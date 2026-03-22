@@ -1,0 +1,21 @@
+{
+  "domain": "{{domain}}",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "input": { "type": "string", "description": "Primary input" }
+    },
+    "required": ["input"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "output": { "type": "string" }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "{{author}}",
+  "fidelity": "Wrapped",
+  "transparency": "Open"
+}

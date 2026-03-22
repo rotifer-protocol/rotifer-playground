@@ -1,0 +1,28 @@
+{
+  "domain": "code.performance",
+  "description": "Optimize web performance including Core Web Vitals, bundle size, and runtime efficiency. Analyze and improve LCP, FID, CLS metrics. Use when optimizing performance, reducing bundle size, or when the user mentions slow, performance, loading, lighthouse, or web vitals.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939412819,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

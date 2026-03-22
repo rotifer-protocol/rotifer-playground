@@ -1,0 +1,12 @@
+.vscode/**
+src/**
+node_modules/**
+tsconfig.json
+.gitignore
+clawhub/**
+rules/**
+skills/**
+.cursor-plugin/**
+.codebuddy-plugin/**
+package-lock.json
+*.map

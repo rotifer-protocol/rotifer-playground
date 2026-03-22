@@ -1,0 +1,8 @@
+{
+  "geneId": "5c69b75c608e55e11e82712d8b2efeac99ec1fd4d42a828f73c92518ac1eb338",
+  "name": "auto-coder",
+  "domain": "code.automation",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:26.564Z",
+  "fromSkill": "../.cursor/skills/auto-coder/SKILL.md"
+}

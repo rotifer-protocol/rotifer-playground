@@ -1,0 +1,28 @@
+{
+  "domain": "ui.web3",
+  "description": "Web3 interface component library. Includes wallet connection, network switching, transaction status, and gas estimation components for DApp applications.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939387302,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

@@ -1,0 +1,28 @@
+{
+  "domain": "docs.technical",
+  "description": "Write technical documentation including README, API docs, and changelogs. Create clear, structured documentation for AI and Web3 projects. Use when writing documentation, creating README, or when the user mentions docs, documentation, readme, or api docs.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939415445,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

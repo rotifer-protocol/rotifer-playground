@@ -1,0 +1,8 @@
+{
+  "geneId": "5e280dbc645f479b7c997b605edf571efd41f8c6892af1c77f1ca8ec41038f9d",
+  "name": "auto-writer",
+  "domain": "content.automation",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:09.112Z",
+  "fromSkill": "../.cursor/skills/auto-writer/SKILL.md"
+}

@@ -1,0 +1,28 @@
+{
+  "domain": "product.management",
+  "description": "World-class product manager assistant for Web2/Web3/AI domains. Writes PRDs, user stories, feature specs, and product roadmaps. Performs requirements analysis and prioritization.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939417033,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

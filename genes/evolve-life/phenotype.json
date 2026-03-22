@@ -1,0 +1,129 @@
+{
+  "domain": "evolve.life",
+  "description": "Conway's Game of Life simulator. Computes cellular automaton evolution from an initial grid state over N generations. Supports preset patterns (glider, pulsar, random) and custom grids. Pure computation \u2014 ideal Native Gene benchmark.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "width": {
+        "type": "number",
+        "description": "Grid width in cells",
+        "default": 64,
+        "minimum": 4,
+        "maximum": 512
+      },
+      "height": {
+        "type": "number",
+        "description": "Grid height in cells",
+        "default": 64,
+        "minimum": 4,
+        "maximum": 512
+      },
+      "generations": {
+        "type": "number",
+        "description": "Number of generations to simulate",
+        "default": 100,
+        "minimum": 1,
+        "maximum": 10000
+      },
+      "preset": {
+        "type": "string",
+        "description": "Initial pattern preset. Overrides grid if provided.",
+        "enum": [
+          "glider",
+          "pulsar",
+          "blinker",
+          "beacon",
+          "r-pentomino",
+          "random"
+        ]
+      },
+      "grid": {
+        "type": "array",
+        "description": "Custom initial grid (2D array of 0s and 1s). Ignored if preset is set.",
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "enum": [
+              0,
+              1
+            ]
+          }
+        }
+      },
+      "rule": {
+        "type": "string",
+        "description": "Life-like rule in B/S notation (default: B3/S23 for Conway's Life)",
+        "default": "B3/S23"
+      },
+      "seed": {
+        "type": "number",
+        "description": "Random seed for 'random' preset (deterministic output)"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "final_grid": {
+        "type": "array",
+        "description": "Grid state after all generations",
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "enum": [
+              0,
+              1
+            ]
+          }
+        }
+      },
+      "alive_count": {
+        "type": "number",
+        "description": "Number of live cells in final grid"
+      },
+      "peak_population": {
+        "type": "number",
+        "description": "Maximum live cells observed across all generations"
+      },
+      "stabilized_at": {
+        "type": "number",
+        "description": "Generation at which the grid stabilized (-1 if not stabilized)"
+      },
+      "extinction": {
+        "type": "boolean",
+        "description": "Whether all cells died before final generation"
+      },
+      "generations_computed": {
+        "type": "number",
+        "description": "Actual number of generations computed (may be less if stabilized/extinct)"
+      },
+      "cells_processed": {
+        "type": "number",
+        "description": "Total cell evaluations (width * height * generations_computed)"
+      },
+      "ascii_snapshot": {
+        "type": "string",
+        "description": "ASCII art of the final grid state (max 80x40)"
+      }
+    },
+    "required": [
+      "final_grid",
+      "alive_count",
+      "peak_population",
+      "stabilized_at",
+      "extinction",
+      "generations_computed",
+      "cells_processed"
+    ]
+  },
+  "dependencies": [],
+  "version": "0.2.0",
+  "author": "rotifer-team",
+  "createdAt": 1741906800000,
+  "fidelity": "Native",
+  "transparency": "Open",
+  "ir_hash": "f04e1e5913d7b6624630254dc97e18f2bea5b113bd52e3cd6fdddc0ce0f471c2"
+}

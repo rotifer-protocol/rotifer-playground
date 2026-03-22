@@ -1,0 +1,28 @@
+{
+  "domain": "orchestration.dispatch",
+  "description": "Intelligent skill orchestration hub. Automatically identifies and dispatches the most suitable skills based on user intent. Analyzes conversation context, matches task types, and combines multiple skills for complex tasks.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939421033,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

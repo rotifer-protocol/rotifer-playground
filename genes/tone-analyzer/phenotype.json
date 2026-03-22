@@ -1,0 +1,28 @@
+{
+  "domain": "content.tone",
+  "description": "Analyze and adjust content tone to match target audience and purpose. Ensure appropriate voice, formality, and emotional impact. Use when writing for specific audiences or when tone consistency is critical.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939402132,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

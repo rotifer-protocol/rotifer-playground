@@ -1,0 +1,80 @@
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  design-tokens wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  ui-components wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  ux-patterns wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  brand-personality wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  uiux-designer wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  ai-components wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  web3-components wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  auto-writer wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  academic-writer wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  business-writer wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  creative-writer wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  copywriter wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  translator wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  grammar-checker wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  style-optimizer wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  readability-analyzer wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  tone-analyzer wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  plagiarism-checker wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  citation-manager wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  fact-checker wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  seo-optimizer wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  auto-coder wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  logic-architect wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  api-designer wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  data-modeler wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  testing-strategist wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  tech-lead wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  security-auditor wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  debugger wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  performance-optimizer wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  devops-automator wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  git-workflow wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  docs-writer wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  doc-coauthoring wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  product-manager wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  project-reviewer wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  prompt-engineer wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  algorithmic-art wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  license-advisor wrap
+scripts/cold-start.sh:81: no such file or directory: node dist/index.js
+FAIL  orch wrap

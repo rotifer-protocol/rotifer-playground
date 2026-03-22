@@ -1,0 +1,12 @@
+{
+  "geneId": "91f0c58c3342d9853eef2747aa91cf59e23f80a5426be2ce9200a1e44a0de113",
+  "name": "particle-spatial",
+  "domain": "sim.particle",
+  "compiledAt": "2026-03-14T09:13:54.298Z",
+  "fidelity": "Native",
+  "wasmAvailable": true,
+  "irHash": "391614d239e64ad94d257ec59c079a1a060d0143b28f6edd8ec255858f961d1c",
+  "totalSize": 1322156,
+  "codeSectionSize": 956115,
+  "durationMs": 5868
+}

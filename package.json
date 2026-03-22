@@ -1,0 +1,74 @@
+{
+  "name": "@rotifer/playground",
+  "version": "0.7.9",
+  "description": "Rotifer Protocol Playground — local development environment for gene development, Arena competition, and protocol simulation",
+  "license": "Apache-2.0",
+  "author": "Rotifer Protocol Contributors",
+  "homepage": "https://github.com/rotifer-protocol/rotifer-playground#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rotifer-protocol/rotifer-playground.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rotifer-protocol/rotifer-playground/issues"
+  },
+  "keywords": [
+    "rotifer",
+    "protocol",
+    "gene",
+    "arena",
+    "agent",
+    "wasm",
+    "sandbox",
+    "evolution",
+    "ai",
+    "web3",
+    "decentralized",
+    "autonomous",
+    "digital-life",
+    "cli"
+  ],
+  "bin": {
+    "rotifer": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "build:napi": "cd crates/rotifer-napi && napi build --release",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run lint && npm run test && npm run build",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "ajv": "^8.17.0",
+    "ajv-formats": "^3.0.0",
+    "chalk": "^4.1.2",
+    "cli-table3": "^0.6.5",
+    "commander": "^13.0.0",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.5.1",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "files": [
+    "dist/",
+    "templates/",
+    "genes/",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ]
+}

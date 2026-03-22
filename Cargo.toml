@@ -1,0 +1,26 @@
+[workspace]
+members = ["crates/rotifer-core", "crates/rotifer-napi"]
+resolver = "2"
+
+[workspace.package]
+version = "0.5.0-alpha.2"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/rotifer-protocol/rotifer-playground"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+anyhow = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+wasmtime = "29"
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+hex = "0.4"
+rmp-serde = "1"
+wasm-encoder = "0.221"
+wasmparser = "0.221"

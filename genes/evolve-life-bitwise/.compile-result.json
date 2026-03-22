@@ -1,0 +1,12 @@
+{
+  "geneId": "5c2d27d8cc0f8f2d5be5bdf95b4c5b499a8a753c5181dc6551a55eb000ca2628",
+  "name": "evolve-life-bitwise",
+  "domain": "evolve.life",
+  "compiledAt": "2026-03-14T06:25:01.974Z",
+  "fidelity": "Native",
+  "wasmAvailable": true,
+  "irHash": "29095a3f52e096d1e8ba016b9025cacb90e95f9be1b157f6f5d0c487114ec538",
+  "totalSize": 1307563,
+  "codeSectionSize": 956115,
+  "durationMs": 4505
+}

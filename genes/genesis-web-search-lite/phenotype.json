@@ -1,0 +1,28 @@
+{
+  "domain": "search",
+  "description": "Lightweight web search returning a single best-match answer with source attribution.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string", "description": "Search query string" }
+    },
+    "required": ["query"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "answer": { "type": "string" },
+      "source": { "type": "string" }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-genesis",
+  "fidelity": "Native",
+  "transparency": "Open",
+  "semantic_requirements": {
+    "timeModel": "Async",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fallback"
+  }
+}

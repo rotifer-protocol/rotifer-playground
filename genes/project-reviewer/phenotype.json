@@ -1,0 +1,28 @@
+{
+  "domain": "product.review",
+  "description": "Central project review hub coordinating all skills including product-manager. Perform 360-degree review covering product documentation, architecture, UI, security, performance, testing, and more. Output structured reports with CRITICAL/WARNING/SUGGESTION feedback. Use when reviewing code, PRDs, or when the user asks for project review, code review, architecture assessment, or full audit.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939417803,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

@@ -1,0 +1,34 @@
+{
+  "domain": "tooling",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "json": { "type": "string", "description": "JSON string to validate" },
+      "schema": { "type": "string", "description": "JSON Schema to validate against" }
+    },
+    "required": ["json", "schema"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "valid": { "type": "boolean" },
+      "errors": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "message": { "type": "string" },
+            "path": { "type": "string" }
+          }
+        }
+      },
+      "parsedSuccessfully": { "type": "boolean" }
+    },
+    "required": ["valid", "errors", "parsedSuccessfully"]
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "example",
+  "fidelity": "Wrapped",
+  "transparency": "Open"
+}

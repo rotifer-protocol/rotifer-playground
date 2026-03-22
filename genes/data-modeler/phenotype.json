@@ -1,0 +1,28 @@
+{
+  "domain": "code.database",
+  "description": "Design database schemas with Prisma for AI and Web3 applications. Define models, relations, indexes, and migrations. Use when designing databases, creating Prisma schemas, or when the user mentions database, schema, model, prisma, or migration.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939408834,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

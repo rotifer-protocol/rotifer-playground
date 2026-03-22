@@ -1,0 +1,28 @@
+{
+  "domain": "content.factcheck",
+  "description": "Verify facts, claims, and sources in written content. Ensure accuracy and credibility of information. Use when writing news, reports, or any content where factual accuracy is critical.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939404880,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

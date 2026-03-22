@@ -1,0 +1,52 @@
+{
+  "domain": "content.grammar",
+  "description": "Check grammar, spelling, and punctuation in written content. Identify common errors and provide corrections. Use when reviewing any written content for grammatical accuracy.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "English text to check for grammar issues"
+      },
+      "strict": {
+        "type": "boolean",
+        "description": "Enable additional rules (passive voice, excessive adverbs)",
+        "default": false
+      }
+    },
+    "required": ["text"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "issues": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "rule": { "type": "string" },
+            "message": { "type": "string" },
+            "position": { "type": "number" },
+            "suggestion": { "type": "string" }
+          },
+          "required": ["rule", "message", "position", "suggestion"]
+        }
+      },
+      "score": {
+        "type": "number",
+        "description": "0-100, higher = fewer issues"
+      },
+      "summary": {
+        "type": "string"
+      }
+    },
+    "required": ["issues", "score", "summary"]
+  },
+  "dependencies": [],
+  "version": "0.2.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939397858,
+  "fidelity": "Native",
+  "transparency": "Open",
+  "source": "skill"
+}

@@ -1,0 +1,48 @@
+{
+  "domain": "text.extract",
+  "description": "Extracts and categorizes all URLs from text content, with optional validation of link accessibility.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "text": { "type": "string", "description": "Text content to extract URLs from" },
+      "includeEmails": { "type": "boolean", "description": "Also extract email addresses", "default": false },
+      "deduplicate": { "type": "boolean", "description": "Remove duplicate URLs", "default": true }
+    },
+    "required": ["text"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "urls": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "url": { "type": "string" },
+            "protocol": { "type": "string", "description": "http, https, ftp, etc." },
+            "domain": { "type": "string" },
+            "position": { "type": "number", "description": "Character offset in source text" }
+          }
+        },
+        "description": "Extracted URLs with metadata"
+      },
+      "emails": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Extracted email addresses (if includeEmails is true)"
+      },
+      "totalFound": { "type": "number", "description": "Total URLs found" },
+      "uniqueDomains": { "type": "array", "items": { "type": "string" }, "description": "List of unique domains" }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-genesis",
+  "fidelity": "Native",
+  "transparency": "Open",
+  "semantic_requirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  }
+}

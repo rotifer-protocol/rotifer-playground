@@ -1,0 +1,8 @@
+{
+  "geneId": "1c2b20e637c393486e300fcc73052ecc7dd16f0b09e2b2a42b06d5418ee8a785",
+  "name": "ai-components",
+  "domain": "ui.ai",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:05.955Z",
+  "fromSkill": "../.cursor/skills/ai-components/SKILL.md"
+}

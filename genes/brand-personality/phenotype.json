@@ -1,0 +1,28 @@
+{
+  "domain": "ui.branding",
+  "description": "Parameterized brand style system. Generates infinite style combinations through 6 dimensions: color temperature, border-radius, motion, density, emotion, and contrast.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939382612,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

@@ -1,0 +1,28 @@
+{
+  "domain": "content.style",
+  "description": "Optimize writing style for clarity, consistency, and readability. Improve sentence structure, word choice, and flow. Use when polishing written content for better reader experience.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939399973,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

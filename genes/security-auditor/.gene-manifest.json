@@ -1,0 +1,8 @@
+{
+  "geneId": "e884a901d023c20d5693dec5005280d5376cafddb6213a94fc91f452239550ca",
+  "name": "security-auditor",
+  "domain": "code.security",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:31.218Z",
+  "fromSkill": "../.cursor/skills/security-auditor/SKILL.md"
+}

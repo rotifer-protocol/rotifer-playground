@@ -1,0 +1,8 @@
+{
+  "geneId": "d43316ccca60ab93574121e0a1a30bbd66d1e3ccb07a9fd12c53fae73e1ee8a8",
+  "name": "debugger",
+  "domain": "code.debug",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:31.991Z",
+  "fromSkill": "../.cursor/skills/debugger/SKILL.md"
+}

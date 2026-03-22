@@ -1,0 +1,11 @@
+{
+  "$schema": "https://rotifer.dev/schemas/algebra-expr.json",
+  "type": "Par",
+  "branches": [
+    { "type": "Gene", "id": "{{gene_a_id}}" },
+    { "type": "Gene", "id": "{{gene_b_id}}" }
+  ],
+  "merge": "FirstSuccess",
+  "deadline": "5s",
+  "_comment": "Parallel composition: run both genes, take first success within 5s deadline"
+}

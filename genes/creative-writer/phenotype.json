@@ -1,0 +1,28 @@
+{
+  "domain": "content.creative",
+  "description": "Write creative content including stories, scripts, and narrative works. Master storytelling techniques, character development, and emotional expression. Use when creating fiction, screenplays, or any narrative-driven content.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939393535,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

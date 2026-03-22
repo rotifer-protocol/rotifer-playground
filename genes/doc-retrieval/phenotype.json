@@ -1,0 +1,54 @@
+{
+  "domain": "ai.retrieval",
+  "description": "Retrieves relevant documentation chunks via vector similarity search. Computes embeddings and queries Supabase match_documents RPC.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "question": {
+        "type": "string",
+        "description": "Natural language question to search for"
+      },
+      "topK": {
+        "type": "number",
+        "description": "Number of results to return (default 5, max 20)",
+        "default": 5
+      }
+    },
+    "required": ["question"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "question": { "type": "string" },
+      "chunks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "content": { "type": "string" },
+            "source": { "type": "string" },
+            "heading": { "type": "string" },
+            "score": { "type": "number" }
+          },
+          "required": ["content", "source", "score"]
+        }
+      }
+    },
+    "required": ["question", "chunks"]
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1772236800000,
+  "fidelity": "Hybrid",
+  "transparency": "Open",
+  "network": {
+    "allowedDomains": [
+      "api.openai.com",
+      "*.supabase.co"
+    ],
+    "maxTimeoutMs": 30000,
+    "maxResponseBytes": 1048576,
+    "maxRequestsPerMin": 10
+  }
+}

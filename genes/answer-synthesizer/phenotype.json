@@ -1,0 +1,61 @@
+{
+  "domain": "ai.synthesis",
+  "description": "Synthesizes a structured answer from retrieved document chunks using an LLM. Provider-agnostic: supports Claude and OpenAI via environment configuration.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "question": {
+        "type": "string",
+        "description": "Original user question"
+      },
+      "chunks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "content": { "type": "string" },
+            "source": { "type": "string" },
+            "score": { "type": "number" }
+          },
+          "required": ["content", "source"]
+        },
+        "description": "Retrieved context chunks from doc-retrieval"
+      },
+      "provider": {
+        "type": "string",
+        "description": "LLM provider override: 'claude' or 'openai' (default from env ROTIFER_LLM_PROVIDER)"
+      }
+    },
+    "required": ["question", "chunks"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "answer": { "type": "string" },
+      "sources": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "confidence": {
+        "type": "number",
+        "description": "0-1 confidence score based on chunk relevance"
+      }
+    },
+    "required": ["answer", "sources", "confidence"]
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1772236800000,
+  "fidelity": "Hybrid",
+  "transparency": "Open",
+  "network": {
+    "allowedDomains": [
+      "api.anthropic.com",
+      "api.openai.com"
+    ],
+    "maxTimeoutMs": 30000,
+    "maxResponseBytes": 1048576,
+    "maxRequestsPerMin": 10
+  }
+}

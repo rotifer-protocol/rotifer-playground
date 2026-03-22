@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+target/
+*.node
+index.d.ts
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+
+# Runtime
+.rotifer/
+
+# Lock files (Cargo.lock is committed for libraries)
+# package-lock.json is committed
+
+# Gene build artifacts (contains local paths, not for VCS)
+.gene-manifest.json
+
+# Sandbox cache
+*.tsbuildinfo
+
+# Test artifacts
+coverage/
+
+# Wrangler
+.wrangler/
+
+# Temp files
+.temp/
+supabase/.temp/
+
+# npm pack artifacts
+package/
+*.tgz
+
+# ADR-106 L4a: prevent internal/ cross-contamination
+internal/

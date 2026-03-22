@@ -1,0 +1,8 @@
+{
+  "geneId": "e9aedd6d46feada1ace936dff6c922abf5fee0e4ddae6b072cc86b2a8d4b23c6",
+  "name": "tone-analyzer",
+  "domain": "content.tone",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:22.133Z",
+  "fromSkill": "../.cursor/skills/tone-analyzer/SKILL.md"
+}

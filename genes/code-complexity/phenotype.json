@@ -1,0 +1,34 @@
+{
+  "domain": "code.analyze",
+  "description": "Analyzes source code complexity using cyclomatic complexity, lines of code, and nesting depth metrics.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "code": { "type": "string", "description": "Source code to analyze" },
+      "language": { "type": "string", "description": "Programming language", "enum": ["typescript", "javascript", "python", "rust", "go"] },
+      "threshold": { "type": "number", "description": "Complexity threshold for warnings", "default": 10 }
+    },
+    "required": ["code", "language"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "cyclomaticComplexity": { "type": "number", "description": "McCabe cyclomatic complexity score" },
+      "linesOfCode": { "type": "number", "description": "Non-blank, non-comment lines" },
+      "maxNestingDepth": { "type": "number", "description": "Maximum nesting depth of control structures" },
+      "functionCount": { "type": "number", "description": "Number of functions/methods found" },
+      "rating": { "type": "string", "description": "Complexity rating", "enum": ["low", "moderate", "high", "very-high"] },
+      "suggestions": { "type": "array", "items": { "type": "string" }, "description": "Improvement suggestions if complexity is high" }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-genesis",
+  "fidelity": "Native",
+  "transparency": "Open",
+  "semantic_requirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "domain": "ai.prompting",
+  "description": "Design and optimize AI prompts for maximum effectiveness and cost efficiency. Create structured outputs, few-shot examples, and prompt templates. Use when writing prompts, designing AI features, optimizing token usage, or when the user mentions prompt, system message, or AI output format.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939418611,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

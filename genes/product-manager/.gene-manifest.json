@@ -1,0 +1,8 @@
+{
+  "geneId": "7d8c4bd9a10a2cbb57747c0a7ab5e8e79ad5c8573310b1c473f6d8fa681c64d2",
+  "name": "product-manager",
+  "domain": "product.management",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:37.034Z",
+  "fromSkill": "../.cursor/skills/product-manager/SKILL.md"
+}

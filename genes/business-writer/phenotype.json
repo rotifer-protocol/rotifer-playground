@@ -1,0 +1,28 @@
+{
+  "domain": "content.business",
+  "description": "Write professional business documents including reports, proposals, and summaries. Create clear, data-driven content for workplace communication. Use when writing work reports, annual summaries, business plans, or OKRs.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939391931,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

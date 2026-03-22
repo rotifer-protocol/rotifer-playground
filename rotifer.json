@@ -1,0 +1,7 @@
+{
+  "name": "rotifer-playground",
+  "version": "0.4.0-alpha.1",
+  "author": "rotifer-team",
+  "genes_dir": "genes",
+  "default_domain": "general"
+}

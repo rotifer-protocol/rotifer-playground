@@ -1,0 +1,28 @@
+{
+  "domain": "code.architecture",
+  "description": "Ensure code has sound business logic, data flow, and technical implementation for AI and Web3 projects. Focus on architecture, edge cases, state management, agent patterns, and wallet safety. Use when writing core logic, reviewing architecture, implementing APIs, or when the user mentions logic, architecture, data flow, or asks for code review ignoring UI.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939407333,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

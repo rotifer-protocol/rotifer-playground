@@ -1,0 +1,137 @@
+{
+  "domain": "sim.particle",
+  "description": "N-body gravitational simulation using spatial hash grid. Partitions particles into cells based on bounding box; each particle interacts only with neighbors in its 3x3 cell neighborhood. Reduces pairwise evaluations for spatially clustered distributions.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "particles": {
+        "type": "array",
+        "description": "Initial particle states. Ignored if preset is provided.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "vx": {
+              "type": "number"
+            },
+            "vy": {
+              "type": "number"
+            },
+            "mass": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "vx",
+            "vy",
+            "mass"
+          ]
+        }
+      },
+      "preset": {
+        "type": "string",
+        "description": "Preset particle configuration",
+        "enum": [
+          "solar",
+          "binary",
+          "cluster",
+          "collision"
+        ]
+      },
+      "count": {
+        "type": "number",
+        "description": "Number of particles for preset generation",
+        "default": 64,
+        "minimum": 2,
+        "maximum": 2048
+      },
+      "steps": {
+        "type": "number",
+        "description": "Number of simulation steps",
+        "default": 100,
+        "minimum": 1,
+        "maximum": 10000
+      },
+      "dt": {
+        "type": "number",
+        "description": "Time step size",
+        "default": 0.01
+      },
+      "G": {
+        "type": "number",
+        "description": "Gravitational constant",
+        "default": 1
+      },
+      "softening": {
+        "type": "number",
+        "description": "Softening parameter to prevent singularity at close range",
+        "default": 0.01
+      },
+      "seed": {
+        "type": "number",
+        "description": "Random seed for preset generation (deterministic output)"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "particles": {
+        "type": "array",
+        "description": "Final particle states after simulation",
+        "items": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "vx": {
+              "type": "number"
+            },
+            "vy": {
+              "type": "number"
+            },
+            "mass": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "steps_computed": {
+        "type": "number",
+        "description": "Actual number of simulation steps computed"
+      },
+      "total_energy": {
+        "type": "number",
+        "description": "Total system energy (kinetic + potential) at final state"
+      },
+      "interactions_computed": {
+        "type": "number",
+        "description": "Total pairwise force evaluations across all steps"
+      }
+    },
+    "required": [
+      "particles",
+      "steps_computed",
+      "total_energy",
+      "interactions_computed"
+    ]
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "fidelity": "Native",
+  "transparency": "Open",
+  "ir_hash": "391614d239e64ad94d257ec59c079a1a060d0143b28f6edd8ec255858f961d1c"
+}

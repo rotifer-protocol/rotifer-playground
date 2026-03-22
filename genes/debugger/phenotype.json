@@ -1,0 +1,28 @@
+{
+  "domain": "code.debug",
+  "description": "Systematic debugging guide for AI and Web3 applications. Diagnose errors, analyze logs, and identify root causes. Use when troubleshooting issues, analyzing errors, or when the user mentions bug, error, not working, debug, or fix.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939411990,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

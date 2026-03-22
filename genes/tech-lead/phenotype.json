@@ -1,0 +1,28 @@
+{
+  "domain": "code.quality",
+  "description": "Enforce code consistency, naming conventions, and hygiene for AI and Web3 projects. Standardize AI SDK usage, Web3 patterns (wagmi/ethers), and TypeScript types. Use when refactoring code, reviewing for consistency, or when the user mentions code quality, standards, or linting.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939410356,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

@@ -1,0 +1,8 @@
+{
+  "geneId": "a49ba8e91e95d38b1f6e9379219bb7e9ca925499dfa31a2857253a21fbc209ae",
+  "name": "readability-analyzer",
+  "domain": "content.readability",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:21.150Z",
+  "fromSkill": "../.cursor/skills/readability-analyzer/SKILL.md"
+}

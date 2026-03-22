@@ -1,0 +1,30 @@
+# Source
+src/
+crates/
+tests/
+
+# Config
+tsconfig.json
+vitest.config.ts
+.eslintrc*
+.prettierrc*
+
+# Build artifacts
+*.tsbuildinfo
+target/
+
+# Dev files
+demo.sh
+.rotifer/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+
+# Lock files (consumer should use their own)
+package-lock.json
+Cargo.lock

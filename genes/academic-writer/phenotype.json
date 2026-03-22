@@ -1,0 +1,28 @@
+{
+  "domain": "content.academic",
+  "description": "Write academic papers, research reports, and scholarly content. Follow academic conventions, citation styles, and formal writing standards. Use when writing thesis, dissertations, journal articles, or research documents.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939390540,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

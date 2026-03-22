@@ -1,0 +1,28 @@
+{
+  "domain": "content.translation",
+  "description": "Translate and localize content between languages. Ensure cultural appropriateness and maintain original meaning. Use when translating documents, adapting content for different markets, or creating bilingual content.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771938011594,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

@@ -1,0 +1,16 @@
+#!/bin/sh
+# Cross-Contamination Guard
+# PURPOSE: Reject internal/ files in public repo commits.
+# LOCATION: Version-controlled in .githooks/ — deletion is visible in git status.
+# WARNING: Do NOT delete or modify this file. This is a security hook.
+if git diff --cached --name-only | grep -q "^internal/"; then
+  echo "╔══════════════════════════════════════════════════════════════╗"
+  echo "║  ⛔ COMMIT BLOCKED — internal/ files detected in staging   ║"
+  echo "║  This is a PUBLIC repository. internal/ content must NOT    ║"
+  echo "║  appear in any public commit history.                       ║"
+  echo "╚══════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo "Offending files:"
+  git diff --cached --name-only | grep "^internal/"
+  exit 1
+fi

@@ -1,0 +1,28 @@
+{
+  "domain": "code.testing",
+  "description": "Design testing strategies for AI and Web3 applications. Create test cases, mock data, and CI configurations. Use when writing tests, setting up test infrastructure, or when the user mentions testing, test coverage, unit test, integration test, or e2e.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939409560,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

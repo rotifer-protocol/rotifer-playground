@@ -1,0 +1,28 @@
+{
+  "domain": "code.security",
+  "description": "Audit code for security vulnerabilities in AI and Web3 applications. Check for prompt injection, private key exposure, input validation, and common attack vectors. Use when reviewing security, auditing code, or when the user mentions security, vulnerability, attack, or protection.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939411217,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

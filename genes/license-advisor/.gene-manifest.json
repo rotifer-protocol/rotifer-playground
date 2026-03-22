@@ -1,0 +1,8 @@
+{
+  "geneId": "157314d0eb6da3529235d9ad6cf877b22a46a8aec461bafeba1825040ab1841a",
+  "name": "license-advisor",
+  "domain": "legal.licensing",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:40.260Z",
+  "fromSkill": "../.cursor/skills/license-advisor/SKILL.md"
+}

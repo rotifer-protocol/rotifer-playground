@@ -1,0 +1,26 @@
+{
+  "domain": "nlp",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "text": { "type": "string", "description": "The text to summarize" },
+      "maxLength": { "type": "integer", "default": 100, "description": "Max summary length in characters" }
+    },
+    "required": ["text"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "summary": { "type": "string" },
+      "originalLength": { "type": "integer" },
+      "summaryLength": { "type": "integer" },
+      "compressionRatio": { "type": "number" }
+    },
+    "required": ["summary", "originalLength", "summaryLength", "compressionRatio"]
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "example",
+  "fidelity": "Wrapped",
+  "transparency": "Open"
+}

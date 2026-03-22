@@ -1,0 +1,50 @@
+{
+  "domain": "content.citation",
+  "description": "Manage academic citations and references. Format citations according to APA, MLA, Chicago, GB/T 7714 and other styles. Use when writing academic papers or any content requiring proper source attribution.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "sources": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string", "enum": ["book", "article", "website", "conference"] },
+            "authors": { "type": "array", "items": { "type": "string" } },
+            "title": { "type": "string" },
+            "year": { "type": "number" },
+            "journal": { "type": "string" },
+            "volume": { "type": "number" },
+            "issue": { "type": "number" },
+            "pages": { "type": "string" },
+            "publisher": { "type": "string" },
+            "url": { "type": "string" },
+            "accessDate": { "type": "string" },
+            "conference": { "type": "string" },
+            "doi": { "type": "string" }
+          },
+          "required": ["type", "authors", "title", "year"]
+        }
+      },
+      "style": { "type": "string", "enum": ["apa", "mla", "chicago"] }
+    },
+    "required": ["sources", "style"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "formatted": { "type": "array", "items": { "type": "string" } },
+      "bibliography": { "type": "string" },
+      "style": { "type": "string" },
+      "sourceCount": { "type": "number" }
+    },
+    "required": ["formatted", "bibliography", "style", "sourceCount"]
+  },
+  "dependencies": [],
+  "version": "0.2.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939404211,
+  "fidelity": "Native",
+  "transparency": "Open",
+  "source": "skill"
+}

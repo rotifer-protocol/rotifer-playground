@@ -1,0 +1,28 @@
+{
+  "domain": "content.marketing",
+  "description": "Write compelling marketing copy, social media content, and advertising materials. Master platform-specific styles and persuasion techniques. Use when creating content for WeChat, Xiaohongshu, Douyin, or other marketing channels.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939394693,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

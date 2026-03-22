@@ -1,0 +1,8 @@
+{
+  "geneId": "61c5a2a3efb01325bd91516fff374bb5d8199d58f01e753907b3da26fcec693b",
+  "name": "prompt-engineer",
+  "domain": "ai.prompting",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:38.612Z",
+  "fromSkill": "../.cursor/skills/prompt-engineer/SKILL.md"
+}

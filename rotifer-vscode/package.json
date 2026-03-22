@@ -1,0 +1,143 @@
+{
+  "name": "rotifer-vscode",
+  "displayName": "Rotifer Protocol",
+  "description": "Gene browser, installer, and developer tools for the Rotifer Protocol",
+  "version": "0.7.8",
+  "publisher": "rotifer-foundation",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rotifer-protocol/rotifer-playground"
+  },
+  "homepage": "https://rotifer.dev",
+  "bugs": {
+    "url": "https://github.com/rotifer-protocol/rotifer-playground/issues"
+  },
+  "icon": "icon.png",
+  "keywords": ["rotifer", "gene", "ai-agent", "wasm", "arena", "protocol"],
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other", "Machine Learning"],
+  "activationEvents": [
+    "onView:rotiferGenes",
+    "onView:rotiferLocalGenes",
+    "onView:rotiferArena"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "rotifer",
+          "title": "Rotifer",
+          "icon": "$(beaker)"
+        }
+      ]
+    },
+    "views": {
+      "rotifer": [
+        {
+          "id": "rotiferGenes",
+          "name": "Gene Registry"
+        },
+        {
+          "id": "rotiferLocalGenes",
+          "name": "Local Genes"
+        },
+        {
+          "id": "rotiferArena",
+          "name": "Arena Rankings"
+        }
+      ]
+    },
+    "commands": [
+      { "command": "rotifer.refreshGenes", "title": "Refresh Gene Registry", "icon": "$(refresh)" },
+      { "command": "rotifer.installGene", "title": "Install Gene", "icon": "$(cloud-download)" },
+      { "command": "rotifer.geneDetails", "title": "View Gene Details" },
+      { "command": "rotifer.showReputation", "title": "View Gene Reputation" },
+      { "command": "rotifer.geneStats", "title": "View Gene Statistics" },
+      { "command": "rotifer.geneVersions", "title": "View Version History" },
+      { "command": "rotifer.searchGenes", "title": "Rotifer: Search Genes", "icon": "$(search)" },
+      { "command": "rotifer.compareGenes", "title": "Rotifer: Compare Genes" },
+      { "command": "rotifer.publishSkill", "title": "Rotifer: Publish as Gene", "icon": "$(cloud-upload)" },
+      { "command": "rotifer.login", "title": "Rotifer: Sign In" },
+      { "command": "rotifer.logout", "title": "Rotifer: Sign Out" },
+      { "command": "rotifer.authMenu", "title": "Rotifer: Auth Menu" },
+      { "command": "rotifer.refreshLocalGenes", "title": "Refresh Local Genes", "icon": "$(refresh)" },
+      { "command": "rotifer.initProject", "title": "Rotifer: Initialize Project" },
+      { "command": "rotifer.scanGenes", "title": "Rotifer: Scan for Genes" },
+      { "command": "rotifer.wrapGene", "title": "Rotifer: Wrap Gene" },
+      { "command": "rotifer.testGene", "title": "Rotifer: Test Gene", "icon": "$(testing-run-icon)" },
+      { "command": "rotifer.compileGene", "title": "Rotifer: Compile Gene", "icon": "$(gear)" },
+      { "command": "rotifer.runGene", "title": "Rotifer: Run Gene", "icon": "$(play)" },
+      { "command": "rotifer.refreshArena", "title": "Refresh Arena Rankings", "icon": "$(refresh)" },
+      { "command": "rotifer.arenaSubmit", "title": "Rotifer: Submit to Arena", "icon": "$(trophy)" },
+      { "command": "rotifer.createAgent", "title": "Rotifer: Create Agent" },
+      { "command": "rotifer.listAgents", "title": "Rotifer: List Agents" },
+      { "command": "rotifer.runAgent", "title": "Rotifer: Run Agent" },
+      { "command": "rotifer.showLeaderboard", "title": "Rotifer: Developer Leaderboard" },
+      { "command": "rotifer.myReputation", "title": "Rotifer: My Reputation" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "rotifer.refreshGenes", "when": "view == rotiferGenes", "group": "navigation" },
+        { "command": "rotifer.searchGenes", "when": "view == rotiferGenes", "group": "navigation" },
+        { "command": "rotifer.refreshLocalGenes", "when": "view == rotiferLocalGenes", "group": "navigation" },
+        { "command": "rotifer.refreshArena", "when": "view == rotiferArena", "group": "navigation" }
+      ],
+      "view/item/context": [
+        { "command": "rotifer.installGene", "when": "view == rotiferGenes && viewItem == gene", "group": "inline" },
+        { "command": "rotifer.showReputation", "when": "view == rotiferGenes && viewItem == gene" },
+        { "command": "rotifer.geneStats", "when": "view == rotiferGenes && viewItem == gene" },
+        { "command": "rotifer.geneVersions", "when": "view == rotiferGenes && viewItem == gene" },
+        { "command": "rotifer.testGene", "when": "view == rotiferLocalGenes && viewItem =~ /localGene/", "group": "inline" },
+        { "command": "rotifer.compileGene", "when": "view == rotiferLocalGenes && viewItem =~ /localGene/" },
+        { "command": "rotifer.runGene", "when": "view == rotiferLocalGenes && viewItem =~ /localGene/" },
+        { "command": "rotifer.arenaSubmit", "when": "view == rotiferLocalGenes && viewItem == localGenePublished" }
+      ],
+      "explorer/context": [
+        { "command": "rotifer.publishSkill", "when": "resourceFilename == SKILL.md", "group": "rotifer@1" }
+      ],
+      "commandPalette": [
+        { "command": "rotifer.searchGenes" },
+        { "command": "rotifer.compareGenes" },
+        { "command": "rotifer.login" },
+        { "command": "rotifer.logout" },
+        { "command": "rotifer.initProject" },
+        { "command": "rotifer.scanGenes" },
+        { "command": "rotifer.wrapGene" },
+        { "command": "rotifer.createAgent" },
+        { "command": "rotifer.listAgents" },
+        { "command": "rotifer.runAgent" },
+        { "command": "rotifer.showLeaderboard" },
+        { "command": "rotifer.myReputation" }
+      ]
+    },
+    "configuration": {
+      "title": "Rotifer Protocol",
+      "properties": {
+        "rotifer.cloudEndpoint": {
+          "type": "string",
+          "default": "https://vihbmpuqlamhxbmahcje.supabase.co",
+          "description": "Rotifer Cloud API endpoint (Supabase URL)"
+        },
+        "rotifer.anonKey": {
+          "type": "string",
+          "default": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpaGJtcHVxbGFtaHhibWFoY2plIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4MjUxMTQsImV4cCI6MjA4NzQwMTExNH0.t77n7TZ2jV04lya2sWuv4AYAcXnsc49jcfVIJr0heYQ",
+          "description": "Supabase anon key for the Rotifer Cloud (public key, safe to share)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^3.0.0"
+  }
+}

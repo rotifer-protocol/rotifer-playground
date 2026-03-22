@@ -1,0 +1,8 @@
+{
+  "geneId": "191085093051e57cc79039969b054b83e9d93086333674e630f3ab2f7aae5837",
+  "name": "grammar-checker",
+  "domain": "content.grammar",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:17.860Z",
+  "fromSkill": "../.cursor/skills/grammar-checker/SKILL.md"
+}

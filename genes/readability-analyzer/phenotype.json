@@ -1,0 +1,35 @@
+{
+  "domain": "content.readability",
+  "description": "Analyze and improve content readability. Evaluate sentence complexity, word choice, and overall accessibility. Use when ensuring content is appropriate for target audience reading level.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "English text to analyze for readability"
+      }
+    },
+    "required": ["text"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "fleschKincaid": { "type": "number", "description": "Flesch-Kincaid reading ease score (0-100)" },
+      "gradeLevel": { "type": "number", "description": "US grade level" },
+      "avgSentenceLength": { "type": "number", "description": "Average words per sentence" },
+      "avgSyllablesPerWord": { "type": "number", "description": "Average syllables per word" },
+      "wordCount": { "type": "number", "description": "Total word count" },
+      "sentenceCount": { "type": "number", "description": "Total sentence count" },
+      "complexWordRatio": { "type": "number", "description": "Ratio of words with 3+ syllables" },
+      "verdict": { "type": "string", "description": "Readability verdict (e.g. Easy to read, College level)" }
+    },
+    "required": ["fleschKincaid", "gradeLevel", "avgSentenceLength", "avgSyllablesPerWord", "wordCount", "sentenceCount", "complexWordRatio", "verdict"]
+  },
+  "dependencies": [],
+  "version": "0.2.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939401147,
+  "fidelity": "Native",
+  "transparency": "Open",
+  "source": "skill"
+}

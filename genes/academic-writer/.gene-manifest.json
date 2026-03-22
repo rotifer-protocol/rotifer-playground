@@ -1,0 +1,8 @@
+{
+  "geneId": "f3f7ed9e0099a055c841c1573024a89b853e17772201a7183ae49760bb2db0a0",
+  "name": "academic-writer",
+  "domain": "content.academic",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:10.543Z",
+  "fromSkill": "../.cursor/skills/academic-writer/SKILL.md"
+}

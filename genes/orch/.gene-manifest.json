@@ -1,0 +1,8 @@
+{
+  "geneId": "1b911355b52400b6407a818bf4b8c687ecf7a1c8d59a1441fcf59ea8670ecf03",
+  "name": "orch",
+  "domain": "orchestration.dispatch",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:41.034Z",
+  "fromSkill": "../.cursor/skills/orch/SKILL.md"
+}

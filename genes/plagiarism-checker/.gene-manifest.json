@@ -1,0 +1,8 @@
+{
+  "geneId": "8a2214ce57aa36eba5f22117ba8784ba9b3b044a0024ae55bfc5972acc38e5fa",
+  "name": "plagiarism-checker",
+  "domain": "content.integrity",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:23.270Z",
+  "fromSkill": "../.cursor/skills/plagiarism-checker/SKILL.md"
+}

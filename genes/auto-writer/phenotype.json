@@ -1,0 +1,28 @@
+{
+  "domain": "content.automation",
+  "description": "Execute continuous AI-powered content generation with intelligent iteration loops. Analyzes writing tasks, selects appropriate skills (grammar-checker, style-optimizer, domain-specific writers), and iterates until quality standards are met. Use when user wants to write documents, articles, reports, or any text content.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939389111,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

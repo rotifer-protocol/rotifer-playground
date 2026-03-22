@@ -1,0 +1,28 @@
+{
+  "domain": "content.integrity",
+  "description": "Check content for plagiarism and ensure originality. Identify potential copied content and guide proper attribution. Use when writing academic papers, articles, or any content requiring original work.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939403269,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

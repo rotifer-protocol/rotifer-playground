@@ -1,0 +1,42 @@
+{
+  "domain": "data.validate",
+  "description": "Validates JSON data against a JSON Schema definition, returning detailed validation errors with paths.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "data": { "description": "The JSON data to validate (any type)" },
+      "schema": { "type": "object", "description": "JSON Schema to validate against" },
+      "strict": { "type": "boolean", "description": "Disallow additional properties not in schema", "default": false }
+    },
+    "required": ["data", "schema"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "valid": { "type": "boolean", "description": "Whether the data passes validation" },
+      "errors": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string", "description": "JSON path to the error (e.g. $.items[0].name)" },
+            "message": { "type": "string", "description": "Human-readable error message" },
+            "keyword": { "type": "string", "description": "The schema keyword that failed (e.g. type, required)" }
+          }
+        },
+        "description": "List of validation errors (empty if valid)"
+      },
+      "errorCount": { "type": "number", "description": "Total number of validation errors" }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-genesis",
+  "fidelity": "Native",
+  "transparency": "Open",
+  "semantic_requirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "domain": "ui.design",
+  "description": "Unified UI/UX design entry point. Dispatches design tokens, components, and UX pattern sub-skills via style dimension parameters. Supports presets, fine-tuning, and full customization.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939384426,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

@@ -1,0 +1,8 @@
+{
+  "geneId": "d9d24575a8e82c688691e161bb37924ad2c412fdef5b3fdedd35cb7ad9c228d9",
+  "name": "git-workflow",
+  "domain": "devops.git",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:34.661Z",
+  "fromSkill": "../.cursor/skills/git-workflow/SKILL.md"
+}

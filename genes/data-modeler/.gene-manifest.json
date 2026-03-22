@@ -1,0 +1,8 @@
+{
+  "geneId": "2c6e59ca61b8087e82389787821ca73b2aab71f2b82de1aa9c0895d39e34c9e6",
+  "name": "data-modeler",
+  "domain": "code.database",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:28.835Z",
+  "fromSkill": "../.cursor/skills/data-modeler/SKILL.md"
+}

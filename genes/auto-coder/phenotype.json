@@ -1,0 +1,28 @@
+{
+  "domain": "code.automation",
+  "description": "Execute continuous AI-powered code generation with intelligent iteration loops. Always runs in iterative mode - generates code, validates with quality skills (testing-strategist, tech-lead, logic-architect, debugger), and repeats until success or limits reached. Use when user wants to implement features, write code, or automate programming tasks.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939406563,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

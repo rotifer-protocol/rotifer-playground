@@ -1,0 +1,27 @@
+{
+  "domain": "network",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "url": { "type": "string", "format": "uri", "description": "The URL to fetch" },
+      "timeout": { "type": "integer", "default": 5000, "description": "Timeout in milliseconds" }
+    },
+    "required": ["url"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "content": { "type": "string" },
+      "statusCode": { "type": "integer" },
+      "contentType": { "type": "string" },
+      "truncated": { "type": "boolean" },
+      "fetchedAt": { "type": "string", "format": "date-time" }
+    },
+    "required": ["content", "statusCode", "contentType", "truncated", "fetchedAt"]
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "example",
+  "fidelity": "Wrapped",
+  "transparency": "Open"
+}

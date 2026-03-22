@@ -1,0 +1,45 @@
+{
+  "domain": "content.linking",
+  "description": "Maps source file paths to human-readable titles and browsable URLs. Pure mapping logic, no network dependency.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "answer": { "type": "string", "description": "The synthesized answer (passed through)" },
+      "sources": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Source file paths from answer-synthesizer"
+      },
+      "confidence": { "type": "number" }
+    },
+    "required": ["answer", "sources"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "The answer text (renamed for grammar-checker compatibility)"
+      },
+      "links": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "url": { "type": "string" }
+          },
+          "required": ["title", "url"]
+        }
+      },
+      "confidence": { "type": "number" }
+    },
+    "required": ["text", "links"]
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1772236800000,
+  "fidelity": "Native",
+  "transparency": "Open"
+}

@@ -1,0 +1,8 @@
+{
+  "geneId": "6a4c87cfeb6420cf1b9bed5f282e808d2b277dc7f8baff6580b219a944ebfddd",
+  "name": "performance-optimizer",
+  "domain": "code.performance",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:32.820Z",
+  "fromSkill": "../.cursor/skills/performance-optimizer/SKILL.md"
+}

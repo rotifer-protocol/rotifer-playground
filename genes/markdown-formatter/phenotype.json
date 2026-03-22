@@ -1,0 +1,32 @@
+{
+  "domain": "text.format",
+  "description": "Normalizes Markdown formatting: fixes heading levels, standardizes list markers, wraps long lines, and enforces consistent spacing.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "markdown": { "type": "string", "description": "Raw Markdown text to format" },
+      "lineWidth": { "type": "number", "description": "Maximum line width for wrapping", "default": 80 },
+      "listMarker": { "type": "string", "description": "List bullet character", "enum": ["-", "*", "+"], "default": "-" },
+      "headingStyle": { "type": "string", "description": "Heading style", "enum": ["atx", "setext"], "default": "atx" }
+    },
+    "required": ["markdown"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "formatted": { "type": "string", "description": "Formatted Markdown text" },
+      "changed": { "type": "boolean", "description": "Whether any formatting changes were made" },
+      "changeCount": { "type": "number", "description": "Number of formatting changes applied" }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-genesis",
+  "fidelity": "Native",
+  "transparency": "Open",
+  "semantic_requirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  }
+}

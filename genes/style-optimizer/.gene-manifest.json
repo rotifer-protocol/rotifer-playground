@@ -1,0 +1,8 @@
+{
+  "geneId": "e21277e13eb1038c2070805ffd27baaff1c2cd3d3cb6aeae854ff604ecaf8ccc",
+  "name": "style-optimizer",
+  "domain": "content.style",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:19.974Z",
+  "fromSkill": "../.cursor/skills/style-optimizer/SKILL.md"
+}

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://rotifer.dev/schemas/algebra-expr.json",
+  "type": "Seq",
+  "steps": [
+    { "type": "Gene", "id": "{{gene_a_id}}" },
+    { "type": "Gene", "id": "{{gene_b_id}}" }
+  ],
+  "_comment": "Sequential composition: gene_a output feeds into gene_b input"
+}

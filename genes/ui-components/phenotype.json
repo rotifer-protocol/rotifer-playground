@@ -1,0 +1,28 @@
+{
+  "domain": "ui.components",
+  "description": "Parameterized UI component library. Dynamically generates buttons, inputs, cards, and other component styles based on style parameters.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939271216,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

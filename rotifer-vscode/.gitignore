@@ -1,0 +1,7 @@
+out/
+node_modules/
+*.vsix
+.env
+.env.*
+.wrangler/
+.temp/

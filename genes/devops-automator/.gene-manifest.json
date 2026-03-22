@@ -1,0 +1,8 @@
+{
+  "geneId": "613f1a7b180c758016c44f85210f4beec2dede9944a36f77a4d4fad9d02285c2",
+  "name": "devops-automator",
+  "domain": "devops.cicd",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:33.758Z",
+  "fromSkill": "../.cursor/skills/devops-automator/SKILL.md"
+}

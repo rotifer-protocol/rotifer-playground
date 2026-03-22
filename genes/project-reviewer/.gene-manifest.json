@@ -1,0 +1,8 @@
+{
+  "geneId": "a7039e177e0802e143505222ef810e9096ff0d3fd5b470a08bb3f157248cef64",
+  "name": "project-reviewer",
+  "domain": "product.review",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:37.804Z",
+  "fromSkill": "../.cursor/skills/project-reviewer/SKILL.md"
+}

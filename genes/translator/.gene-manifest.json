@@ -1,0 +1,8 @@
+{
+  "geneId": "272948d131d1c60938cee6199cd8cc49d8c528e305697d816ee26ef0f9475d2a",
+  "name": "translator",
+  "domain": "content.translation",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:15.956Z",
+  "fromSkill": "../.cursor/skills/translator/SKILL.md"
+}

@@ -1,0 +1,28 @@
+{
+  "domain": "devops.cicd",
+  "description": "Automate CI/CD pipelines, Docker configuration, and deployment for Next.js AI/Web3 apps. Setup GitHub Actions, Vercel, and environment management. Use when setting up deployment, CI/CD, or when the user mentions deploy, docker, github actions, vercel, or ci/cd.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939413757,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

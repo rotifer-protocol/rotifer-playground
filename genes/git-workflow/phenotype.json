@@ -1,0 +1,28 @@
+{
+  "domain": "devops.git",
+  "description": "Standardize Git workflow with conventional commits, PR templates, branch naming, and changelog generation. Use when committing code, creating PRs, managing releases, or when the user mentions git, commit, pull request, branch, or changelog.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939414660,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

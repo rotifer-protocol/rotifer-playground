@@ -1,0 +1,28 @@
+{
+  "domain": "code.api",
+  "description": "Design RESTful and tRPC APIs with consistent patterns, error handling, and documentation. Define endpoint structure, response formats, and error codes. Use when designing APIs, creating endpoints, or when the user mentions API, endpoint, REST, tRPC, or response format.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939408115,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

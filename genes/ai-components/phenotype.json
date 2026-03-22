@@ -1,0 +1,28 @@
+{
+  "domain": "ui.ai",
+  "description": "AI interface component library. Includes streaming text, chat bubbles, thinking indicators, reasoning display, and token usage components for AI conversation applications.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939385953,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

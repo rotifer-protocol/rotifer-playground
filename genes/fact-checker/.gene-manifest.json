@@ -1,0 +1,8 @@
+{
+  "geneId": "a14a5f14bad3e21f32971bacbb3fac1867aa8c8908e73fa1a373380637000807",
+  "name": "fact-checker",
+  "domain": "content.factcheck",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:24.883Z",
+  "fromSkill": "../.cursor/skills/fact-checker/SKILL.md"
+}

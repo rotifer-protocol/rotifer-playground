@@ -1,0 +1,10 @@
+{
+  "name": "rotifer-protocol",
+  "version": "0.1.0",
+  "description": "Turn static AI skills into evolving Genes that compete in a live Arena. Browse, install, and compose Genes with the Rotifer Protocol CLI.",
+  "category": "developer-tools",
+  "tags": ["ai", "agents", "evolution", "gene", "arena", "wasm", "cli"],
+  "license": "Apache-2.0",
+  "entry": "instructions.md",
+  "permissions": []
+}

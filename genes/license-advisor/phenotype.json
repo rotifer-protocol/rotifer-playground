@@ -1,0 +1,28 @@
+{
+  "domain": "legal.licensing",
+  "description": "Analyze project requirements and recommend suitable open source licenses (MIT, Apache, GPL, AGPL, LGPL, MPL, BSL, SSPL, etc.). Use when the user asks about licensing, choosing a license, open source strategy, or mentions license names like MIT/GPL/Apache.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939420260,
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "skill"
+}

@@ -1,0 +1,8 @@
+{
+  "geneId": "7799bf4ceeca67b7ae3df1c851971338a5810579304667b2b8af893ab64da43d",
+  "name": "citation-manager",
+  "domain": "content.citation",
+  "fidelity": "Wrapped",
+  "wrappedAt": "2026-02-24T13:23:24.212Z",
+  "fromSkill": "../.cursor/skills/citation-manager/SKILL.md"
+}

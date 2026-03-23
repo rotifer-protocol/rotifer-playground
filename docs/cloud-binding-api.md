@@ -1,8 +1,8 @@
 # Rotifer Cloud Binding — REST API Specification
 
-> Version: 1.1.0-draft
-> Date: 2026-02-28
-> Status: Draft (security section updated post-v0.7 audit)
+> Version: 1.2.0-draft
+> Date: 2026-03-22
+> Status: Draft (§23.1 ContributionMetrics + invocation tracking added)
 
 ## Overview
 
@@ -293,6 +293,50 @@ Get developer public profile.
 
 ---
 
+## Contribution Metrics (§23.1)
+
+### `GET /v1/genes/:id/metrics`
+
+Get contribution metrics for a gene. Publicly readable per §9.7.1 data transparency.
+
+**Response (200):**
+```json
+{
+  "gene_id": "uuid",
+  "total_invocations": 1234,
+  "unique_callers": 42,
+  "invocations_last_30d": 87,
+  "derivation_count": 3,
+  "composition_count": 5,
+  "downstream_success_rate": 0.92,
+  "updated_at": "2026-03-22T00:00:00Z"
+}
+```
+
+### `POST /v1/rpc/log_gene_invocation` (service_role only)
+
+Record a gene invocation. Called internally by Edge Functions when a gene is executed.
+
+**Request:**
+```json
+{
+  "p_gene_id": "uuid",
+  "p_caller_agent_id": "agent-identity-string"
+}
+```
+
+**Response (200):**
+```json
+"uuid"
+```
+
+**Notes:**
+- Only callable via `service_role` key (Edge Functions)
+- `gene_author_id` is auto-populated via trigger
+- `is_self_invocation` is a generated column for §33.4 Rule 1
+
+---
+
 ## Error Format
 
 All errors follow a consistent format:
@@ -321,6 +365,8 @@ The Cloud Binding backend enforces security at the database level via PostgreSQL
 | `downloads` | Public | Authenticated only | — | — |
 | `gene_reputation` | Public (read-only) | **Blocked** (server-side compute only) | — | — |
 | `developer_reputation` | Public (read-only) | **Blocked** (server-side compute only) | **Blocked** | — |
+| `gene_invocation_log` | Public (§9.7.1 transparency) | **Blocked** (service_role via RPC) | — | — |
+| `gene_contribution_metrics` | Public (§9.7.1 transparency) | **Blocked** (refresh function only) | **Blocked** | — |
 
 ### Function Access Controls
 
@@ -332,6 +378,9 @@ The Cloud Binding backend enforces security at the database level via PostgreSQL
 | `compute_gene_reputation()` | Authenticated | `SECURITY DEFINER`; writes to `gene_reputation` on behalf of caller |
 | `compute_developer_reputation()` | Authenticated | `SECURITY DEFINER`; writes to `developer_reputation` on behalf of caller |
 | `apply_reputation_decay()` | **service_role only** | `SECURITY DEFINER`; intended for cron/admin use |
+| `refresh_contribution_metrics()` | **service_role only** | `SECURITY DEFINER`; called by `compute_all_reputations()` |
+| `log_gene_invocation()` | **service_role only** | `SECURITY DEFINER`; Edge Function entry point for invocation tracking |
+| `cleanup_old_invocation_logs()` | **service_role only** | `SECURITY DEFINER`; weekly cron, retains 90d for §33.4 loop detection |
 | `handle_new_user()` | Auth trigger | `SECURITY DEFINER`; sanitizes OAuth username, validates avatar URL |
 
 ### Audit History
@@ -340,6 +389,7 @@ The Cloud Binding backend enforces security at the database level via PostgreSQL
 |---------|-----------|-------|
 | v0.7 | `005_security_hardening.sql` | Fixed 2 CRITICAL + 5 WARNING findings (C1, C2, W1–W5) |
 | v0.7 | `006_revoke_anon_execute.sql` | Revoked `anon` EXECUTE on restricted functions (Supabase-specific) |
+| v0.8 | `20260322120000_contribution_metrics.sql` | ContributionMetrics data model + invocation tracking (§23.1) |
 
 See the security audit report for details.
 

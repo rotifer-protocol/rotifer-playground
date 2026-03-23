@@ -7,6 +7,7 @@ import type {
   CloudArenaRankings,
   CloudArenaEntry,
   FitnessReport,
+  ContributionMetrics,
 } from "./types.js";
 import { DEFAULT_CLOUD_ENDPOINT, CLOUD_CONFIG_FILE } from "./types.js";
 import { loadCredentials, refreshTokenIfNeeded } from "./auth.js";
@@ -595,6 +596,44 @@ export async function getGeneStats(geneId: string): Promise<GeneStatsResponse> {
     last_7d: data.last_7d ?? 0,
     last_30d: data.last_30d ?? 0,
     last_90d: data.last_90d ?? 0,
+  };
+}
+
+// --- ContributionMetrics (§23.1) ---
+
+export async function getContributionMetrics(geneId: string): Promise<ContributionMetrics> {
+  const params = new URLSearchParams();
+  params.set("gene_id", `eq.${geneId}`);
+  params.set("select", "*");
+
+  const res = await fetch(apiUrl(`/gene_contribution_metrics?${params}`), {
+    headers: authHeaders(),
+  });
+  const data = await handleResponse<any[]>(res);
+
+  if (data.length === 0) {
+    return {
+      gene_id: geneId,
+      total_invocations: 0,
+      unique_callers: 0,
+      invocations_last_30d: 0,
+      derivation_count: 0,
+      composition_count: 0,
+      downstream_success_rate: 1.0,
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  const row = data[0];
+  return {
+    gene_id: row.gene_id,
+    total_invocations: row.total_invocations ?? 0,
+    unique_callers: row.unique_callers ?? 0,
+    invocations_last_30d: row.invocations_last_30d ?? 0,
+    derivation_count: row.derivation_count ?? 0,
+    composition_count: row.composition_count ?? 0,
+    downstream_success_rate: row.downstream_success_rate ?? 1.0,
+    updated_at: row.updated_at,
   };
 }
 

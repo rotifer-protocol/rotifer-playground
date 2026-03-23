@@ -84,6 +84,17 @@ export interface CloudError {
   };
 }
 
+export interface ContributionMetrics {
+  gene_id: string;
+  total_invocations: number;
+  unique_callers: number;
+  invocations_last_30d: number;
+  derivation_count: number;
+  composition_count: number;
+  downstream_success_rate: number;
+  updated_at: string;
+}
+
 export const DEFAULT_CLOUD_ENDPOINT =
   process.env.ROTIFER_CLOUD_ENDPOINT || "https://cloud.rotifer.dev";
 export const CREDENTIALS_FILE = "credentials.json";

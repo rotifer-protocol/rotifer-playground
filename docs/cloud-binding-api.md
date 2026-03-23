@@ -293,6 +293,38 @@ Get developer public profile.
 
 ---
 
+## Epoch Compute Log
+
+### `GET /v1/reputation_compute_log`
+
+Query Epoch computation history. Shows when reputation computations ran and their results.
+
+**Query parameters:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `limit` | number | Max entries to return (default: 10) |
+
+**Response (200):**
+```json
+[
+  {
+    "id": "uuid",
+    "compute_type": "contribution_metrics",
+    "affected_count": 70,
+    "started_at": "2026-03-22T00:00:01Z",
+    "finished_at": "2026-03-22T00:00:02Z",
+    "status": "success",
+    "error_message": null
+  }
+]
+```
+
+**Notes:**
+- `compute_type` values: `contribution_metrics`, `gene`, `developer`
+- Idempotent per day (only one successful run per day)
+
+---
+
 ## Contribution Metrics (§23.1)
 
 ### `GET /v1/genes/:id/metrics`

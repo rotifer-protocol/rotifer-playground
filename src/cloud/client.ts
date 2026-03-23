@@ -599,6 +599,40 @@ export async function getGeneStats(geneId: string): Promise<GeneStatsResponse> {
   };
 }
 
+// --- Epoch Compute Log ---
+
+export interface ComputeLogEntry {
+  id: string;
+  compute_type: string;
+  affected_count: number;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  error_message: string | null;
+}
+
+export async function getReputationComputeLog(limit: number = 10): Promise<ComputeLogEntry[]> {
+  const params = new URLSearchParams();
+  params.set("select", "*");
+  params.set("order", "started_at.desc");
+  params.set("limit", String(limit));
+
+  const res = await fetch(apiUrl(`/reputation_compute_log?${params}`), {
+    headers: authHeaders(),
+  });
+  const data = await handleResponse<any[]>(res);
+
+  return data.map((row) => ({
+    id: row.id,
+    compute_type: row.compute_type,
+    affected_count: row.affected_count ?? 0,
+    started_at: row.started_at,
+    finished_at: row.finished_at ?? null,
+    status: row.status,
+    error_message: row.error_message ?? null,
+  }));
+}
+
 // --- ContributionMetrics (§23.1) ---
 
 export async function getContributionMetrics(geneId: string): Promise<ContributionMetrics> {

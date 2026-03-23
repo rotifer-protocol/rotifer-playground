@@ -118,7 +118,7 @@ jobs:
       - name: Cargo dependency audit
         run: |
           cargo install cargo-audit --quiet
-          cargo audit -p rotifer-core
+          cargo audit
 
       - name: npm dependency audit
         run: npm audit --audit-level=high || true

@@ -11,6 +11,8 @@ function cli(args: string): string {
 }
 
 const PIPELINE = ["doc-retrieval", "answer-synthesizer", "source-linker", "grammar-checker"];
+const nodeVersion = parseInt(process.versions.node.split(".")[0], 10);
+const skipRuntime = nodeVersion < 22;
 
 describe("Dogfooding Pipeline", () => {
   it("all 4 genes have phenotype.json", () => {
@@ -56,7 +58,7 @@ describe("Dogfooding Pipeline", () => {
     expect(out).toContain("Seq");
   });
 
-  it("CLI: source-linker solo run (no API keys needed)", () => {
+  it.skipIf(skipRuntime)("CLI: source-linker solo run (no API keys needed)", () => {
     cli("agent create sl-e2e-test --genes source-linker");
     const input = JSON.stringify({
       answer: "A Gene is the atomic unit of capability in Rotifer.",
@@ -69,7 +71,7 @@ describe("Dogfooding Pipeline", () => {
     expect(out).toMatch(/Getting Started|links/);
   });
 
-  it("CLI: grammar-checker solo run (no API keys needed)", () => {
+  it.skipIf(skipRuntime)("CLI: grammar-checker solo run (no API keys needed)", () => {
     cli("agent create gc-e2e-test --genes grammar-checker");
     const input = JSON.stringify({ text: "This are a test sentance with erors." });
     const out = cli(`agent run gc-e2e-test --input '${input}'`);
@@ -77,7 +79,7 @@ describe("Dogfooding Pipeline", () => {
     expect(out).toContain("grammar-checker");
   });
 
-  it("CLI: source-linker → grammar-checker 2-gene Seq (no API keys)", () => {
+  it.skipIf(skipRuntime)("CLI: source-linker → grammar-checker 2-gene Seq (no API keys)", () => {
     cli("agent create sl-gc-e2e-test --genes source-linker grammar-checker --composition Seq");
     const input = JSON.stringify({
       answer: "This are a test sentance about genes.",

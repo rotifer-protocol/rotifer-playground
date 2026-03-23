@@ -28,6 +28,11 @@ export const initCommand = new Command("init")
   .option("--fidelity <level>", "example gene fidelity: Wrapped | Hybrid | Native", "Wrapped")
   .option("--no-genesis", "skip genesis genes installation")
   .action(async (name: string, options: { domain: string; fidelity: string; genesis: boolean }) => {
+    if (/\.\.[\\/]|[\\/]\.\.|^\.\.$/.test(name)) {
+      display.error("Project name must not contain path traversal sequences: " + name);
+      process.exit(1);
+    }
+
     const projectDir = resolve(process.cwd(), name);
 
     if (existsSync(projectDir)) {

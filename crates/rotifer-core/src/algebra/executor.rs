@@ -55,7 +55,30 @@ impl<'a> AlgebraExecutor<'a> {
             AlgebraExpr::Try { primary, fallback } => {
                 match self.execute(primary, context, input.clone()) {
                     ok @ Ok(GeneResult::Success { .. }) => ok,
-                    _ => self.execute(fallback, context, input),
+                    Ok(GeneResult::Error { code, message, retryable, details }) => {
+                        let fallback_input = serde_json::json!({
+                            "error": {
+                                "code": code.to_string(),
+                                "message": message,
+                                "retryable": retryable,
+                                "details": details,
+                            },
+                            "original_input": input,
+                        });
+                        self.execute(fallback, context, fallback_input)
+                    }
+                    Err(_) => {
+                        let fallback_input = serde_json::json!({
+                            "error": {
+                                "code": "INTERNAL_ERROR",
+                                "message": "primary gene execution failed",
+                                "retryable": false,
+                                "details": null,
+                            },
+                            "original_input": input,
+                        });
+                        self.execute(fallback, context, fallback_input)
+                    }
                 }
             }
 
@@ -381,6 +404,40 @@ mod tests {
             GeneResult::Error { message, .. } => panic!("expected fallback success, got error: {message}"),
         }
         assert_eq!(success_sandbox.calls(), 1, "only fallback should execute");
+    }
+
+    #[test]
+    fn try_fallback_receives_error_and_original_input() {
+        let sandbox = MockSandbox::succeeding();
+        let (id1, gene1) = make_gene(1);
+        let (id2, gene2) = make_gene(2);
+
+        let mut no_wasm_gene = gene1.clone();
+        no_wasm_gene.wasm_bytes = None;
+
+        let store: HashMap<GeneId, Gene> = [
+            (id1, no_wasm_gene),
+            (id2, gene2),
+        ].into_iter().collect();
+
+        let exec = AlgebraExecutor::new(&sandbox, &store);
+        let original = serde_json::json!({"question": "hello"});
+
+        let expr = AlgebraExpr::Try {
+            primary: Box::new(AlgebraExpr::Gene(id1)),
+            fallback: Box::new(AlgebraExpr::Gene(id2)),
+        };
+
+        let result = exec.execute(&expr, &test_context(), original.clone()).unwrap();
+        match result {
+            GeneResult::Success { data, .. } => {
+                assert!(data.get("error").is_some(), "fallback input should contain 'error'");
+                assert_eq!(data["original_input"], original, "should pass original_input");
+                assert!(data["error"]["code"].is_string(), "error should have code");
+                assert!(data["error"]["message"].is_string(), "error should have message");
+            }
+            _ => panic!("expected fallback success with error+original_input"),
+        }
     }
 
     // ── T4: Par parallelism tests ──

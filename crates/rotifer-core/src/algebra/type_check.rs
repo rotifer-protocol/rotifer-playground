@@ -20,8 +20,19 @@ pub enum TypeCheckError {
     SchemaIncompatible { from: String, to: String, detail: String },
 }
 
-/// Statically validate an [`AlgebraExpr`] against depth, gene-count, and
-/// existence constraints. Returns accumulated errors if any.
+/// Result of schema compatibility check between adjacent genes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchemaCheckResult {
+    /// Schemas are structurally compatible.
+    Pass,
+    /// Schemas could not be checked (missing or empty schemas).
+    Unchecked,
+    /// Schemas are incompatible — consumer requires fields producer doesn't provide.
+    Fail { missing_fields: Vec<String> },
+}
+
+/// Statically validate an [`AlgebraExpr`] against depth, gene-count,
+/// existence, and schema compatibility constraints.
 pub fn check_composition(
     expr: &AlgebraExpr,
     gene_store: &HashMap<GeneId, Gene>,
@@ -45,11 +56,113 @@ pub fn check_composition(
     }
 
     check_gene_existence(expr, gene_store, &mut errors);
+    check_schema_compatibility(expr, gene_store, &mut errors);
 
     if errors.is_empty() {
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+/// Check that each producer's output schema covers the next consumer's required inputs.
+fn check_schema_compatibility(
+    expr: &AlgebraExpr,
+    gene_store: &HashMap<GeneId, Gene>,
+    errors: &mut Vec<TypeCheckError>,
+) {
+    if let AlgebraExpr::Seq(steps) = expr {
+        let gene_ids: Vec<&GeneId> = steps
+            .iter()
+            .filter_map(|s| match s {
+                AlgebraExpr::Gene(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+
+        for pair in gene_ids.windows(2) {
+            let producer_id = pair[0];
+            let consumer_id = pair[1];
+
+            if let (Some(producer), Some(consumer)) =
+                (gene_store.get(producer_id), gene_store.get(consumer_id))
+            {
+                let result = check_schemas(
+                    &producer.phenotype.output_schema,
+                    &consumer.phenotype.input_schema,
+                );
+                if let SchemaCheckResult::Fail { missing_fields } = result {
+                    errors.push(TypeCheckError::SchemaIncompatible {
+                        from: producer.phenotype.domain.clone(),
+                        to: consumer.phenotype.domain.clone(),
+                        detail: format!("missing required fields: {}", missing_fields.join(", ")),
+                    });
+                }
+            }
+        }
+    }
+
+    match expr {
+        AlgebraExpr::Seq(steps) => {
+            for step in steps {
+                check_schema_compatibility(step, gene_store, errors);
+            }
+        }
+        AlgebraExpr::Par { branches, .. } => {
+            for branch in branches {
+                check_schema_compatibility(branch, gene_store, errors);
+            }
+        }
+        AlgebraExpr::Cond {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            check_schema_compatibility(then_branch, gene_store, errors);
+            check_schema_compatibility(else_branch, gene_store, errors);
+        }
+        AlgebraExpr::Try {
+            primary, fallback, ..
+        } => {
+            check_schema_compatibility(primary, gene_store, errors);
+            check_schema_compatibility(fallback, gene_store, errors);
+        }
+        AlgebraExpr::Transform { inner, .. } => {
+            check_schema_compatibility(inner, gene_store, errors);
+        }
+        AlgebraExpr::Gene(_) => {}
+    }
+}
+
+/// Structural subtype check: verifies the producer's output covers consumer's required inputs.
+fn check_schemas(
+    output_schema: &serde_json::Value,
+    input_schema: &serde_json::Value,
+) -> SchemaCheckResult {
+    let output_props = match output_schema.get("properties") {
+        Some(serde_json::Value::Object(m)) => m,
+        _ => return SchemaCheckResult::Unchecked,
+    };
+
+    let required = match input_schema.get("required") {
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect::<Vec<_>>(),
+        _ => return SchemaCheckResult::Pass,
+    };
+
+    let missing: Vec<String> = required
+        .into_iter()
+        .filter(|field| !output_props.contains_key(field))
+        .collect();
+
+    if missing.is_empty() {
+        SchemaCheckResult::Pass
+    } else {
+        SchemaCheckResult::Fail {
+            missing_fields: missing,
+        }
     }
 }
 
@@ -325,5 +438,86 @@ mod tests {
         let has_not_found = errs.iter().any(|e| matches!(e, TypeCheckError::GeneNotFound(_)));
         assert!(has_depth, "should report DepthExceeded");
         assert!(has_not_found, "should report GeneNotFound");
+    }
+
+    fn make_gene_with_schemas(
+        id_byte: u8,
+        input: serde_json::Value,
+        output: serde_json::Value,
+    ) -> (GeneId, Gene) {
+        let (id, mut gene) = make_gene(id_byte);
+        gene.phenotype.input_schema = input;
+        gene.phenotype.output_schema = output;
+        (id, gene)
+    }
+
+    #[test]
+    fn schema_compatible_seq_passes() {
+        let (id1, gene1) = make_gene_with_schemas(
+            1,
+            serde_json::json!({}),
+            serde_json::json!({"properties": {"text": {"type": "string"}}}),
+        );
+        let (id2, gene2) = make_gene_with_schemas(
+            2,
+            serde_json::json!({"required": ["text"], "properties": {"text": {"type": "string"}}}),
+            serde_json::json!({}),
+        );
+        let store: HashMap<GeneId, Gene> = [(id1, gene1), (id2, gene2)].into_iter().collect();
+        let expr = AlgebraExpr::Seq(vec![AlgebraExpr::Gene(id1), AlgebraExpr::Gene(id2)]);
+        assert!(check_composition(&expr, &store).is_ok());
+    }
+
+    #[test]
+    fn schema_incompatible_seq_fails() {
+        let (id1, gene1) = make_gene_with_schemas(
+            1,
+            serde_json::json!({}),
+            serde_json::json!({"properties": {"count": {"type": "integer"}}}),
+        );
+        let (id2, gene2) = make_gene_with_schemas(
+            2,
+            serde_json::json!({"required": ["text", "score"], "properties": {"text": {}, "score": {}}}),
+            serde_json::json!({}),
+        );
+        let store: HashMap<GeneId, Gene> = [(id1, gene1), (id2, gene2)].into_iter().collect();
+        let expr = AlgebraExpr::Seq(vec![AlgebraExpr::Gene(id1), AlgebraExpr::Gene(id2)]);
+        let errs = check_composition(&expr, &store).unwrap_err();
+        assert!(errs.iter().any(|e| matches!(e, TypeCheckError::SchemaIncompatible { .. })));
+    }
+
+    #[test]
+    fn schema_missing_properties_is_unchecked() {
+        let (id1, gene1) = make_gene(1);
+        let (id2, gene2) = make_gene(2);
+        let store: HashMap<GeneId, Gene> = [(id1, gene1), (id2, gene2)].into_iter().collect();
+        let expr = AlgebraExpr::Seq(vec![AlgebraExpr::Gene(id1), AlgebraExpr::Gene(id2)]);
+        assert!(check_composition(&expr, &store).is_ok());
+    }
+
+    #[test]
+    fn check_schemas_unit_pass() {
+        let output = serde_json::json!({"properties": {"x": {"type": "string"}, "y": {"type": "number"}}});
+        let input = serde_json::json!({"required": ["x"]});
+        assert_eq!(check_schemas(&output, &input), SchemaCheckResult::Pass);
+    }
+
+    #[test]
+    fn check_schemas_unit_fail() {
+        let output = serde_json::json!({"properties": {"x": {"type": "string"}}});
+        let input = serde_json::json!({"required": ["x", "missing_field"]});
+        match check_schemas(&output, &input) {
+            SchemaCheckResult::Fail { missing_fields } => {
+                assert_eq!(missing_fields, vec!["missing_field"]);
+            }
+            other => panic!("expected Fail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn check_schemas_unit_unchecked() {
+        let output = serde_json::json!({});
+        let input = serde_json::json!({"required": ["x"]});
+        assert_eq!(check_schemas(&output, &input), SchemaCheckResult::Unchecked);
     }
 }

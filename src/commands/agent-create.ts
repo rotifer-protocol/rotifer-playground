@@ -208,12 +208,32 @@ function getArenaRankings(
   return entries;
 }
 
+type SchemaCheckResult = "PASS" | "UNCHECKED" | "FAIL";
+
+interface SchemaCheckEntry {
+  producer: string;
+  consumer: string;
+  result: SchemaCheckResult;
+  detail: string;
+}
+
+function isSubtype(
+  producerType: string | undefined,
+  consumerType: string | undefined,
+): boolean {
+  if (!consumerType || !producerType) return true;
+  if (consumerType === producerType) return true;
+  if (consumerType === "number" && producerType === "integer") return true;
+  return false;
+}
+
 function checkSchemaCompatibility(
   root: string,
   genesDir: string,
   genome: string[],
 ): string[] {
   const warnings: string[] = [];
+  const results: SchemaCheckEntry[] = [];
 
   for (let i = 0; i < genome.length - 1; i++) {
     const producerName = genome[i];
@@ -221,26 +241,86 @@ function checkSchemaCompatibility(
     const producerPhenoPath = join(root, genesDir, producerName, "phenotype.json");
     const consumerPhenoPath = join(root, genesDir, consumerName, "phenotype.json");
 
-    if (!existsSync(producerPhenoPath) || !existsSync(consumerPhenoPath)) continue;
+    if (!existsSync(producerPhenoPath) || !existsSync(consumerPhenoPath)) {
+      results.push({
+        producer: producerName,
+        consumer: consumerName,
+        result: "UNCHECKED",
+        detail: "phenotype.json missing for one or both genes",
+      });
+      warnings.push(
+        `${producerName} → ${consumerName}: UNCHECKED (phenotype.json missing)`,
+      );
+      continue;
+    }
 
     try {
       const producer = JSON.parse(readFileSync(producerPhenoPath, "utf-8"));
       const consumer = JSON.parse(readFileSync(consumerPhenoPath, "utf-8"));
 
-      const outputProps = producer.outputSchema?.properties || {};
-      const requiredInputs: string[] = consumer.inputSchema?.required || [];
+      const outputSchema = producer.outputSchema;
+      const inputSchema = consumer.inputSchema;
+
+      if (!outputSchema?.properties || !inputSchema) {
+        results.push({
+          producer: producerName,
+          consumer: consumerName,
+          result: "UNCHECKED",
+          detail: "schema properties not defined",
+        });
+        continue;
+      }
+
+      const outputProps = outputSchema.properties;
+      const requiredInputs: string[] = inputSchema.required || [];
+      const inputProps = inputSchema.properties || {};
 
       const missingFields = requiredInputs.filter(
         (field: string) => !(field in outputProps),
       );
 
-      if (missingFields.length > 0) {
+      const typeMismatches: string[] = [];
+      for (const field of Object.keys(inputProps)) {
+        if (field in outputProps) {
+          const outType = outputProps[field]?.type;
+          const inType = inputProps[field]?.type;
+          if (!isSubtype(outType, inType)) {
+            typeMismatches.push(`${field}: ${outType} ≠ ${inType}`);
+          }
+        }
+      }
+
+      if (missingFields.length > 0 || typeMismatches.length > 0) {
+        const details: string[] = [];
+        if (missingFields.length > 0)
+          details.push(`missing: [${missingFields.join(", ")}]`);
+        if (typeMismatches.length > 0)
+          details.push(`type mismatch: [${typeMismatches.join("; ")}]`);
+
+        results.push({
+          producer: producerName,
+          consumer: consumerName,
+          result: "FAIL",
+          detail: details.join(", "),
+        });
         warnings.push(
-          `${producerName} → ${consumerName}: consumer requires [${missingFields.join(", ")}] but producer output lacks them`,
+          `${producerName} → ${consumerName}: FAIL — ${details.join(", ")}`,
         );
+      } else {
+        results.push({
+          producer: producerName,
+          consumer: consumerName,
+          result: "PASS",
+          detail: "structural subtype check passed",
+        });
       }
     } catch {
-      // skip unparseable phenotypes
+      results.push({
+        producer: producerName,
+        consumer: consumerName,
+        result: "UNCHECKED",
+        detail: "failed to parse phenotype.json",
+      });
     }
   }
 

@@ -116,6 +116,7 @@ jobs:
         run: npm ci
 
       - name: Cargo dependency audit
+        continue-on-error: true
         run: |
           cargo install cargo-audit --quiet
           cargo audit

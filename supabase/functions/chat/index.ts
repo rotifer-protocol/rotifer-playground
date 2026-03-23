@@ -1,9 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { corsHeaders, handleCors } from "./cors.ts";
+import { getCorsHeaders, handleCors } from "./cors.ts";
 import { checkRateLimit } from "./rate-limiter.ts";
 import { getCachedResponse, setCachedResponse } from "./cache.ts";
 import { checkDailyLimit, recordCost } from "./cost-monitor.ts";
-import { recordAnalytics } from "./analytics.ts";
+import { recordAnalytics, recordSecurityEvent } from "./analytics.ts";
 import { filterContent } from "./content-filter.ts";
 
 const RAG_URL = Deno.env.get("RAG_SUPABASE_URL")!;
@@ -11,19 +11,70 @@ const RAG_ANON_KEY = Deno.env.get("RAG_SUPABASE_ANON_KEY")!;
 const MAIN_URL = Deno.env.get("SUPABASE_URL")!;
 const MAIN_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const LLM_API_KEY = Deno.env.get("LLM_API_KEY")!;
-const LLM_MODEL = Deno.env.get("LLM_MODEL") || "claude-3-5-haiku-20241022";
-const LLM_BASE_URL = Deno.env.get("LLM_BASE_URL") || "https://api.anthropic.com";
+const LLM_MODEL = Deno.env.get("LLM_MODEL") || "deepseek-chat";
+const LLM_BASE_URL = Deno.env.get("LLM_BASE_URL") || "https://api.deepseek.com";
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 const MAX_TOKENS = 1024;
-const TOP_K = 5;
+const TOP_K = 14;
 
 interface ChatRequest {
   question: string;
   session_id?: string;
+  locale?: "en" | "zh";
   history?: Array<{ role: "user" | "assistant"; content: string }>;
 }
 
+type Locale = "en" | "zh";
+
+const ERR_MESSAGES: Record<string, Record<Locale, string>> = {
+  rate_limit_hourly: {
+    en: "Too many requests. Please wait a moment.",
+    zh: "请求过于频繁，请稍后再试。",
+  },
+  rate_limit_daily: {
+    en: "Daily limit reached for your IP. Please try again tomorrow.",
+    zh: "您的 IP 今日请求已达上限，请明天再试。",
+  },
+  daily_quota: {
+    en: "Daily quota exceeded. Please try again tomorrow.",
+    zh: "今日全局配额已用完，请明天再试。",
+  },
+  missing_question: {
+    en: "Missing or invalid 'question' field",
+    zh: "请输入有效的问题",
+  },
+  question_too_long: {
+    en: "Question too long (max 2000 characters)",
+    zh: "问题过长（最多 2000 个字符）",
+  },
+  session_limit: {
+    en: "Session limit exceeded (max 20 turns). Please clear history and start a new conversation.",
+    zh: "会话轮数已达上限（最多 20 轮），请清除历史记录开始新对话。",
+  },
+  content_blocked: {
+    en: "This type of question is not supported. Please ask about the Rotifer Protocol.",
+    zh: "该类型的问题不被支持，请提问与轮虫协议相关的内容。",
+  },
+};
+
+function errMsg(key: string, locale: Locale): string {
+  return ERR_MESSAGES[key]?.[locale] || ERR_MESSAGES[key]?.en || key;
+}
+
+function detectLocale(body: ChatRequest): Locale {
+  if (body.locale === "zh") return "zh";
+  if (body.locale === "en") return "en";
+  if (/[\u4e00-\u9fff]/.test(body.question)) return "zh";
+  return "en";
+}
+
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return handleCors();
+  const requestOrigin = req.headers.get("origin");
+  const corsHeaders = getCorsHeaders(requestOrigin);
+
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
 
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
@@ -34,50 +85,67 @@ Deno.serve(async (req: Request) => {
 
   const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
 
+  const startTime = Date.now();
+
   try {
+    const body: ChatRequest = await req.json();
+    const locale = detectLocale(body);
+
     const rateLimitResult = await checkRateLimit(clientIp);
     if (!rateLimitResult.allowed) {
+      const errKey = rateLimitResult.reason === "daily_limit" ? "rate_limit_daily" : "rate_limit_hourly";
+      await recordSecurityEvent("rate_limit", rateLimitResult.ipHash, "", rateLimitResult.reason || "rate_limit");
       return new Response(
-        JSON.stringify({ error: "Rate limit exceeded", retry_after: rateLimitResult.retryAfter }),
+        JSON.stringify({ error: errMsg(errKey, locale), retry_after: rateLimitResult.retryAfter }),
         { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     const dailyOk = await checkDailyLimit();
     if (!dailyOk) {
+      await recordSecurityEvent("cost_limit", rateLimitResult.ipHash, "", "Daily quota exceeded");
       return new Response(
-        JSON.stringify({ error: "Daily quota exceeded. Please try again tomorrow." }),
+        JSON.stringify({ error: errMsg("daily_quota", locale) }),
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const body: ChatRequest = await req.json();
-
     if (!body.question || typeof body.question !== "string") {
       return new Response(
-        JSON.stringify({ error: "Missing or invalid 'question' field" }),
+        JSON.stringify({ error: errMsg("missing_question", locale) }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     if (body.question.length > 2000) {
       return new Response(
-        JSON.stringify({ error: "Question too long (max 2000 characters)" }),
+        JSON.stringify({ error: errMsg("question_too_long", locale) }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     if (body.history && body.history.length > 20) {
       return new Response(
-        JSON.stringify({ error: "Session limit exceeded (max 20 turns)" }),
+        JSON.stringify({ error: errMsg("session_limit", locale) }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
+    const qHash = await hashQuestion(body.question);
+
     const contentCheck = filterContent(body.question);
     if (!contentCheck.allowed) {
+      await recordSecurityEvent("content_filter", rateLimitResult.ipHash, qHash, contentCheck.category || "unknown");
+      await recordAnalytics({
+        questionHash: qHash,
+        cacheHit: false,
+        sources: [],
+        blocked: true,
+        blockReason: contentCheck.category,
+        responseTimeMs: Date.now() - startTime,
+      });
       return new Response(
-        JSON.stringify({ error: contentCheck.reason }),
+        JSON.stringify({ error: errMsg("content_blocked", locale) }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -88,6 +156,7 @@ Deno.serve(async (req: Request) => {
         questionHash: cached.hash,
         cacheHit: true,
         sources: cached.sources,
+        responseTimeMs: Date.now() - startTime,
       });
       return new Response(JSON.stringify(cached.response), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -96,10 +165,10 @@ Deno.serve(async (req: Request) => {
 
     const ragClient = createClient(RAG_URL, RAG_ANON_KEY);
 
-    const embeddingRes = await fetch(`${LLM_BASE_URL.replace("api.anthropic.com", "api.openai.com")}/v1/embeddings`, {
+    const embeddingRes = await fetch("https://api.openai.com/v1/embeddings", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${Deno.env.get("OPENAI_API_KEY") || LLM_API_KEY}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -118,39 +187,86 @@ Deno.serve(async (req: Request) => {
     const { data: docs, error: ragError } = await ragClient.rpc("match_documents", {
       query_embedding: queryEmbedding,
       match_count: TOP_K,
-      match_threshold: 0.5,
+      match_threshold: 0.3,
     });
 
     if (ragError) throw new Error(`RAG query failed: ${ragError.message}`);
 
-    const context = (docs || [])
-      .map((d: { content: string; source: string; similarity: number }) =>
-        `[Source: ${d.source}]\n${d.content}`
-      )
+    const langPrefix = locale === "zh" ? "src/content/docs/zh/" : "src/content/docs/docs/";
+    const MAX_CONTEXT_DOCS = 6;
+
+    function normalizePath(source: string): string {
+      return source
+        .replace(/^src\/content\/docs\/zh\//, "")
+        .replace(/^src\/content\/docs\//, "");
+    }
+
+    function isUserLang(source: string): boolean {
+      return source.startsWith(langPrefix);
+    }
+
+    type Doc = { content: string; source: string; similarity: number; metadata?: { title?: string } };
+    const allDocs = (docs || []) as Doc[];
+
+    const filteredDocs: Doc[] = [];
+    const altLangPaths = new Set<string>();
+
+    for (const d of allDocs) {
+      if (isUserLang(d.source)) {
+        altLangPaths.add(normalizePath(d.source));
+      }
+    }
+
+    for (const d of allDocs) {
+      if (isUserLang(d.source)) {
+        filteredDocs.push(d);
+      } else if (!altLangPaths.has(normalizePath(d.source))) {
+        filteredDocs.push(d);
+      }
+    }
+
+    const sorted = filteredDocs
+      .sort((a, b) => {
+        const aBoost = isUserLang(a.source) ? 0.05 : 0;
+        const bBoost = isUserLang(b.source) ? 0.05 : 0;
+        return (b.similarity + bBoost) - (a.similarity + aBoost);
+      })
+      .slice(0, MAX_CONTEXT_DOCS);
+
+    const context = sorted
+      .map((d, i) => `[Document ${i + 1}]\n${d.content}`)
       .join("\n\n---\n\n");
 
-    const sources = (docs || []).map((d: { source: string; similarity: number }) => ({
-      source: d.source,
-      similarity: d.similarity,
-    }));
+    const seenSources = new Set<string>();
+    const sources = sorted
+      .filter((d) => {
+        if (seenSources.has(d.source)) return false;
+        seenSources.add(d.source);
+        return true;
+      })
+      .map((d) => ({
+        source: d.source,
+        similarity: d.similarity,
+        ...(d.metadata?.title && { title: d.metadata.title }),
+      }));
 
     const systemPrompt = `You are the Rotifer Protocol documentation assistant. Answer questions about the Rotifer Protocol based ONLY on the provided documentation context. If the context doesn't contain relevant information, say so honestly.
 
 Rules:
-- Be concise and accurate
-- Always cite sources using [Source: path] format
-- If a question is not about Rotifer Protocol, politely redirect
-- Respond in the same language as the user's question
-- Format responses with Markdown when helpful
-- Do not reveal internal implementation details or file paths outside the public documentation
+- Be concise and accurate. Keep answers focused; use bullet points and short paragraphs.
+- Do NOT include source citations, file paths, or [Source: ...] references in your response text. Source attribution is handled separately by the system.
+- If a question is not about Rotifer Protocol, politely redirect.
+- Respond in the same language as the user's question.
+- Format responses with Markdown (headers, lists, code blocks) for readability.
+- Do not reveal internal file paths, directory structures, or implementation details.
 
 Documentation context:
 ${context || "No relevant documentation found."}`;
 
     const messages = [
-      ...(body.history || []).slice(-6).map((m) => ({
+      ...(body.history || []).slice(-4).map((m) => ({
         role: m.role,
-        content: m.content,
+        content: m.content.slice(0, 1000),
       })),
       { role: "user", content: body.question },
     ];
@@ -158,18 +274,19 @@ ${context || "No relevant documentation found."}`;
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          const llmRes = await fetch(`${LLM_BASE_URL}/v1/messages`, {
+          const llmRes = await fetch(`${LLM_BASE_URL}/v1/chat/completions`, {
             method: "POST",
             headers: {
-              "x-api-key": LLM_API_KEY,
-              "anthropic-version": "2023-06-01",
+              Authorization: `Bearer ${LLM_API_KEY}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
               model: LLM_MODEL,
               max_tokens: MAX_TOKENS,
-              system: systemPrompt,
-              messages,
+              messages: [
+                { role: "system", content: systemPrompt },
+                ...messages,
+              ],
               stream: true,
             }),
           });
@@ -203,11 +320,12 @@ ${context || "No relevant documentation found."}`;
 
               try {
                 const event = JSON.parse(data);
-                if (event.type === "content_block_delta" && event.delta?.text) {
-                  fullResponse += event.delta.text;
+                const delta = event.choices?.[0]?.delta?.content;
+                if (delta) {
+                  fullResponse += delta;
                   controller.enqueue(
                     new TextEncoder().encode(
-                      `data: ${JSON.stringify({ type: "text", text: event.delta.text })}\n\n`
+                      `data: ${JSON.stringify({ type: "text", text: delta })}\n\n`
                     )
                   );
                 }
@@ -241,10 +359,11 @@ ${context || "No relevant documentation found."}`;
           await recordCost(LLM_MODEL, fullResponse.length);
 
           await recordAnalytics({
-            questionHash: await hashQuestion(body.question),
+            questionHash: qHash,
             cacheHit: false,
             sources: sources.map((s: { source: string }) => s.source),
             responseLength: fullResponse.length,
+            responseTimeMs: Date.now() - startTime,
           });
 
           const mainClient = createClient(MAIN_URL, MAIN_SERVICE_KEY);

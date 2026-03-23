@@ -5,12 +5,13 @@ interface CacheEntry {
   expiresAt: number;
 }
 
-const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+const CACHE_VERSION = "v9";
+const CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 const MAX_CACHE_SIZE = 200;
 const cache = new Map<string, CacheEntry>();
 
 async function hash(text: string): Promise<string> {
-  const data = new TextEncoder().encode(text.toLowerCase().trim());
+  const data = new TextEncoder().encode(`${CACHE_VERSION}:${text.toLowerCase().trim()}`);
   const digest = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))

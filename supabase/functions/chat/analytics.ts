@@ -5,6 +5,9 @@ interface AnalyticsEvent {
   cacheHit: boolean;
   sources: string[];
   responseLength?: number;
+  responseTimeMs?: number;
+  blocked?: boolean;
+  blockReason?: string;
 }
 
 export async function recordAnalytics(event: AnalyticsEvent): Promise<void> {
@@ -20,10 +23,37 @@ export async function recordAnalytics(event: AnalyticsEvent): Promise<void> {
       cache_hit: event.cacheHit,
       top_sources: event.sources.slice(0, 3),
       response_length: event.responseLength || 0,
+      response_time_ms: event.responseTimeMs || 0,
+      blocked: event.blocked || false,
+      block_reason: event.blockReason || null,
       category: classifyQuestion(event.sources),
     });
   } catch (err) {
     console.error("[analytics] Failed to record:", err);
+  }
+}
+
+export async function recordSecurityEvent(
+  eventType: string,
+  ipHash: string,
+  questionHash: string,
+  reason: string
+): Promise<void> {
+  try {
+    const ragUrl = Deno.env.get("RAG_SUPABASE_URL");
+    const ragKey = Deno.env.get("RAG_SUPABASE_SERVICE_KEY");
+    if (!ragUrl || !ragKey) return;
+
+    const client = createClient(ragUrl, ragKey);
+
+    await client.from("security_events").insert({
+      event_type: eventType,
+      ip_hash: ipHash,
+      question_hash: questionHash,
+      reason,
+    });
+  } catch (err) {
+    console.error("[security] Failed to record event:", err);
   }
 }
 

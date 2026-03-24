@@ -10,6 +10,7 @@ import { join, basename } from "path";
 
 const GENES_DIR = join(__dirname, "../../genes");
 const RULES_DIR = join(__dirname, "../../../.cursor/rules");
+const HAS_RULES = existsSync(RULES_DIR);
 
 // ═══════════════════════════════════════════════════════════════
 // PART 1: Rule Router Evaluation
@@ -216,7 +217,7 @@ function evaluateRoute(
   return { precision, recall, f1 };
 }
 
-describe("Rule Router Automated Evaluation", () => {
+describe.skipIf(!HAS_RULES)("Rule Router Automated Evaluation", () => {
   const rules = extractRuleMeta();
   const BUDGET = 50_000;
 

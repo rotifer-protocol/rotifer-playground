@@ -63,7 +63,7 @@ describe("RLS: playground migrations", () => {
 // ─── RAG Migrations ───────────────────────────────────────────
 
 describe.skipIf(!HAS_RAG_DIR)("RLS: RAG migrations", () => {
-  const sql = readMigration(RAG_MIGRATIONS_DIR, "20260322200000_rag_schema.sql");
+  const sql = HAS_RAG_DIR ? readMigration(RAG_MIGRATIONS_DIR, "20260322200000_rag_schema.sql") : "";
 
   it("doc_chunks has RLS enabled", () => {
     expect(hasRLS(sql, "doc_chunks")).toBe(true);

@@ -1,9 +1,10 @@
 /**
  * Gap #9: Protobuf schema validation
- * Extracts .proto from RFC markdown and validates structure
+ * Extracts .proto from RFC markdown and validates structure.
+ * Requires internal/spec-internal — skipped in CI where monorepo root is absent.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const RFC_PATH = join(
@@ -11,17 +12,19 @@ const RFC_PATH = join(
   "../../../internal/spec-internal/p2p-protocol-rfc.md"
 );
 
+const HAS_RFC = existsSync(RFC_PATH);
+
 function extractAllProtoSchemas(markdown: string): string {
   const matches = [...markdown.matchAll(/```protobuf\n([\s\S]*?)```/g)];
   return matches.map((m) => m[1]).join("\n");
 }
 
-const rfcContent = readFileSync(RFC_PATH, "utf-8");
+const rfcContent = HAS_RFC ? readFileSync(RFC_PATH, "utf-8") : "";
 const proto = extractAllProtoSchemas(rfcContent);
 
 // ─── Schema Extraction ───────────────────────────────────────
 
-describe("Protobuf schema: extraction from RFC", () => {
+describe.skipIf(!HAS_RFC)("Protobuf schema: extraction from RFC", () => {
   it("proto schema is extractable from RFC markdown", () => {
     expect(proto.length).toBeGreaterThan(100);
   });
@@ -37,7 +40,7 @@ describe("Protobuf schema: extraction from RFC", () => {
 
 // ─── Message Definitions ──────────────────────────────────────
 
-describe("Protobuf schema: required message types", () => {
+describe.skipIf(!HAS_RFC)("Protobuf schema: required message types", () => {
   const expectedMessages = [
     "MessageEnvelope",
     "GeneAnnouncement",
@@ -52,7 +55,7 @@ describe("Protobuf schema: required message types", () => {
   }
 });
 
-describe("Protobuf schema: field completeness", () => {
+describe.skipIf(!HAS_RFC)("Protobuf schema: field completeness", () => {
   it("GeneAnnouncement has gene_id field", () => {
     expect(proto).toMatch(/gene_id/);
   });
@@ -74,7 +77,7 @@ describe("Protobuf schema: field completeness", () => {
 
 // ─── Syntax Validation ───────────────────────────────────────
 
-describe("Protobuf schema: syntax correctness", () => {
+describe.skipIf(!HAS_RFC)("Protobuf schema: syntax correctness", () => {
   it("all message blocks are properly closed", () => {
     const openBraces = (proto.match(/\{/g) || []).length;
     const closeBraces = (proto.match(/\}/g) || []).length;

@@ -3,11 +3,12 @@
  * Verifies all migration files have proper RLS policies
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const MIGRATIONS_DIR = join(import.meta.dirname, "../../supabase/migrations");
 const RAG_MIGRATIONS_DIR = join(import.meta.dirname, "../../../rotifer-dev/supabase/migrations");
+const HAS_RAG_DIR = existsSync(RAG_MIGRATIONS_DIR);
 
 function readMigration(dir: string, filename: string): string {
   return readFileSync(join(dir, filename), "utf-8");
@@ -61,7 +62,7 @@ describe("RLS: playground migrations", () => {
 
 // ─── RAG Migrations ───────────────────────────────────────────
 
-describe("RLS: RAG migrations", () => {
+describe.skipIf(!HAS_RAG_DIR)("RLS: RAG migrations", () => {
   const sql = readMigration(RAG_MIGRATIONS_DIR, "20260322200000_rag_schema.sql");
 
   it("doc_chunks has RLS enabled", () => {

@@ -1,0 +1,38 @@
+#!/bin/sh
+# Pre-push History Audit Guard (ADR-107 D3)
+# PURPOSE: Prevent sensitive content from leaking through git history.
+# LOCATION: Version-controlled in .githooks/ — deletion is visible in git status.
+# WARNING: Do NOT delete or modify this file. This is a security hook.
+#
+# Source: Event #10 — Gemini Deep Research extracted 6,909-line internal spec
+# from GitHub commit history even though HEAD was clean.
+
+REMOTE="$1"
+URL="$2"
+
+SENSITIVE_FILE_PATTERNS="internal/|\.env$|credential|secret|spec-internal"
+
+while read local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    RANGE="$local_sha"
+  else
+    RANGE="$remote_sha..$local_sha"
+  fi
+
+  LEAKED=$(git diff --name-only "$RANGE" 2>/dev/null | grep -E "$SENSITIVE_FILE_PATTERNS")
+  if [ -n "$LEAKED" ]; then
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║  ⛔ PUSH BLOCKED — sensitive file paths in pushed commits   ║"
+    echo "║  ADR-107: Commits must not introduce internal/ or secret    ║"
+    echo "║  files into public repository history.                      ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "Offending files:"
+    echo "$LEAKED"
+    echo ""
+    echo "Fix: Remove these files from commits before pushing."
+    exit 1
+  fi
+done
+
+exit 0

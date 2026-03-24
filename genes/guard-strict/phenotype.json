@@ -1,0 +1,107 @@
+{
+  "domain": "guard.code-review",
+  "description": "Strict guard gene for code review output filtering. High precision, low recall — blocks false positives aggressively. Prefers missing a real issue over flagging a non-issue. Part of the Code Review Assistant 3×2 arena competition.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "reviewOutput": {
+        "type": "object",
+        "description": "Raw output from a Prompt Gene (code review findings)",
+        "properties": {
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "severity": { "type": "string" },
+                "category": { "type": "string" },
+                "message": { "type": "string" },
+                "line": { "type": "integer" },
+                "fix": { "type": "string" }
+              }
+            }
+          },
+          "summary": { "type": "string" }
+        }
+      },
+      "originalCode": {
+        "type": "string",
+        "description": "The original code being reviewed (for cross-checking)"
+      }
+    },
+    "required": ["reviewOutput"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "filteredFindings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "severity": { "type": "string" },
+            "category": { "type": "string" },
+            "message": { "type": "string" },
+            "line": { "type": "integer" },
+            "fix": { "type": "string" },
+            "confidence": { "type": "number", "description": "0-1 confidence that this is a real issue" }
+          }
+        },
+        "description": "Only findings that pass strict validation"
+      },
+      "rejected": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "originalMessage": { "type": "string" },
+            "rejectReason": { "type": "string" }
+          }
+        },
+        "description": "Findings rejected with reason"
+      },
+      "guardStats": {
+        "type": "object",
+        "properties": {
+          "inputCount": { "type": "integer" },
+          "outputCount": { "type": "integer" },
+          "rejectRate": { "type": "number" }
+        }
+      }
+    }
+  },
+  "llmRequirements": {
+    "templateFormat": "mustache",
+    "templateVariables": ["reviewOutput", "originalCode"],
+    "targetModels": ["claude-3", "gpt-4"],
+    "minContextWindow": 8192,
+    "expectedOutputFormat": "json",
+    "temperatureHint": 0.0,
+    "maxOutputTokens": 4096,
+    "systemPromptPath": "system-prompt.md",
+    "chainOfThought": true
+  },
+  "guardConfig": {
+    "mode": "filter",
+    "vgContribution": "Security_Leak_Risk",
+    "strictness": "high",
+    "targetFalsePositiveRate": 0.05,
+    "targetFalseNegativeRate": 0.30
+  },
+  "fitnessConfig": {
+    "evaluationMethod": "template-quality",
+    "dimensions": {
+      "precision": { "weight": 0.40, "description": "1 - false positive rate" },
+      "recall": { "weight": 0.20, "description": "Fraction of true issues preserved" },
+      "rejectQuality": { "weight": 0.20, "description": "Correctness of reject reasons" },
+      "templateValidity": { "weight": 0.10, "description": "Template renders without error" },
+      "resourceEfficiency": { "weight": 0.10, "description": "Token efficiency" }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "development-genome"
+}

@@ -1,0 +1,61 @@
+{
+  "domain": "prompt.code-review",
+  "description": "Code review gene specialized in performance issue detection. Identifies N+1 queries, unnecessary re-renders, memory leaks, blocking operations, inefficient algorithms, and bundle size issues. Part of the Code Review Assistant 3×2 arena competition.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "code": { "type": "string", "description": "Source code to review" },
+      "language": { "type": "string", "description": "Programming language" },
+      "context": { "type": "string", "description": "File path or component context" }
+    },
+    "required": ["code"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "severity": { "type": "string", "enum": ["critical", "warning", "info"] },
+            "category": { "type": "string" },
+            "message": { "type": "string" },
+            "line": { "type": "integer" },
+            "fix": { "type": "string" },
+            "impact": { "type": "string", "description": "Estimated performance impact" }
+          }
+        }
+      },
+      "summary": { "type": "string" },
+      "overallImpact": { "type": "string", "enum": ["high", "medium", "low", "negligible"] }
+    }
+  },
+  "llmRequirements": {
+    "templateFormat": "mustache",
+    "templateVariables": ["code", "language", "context"],
+    "targetModels": ["claude-3", "gpt-4"],
+    "minContextWindow": 8192,
+    "expectedOutputFormat": "json",
+    "temperatureHint": 0.2,
+    "maxOutputTokens": 4096,
+    "systemPromptPath": "system-prompt.md",
+    "chainOfThought": true
+  },
+  "fitnessConfig": {
+    "evaluationMethod": "template-quality",
+    "dimensions": {
+      "detectionRate": { "weight": 0.35, "description": "Fraction of known perf issues found" },
+      "falsePositiveRate": { "weight": 0.25, "description": "Precision of findings" },
+      "responseQuality": { "weight": 0.20, "description": "Actionability of optimization suggestions" },
+      "templateValidity": { "weight": 0.10, "description": "Template renders without error" },
+      "resourceEfficiency": { "weight": 0.10, "description": "Token efficiency" }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-team",
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "development-genome"
+}

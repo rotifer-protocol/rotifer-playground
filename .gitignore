@@ -20,6 +20,7 @@ Thumbs.db
 # Environment
 .env
 .env.*
+!.env.example
 
 # Runtime
 .rotifer/

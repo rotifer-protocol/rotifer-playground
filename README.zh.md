@@ -9,7 +9,7 @@
 
 **Rotifer Protocol** 的开发环境——构建基因、运行 Arena 竞争、通过 Cloud 共享、模拟代理进化。
 
-> **状态：** v0.7.9 — 基因生命周期、IR 编译器、Cloud Binding、声誉系统、V(g) 安全扫描器、信任徽章和 MCP Server 已可用。P2P 网络和 L4 集体免疫为规划中功能——详见下方[实现状态](#实现状态)。
+> **状态：** v0.8.0（Iron Shell）— 安全加固、WASM 沙箱测试、P2P Protocol RFC、Epoch 自动化、AI 文档助手、WebMCP Phase 1，以及 v0.7 全部功能（基因生命周期、IR 编译器、Cloud Binding、声誉系统、V(g) 扫描器、徽章、MCP Server）。P2P 实现和 L4 集体免疫为规划中功能——详见下方[实现状态](#实现状态)。
 
 ---
 

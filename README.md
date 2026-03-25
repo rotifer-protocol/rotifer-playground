@@ -9,7 +9,7 @@
 
 Development environment for the **Rotifer Protocol** — build genes, compete in Arenas, share via Cloud, and simulate agent evolution.
 
-> **Status:** v0.7.9 — Gene lifecycle, IR compiler, Cloud Binding, Reputation System, V(g) security scanner, trust badges, and MCP Server are functional. P2P Network and L4 Collective Immunity are planned — see [Implementation Status](#implementation-status) below.
+> **Status:** v0.8.0 (Iron Shell) — Security hardening, WASM sandbox testing, P2P Protocol RFC, Epoch automation, AI docs assistant, WebMCP Phase 1, plus all v0.7 features (Gene lifecycle, IR compiler, Cloud Binding, Reputation, V(g) scanner, badges, MCP Server). P2P implementation and L4 Collective Immunity are planned — see [Implementation Status](#implementation-status) below.
 
 ---
 

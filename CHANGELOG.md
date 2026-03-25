@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-02-17
+
+### Added
+
+- **Supabase deep security audit** — RLS validation, API auth bypass testing, Edge Function permission boundaries across all v0.7 attack surfaces
+- **WASM malicious payload protection** — IR upload payload validation (size limits, magic bytes verification, custom section whitelist)
+- **IR sandbox escape testing** — 15+ WASM security tests (memory OOB, infinite loops, host function abuse, resource exhaustion)
+- **P2P Protocol RFC** — complete design document covering transport, discovery, messaging, security model, and Cloud binding collaboration
+- **Security Checklist mechanism** — reusable version-level security checklist template integrated into CI and release flow
+- **Epoch automation** — pg_cron daily reputation computation + monthly decay trigger with idempotent `compute_all_reputations()` RPC
+- **ContributionMetrics data model** — anti-manipulation ready contribution tracking (`gene_invocation_log`, `gene_contribution_metrics`)
+- **V(g) Security Leak Risk data collection** — leak risk scoring pipeline for badge system
+- **LLM-Native Gene Phenotype standard** — Prompt Gene + Guard Gene phenotype definitions
+- **Evolution API Level 1.5** — Gene recommendation + Arena observability REST endpoints
+- **V(g) Safety Badge data pipeline** — automated safety badge generation and caching
+- **AI documentation assistant** — RAG-powered chat component on rotifer.dev with rate limiting, content filtering, and analytics
+- **WebMCP Phase 1** — 14 Agent-ready marketplace tools (10 read + 4 write with auth + confirm)
+- **ICP filing preparation** — China market regulatory prerequisites
+- **Spec evolutionary sync** — CP-1 Code→Spec reverse audit alignment
+
+### Changed
+
+- Infrastructure resilience improvements (Forgejo migration preparation, GitLab→GitHub CI migration)
+- Release flow updates per ADR-097 (ops-release layer registry)
+
 ## [0.7.9] - 2026-03-20
 
 ### Added

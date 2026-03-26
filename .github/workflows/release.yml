@@ -51,13 +51,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build
+        run: npm run build
+
       - name: Run tests
         run: npm test
 
-      - name: Build and verify
-        run: |
-          npm run build
-          node dist/index.js --version
+      - name: Verify CLI
+        run: node dist/index.js --version
 
   rust-build:
     name: Rust Build (${{ matrix.os }})

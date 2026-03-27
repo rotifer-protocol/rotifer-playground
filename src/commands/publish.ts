@@ -57,10 +57,31 @@ async function publishSingleGene(
     }
   }
 
+  const fidelity: string = phenotype.fidelity || "Wrapped";
+
   const irWasmPath = join(geneDir, "gene.ir.wasm");
   const wasmBytes = existsSync(irWasmPath)
     ? (readFileSync(irWasmPath) as Buffer)
     : null;
+
+  if (fidelity === "Native" && !wasmBytes) {
+    return {
+      name,
+      status: "failed",
+      error: `Native gene requires compiled WASM (gene.ir.wasm). Run 'rotifer compile ${name}' first, or set fidelity to "Wrapped" / "Hybrid" in phenotype.json`,
+    };
+  }
+
+  const version: string = phenotype.version || "0.1.0";
+  const manifestPath = join(geneDir, ".cloud-manifest.json");
+  const isFirstPublish = !existsSync(manifestPath);
+  if (isFirstPublish && /^[1-9]/.test(version)) {
+    if (!quiet) {
+      display.warn(
+        `First publish of '${name}' uses version ${version} (no prior version chain). Consider starting from 0.x.y.`
+      );
+    }
+  }
 
   const domain = phenotype.domain || "unknown";
   if (!/^[a-z0-9]+(\.[a-z0-9]+)*$/.test(domain)) {
@@ -124,8 +145,12 @@ async function publishSingleGene(
         };
         await arenaSubmit(result.id, defaultFitness);
         await getGeneReputation(result.id);
-      } catch {
-        // Arena chain failure is non-fatal
+      } catch (arenaErr: any) {
+        if (!quiet) {
+          display.warn(
+            `Arena submission failed for '${name}': ${arenaErr?.message ?? "unknown error"}. Gene published but not ranked. Run 'rotifer arena submit --cloud ${name}' to retry.`
+          );
+        }
       }
     }
 
@@ -166,6 +191,23 @@ export const publishCommand = new Command("publish")
       }
 
       const phenotype = JSON.parse(readFileSync(phenotypePath, "utf-8"));
+
+      if (phenotype.fidelity === "Native") {
+        const wasmPath = join(geneDir, "gene.ir.wasm");
+        if (!existsSync(wasmPath)) {
+          display.rustStyleError({
+            code: "E0060",
+            message: `Native gene '${name}' has no compiled WASM binary`,
+            file: wasmPath,
+            suggestion:
+              "Run 'rotifer compile " +
+              name +
+              "' to generate gene.ir.wasm, or change fidelity to \"Wrapped\" in phenotype.json",
+          });
+          process.exit(1);
+        }
+      }
+
       if (phenotype.fidelity === "Hybrid") {
         const net = phenotype.network;
         if (!net || !Array.isArray(net.allowedDomains) || net.allowedDomains.length === 0) {
@@ -232,12 +274,13 @@ export const publishCommand = new Command("publish")
         console.log(statusIcon);
       }
 
-      // Update developer reputation once at the end
       if (!options.skipArena) {
         try {
           await getDeveloperReputation(creds.user.id);
-        } catch {
-          // non-fatal
+        } catch (repErr: any) {
+          display.warn(
+            `Developer reputation refresh failed: ${repErr?.message ?? "unknown error"}`
+          );
         }
       }
 
@@ -316,8 +359,10 @@ export const publishCommand = new Command("publish")
           const devRep = await getDeveloperReputation(creds.user.id);
           display.keyValue("Developer Reputation", devRep.score.toFixed(4));
           display.keyValue("Genes Published", String(devRep.genes_published));
-        } catch {
-          // non-fatal
+        } catch (repErr: any) {
+          display.warn(
+            `Developer reputation refresh failed: ${repErr?.message ?? "unknown error"}`
+          );
         }
       } else {
         display.info(

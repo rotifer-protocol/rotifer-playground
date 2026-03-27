@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-03-27
+
+### Added
+
+- **API Apocalypse experiment** — chaos engineering benchmark proving fitness-based auto-failover: Rotifer Agent 83.3% source uptime vs Baseline 33.3% (2.5x improvement, 0 human intervention)
+- **DomainFailoverEngine** — L2 Calibration auto-failover integrated into core runtime with TryPool composition type
+- **`rotifer wrap --from-clawhub`** — one-command Skill→Gene migration tool (100% coverage on Top 50 ClawHub Skills)
+- **V(g) Top 50 scan report** — automated quality analysis of ClawHub ecosystem (38,141 Skills, 25M downloads)
+- **AI documentation quality** — 19-question Golden QA test suite + LLM-as-Judge evaluator with CI integration
+- 6 weather parser genes for experiment (3 sources × 2 format versions)
+- SVG animation generator with rotifer.dev design system alignment
+- Experiment results with 3 reproducible runs
+
 ## [0.8.0] - 2026-02-17
 
 ### Added

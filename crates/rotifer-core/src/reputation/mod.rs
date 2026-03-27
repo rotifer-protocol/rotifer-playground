@@ -65,7 +65,7 @@ pub fn compute_gene_reputation(metrics: &GeneMetrics, epoch: u32) -> GeneReputat
     };
 
     let stability_score = if metrics.total_calls > 0 {
-        (metrics.total_calls as f64 / 100.0).min(1.0)
+        ((metrics.total_calls as f64 + 1.0).ln() / 101_f64.ln()).min(1.0)
     } else {
         0.0
     };
@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn stability_score_scales_linearly() {
+    fn stability_score_scales_logarithmically() {
         let m1 = GeneMetrics {
             fitness_value: 0.0,
             downloads: 0,
@@ -256,7 +256,7 @@ mod tests {
 
         assert!(r1.stability_score < r2.stability_score);
         assert!(r2.stability_score < r3.stability_score);
-        // Caps at 1.0
+        // ln(101)/ln(101) = 1.0 at total_calls=100
         assert!((r3.stability_score - 1.0).abs() < f64::EPSILON);
         assert!((r4.stability_score - 1.0).abs() < f64::EPSILON);
     }

@@ -124,7 +124,7 @@ pub fn compute_fitness(results: &[EvaluationResult]) -> FitnessScore {
     // Multiplicative formula: F(g) = [S_r · ln(1+C) · (1+R)] / [L · Cost]
     let l = latency_score.max(0.001);
     let cost = resource_efficiency.max(0.001);
-    let numerator = success_rate * (1.0 + coverage).ln_1p().max(0.001) * (1.0 + robustness);
+    let numerator = success_rate * coverage.ln_1p().max(0.001) * (1.0 + robustness);
     let denominator = l * cost;
     let value = if denominator > 0.0 {
         numerator / denominator

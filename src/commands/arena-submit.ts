@@ -125,10 +125,10 @@ export const arenaSubmitCommand = new Command("submit")
       const avgCost = results.reduce((s, r) => s + r.resourceCost, 0) / total;
       const resourceEfficiency = 1.0 / (1.0 + avgCost / 10000.0);
 
-      // Multiplicative formula (v2) — aligned with spec
+      // Multiplicative formula (v2) — aligned with spec §5
       const coverage = 0.5;
       const robustness = 0.5;
-      const numerator = successRate * Math.log1p(1 + coverage) * (1 + robustness);
+      const numerator = successRate * Math.log1p(coverage) * (1 + robustness);
       const denominator = Math.max(latencyScore, 0.001) * Math.max(resourceEfficiency, 0.001);
       const value = Math.min(denominator > 0 ? numerator / denominator : 0, 1.0);
       const safetyScore = successes === total ? 1.0 : successRate * 0.9;

@@ -324,11 +324,23 @@ export async function downloadGeneWasm(wasmUrl: string): Promise<Buffer> {
 }
 
 export async function trackDownload(geneId: string): Promise<void> {
-  await fetch(apiUrl("/rpc/track_download"), {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ p_gene_id: geneId }),
-  }).catch(() => {});
+  try {
+    const res = await fetch(apiUrl("/rpc/track_download"), {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ p_gene_id: geneId }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      process.stderr.write(
+        `[rotifer] track_download failed (${res.status}): ${body}\n`
+      );
+    }
+  } catch (err: any) {
+    process.stderr.write(
+      `[rotifer] track_download error: ${err?.message ?? err}\n`
+    );
+  }
 }
 
 // --- Cloud Arena ---

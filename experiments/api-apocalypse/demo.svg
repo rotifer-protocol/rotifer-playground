@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 568" width="720" height="568">
+<style>
+@keyframes a{from{opacity:0}to{opacity:1}}
+text{font-family:'JetBrains Mono','Fira Code','Cascadia Code','SF Mono',Menlo,Consolas,monospace;font-size:13px}
+.f{opacity:0;animation-name:a;animation-duration:.35s;animation-timing-function:ease-out;animation-fill-mode:forwards}
+.f0{animation-delay:0.0s}
+.f1{animation-delay:0.3s}
+.f2{animation-delay:0.6s}
+.f3{animation-delay:1.5s}
+.f4{animation-delay:1.5s}
+.f5{animation-delay:2.5s}
+.f6{animation-delay:3.5s}
+.f7{animation-delay:4.5s}
+.f8{animation-delay:6.0s}
+.f9{animation-delay:7.0s}
+.f10{animation-delay:8.5s}
+.f11{animation-delay:9.5s}
+.f12{animation-delay:11.0s}
+.f13{animation-delay:12.0s}
+.f14{animation-delay:13.0s}
+.f15{animation-delay:14.0s}
+.f16{animation-delay:15.5s}
+.f17{animation-delay:15.8s}
+.f18{animation-delay:16.1s}
+.f19{animation-delay:16.4s}
+.f20{animation-delay:17.0s}
+.f21{animation-delay:18.0s}
+</style>
+<rect width="720" height="568" rx="8" fill="#1a1b26"/>
+<rect width="720" height="36" rx="8" fill="#111113"/>
+<rect y="28" width="720" height="8" fill="#111113"/>
+<line x1="0" y1="36" x2="720" y2="36" stroke="#27272a"/>
+<circle cx="20" cy="18" r="6" fill="#ff5f57"/>
+<circle cx="40" cy="18" r="6" fill="#febc2e"/>
+<circle cx="60" cy="18" r="6" fill="#28c840"/>
+<text x="360" y="22" text-anchor="middle" fill="#565f89" font-family="'JetBrains Mono','Fira Code','Cascadia Code','SF Mono',Menlo,Consolas,monospace" font-size="12">api-apocalypse — demo</text>
+<text y="65" class="f f0"><tspan x="24" fill="#e2e8f0">API Apocalypse</tspan><tspan fill="#565f89"> — Evolutionary Recovery Demo</tspan></text>
+<text y="85" class="f f1"><tspan x="24" fill="#565f89">3 weather APIs · 5 disruptions · 30 seconds</tspan></text>
+<text y="105" class="f f2"><tspan x="24" fill="#22c55e">✓</tspan><tspan fill="#565f89"> ok   </tspan><tspan fill="#ef4444">✗</tspan><tspan fill="#565f89"> fail   </tspan><tspan fill="#eab308">⟳</tspan><tspan fill="#565f89"> gene switched</tspan></text>
+<g class="f f3"><line x1="66" y1="132" x2="66" y2="372" stroke="#2a2a3a"/><line x1="282" y1="132" x2="282" y2="372" stroke="#2a2a3a"/><line x1="498" y1="132" x2="498" y2="372" stroke="#2a2a3a"/><line x1="24" y1="152" x2="696" y2="152" stroke="#2a2a3a"/><line x1="24" y1="372" x2="696" y2="372" stroke="#2a2a3a"/></g>
+<text y="145" class="f f4"><tspan x="45" text-anchor="middle" fill="#e2e8f0">t</tspan><tspan x="174" text-anchor="middle" fill="#22c55e">ROTIFER</tspan><tspan x="390" text-anchor="middle" fill="#ef4444">BASELINE</tspan></text>
+<text y="165" class="f f5"><tspan x="48" fill="#565f89">0s</tspan><tspan x="82" fill="#22c55e">✓ ✓ ✓</tspan><tspan x="170" fill="#565f89">23.5°C</tspan><tspan x="298" fill="#22c55e">✓ ✓ ✓</tspan><tspan x="386" fill="#565f89">23.5°C</tspan><tspan x="514" fill="#565f89">normal</tspan></text>
+<text y="185" class="f f6"><tspan x="82" fill="#eab308">⚡ Source A — JSON format restructured</tspan></text>
+<text y="205" class="f f7"><tspan x="48" fill="#c0caf5">8s</tspan><tspan x="82" fill="#22c55e">✓</tspan><tspan fill="#eab308">⟳</tspan><tspan fill="#22c55e"> ✓ ✓</tspan><tspan x="170" fill="#c0caf5">23.2°C</tspan><tspan x="298" fill="#ef4444">✗</tspan><tspan fill="#c0caf5"> </tspan><tspan fill="#22c55e">✓</tspan><tspan fill="#c0caf5"> </tspan><tspan fill="#22c55e">✓</tspan><tspan x="386" fill="#c0caf5">23.1°C</tspan><tspan x="514" fill="#eab308">switched!</tspan></text>
+<text y="225" class="f f8"><tspan x="82" fill="#eab308">⚡ Source B — XML format restructured</tspan></text>
+<text y="245" class="f f9"><tspan x="48" fill="#c0caf5">14s</tspan><tspan x="82" fill="#22c55e">✓ ✓</tspan><tspan fill="#eab308">⟳</tspan><tspan fill="#22c55e"> ✓</tspan><tspan x="170" fill="#c0caf5">23.0°C</tspan><tspan x="298" fill="#ef4444">✗</tspan><tspan fill="#c0caf5"> </tspan><tspan fill="#ef4444">✗</tspan><tspan fill="#c0caf5"> </tspan><tspan fill="#22c55e">✓</tspan><tspan x="386" fill="#c0caf5">22.9°C</tspan><tspan x="514" fill="#eab308">switched!</tspan></text>
+<text y="265" class="f f10"><tspan x="82" fill="#eab308">⚡ Source C — CSV columns reordered</tspan></text>
+<text y="285" class="f f11"><tspan x="48" fill="#c0caf5">20s</tspan><tspan x="82" fill="#22c55e">✓ ✓ ✓</tspan><tspan fill="#eab308">⟳</tspan><tspan x="170" fill="#c0caf5">22.8°C</tspan><tspan x="298" fill="#ef4444">✗</tspan><tspan fill="#c0caf5"> </tspan><tspan fill="#ef4444">✗</tspan><tspan fill="#c0caf5"> </tspan><tspan fill="#ef4444">✗</tspan><tspan x="386" fill="#ef4444">NO DATA</tspan><tspan x="514" fill="#eab308">switched!</tspan></text>
+<text y="305" class="f f12"><tspan x="82" fill="#eab308">⚡ Source A — rate limited (429)</tspan></text>
+<text y="325" class="f f13"><tspan x="48" fill="#c0caf5">24s</tspan><tspan x="82" fill="#ef4444">✗</tspan><tspan fill="#c0caf5"> </tspan><tspan fill="#22c55e">✓</tspan><tspan fill="#c0caf5"> </tspan><tspan fill="#22c55e">✓</tspan><tspan x="170" fill="#c0caf5">23.0°C</tspan><tspan x="298" fill="#ef4444">✗</tspan><tspan fill="#c0caf5"> </tspan><tspan fill="#ef4444">✗</tspan><tspan fill="#c0caf5"> </tspan><tspan fill="#ef4444">✗</tspan><tspan x="386" fill="#ef4444">NO DATA</tspan></text>
+<text y="345" class="f f14"><tspan x="82" fill="#eab308">⚡ Source B — offline (503)</tspan></text>
+<text y="365" class="f f15"><tspan x="48" fill="#c0caf5">28s</tspan><tspan x="82" fill="#ef4444">✗</tspan><tspan fill="#c0caf5"> </tspan><tspan fill="#ef4444">✗</tspan><tspan fill="#c0caf5"> </tspan><tspan fill="#22c55e">✓</tspan><tspan x="170" fill="#c0caf5">22.9°C</tspan><tspan x="298" fill="#ef4444">✗</tspan><tspan fill="#c0caf5"> </tspan><tspan fill="#ef4444">✗</tspan><tspan fill="#c0caf5"> </tspan><tspan fill="#ef4444">✗</tspan><tspan x="386" fill="#ef4444">NO DATA</tspan></text>
+<text y="405" class="f f16"><tspan x="174" text-anchor="middle" fill="#22c55e">ROTIFER</tspan><tspan x="390" text-anchor="middle" fill="#ef4444">BASELINE</tspan></text>
+<text y="425" class="f f17"><tspan x="82" fill="#565f89">Uptime</tspan><tspan x="174" text-anchor="middle" fill="#22c55e">83.3%</tspan><tspan x="390" text-anchor="middle" fill="#ef4444">33.3%</tspan></text>
+<text y="445" class="f f18"><tspan x="82" fill="#565f89">Switches</tspan><tspan x="174" text-anchor="middle" fill="#22c55e">3</tspan><tspan x="390" text-anchor="middle" fill="#ef4444">N/A</tspan></text>
+<text y="465" class="f f19"><tspan x="82" fill="#565f89">Human</tspan><tspan x="174" text-anchor="middle" fill="#22c55e">0</tspan><tspan x="390" text-anchor="middle" fill="#ef4444">needed</tspan></text>
+<text y="505" class="f f20"><tspan x="24" fill="#22c55e">▸ </tspan><tspan fill="#22c55e">Rotifer: 2.5x resilience, 0 human intervention</tspan></text>
+<text y="545" class="f f21"><tspan x="24" fill="#565f89">github.com/rotifer-protocol/rotifer-playground</tspan></text>
+</svg>

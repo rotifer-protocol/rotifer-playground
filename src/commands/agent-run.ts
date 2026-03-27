@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
@@ -7,6 +7,7 @@ import * as display from "../utils/display.js";
 import { getProjectRoot, loadConfig } from "../utils/config.js";
 import { tryLoadBinding, type NativeBinding } from "../utils/binding.js";
 import { createGatewayFetch, type GatewayFetchOptions, type GatewayResponse } from "../runtime/network-gateway.js";
+import { DomainFailoverEngine, type GeneExecutionResult } from "../runtime/domain-failover.js";
 
 interface AgentInfo {
   id: string;
@@ -74,6 +75,12 @@ export const agentRunCommand = new Command("run")
     const genesDir = join(root, config.genes_dir);
     const binding = options.sandbox ? tryLoadBinding() : null;
     const startTime = performance.now();
+
+    // TryPool: domain-based failover with fitness tracking
+    if (compositionType === "TryPool") {
+      await executeTryPool(agent, genesDir, binding, input, root, options.verbose);
+      return;
+    }
 
     // For non-Seq compositions with WASM support, use executeAlgebra()
     if (compositionType !== "Single" && compositionType !== "Seq" && binding) {
@@ -311,6 +318,190 @@ function printPipelineLog(log: Array<{
     }
   }
   console.log("  └─────┴──────────────────────────┴──────────┴──────────────┴───────────┘");
+}
+
+async function executeTryPool(
+  agent: AgentInfo,
+  genesDir: string,
+  binding: NativeBinding | null,
+  input: unknown,
+  root: string,
+  verbose: boolean,
+): Promise<void> {
+  const engine = new DomainFailoverEngine();
+  const startTime = performance.now();
+
+  for (const geneName of agent.genome) {
+    const geneDir = join(genesDir, geneName);
+    const phenotypePath = join(geneDir, "phenotype.json");
+    const phenotype = existsSync(phenotypePath)
+      ? JSON.parse(readFileSync(phenotypePath, "utf-8"))
+      : {};
+    const domain: string = phenotype.domain || "default";
+    const irWasmPath = join(geneDir, "gene.ir.wasm");
+    const hasWasm = existsSync(irWasmPath);
+
+    const executor = await buildGeneExecutor(
+      geneName, geneDir, irWasmPath, hasWasm, phenotype, binding
+    );
+    engine.registerGene(geneName, domain, executor);
+  }
+
+  const fitnessPath = join(root, ".rotifer", "agents", `${agent.name}.fitness.json`);
+  if (existsSync(fitnessPath)) {
+    try {
+      const saved = JSON.parse(readFileSync(fitnessPath, "utf-8"));
+      engine.loadFitnessState(saved);
+      display.info("Loaded fitness state from previous run");
+    } catch { /* fresh start */ }
+  }
+
+  engine.initialize();
+
+  const domains = engine.getDomains();
+  display.info(`TryPool: ${domains.length} domain(s), ${agent.genome.length} gene(s)`);
+  for (const d of domains) {
+    const active = engine.getActiveGene(d);
+    display.info(`  ${d}: ${engine.getPoolSize(d)} genes (active: ${active})`);
+  }
+  console.log();
+
+  const results = await engine.executeAll(input);
+
+  let anyFailed = false;
+  const outputs: Record<string, unknown> = {};
+
+  for (const r of results) {
+    if (r.status === "success") {
+      const sw = r.switchedFrom ? ` (switched from ${r.switchedFrom})` : "";
+      display.success(
+        `${r.domain}: ${r.geneUsed} (${r.attempts} attempt(s), ${r.durationMs.toFixed(1)}ms)${sw}`
+      );
+      outputs[r.domain] = r.output;
+    } else {
+      display.error(`${r.domain}: all ${r.attempts} gene(s) failed`);
+      anyFailed = true;
+    }
+  }
+
+  try {
+    writeFileSync(fitnessPath, JSON.stringify(engine.exportFitnessState(), null, 2));
+  } catch { /* non-fatal */ }
+
+  const totalElapsed = performance.now() - startTime;
+  console.log();
+
+  if (verbose) {
+    display.info("Fitness state:");
+    const state = engine.exportFitnessState();
+    for (const [name, s] of Object.entries(state)) {
+      const bar = "█".repeat(Math.round(s.fitness * 20)).padEnd(20, "░");
+      console.log(`  ${name.padEnd(30)} ${bar} ${s.fitness.toFixed(3)}  (${s.successes}✓ ${s.failures}✗)`);
+    }
+    console.log();
+  }
+
+  const switches = results.filter((r) => r.switchedFrom).length;
+  display.success("TryPool execution complete");
+  display.keyValue("Agent", agent.name);
+  display.keyValue("Domains", `${domains.length}`);
+  display.keyValue("Succeeded", `${results.filter((r) => r.status === "success").length}/${domains.length}`);
+  if (switches > 0) {
+    display.keyValue("Gene Switches", `${switches}`);
+  }
+  display.keyValue("Duration", `${totalElapsed.toFixed(1)}ms`);
+  console.log();
+  display.info("Output:");
+  console.log(JSON.stringify(outputs, null, 2));
+
+  if (anyFailed) {
+    process.exit(1);
+  }
+}
+
+async function buildGeneExecutor(
+  geneName: string,
+  geneDir: string,
+  irWasmPath: string,
+  hasWasm: boolean,
+  phenotype: Record<string, unknown>,
+  binding: NativeBinding | null,
+): Promise<(input: unknown) => Promise<GeneExecutionResult>> {
+  if (hasWasm && binding) {
+    const wasmBytes = readFileSync(irWasmPath) as Buffer;
+    const phenoStr = JSON.stringify(phenotype);
+    return async (input: unknown): Promise<GeneExecutionResult> => {
+      const start = performance.now();
+      try {
+        const result = binding.executeGene(wasmBytes, JSON.stringify(input), phenoStr);
+        return {
+          success: result.success,
+          output: result.output,
+          error: result.errorMessage || undefined,
+          engine: "wasm",
+          durationMs: performance.now() - start,
+          fuelConsumed: result.fuelConsumed,
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          error: err.message,
+          engine: "wasm",
+          durationMs: performance.now() - start,
+        };
+      }
+    };
+  }
+
+  const srcFile = findSourceFile(geneDir);
+  if (!srcFile) {
+    return async (): Promise<GeneExecutionResult> => ({
+      success: false,
+      error: `Gene '${geneName}' has no source file or compiled WASM`,
+      engine: "none",
+      durationMs: 0,
+    });
+  }
+
+  const absPath = resolve(geneDir, srcFile);
+  const mod = await import(pathToFileURL(absPath).href);
+
+  if (typeof mod.express !== "function") {
+    return async (): Promise<GeneExecutionResult> => ({
+      success: false,
+      error: `Gene '${geneName}' does not export express()`,
+      engine: "none",
+      durationMs: 0,
+    });
+  }
+
+  const isHybrid = phenotype.fidelity === "Hybrid" && phenotype.network;
+
+  return async (input: unknown): Promise<GeneExecutionResult> => {
+    const start = performance.now();
+    try {
+      let result: unknown;
+      if (isHybrid) {
+        const { gatewayFetch } = createGatewayFetch(phenotype.network as any);
+        result = await mod.express(input, { gatewayFetch });
+      } else {
+        result = await mod.express(input);
+      }
+      return {
+        success: true,
+        output: result,
+        engine: isHybrid ? "node+gateway" : "node",
+        durationMs: performance.now() - start,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err.message,
+        engine: "node",
+        durationMs: performance.now() - start,
+      };
+    }
+  };
 }
 
 function geneNameToId(geneName: string): string {

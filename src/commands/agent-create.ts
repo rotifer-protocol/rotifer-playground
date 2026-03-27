@@ -20,7 +20,7 @@ export const agentCreateCommand = new Command("create")
   .option("--strategy <strategy>", "gene selection strategy", "greedy")
   .option(
     "--composition <type>",
-    "composition type: Seq, Par, Cond, Try",
+    "composition type: Seq, Par, Cond, Try, TryPool",
     "Seq"
   )
   .option("--par-merge <strategy>", "merge strategy for Par: first, concat, merge", "first")
@@ -121,6 +121,8 @@ export const agentCreateCommand = new Command("create")
           primary: genome[0],
           fallback: genome[1],
         };
+      } else if (compositionType === "TryPool") {
+        composition = { type: "TryPool" };
       }
 
       const agent = {

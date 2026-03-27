@@ -1,0 +1,909 @@
+{
+  "rotifer": [
+    {
+      "tick": 1,
+      "timestampMs": 1774600778335,
+      "elapsedSec": 0,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41955.6,
+          "geneUsed": "price-source-a-v1",
+          "latencyMs": 18
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41895.68,
+          "geneUsed": "price-source-b-v1",
+          "latencyMs": 4
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41944.19,
+          "geneUsed": "price-source-c-v1",
+          "latencyMs": 2
+        }
+      },
+      "aggregatedPrice": 41931.82,
+      "successfulSources": 3
+    },
+    {
+      "tick": 2,
+      "timestampMs": 1774600780343,
+      "elapsedSec": 2,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41933.95,
+          "geneUsed": "price-source-a-v1",
+          "latencyMs": 2
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41903.82,
+          "geneUsed": "price-source-b-v1",
+          "latencyMs": 4
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41942.16,
+          "geneUsed": "price-source-c-v1",
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41926.64,
+      "successfulSources": 3
+    },
+    {
+      "tick": 3,
+      "timestampMs": 1774600782350,
+      "elapsedSec": 4,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41979.25,
+          "geneUsed": "price-source-a-v1",
+          "latencyMs": 2
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41978.76,
+          "geneUsed": "price-source-b-v1",
+          "latencyMs": 2
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41989.39,
+          "geneUsed": "price-source-c-v1",
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41982.47,
+      "successfulSources": 3
+    },
+    {
+      "tick": 4,
+      "timestampMs": 1774600784355,
+      "elapsedSec": 6,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41912.86,
+          "geneUsed": "price-source-a-v2",
+          "switchedFrom": "price-source-a-v1",
+          "latencyMs": 1
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41950.14,
+          "geneUsed": "price-source-b-v1",
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "success",
+          "price": 42005.56,
+          "geneUsed": "price-source-c-v1",
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41956.19,
+      "successfulSources": 3
+    },
+    {
+      "tick": 5,
+      "timestampMs": 1774600786362,
+      "elapsedSec": 8,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41981.3,
+          "geneUsed": "price-source-a-v2",
+          "latencyMs": 2
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41920.83,
+          "geneUsed": "price-source-b-v1",
+          "latencyMs": 2
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41986.35,
+          "geneUsed": "price-source-c-v1",
+          "latencyMs": 2
+        }
+      },
+      "aggregatedPrice": 41962.83,
+      "successfulSources": 3
+    },
+    {
+      "tick": 6,
+      "timestampMs": 1774600788366,
+      "elapsedSec": 10,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41986.72,
+          "geneUsed": "price-source-a-v2",
+          "latencyMs": 1
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41978.7,
+          "geneUsed": "price-source-b-v1",
+          "latencyMs": 0
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41913.12,
+          "geneUsed": "price-source-c-v1",
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41959.51,
+      "successfulSources": 3
+    },
+    {
+      "tick": 7,
+      "timestampMs": 1774600790369,
+      "elapsedSec": 12,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41937.27,
+          "geneUsed": "price-source-a-v2",
+          "latencyMs": 1
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41950.28,
+          "geneUsed": "price-source-b-v2",
+          "switchedFrom": "price-source-b-v1",
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41878.79,
+          "geneUsed": "price-source-c-v1",
+          "latencyMs": 0
+        }
+      },
+      "aggregatedPrice": 41922.11,
+      "successfulSources": 3
+    },
+    {
+      "tick": 8,
+      "timestampMs": 1774600792377,
+      "elapsedSec": 14,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41860.63,
+          "geneUsed": "price-source-a-v2",
+          "latencyMs": 2
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41902.12,
+          "geneUsed": "price-source-b-v2",
+          "latencyMs": 3
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41866.02,
+          "geneUsed": "price-source-c-v1",
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41876.26,
+      "successfulSources": 3
+    },
+    {
+      "tick": 9,
+      "timestampMs": 1774600794385,
+      "elapsedSec": 16,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41797.64,
+          "geneUsed": "price-source-a-v2",
+          "latencyMs": 3
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41833.47,
+          "geneUsed": "price-source-b-v2",
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41798.31,
+          "geneUsed": "price-source-c-v1",
+          "latencyMs": 3
+        }
+      },
+      "aggregatedPrice": 41809.81,
+      "successfulSources": 3
+    },
+    {
+      "tick": 10,
+      "timestampMs": 1774600796393,
+      "elapsedSec": 18,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41801.2,
+          "geneUsed": "price-source-a-v2",
+          "latencyMs": 2
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41749.98,
+          "geneUsed": "price-source-b-v2",
+          "latencyMs": 2
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41717.1,
+          "geneUsed": "price-source-c-v2",
+          "switchedFrom": "price-source-c-v1",
+          "latencyMs": 2
+        }
+      },
+      "aggregatedPrice": 41756.09,
+      "successfulSources": 3
+    },
+    {
+      "tick": 11,
+      "timestampMs": 1774600798403,
+      "elapsedSec": 20,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41730.29,
+          "geneUsed": "price-source-a-v2",
+          "latencyMs": 4
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41733.68,
+          "geneUsed": "price-source-b-v2",
+          "latencyMs": 2
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41812.43,
+          "geneUsed": "price-source-c-v2",
+          "latencyMs": 2
+        }
+      },
+      "aggregatedPrice": 41758.8,
+      "successfulSources": 3
+    },
+    {
+      "tick": 12,
+      "timestampMs": 1774600800408,
+      "elapsedSec": 22,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41767.06,
+          "geneUsed": "price-source-a-v2",
+          "latencyMs": 1
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41829.46,
+          "geneUsed": "price-source-b-v2",
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41798.2,
+          "geneUsed": "price-source-c-v2",
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41798.24,
+      "successfulSources": 3
+    },
+    {
+      "tick": 13,
+      "timestampMs": 1774600802412,
+      "elapsedSec": 24,
+      "sources": {
+        "source-a": {
+          "status": "fetch_error",
+          "error": "HTTP 429 Too Many Requests",
+          "latencyMs": 1
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41736.96,
+          "geneUsed": "price-source-b-v2",
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41737.53,
+          "geneUsed": "price-source-c-v2",
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41737.24,
+      "successfulSources": 2
+    },
+    {
+      "tick": 14,
+      "timestampMs": 1774600804526,
+      "elapsedSec": 26,
+      "sources": {
+        "source-a": {
+          "status": "fetch_error",
+          "error": "HTTP 429 Too Many Requests",
+          "latencyMs": 18
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41733.92,
+          "geneUsed": "price-source-b-v2",
+          "latencyMs": 81
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41706.6,
+          "geneUsed": "price-source-c-v2",
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41720.26,
+      "successfulSources": 2
+    },
+    {
+      "tick": 15,
+      "timestampMs": 1774600806533,
+      "elapsedSec": 28,
+      "sources": {
+        "source-a": {
+          "status": "fetch_error",
+          "error": "HTTP 429 Too Many Requests",
+          "latencyMs": 3
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41732.62,
+          "geneUsed": "price-source-b-v2",
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41673.34,
+          "geneUsed": "price-source-c-v2",
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41702.98,
+      "successfulSources": 2
+    },
+    {
+      "tick": 16,
+      "timestampMs": 1774600808535,
+      "elapsedSec": 30,
+      "sources": {
+        "source-a": {
+          "status": "fetch_error",
+          "error": "HTTP 429 Too Many Requests",
+          "latencyMs": 1
+        },
+        "source-b": {
+          "status": "fetch_error",
+          "error": "HTTP 503 Service Unavailable",
+          "latencyMs": 0
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41578.61,
+          "geneUsed": "price-source-c-v2",
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41578.61,
+      "successfulSources": 1
+    },
+    {
+      "tick": 17,
+      "timestampMs": 1774600810539,
+      "elapsedSec": 32,
+      "sources": {
+        "source-a": {
+          "status": "fetch_error",
+          "error": "HTTP 429 Too Many Requests",
+          "latencyMs": 1
+        },
+        "source-b": {
+          "status": "fetch_error",
+          "error": "HTTP 503 Service Unavailable",
+          "latencyMs": 0
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41637.75,
+          "geneUsed": "price-source-c-v2",
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41637.75,
+      "successfulSources": 1
+    },
+    {
+      "tick": 18,
+      "timestampMs": 1774600812542,
+      "elapsedSec": 34,
+      "sources": {
+        "source-a": {
+          "status": "fetch_error",
+          "error": "HTTP 429 Too Many Requests",
+          "latencyMs": 1
+        },
+        "source-b": {
+          "status": "fetch_error",
+          "error": "HTTP 503 Service Unavailable",
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41648.61,
+          "geneUsed": "price-source-c-v2",
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41648.61,
+      "successfulSources": 1
+    }
+  ],
+  "baseline": [
+    {
+      "tick": 1,
+      "timestampMs": 1774600778334,
+      "elapsedSec": 0,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41966.65,
+          "latencyMs": 10
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41945.03,
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41907.73,
+          "latencyMs": 2
+        }
+      },
+      "aggregatedPrice": 41939.8,
+      "successfulSources": 3
+    },
+    {
+      "tick": 2,
+      "timestampMs": 1774600780343,
+      "elapsedSec": 2,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41936.86,
+          "latencyMs": 3
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41914.58,
+          "latencyMs": 3
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41981.77,
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41944.4,
+      "successfulSources": 3
+    },
+    {
+      "tick": 3,
+      "timestampMs": 1774600782351,
+      "elapsedSec": 4,
+      "sources": {
+        "source-a": {
+          "status": "success",
+          "price": 41973.66,
+          "latencyMs": 3
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41979.16,
+          "latencyMs": 3
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41942.44,
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41965.09,
+      "successfulSources": 3
+    },
+    {
+      "tick": 4,
+      "timestampMs": 1774600784355,
+      "elapsedSec": 6,
+      "sources": {
+        "source-a": {
+          "status": "parse_error",
+          "error": "[price-source-a-v1] Expected { btc_price, currency } but got keys: bitcoin",
+          "latencyMs": 2
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41967.17,
+          "latencyMs": 0
+        },
+        "source-c": {
+          "status": "success",
+          "price": 42027.73,
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41997.45,
+      "successfulSources": 2
+    },
+    {
+      "tick": 5,
+      "timestampMs": 1774600786363,
+      "elapsedSec": 8,
+      "sources": {
+        "source-a": {
+          "status": "parse_error",
+          "error": "[price-source-a-v1] Expected { btc_price, currency } but got keys: bitcoin",
+          "latencyMs": 2
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41958.83,
+          "latencyMs": 2
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41944.11,
+          "latencyMs": 2
+        }
+      },
+      "aggregatedPrice": 41951.47,
+      "successfulSources": 2
+    },
+    {
+      "tick": 6,
+      "timestampMs": 1774600788366,
+      "elapsedSec": 10,
+      "sources": {
+        "source-a": {
+          "status": "parse_error",
+          "error": "[price-source-a-v1] Expected { btc_price, currency } but got keys: bitcoin",
+          "latencyMs": 1
+        },
+        "source-b": {
+          "status": "success",
+          "price": 41953.19,
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41940.4,
+          "latencyMs": 0
+        }
+      },
+      "aggregatedPrice": 41946.8,
+      "successfulSources": 2
+    },
+    {
+      "tick": 7,
+      "timestampMs": 1774600790370,
+      "elapsedSec": 12,
+      "sources": {
+        "source-a": {
+          "status": "parse_error",
+          "error": "[price-source-a-v1] Expected { btc_price, currency } but got keys: bitcoin",
+          "latencyMs": 1
+        },
+        "source-b": {
+          "status": "parse_error",
+          "error": "[price-source-b-v1] Expected <value>N</value><unit>X</unit> XML structure",
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41834.02,
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41834.02,
+      "successfulSources": 1
+    },
+    {
+      "tick": 8,
+      "timestampMs": 1774600792378,
+      "elapsedSec": 14,
+      "sources": {
+        "source-a": {
+          "status": "parse_error",
+          "error": "[price-source-a-v1] Expected { btc_price, currency } but got keys: bitcoin",
+          "latencyMs": 2
+        },
+        "source-b": {
+          "status": "parse_error",
+          "error": "[price-source-b-v1] Expected <value>N</value><unit>X</unit> XML structure",
+          "latencyMs": 3
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41828.6,
+          "latencyMs": 1
+        }
+      },
+      "aggregatedPrice": 41828.6,
+      "successfulSources": 1
+    },
+    {
+      "tick": 9,
+      "timestampMs": 1774600794385,
+      "elapsedSec": 16,
+      "sources": {
+        "source-a": {
+          "status": "parse_error",
+          "error": "[price-source-a-v1] Expected { btc_price, currency } but got keys: bitcoin",
+          "latencyMs": 2
+        },
+        "source-b": {
+          "status": "parse_error",
+          "error": "[price-source-b-v1] Expected <value>N</value><unit>X</unit> XML structure",
+          "latencyMs": 2
+        },
+        "source-c": {
+          "status": "success",
+          "price": 41771.49,
+          "latencyMs": 2
+        }
+      },
+      "aggregatedPrice": 41771.49,
+      "successfulSources": 1
+    },
+    {
+      "tick": 10,
+      "timestampMs": 1774600796393,
+      "elapsedSec": 18,
+      "sources": {
+        "source-a": {
+          "status": "parse_error",
+          "error": "[price-source-a-v1] Expected { btc_price, currency } but got keys: bitcoin",
+          "latencyMs": 2
+        },
+        "source-b": {
+          "status": "parse_error",
+          "error": "[price-source-b-v1] Expected <value>N</value><unit>X</unit> XML structure",
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "parse_error",
+          "error": "[price-source-c-v1] Expected columns \"price\" and \"currency\", got: currency, asset, value, timestamp",
+          "latencyMs": 2
+        }
+      },
+      "successfulSources": 0
+    },
+    {
+      "tick": 11,
+      "timestampMs": 1774600798403,
+      "elapsedSec": 20,
+      "sources": {
+        "source-a": {
+          "status": "parse_error",
+          "error": "[price-source-a-v1] Expected { btc_price, currency } but got keys: bitcoin",
+          "latencyMs": 4
+        },
+        "source-b": {
+          "status": "parse_error",
+          "error": "[price-source-b-v1] Expected <value>N</value><unit>X</unit> XML structure",
+          "latencyMs": 2
+        },
+        "source-c": {
+          "status": "parse_error",
+          "error": "[price-source-c-v1] Expected columns \"price\" and \"currency\", got: currency, asset, value, timestamp",
+          "latencyMs": 1
+        }
+      },
+      "successfulSources": 0
+    },
+    {
+      "tick": 12,
+      "timestampMs": 1774600800408,
+      "elapsedSec": 22,
+      "sources": {
+        "source-a": {
+          "status": "parse_error",
+          "error": "[price-source-a-v1] Expected { btc_price, currency } but got keys: bitcoin",
+          "latencyMs": 1
+        },
+        "source-b": {
+          "status": "parse_error",
+          "error": "[price-source-b-v1] Expected <value>N</value><unit>X</unit> XML structure",
+          "latencyMs": 2
+        },
+        "source-c": {
+          "status": "parse_error",
+          "error": "[price-source-c-v1] Expected columns \"price\" and \"currency\", got: currency, asset, value, timestamp",
+          "latencyMs": 0
+        }
+      },
+      "successfulSources": 0
+    },
+    {
+      "tick": 13,
+      "timestampMs": 1774600802412,
+      "elapsedSec": 24,
+      "sources": {
+        "source-a": {
+          "status": "fetch_error",
+          "error": "HTTP 429 Too Many Requests",
+          "latencyMs": 1
+        },
+        "source-b": {
+          "status": "parse_error",
+          "error": "[price-source-b-v1] Expected <value>N</value><unit>X</unit> XML structure",
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "parse_error",
+          "error": "[price-source-c-v1] Expected columns \"price\" and \"currency\", got: currency, asset, value, timestamp",
+          "latencyMs": 1
+        }
+      },
+      "successfulSources": 0
+    },
+    {
+      "tick": 14,
+      "timestampMs": 1774600804526,
+      "elapsedSec": 26,
+      "sources": {
+        "source-a": {
+          "status": "fetch_error",
+          "error": "HTTP 429 Too Many Requests",
+          "latencyMs": 17
+        },
+        "source-b": {
+          "status": "parse_error",
+          "error": "[price-source-b-v1] Expected <value>N</value><unit>X</unit> XML structure",
+          "latencyMs": 81
+        },
+        "source-c": {
+          "status": "parse_error",
+          "error": "[price-source-c-v1] Expected columns \"price\" and \"currency\", got: currency, asset, value, timestamp",
+          "latencyMs": 1
+        }
+      },
+      "successfulSources": 0
+    },
+    {
+      "tick": 15,
+      "timestampMs": 1774600806533,
+      "elapsedSec": 28,
+      "sources": {
+        "source-a": {
+          "status": "fetch_error",
+          "error": "HTTP 429 Too Many Requests",
+          "latencyMs": 3
+        },
+        "source-b": {
+          "status": "parse_error",
+          "error": "[price-source-b-v1] Expected <value>N</value><unit>X</unit> XML structure",
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "parse_error",
+          "error": "[price-source-c-v1] Expected columns \"price\" and \"currency\", got: currency, asset, value, timestamp",
+          "latencyMs": 1
+        }
+      },
+      "successfulSources": 0
+    },
+    {
+      "tick": 16,
+      "timestampMs": 1774600808535,
+      "elapsedSec": 30,
+      "sources": {
+        "source-a": {
+          "status": "fetch_error",
+          "error": "HTTP 429 Too Many Requests",
+          "latencyMs": 1
+        },
+        "source-b": {
+          "status": "fetch_error",
+          "error": "HTTP 503 Service Unavailable",
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "parse_error",
+          "error": "[price-source-c-v1] Expected columns \"price\" and \"currency\", got: currency, asset, value, timestamp",
+          "latencyMs": 0
+        }
+      },
+      "successfulSources": 0
+    },
+    {
+      "tick": 17,
+      "timestampMs": 1774600810539,
+      "elapsedSec": 32,
+      "sources": {
+        "source-a": {
+          "status": "fetch_error",
+          "error": "HTTP 429 Too Many Requests",
+          "latencyMs": 1
+        },
+        "source-b": {
+          "status": "fetch_error",
+          "error": "HTTP 503 Service Unavailable",
+          "latencyMs": 0
+        },
+        "source-c": {
+          "status": "parse_error",
+          "error": "[price-source-c-v1] Expected columns \"price\" and \"currency\", got: currency, asset, value, timestamp",
+          "latencyMs": 1
+        }
+      },
+      "successfulSources": 0
+    },
+    {
+      "tick": 18,
+      "timestampMs": 1774600812542,
+      "elapsedSec": 34,
+      "sources": {
+        "source-a": {
+          "status": "fetch_error",
+          "error": "HTTP 429 Too Many Requests",
+          "latencyMs": 0
+        },
+        "source-b": {
+          "status": "fetch_error",
+          "error": "HTTP 503 Service Unavailable",
+          "latencyMs": 1
+        },
+        "source-c": {
+          "status": "parse_error",
+          "error": "[price-source-c-v1] Expected columns \"price\" and \"currency\", got: currency, asset, value, timestamp",
+          "latencyMs": 1
+        }
+      },
+      "successfulSources": 0
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+
+╔══════════════════════════════════════════════════════════════╗
+║           API APOCALYPSE — EXPERIMENT RESULTS               ║
+╚══════════════════════════════════════════════════════════════╝
+
+  Duration: 180s (90 ticks @ 2s intervals)
+  Sources:  3 (source-a, source-b, source-c)
+  Chaos:    5 disruptions (format change ×3, rate limit ×1, offline ×1)
+
+┌──────────────────────────────────────────────────────────────┐
+│                    HEAD-TO-HEAD COMPARISON                    │
+├──────────────────────────┬──────────────┬────────────────────┤
+│ Metric                   │ Rotifer      │ Baseline           │
+├──────────────────────────┼──────────────┼────────────────────┤
+│ Source Uptime             │   83.3%     │   33.3%             │
+│ MTTR (seconds)           │    N/A      │  never             │
+│ Aggregation Available    │  90/90    │  45/90             │
+│ Auto Gene Switches       │      3      │   N/A              │
+│ Human Interventions      │      0       │   180               │
+└──────────────────────────┴──────────────┴────────────────────┘
+
+Gene Switch Timeline:
+  t=30s source-a: price-source-a-v1 → price-source-a-v2
+  t=60s source-b: price-source-b-v1 → price-source-b-v2
+  t=90s source-c: price-source-c-v1 → price-source-c-v2
+
+═══════════════════════════════════════════════════════════════
+  Conclusion:
+    Rotifer Agent maintained 83.3% source availability
+    vs Baseline's 33.3% — a 2.5x improvement.
+    
+    3 automatic gene switches, 0 human interventions.
+═══════════════════════════════════════════════════════════════

@@ -157,21 +157,16 @@ function generate(): string {
   let frameIdx = 0;
   const delays: { idx: number; delay: number }[] = [];
 
-  const ANIM_DUR = "0.35s";
-  const smilAnimate = (delay: number) =>
-    `<animate attributeName="opacity" from="0" to="1" begin="${delay.toFixed(1)}s" dur="${ANIM_DUR}" fill="freeze"/>`;
-
   function addFrame(
     row: number,
-    delay: number,
+    _delay: number,
     spans: Sp[],
     extraAttr = ""
   ): void {
     frameIdx++;
-    delays.push({ idx: frameIdx, delay });
+    delays.push({ idx: frameIdx, delay: _delay });
     const y = textY(row);
-    let el = `<text y="${y}" opacity="0" font-family="${FONT}" font-size="${FONT_SIZE}"${extraAttr}>`;
-    el += smilAnimate(delay);
+    let el = `<text y="${y}" font-family="${FONT}" font-size="${FONT_SIZE}"${extraAttr}>`;
     for (const s of spans) {
       const xAttr = s.x != null ? ` x="${s.x}"` : "";
       const anchorAttr = s.anchor ? ` text-anchor="${s.anchor}"` : "";
@@ -181,10 +176,10 @@ function generate(): string {
     o.push(el);
   }
 
-  function addGroup(delay: number, content: string): void {
+  function addGroup(_delay: number, content: string): void {
     frameIdx++;
-    delays.push({ idx: frameIdx, delay });
-    o.push(`<g opacity="0">${smilAnimate(delay)}${content}</g>`);
+    delays.push({ idx: frameIdx, delay: _delay });
+    o.push(`<g>${content}</g>`);
   }
 
   // ─── SVG open ──────────────────────────────────────────────────────

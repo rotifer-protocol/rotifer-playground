@@ -1,28 +1,60 @@
 {
+  "author": "rotifer-genesis",
   "domain": "text.summarize",
+  "version": "0.1.0",
+  "fidelity": "Native",
   "description": "Extracts key sentences from text to produce a concise summary within a configurable word limit.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "text"
+    ],
     "properties": {
-      "text": { "type": "string", "description": "The text content to summarize" },
-      "maxWords": { "type": "number", "description": "Maximum words in the summary", "default": 100 },
-      "format": { "type": "string", "description": "Output format", "enum": ["paragraph", "bullets"], "default": "paragraph" }
-    },
-    "required": ["text"]
-  },
-  "outputSchema": {
-    "type": "object",
-    "properties": {
-      "summary": { "type": "string", "description": "The generated summary" },
-      "wordCount": { "type": "number", "description": "Actual word count of the summary" },
-      "compressionRatio": { "type": "number", "description": "Ratio of summary length to original length (0-1)" },
-      "keyPhrases": { "type": "array", "items": { "type": "string" }, "description": "Extracted key phrases" }
+      "text": {
+        "type": "string",
+        "description": "The text content to summarize"
+      },
+      "format": {
+        "enum": [
+          "paragraph",
+          "bullets"
+        ],
+        "type": "string",
+        "default": "paragraph",
+        "description": "Output format"
+      },
+      "maxWords": {
+        "type": "number",
+        "default": 100,
+        "description": "Maximum words in the summary"
+      }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
-  "author": "rotifer-genesis",
-  "fidelity": "Native",
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "string",
+        "description": "The generated summary"
+      },
+      "wordCount": {
+        "type": "number",
+        "description": "Actual word count of the summary"
+      },
+      "keyPhrases": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Extracted key phrases"
+      },
+      "compressionRatio": {
+        "type": "number",
+        "description": "Ratio of summary length to original length (0-1)"
+      }
+    }
+  },
   "transparency": "Open",
   "semantic_requirements": {
     "timeModel": "Sync",

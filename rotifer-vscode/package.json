@@ -2,7 +2,7 @@
   "name": "rotifer-vscode",
   "displayName": "Rotifer Protocol",
   "description": "Gene browser, installer, and developer tools for the Rotifer Protocol",
-  "version": "0.7.8",
+  "version": "0.8.1",
   "publisher": "rotifer-foundation",
   "license": "Apache-2.0",
   "repository": {

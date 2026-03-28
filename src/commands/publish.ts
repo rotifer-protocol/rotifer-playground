@@ -97,6 +97,15 @@ async function publishSingleGene(
     phenotype.description ||
     `${name} gene (${domain})`;
 
+  const nonAscii = (description.match(/[^\x20-\x7E]/g) || []).length;
+  if (!quiet && nonAscii > description.length * 0.5) {
+    display.warn(
+      `Description for '${name}' is mostly non-English. ` +
+      `English descriptions improve global discoverability. ` +
+      `Consider adding an English description in phenotype.json.`
+    );
+  }
+
   const changelog = options.changelog || null;
 
   let readme: string | null = null;

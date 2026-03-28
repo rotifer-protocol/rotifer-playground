@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -53,10 +54,28 @@ jobs:
       - name: Run tests
         run: npm test
 
+  vscode-extension:
+    name: VSCode Extension Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install extension dependencies
+        working-directory: rotifer-vscode
+        run: npm ci
+
+      - name: Run extension tests
+        working-directory: rotifer-vscode
+        run: npm test
+
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, test, rust-check, security-check]
+    needs: [lint, test, rust-check, security-check, vscode-extension]
     steps:
       - uses: actions/checkout@v4
 
@@ -150,3 +169,66 @@ jobs:
           else
             echo "✅ No contamination detected"
           fi
+
+  gitleaks:
+    name: Secrets Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  report-quality:
+    name: Report to Quality Observatory
+    runs-on: ubuntu-latest
+    needs: [test, vscode-extension, security-check]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Run tests with JSON reporter
+        run: |
+          npm run build
+          npx vitest run --reporter=json --outputFile=test-results.json 2>/dev/null || true
+
+      - name: Report test results to Supabase
+        if: env.QUALITY_SUPABASE_URL != ''
+        env:
+          QUALITY_SUPABASE_URL: ${{ secrets.QUALITY_SUPABASE_URL }}
+          QUALITY_SUPABASE_KEY: ${{ secrets.QUALITY_SUPABASE_SERVICE_KEY }}
+        run: |
+          if [ ! -f test-results.json ]; then
+            echo "No test results file found, skipping report"
+            exit 0
+          fi
+
+          VERSION=$(node -p "require('./package.json').version")
+          TOTAL=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numTotalTests || 0")
+          PASSED=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numPassedTests || 0")
+          FAILED=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numFailedTests || 0")
+          DURATION=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).testResults?.reduce((s,r) => s + (r.endTime - r.startTime), 0) || 0")
+
+          curl -s -X POST "${QUALITY_SUPABASE_URL}/rest/v1/release_test_reports" \
+            -H "apikey: ${QUALITY_SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${QUALITY_SUPABASE_KEY}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            -d "{
+              \"version\": \"v${VERSION}\",
+              \"component\": \"cli\",
+              \"total_tests\": ${TOTAL},
+              \"passed\": ${PASSED},
+              \"failed\": ${FAILED},
+              \"duration_ms\": ${DURATION},
+              \"ci_run_url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"
+            }" && echo "✅ Reported to Quality Observatory" || echo "⚠️ Report failed (non-blocking)"

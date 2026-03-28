@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1 — 2026-03-28
+
+Version bump aligned with CLI v0.8.1 (Ecosystem Reach release).
+
 ## 0.7.8 — 2026-02-17
 
 ### Added

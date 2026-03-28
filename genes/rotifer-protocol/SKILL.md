@@ -118,4 +118,4 @@ rotifer agent run search-bot --input '{"query":"hello"}'
 - [rotifer.dev/genes](https://rotifer.dev/genes/) — Gene Store
 - [rotifer.dev/docs](https://rotifer.dev/docs/) — Documentation
 - [GitHub](https://github.com/rotifer-protocol/rotifer-playground) — Source
-- [Discord](https://discord.gg/6d4JrfMr) — Community
+- [Discord](https://rotifer.dev/discord) — Community

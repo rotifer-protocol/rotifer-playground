@@ -9,6 +9,23 @@ import { publishSkillAsGene } from "./skill-publisher";
 import * as webviews from "./webviews";
 
 export function activate(context: vscode.ExtensionContext) {
+  const ONBOARDED_KEY = "rotifer.onboarded";
+  if (!context.globalState.get(ONBOARDED_KEY)) {
+    context.globalState.update(ONBOARDED_KEY, true);
+    vscode.window
+      .showInformationMessage(
+        "Rotifer Protocol installed! Browse Genes, install capabilities, and compete in the Arena.",
+        "Get Started",
+        "Browse Genes",
+      )
+      .then((action) => {
+        if (action === "Get Started")
+          vscode.commands.executeCommand("workbench.action.openWalkthrough", "rotifer-foundation.rotifer-vscode#rotifer.getStarted");
+        if (action === "Browse Genes")
+          vscode.commands.executeCommand("rotiferGenes.focus");
+      });
+  }
+
   const client = new RotiferCloudClient();
   const auth = new AuthManager(client);
 

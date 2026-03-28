@@ -14,7 +14,7 @@
     "url": "https://github.com/rotifer-protocol/rotifer-playground/issues"
   },
   "icon": "icon.png",
-  "keywords": ["rotifer", "gene", "ai-agent", "wasm", "arena", "protocol"],
+  "keywords": ["rotifer", "gene", "ai-agent", "mcp", "wasm", "arena", "protocol", "self-evolving", "autonomous-agent", "evolution", "fitness", "code-as-gene", "ai-tools", "agent-framework"],
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other", "Machine Learning"],
   "activationEvents": [
@@ -112,6 +112,47 @@
         { "command": "rotifer.myReputation" }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "rotiferGenes",
+        "contents": "Welcome to Rotifer Protocol!\n\nBrowse and install self-evolving AI Genes.\n[Browse Gene Registry](command:rotifer.refreshGenes)\n[Search Genes](command:rotifer.searchGenes)\n[Initialize Project](command:rotifer.initProject)"
+      },
+      {
+        "view": "rotiferLocalGenes",
+        "contents": "No local Genes found.\n\nInstall Genes from the registry, or create your own.\n[Install from Registry](command:rotifer.refreshGenes)\n[Scan for Genes](command:rotifer.scanGenes)"
+      },
+      {
+        "view": "rotiferArena",
+        "contents": "Arena rankings show how Genes compete.\n\nSubmit your Gene to see where it stands.\n[View Rankings](command:rotifer.refreshArena)"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "rotifer.getStarted",
+        "title": "Get Started with Rotifer",
+        "description": "Learn how to browse, install, and create self-evolving AI Genes.",
+        "steps": [
+          {
+            "id": "browseRegistry",
+            "title": "Browse the Gene Registry",
+            "description": "Click the Rotifer icon in the Activity Bar to see all published Genes.\n[Open Gene Registry](command:rotiferGenes.focus)",
+            "media": { "markdown": "walkthrough/browse.md" }
+          },
+          {
+            "id": "installGene",
+            "title": "Install Your First Gene",
+            "description": "Right-click any Gene → Install Gene. It downloads to your `genes/` folder.\n[Search Genes](command:rotifer.searchGenes)",
+            "media": { "markdown": "walkthrough/install.md" }
+          },
+          {
+            "id": "submitArena",
+            "title": "Submit to the Arena",
+            "description": "Your Gene competes against others. The fittest survive.\n[View Arena](command:rotiferArena.focus)",
+            "media": { "markdown": "walkthrough/arena.md" }
+          }
+        ]
+      }
+    ],
     "configuration": {
       "title": "Rotifer Protocol",
       "properties": {

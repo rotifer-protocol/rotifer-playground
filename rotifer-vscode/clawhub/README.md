@@ -24,4 +24,4 @@ rotifer init my-project && cd my-project
 - [Gene Store](https://rotifer.dev/genes/) — Browse community Genes
 - [Documentation](https://rotifer.dev/docs/)
 - [GitHub](https://github.com/rotifer-protocol/rotifer-playground) — Source
-- [Discord](https://discord.gg/6d4JrfMr) — Community
+- [Discord](https://rotifer.dev/discord) — Community

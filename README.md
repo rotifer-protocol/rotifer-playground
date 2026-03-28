@@ -5,7 +5,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](https://nodejs.org/)
 [![Protocol](https://img.shields.io/badge/Protocol-Frozen-orange)](https://github.com/rotifer-protocol/rotifer-spec)
-[![Discord](https://img.shields.io/discord/placeholder?label=Discord&logo=discord&color=5865F2)](https://discord.gg/6d4JrfMr)
+[![Discord](https://img.shields.io/discord/placeholder?label=Discord&logo=discord&color=5865F2)](https://rotifer.dev/discord)
 
 Development environment for the **Rotifer Protocol** — build genes, compete in Arenas, share via Cloud, and simulate agent evolution.
 
@@ -267,7 +267,7 @@ Changes driven by implementation feedback are proposed through the ADR process.
 
 ## Community
 
-- [Discord](https://discord.gg/6d4JrfMr) — Join the conversation
+- [Discord](https://rotifer.dev/discord) — Join the conversation
 - [GitHub Discussions](https://github.com/rotifer-protocol/rotifer-playground/discussions) — Questions and proposals
 
 ## Contributing

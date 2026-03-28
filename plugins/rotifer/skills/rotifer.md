@@ -67,4 +67,4 @@ rotifer agent run bot --input '{"query":"hello"}'
 - [Gene Store](https://rotifer.dev/genes/)
 - [Docs](https://rotifer.dev/docs/)
 - [GitHub](https://github.com/rotifer-protocol/rotifer-playground)
-- [Discord](https://discord.gg/6d4JrfMr)
+- [Discord](https://rotifer.dev/discord)

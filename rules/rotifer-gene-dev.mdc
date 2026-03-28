@@ -1,0 +1,26 @@
+---
+description: Rotifer Gene development conventions — naming, structure, fidelity types, and phenotype schema
+globs: ["**/genes/**", "**/phenotype.json"]
+---
+
+# Rotifer Gene Development
+
+## Gene Structure
+
+Every Gene must have:
+- `phenotype.json` — metadata (name, domain, fidelity, version, schemas)
+- `SKILL.md` — human-readable instructions
+- Source files — TypeScript/JavaScript implementation
+
+## Fidelity Types
+
+| Type | Description |
+|------|-------------|
+| **Native** | Pure WASM — fully sandboxed, highest security |
+| **Hybrid** | WASM logic + controlled external calls |
+| **Wrapped** | Thin envelope around an external API |
+
+## Naming Convention
+
+- Gene names: lowercase kebab-case (`web-scraper`, `code-formatter`)
+- Domains: dot-separated hierarchy (`code.format`, `search.web`)

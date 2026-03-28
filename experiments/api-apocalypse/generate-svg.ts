@@ -157,16 +157,21 @@ function generate(): string {
   let frameIdx = 0;
   const delays: { idx: number; delay: number }[] = [];
 
+  const ANIM_DUR = "0.35s";
+  const smilAnimate = (delay: number) =>
+    `<animate attributeName="opacity" from="0" to="1" begin="${delay.toFixed(1)}s" dur="${ANIM_DUR}" fill="freeze"/>`;
+
   function addFrame(
     row: number,
     delay: number,
     spans: Sp[],
     extraAttr = ""
   ): void {
-    const idx = frameIdx++;
-    delays.push({ idx, delay });
+    frameIdx++;
+    delays.push({ idx: frameIdx, delay });
     const y = textY(row);
-    let el = `<text y="${y}" class="f f${idx}"${extraAttr}>`;
+    let el = `<text y="${y}" opacity="0" font-family="${FONT}" font-size="${FONT_SIZE}"${extraAttr}>`;
+    el += smilAnimate(delay);
     for (const s of spans) {
       const xAttr = s.x != null ? ` x="${s.x}"` : "";
       const anchorAttr = s.anchor ? ` text-anchor="${s.anchor}"` : "";
@@ -177,9 +182,9 @@ function generate(): string {
   }
 
   function addGroup(delay: number, content: string): void {
-    const idx = frameIdx++;
-    delays.push({ idx, delay });
-    o.push(`<g class="f f${idx}">${content}</g>`);
+    frameIdx++;
+    delays.push({ idx: frameIdx, delay });
+    o.push(`<g opacity="0">${smilAnimate(delay)}${content}</g>`);
   }
 
   // ─── SVG open ──────────────────────────────────────────────────────
@@ -206,7 +211,7 @@ function generate(): string {
   o.push(`<circle cx="40" cy="${dy}" r="6" fill="#febc2e"/>`);
   o.push(`<circle cx="60" cy="${dy}" r="6" fill="#28c840"/>`);
   o.push(
-    `<text x="${SVG_W / 2}" y="${dy + 4}" text-anchor="middle" fill="${C.dim}" font-family="${FONT}" font-size="12">api-apocalypse — demo</text>`
+    `<text x="${SVG_W / 2}" y="${dy + 4}" text-anchor="middle" fill="${C.dim}" font-family="${FONT}" font-size="12">api-apocalypse ─ demo</text>`
   );
 
   // ─── Title block ───────────────────────────────────────────────────
@@ -393,21 +398,6 @@ function generate(): string {
       PAD.x
     ),
   ]);
-
-  // ─── Style (injected at position 1, after SVG open) ────────────────
-
-  const styleLines = [
-    "<style>",
-    "@keyframes a{from{opacity:0}to{opacity:1}}",
-    `text{font-family:${FONT};font-size:${FONT_SIZE}px}`,
-    ".f{opacity:0;animation-name:a;animation-duration:.35s;animation-timing-function:ease-out;animation-fill-mode:forwards}",
-    ...delays.map(
-      (d) => `.f${d.idx}{animation-delay:${d.delay.toFixed(1)}s}`
-    ),
-    "</style>",
-  ];
-
-  o.splice(1, 0, ...styleLines);
 
   o.push("</svg>");
   return o.join("\n");

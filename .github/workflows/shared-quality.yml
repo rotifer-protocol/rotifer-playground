@@ -1,0 +1,62 @@
+name: Shared Quality Checks
+
+on:
+  workflow_call:
+    inputs:
+      component:
+        required: true
+        type: string
+        description: "Component name for Observatory (cli, mcp, website, vscode)"
+      test_type:
+        required: false
+        type: string
+        default: "unit"
+        description: "Test type (unit, integration, e2e)"
+      run_gitleaks:
+        required: false
+        type: boolean
+        default: true
+      run_cross_contamination:
+        required: false
+        type: boolean
+        default: true
+      run_observatory_report:
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      QUALITY_SUPABASE_URL:
+        required: false
+      QUALITY_SUPABASE_SERVICE_KEY:
+        required: false
+
+jobs:
+  gitleaks:
+    name: Secrets Scan
+    if: inputs.run_gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  cross-contamination:
+    name: Cross-Contamination Check
+    if: inputs.run_cross_contamination
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan for private file paths
+        run: |
+          CONTAMINATED=$(git log --all --diff-filter=A --name-only --format="" | grep "^internal/" | sort -u || true)
+          if [ -n "$CONTAMINATED" ]; then
+            echo "::error::⛔ CRITICAL: private files found in commit history!"
+            echo "$CONTAMINATED"
+            exit 1
+          fi
+          echo "✅ No contamination detected"

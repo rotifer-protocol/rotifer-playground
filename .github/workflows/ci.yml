@@ -196,10 +196,10 @@ jobs:
 
       - run: npm ci
 
-      - name: Run tests with JSON reporter
+      - name: Run tests with JSON reporter + coverage
         run: |
           npm run build
-          npx vitest run --reporter=json --outputFile=test-results.json 2>/dev/null || true
+          npx vitest run --reporter=json --outputFile=test-results.json --coverage 2>/dev/null || true
 
       - name: Report test results to Supabase
         if: env.QUALITY_SUPABASE_URL != ''
@@ -218,6 +218,11 @@ jobs:
           FAILED=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numFailedTests || 0")
           DURATION=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).testResults?.reduce((s,r) => s + (r.endTime - r.startTime), 0) || 0")
 
+          COVERAGE_PCT=0
+          if [ -f coverage/coverage-summary.json ]; then
+            COVERAGE_PCT=$(node -p "JSON.parse(require('fs').readFileSync('coverage/coverage-summary.json','utf8')).total?.lines?.pct || 0")
+          fi
+
           curl -s -X POST "${QUALITY_SUPABASE_URL}/rest/v1/release_test_reports" \
             -H "apikey: ${QUALITY_SUPABASE_KEY}" \
             -H "Authorization: Bearer ${QUALITY_SUPABASE_KEY}" \
@@ -226,9 +231,11 @@ jobs:
             -d "{
               \"version\": \"v${VERSION}\",
               \"component\": \"cli\",
+              \"test_type\": \"unit\",
               \"total_tests\": ${TOTAL},
               \"passed\": ${PASSED},
               \"failed\": ${FAILED},
               \"duration_ms\": ${DURATION},
+              \"coverage_pct\": ${COVERAGE_PCT},
               \"ci_run_url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"
-            }" && echo "✅ Reported to Quality Observatory" || echo "⚠️ Report failed (non-blocking)"
+            }" && echo "✅ Reported to Quality Observatory (coverage: ${COVERAGE_PCT}%)" || echo "⚠️ Report failed (non-blocking)"

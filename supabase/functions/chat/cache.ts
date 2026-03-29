@@ -1,3 +1,5 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
 interface CacheEntry {
   hash: string;
   response: { answer: string; sources: Array<{ source: string; similarity: number }> };
@@ -7,8 +9,9 @@ interface CacheEntry {
 
 const CACHE_VERSION = "v9";
 const CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
-const MAX_CACHE_SIZE = 200;
-const cache = new Map<string, CacheEntry>();
+const MAX_MEM_SIZE = 50;
+
+const memCache = new Map<string, CacheEntry>();
 
 async function hash(text: string): Promise<string> {
   const data = new TextEncoder().encode(`${CACHE_VERSION}:${text.toLowerCase().trim()}`);
@@ -19,19 +22,62 @@ async function hash(text: string): Promise<string> {
     .slice(0, 16);
 }
 
+function getClient() {
+  const url = Deno.env.get("RAG_SUPABASE_URL");
+  const key = Deno.env.get("RAG_SUPABASE_SERVICE_KEY");
+  if (!url || !key) return null;
+  return createClient(url, key);
+}
+
 export async function getCachedResponse(
   question: string
 ): Promise<CacheEntry | null> {
   const h = await hash(question);
-  const entry = cache.get(h);
+  const now = Date.now();
 
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    cache.delete(h);
+  const mem = memCache.get(h);
+  if (mem && now < mem.expiresAt) return mem;
+  if (mem) memCache.delete(h);
+
+  try {
+    const client = getClient();
+    if (!client) return null;
+
+    const { data } = await client
+      .from("response_cache")
+      .select("answer, sources, expires_at, hit_count")
+      .eq("question_hash", h)
+      .eq("cache_version", CACHE_VERSION)
+      .gt("expires_at", new Date().toISOString())
+      .single();
+
+    if (!data) return null;
+
+    await client
+      .from("response_cache")
+      .update({ hit_count: (data.hit_count || 0) + 1 })
+      .eq("question_hash", h)
+      .then(() => {});
+
+    const sources = data.sources as Array<{ source: string; similarity: number }>;
+    const entry: CacheEntry = {
+      hash: h,
+      response: { answer: data.answer, sources },
+      sources: sources.map((s) => s.source),
+      expiresAt: new Date(data.expires_at).getTime(),
+    };
+
+    if (memCache.size >= MAX_MEM_SIZE) {
+      const oldest = memCache.keys().next().value;
+      if (oldest) memCache.delete(oldest);
+    }
+    memCache.set(h, entry);
+
+    return entry;
+  } catch (err) {
+    console.error("[cache] DB read failed, no cache:", err);
     return null;
   }
-
-  return entry;
 }
 
 export async function setCachedResponse(
@@ -39,16 +85,34 @@ export async function setCachedResponse(
   response: { answer: string; sources: Array<{ source: string; similarity: number }> }
 ): Promise<void> {
   const h = await hash(question);
+  const expiresAt = Date.now() + CACHE_TTL_MS;
 
-  if (cache.size >= MAX_CACHE_SIZE) {
-    const oldest = cache.keys().next().value;
-    if (oldest) cache.delete(oldest);
-  }
-
-  cache.set(h, {
+  const entry: CacheEntry = {
     hash: h,
     response,
     sources: response.sources.map((s) => s.source),
-    expiresAt: Date.now() + CACHE_TTL_MS,
-  });
+    expiresAt,
+  };
+
+  if (memCache.size >= MAX_MEM_SIZE) {
+    const oldest = memCache.keys().next().value;
+    if (oldest) memCache.delete(oldest);
+  }
+  memCache.set(h, entry);
+
+  try {
+    const client = getClient();
+    if (!client) return;
+
+    await client.from("response_cache").upsert({
+      question_hash: h,
+      answer: response.answer,
+      sources: response.sources,
+      cache_version: CACHE_VERSION,
+      expires_at: new Date(expiresAt).toISOString(),
+      hit_count: 0,
+    });
+  } catch (err) {
+    console.error("[cache] DB write failed:", err);
+  }
 }

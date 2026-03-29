@@ -43,6 +43,7 @@
     "test:coverage": "vitest run --coverage",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist",
+    "smoke-test": "npx tsx scripts/post-deploy-smoke-test.ts",
     "prepublishOnly": "npm run lint && npm run test && npm run build",
     "prepack": "npm run build"
   },

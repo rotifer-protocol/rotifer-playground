@@ -52,9 +52,37 @@ export async function recordSecurityEvent(
       question_hash: questionHash,
       reason,
     });
+
+    const shouldAlert =
+      eventType === "content_filter" || reason === "auto_ban";
+    if (shouldAlert) {
+      await sendSecurityAlert(eventType, reason, ipHash).catch((err) =>
+        console.error("[security] Alert delivery failed:", err)
+      );
+    }
   } catch (err) {
     console.error("[security] Failed to record event:", err);
   }
+}
+
+async function sendSecurityAlert(
+  eventType: string,
+  reason: string,
+  ipHash: string
+): Promise<void> {
+  const webhookUrl = Deno.env.get("SECURITY_ALERT_WEBHOOK");
+  if (!webhookUrl) return;
+
+  const severity = reason === "auto_ban" ? "HIGH" : "MEDIUM";
+  const message = {
+    content: `**[${severity}] Security Alert**\nType: \`${eventType}\`\nReason: \`${reason}\`\nIP: \`${ipHash.slice(0, 12)}...\`\nTime: ${new Date().toISOString()}`,
+  };
+
+  await fetch(webhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(message),
+  });
 }
 
 function classifyQuestion(sources: string[]): string {

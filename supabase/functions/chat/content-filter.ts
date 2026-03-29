@@ -31,10 +31,19 @@ const BLOCKED_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
 const MIN_LENGTH = 2;
 const MAX_LENGTH = 2000;
 
+function normalizeInput(text: string): string {
+  const noZeroWidth = text.replace(/[\u200b\u200c\u200d\ufeff\u00ad\u2060\u180e]/g, "");
+  const normalized = noZeroWidth.normalize("NFC");
+  const noFullwidth = normalized.replace(/[\uff01-\uff5e]/g, (ch) =>
+    String.fromCharCode(ch.charCodeAt(0) - 0xfee0)
+  );
+  return noFullwidth;
+}
+
 export function filterContent(
   question: string
 ): { allowed: boolean; reason?: string; category?: string } {
-  const trimmed = question.trim();
+  const trimmed = normalizeInput(question.trim());
 
   if (trimmed.length < MIN_LENGTH) {
     return { allowed: false, reason: "Question too short", category: "too_short" };

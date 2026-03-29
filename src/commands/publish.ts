@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import chalk from "chalk";
 import * as display from "../utils/display.js";
 import { getProjectRoot, loadConfig } from "../utils/config.js";
 import { requireAuth } from "../cloud/auth.js";
@@ -12,11 +13,13 @@ import {
   getDeveloperReputation,
 } from "../cloud/client.js";
 import { refreshDomainCacheFromCloud } from "../utils/domain-suggest.js";
+import { runPrePublishChecks, type CheckItem } from "../publish/pre-publish-check.js";
 
 interface PublishOptions {
   description?: string;
   changelog?: string;
   skipArena?: boolean;
+  skipSecurity?: boolean;
   all?: boolean;
 }
 
@@ -24,6 +27,12 @@ interface PublishResult {
   name: string;
   status: "created" | "updated" | "skipped" | "failed";
   error?: string;
+}
+
+function formatCheckIcon(status: CheckItem["status"]): string {
+  if (status === "pass") return chalk.green("✓");
+  if (status === "warn") return chalk.yellow("⚠");
+  return chalk.red("✗");
 }
 
 async function publishSingleGene(
@@ -40,6 +49,24 @@ async function publishSingleGene(
       display.warn(`Skipping '${name}' — no phenotype.json`);
     }
     return { name, status: "skipped", error: "no phenotype.json" };
+  }
+
+  if (!options.skipSecurity) {
+    const checkResult = runPrePublishChecks(geneDir, name);
+
+    if (!quiet) {
+      for (const c of checkResult.checks) {
+        console.log(`  ${formatCheckIcon(c.status)} ${c.name}: ${c.message}`);
+      }
+    }
+
+    if (!checkResult.passed) {
+      const reasons = checkResult.blocking.map((b) => `${b.name}: ${b.message}`).join("; ");
+      if (!quiet) {
+        display.error(`Security check failed for '${name}'. Use --skip-security to bypass.`);
+      }
+      return { name, status: "failed", error: `pre-publish security check failed — ${reasons}` };
+    }
   }
 
   const phenotype = JSON.parse(readFileSync(phenotypePath, "utf-8"));
@@ -175,6 +202,7 @@ export const publishCommand = new Command("publish")
   .option("--description <text>", "gene description")
   .option("--changelog <text>", "changelog entry for this version (max 500 chars)")
   .option("--skip-arena", "skip automatic Arena submission and reputation computation")
+  .option("--skip-security", "skip pre-publish security checks (dangerous API / IR / secrets scan)")
   .option("--all", "publish all valid genes in the genes directory")
   .action(async (name: string | undefined, options: PublishOptions) => {
     if (!name && !options.all) {
@@ -333,6 +361,11 @@ export const publishCommand = new Command("publish")
           suggestion: "Run 'rotifer wrap " + name + " --domain <domain>' first",
         });
         process.exit(1);
+      }
+
+      if (!options.skipSecurity) {
+        console.log();
+        display.header("Pre-publish Security Check");
       }
 
       const result = await publishSingleGene(name!, geneDir, creds, options);

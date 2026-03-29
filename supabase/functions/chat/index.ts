@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, handleCors } from "./cors.ts";
-import { checkRateLimit } from "./rate-limiter.ts";
+import { checkRateLimit, recordContentFilterHit } from "./rate-limiter.ts";
 import { getCachedResponse, setCachedResponse } from "./cache.ts";
 import { checkDailyLimit, recordCost } from "./cost-monitor.ts";
 import { recordAnalytics, recordSecurityEvent } from "./analytics.ts";
@@ -28,12 +28,20 @@ type Locale = "en" | "zh";
 
 const ERR_MESSAGES: Record<string, Record<Locale, string>> = {
   rate_limit_hourly: {
-    en: "Too many requests. Please wait a moment.",
-    zh: "请求过于频繁，请稍后再试。",
+    en: "Too many requests. Please wait a moment and try again. In the meantime, you can browse our documentation at https://rotifer.dev/docs",
+    zh: "请求过于频繁，请稍后再试。等待期间可以浏览文档：https://rotifer.dev/docs",
   },
   rate_limit_daily: {
-    en: "Daily limit reached for your IP. Please try again tomorrow.",
-    zh: "您的 IP 今日请求已达上限，请明天再试。",
+    en: "Daily limit reached. You can continue tomorrow, or explore our docs at https://rotifer.dev/docs and CLI guide at https://rotifer.dev/docs/getting-started",
+    zh: "今日请求已达上限，明天可继续使用。等待期间可浏览文档 https://rotifer.dev/docs 或 CLI 指南 https://rotifer.dev/docs/getting-started",
+  },
+  auto_ban: {
+    en: "Your IP has been temporarily restricted due to excessive requests. Access will be restored in 24 hours. Browse our docs: https://rotifer.dev/docs",
+    zh: "因请求过于频繁，您的 IP 已被临时限制，24 小时后自动恢复。您可以浏览文档：https://rotifer.dev/docs",
+  },
+  adaptive_limit: {
+    en: "Your request rate has been temporarily reduced due to repeated policy violations. Normal limits will restore in 30 minutes.",
+    zh: "因多次触发安全策略，您的请求频率已被临时降低，30 分钟后自动恢复正常限额。",
   },
   daily_quota: {
     en: "Daily quota exceeded. Please try again tomorrow.",
@@ -93,8 +101,12 @@ Deno.serve(async (req: Request) => {
 
     const rateLimitResult = await checkRateLimit(clientIp);
     if (!rateLimitResult.allowed) {
-      const errKey = rateLimitResult.reason === "daily_limit" ? "rate_limit_daily" : "rate_limit_hourly";
-      await recordSecurityEvent("rate_limit", rateLimitResult.ipHash, "", rateLimitResult.reason || "rate_limit");
+      const reason = rateLimitResult.reason || "rate_limit";
+      const errKey = reason === "auto_ban" ? "auto_ban"
+        : reason === "daily_limit" ? "rate_limit_daily"
+        : reason === "adaptive_limit" ? "adaptive_limit"
+        : "rate_limit_hourly";
+      await recordSecurityEvent("rate_limit", rateLimitResult.ipHash, "", reason);
       return new Response(
         JSON.stringify({ error: errMsg(errKey, locale), retry_after: rateLimitResult.retryAfter }),
         { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -135,6 +147,7 @@ Deno.serve(async (req: Request) => {
 
     const contentCheck = filterContent(body.question);
     if (!contentCheck.allowed) {
+      recordContentFilterHit(rateLimitResult.ipHash);
       await recordSecurityEvent("content_filter", rateLimitResult.ipHash, qHash, contentCheck.category || "unknown");
       await recordAnalytics({
         questionHash: qHash,

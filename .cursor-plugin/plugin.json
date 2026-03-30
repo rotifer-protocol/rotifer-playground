@@ -1,7 +1,7 @@
 {
   "name": "rotifer-protocol",
   "description": "Self-evolving AI Agent framework — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "author": {
     "name": "Rotifer Protocol",
     "url": "https://rotifer.dev"
@@ -24,7 +24,7 @@
   "mcpServers": {
     "rotifer": {
       "command": "npx",
-      "args": ["@rotifer/mcp-server@0.8.1"]
+      "args": ["-y", "@rotifer/mcp-server"]
     }
   }
 }

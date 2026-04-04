@@ -7,6 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -16,9 +19,9 @@ jobs:
     name: Lint & Type Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: "22"
           cache: "npm"
@@ -29,6 +32,26 @@ jobs:
       - name: TypeScript type check
         run: npm run lint
 
+  plugin-source:
+    name: Plugin Source Drift Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check generated plugin outputs
+        run: npm run check:plugins
+
+      - name: Verify plugin packaging references
+        run: npm run verify:plugins
+
   test:
     name: Test (Node ${{ matrix.node-version }})
     runs-on: ${{ matrix.os }}
@@ -38,9 +61,9 @@ jobs:
         os: [ubuntu-latest, macos-14]
         node-version: ["20", "22"]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: "npm"
@@ -58,9 +81,9 @@ jobs:
     name: VSCode Extension Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: "22"
 
@@ -72,14 +95,39 @@ jobs:
         working-directory: rotifer-vscode
         run: npm test
 
+  vscode-packaging:
+    name: VSCode Extension Packaging
+    runs-on: ubuntu-latest
+    needs: [plugin-source]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install extension dependencies
+        working-directory: rotifer-vscode
+        run: npm ci
+
+      - name: Package VSCode extension
+        working-directory: rotifer-vscode
+        run: |
+          mkdir -p ../artifacts
+          npx --yes @vscode/vsce package --out ../artifacts/rotifer-vscode-ci.vsix
+
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, test, rust-check, security-check, vscode-extension]
+    needs: [lint, plugin-source, test, rust-check, security-check, vscode-extension, vscode-packaging]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: "22"
           cache: "npm"
@@ -100,11 +148,11 @@ jobs:
     name: Rust Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
 
       - name: Cargo check (core)
         run: cargo check -p rotifer-core
@@ -120,13 +168,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: [rust-check, test]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: "22"
           cache: "npm"
@@ -135,13 +183,12 @@ jobs:
         run: npm ci
 
       - name: Cargo dependency audit
-        continue-on-error: true
         run: |
-          cargo install cargo-audit --quiet
+          cargo install cargo-audit@0.21.2 --quiet
           cargo audit
 
       - name: npm dependency audit
-        run: npm audit --audit-level=high || true
+        run: npm audit --audit-level=high
 
       - name: WASM sandbox security tests
         run: cargo test -p rotifer-core --test wasm_security
@@ -155,7 +202,7 @@ jobs:
       - name: Self-scan (V(g) security)
         run: |
           npm run build
-          node dist/index.js vg . --json || true
+          node dist/index.js vg . --json
 
       - name: Scan for cross-contamination
         run: |
@@ -170,14 +217,47 @@ jobs:
             echo "✅ No contamination detected"
           fi
 
+      - name: Report security scan to Observatory
+        if: github.ref == 'refs/heads/main' && env.QUALITY_SUPABASE_URL != ''
+        env:
+          QUALITY_SUPABASE_URL: ${{ secrets.QUALITY_SUPABASE_URL }}
+          QUALITY_SUPABASE_KEY: ${{ secrets.QUALITY_SUPABASE_SERVICE_KEY }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          NPM_AUDIT=$(npm audit --json --registry https://registry.npmjs.org/ 2>/dev/null || echo '{}')
+          CRITICAL=$(echo "$NPM_AUDIT" | node -p "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).metadata?.vulnerabilities?.critical||0}catch{0}")
+          HIGH=$(echo "$NPM_AUDIT" | node -p "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).metadata?.vulnerabilities?.high||0}catch{0}")
+          MODERATE=$(echo "$NPM_AUDIT" | node -p "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).metadata?.vulnerabilities?.moderate||0}catch{0}")
+          LOW=$(echo "$NPM_AUDIT" | node -p "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).metadata?.vulnerabilities?.low||0}catch{0}")
+          TOTAL=$(echo "$NPM_AUDIT" | node -p "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).metadata?.dependencies?.total||0}catch{0}")
+
+          GRADE="PASS"
+          if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then GRADE="FAIL"; fi
+
+          curl -s -X POST "${QUALITY_SUPABASE_URL}/rest/v1/security_scan_results" \
+            -H "apikey: ${QUALITY_SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${QUALITY_SUPABASE_KEY}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            -d "{\"version\":\"v${VERSION}\",\"component\":\"cli\",\"scan_type\":\"npm_audit\",\"grade\":\"${GRADE}\",\"severity_counts\":{\"critical\":${CRITICAL},\"high\":${HIGH},\"moderate\":${MODERATE},\"low\":${LOW}},\"source\":\"ci\",\"ci_run_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
+            && echo "✅ Security scan reported" || echo "⚠️ Report failed (non-blocking)"
+
+          curl -s -X POST "${QUALITY_SUPABASE_URL}/rest/v1/dependency_audit_logs" \
+            -H "apikey: ${QUALITY_SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${QUALITY_SUPABASE_KEY}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            -d "{\"component\":\"cli\",\"audit_tool\":\"npm_audit\",\"total_deps\":${TOTAL},\"vulnerabilities\":{\"critical\":${CRITICAL},\"high\":${HIGH},\"moderate\":${MODERATE},\"low\":${LOW}},\"ci_run_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
+            && echo "✅ Dependency audit reported" || echo "⚠️ Report failed (non-blocking)"
+
   gitleaks:
     name: Secrets Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -187,9 +267,9 @@ jobs:
     needs: [test, vscode-extension, security-check]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: "22"
           cache: "npm"

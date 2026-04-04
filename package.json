@@ -38,28 +38,35 @@
     "build:napi": "cd crates/rotifer-napi && napi build --release",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
+    "sync:plugins": "node scripts/sync-plugin-outputs.mjs",
+    "check:plugins": "node scripts/check-plugin-outputs.mjs",
+    "verify:plugins": "node scripts/verify-plugin-packaging.mjs",
+    "bump:plugin-family": "node scripts/bump-plugin-family.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "tsc --noEmit",
+    "lint": "tsc --noEmit && eslint src/",
+    "lint:names": "eslint src/ --rule '@typescript-eslint/naming-convention: error'",
     "clean": "rm -rf dist",
     "smoke-test": "npx tsx scripts/post-deploy-smoke-test.ts",
+    "postinstall": "node scripts/postinstall.js",
     "prepublishOnly": "npm run lint && npm run test && npm run build",
     "prepack": "npm run build"
   },
   "dependencies": {
+    "@clack/prompts": "^1.2.0",
     "ajv": "^8.17.0",
     "ajv-formats": "^3.0.0",
     "chalk": "^4.1.2",
-    "cli-table3": "^0.6.5",
-    "commander": "^14.0.0",
-    "pg": "^8.20.0"
+    "commander": "^14.0.0"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.6.0",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^4.1.2",
+    "eslint": "^10.1.0",
     "typescript": "^5.7.0",
+    "typescript-eslint": "^8.58.0",
     "vitest": "^4.0.0"
   },
   "engines": {
@@ -69,6 +76,7 @@
     "dist/",
     "templates/",
     "genes/",
+    "scripts/postinstall.js",
     "LICENSE",
     "README.md",
     "CHANGELOG.md"

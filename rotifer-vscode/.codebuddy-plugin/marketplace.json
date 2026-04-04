@@ -6,13 +6,20 @@
       "name": "rotifer",
       "source": ".",
       "description": "Browse, install, and evolve AI agent capabilities with the Rotifer Protocol. Turn static skills into competing Genes in a live Arena.",
-      "version": "0.1.0",
       "author": "Rotifer Foundation",
       "homepage": "https://rotifer.dev",
       "repository": "https://github.com/rotifer-protocol/rotifer-playground",
       "license": "Apache-2.0",
-      "keywords": ["rotifer", "gene", "ai-agent", "evolution", "arena", "wasm"],
-      "category": "Developer Tools"
+      "keywords": [
+        "rotifer",
+        "gene",
+        "ai-agent",
+        "evolution",
+        "arena",
+        "wasm"
+      ],
+      "category": "Developer Tools",
+      "version": "0.8.1"
     }
   ]
 }

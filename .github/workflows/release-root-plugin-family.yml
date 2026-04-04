@@ -1,0 +1,96 @@
+name: Release Root Plugin Family
+
+on:
+  push:
+    tags:
+      - "root-plugin-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Validate Root Plugin Family
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check root family tag matches manifest
+        if: startsWith(github.ref, 'refs/tags/root-plugin-v')
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/root-plugin-v}"
+          CONFIG_VERSION=$(node -p "require('./plugin-source/families.json').root.version")
+          if [ "$TAG_VERSION" != "$CONFIG_VERSION" ]; then
+            echo "::error::Tag version $TAG_VERSION does not match plugin-source/families.json root version $CONFIG_VERSION"
+            exit 1
+          fi
+
+      - name: Check generated plugin outputs
+        run: npm run check:plugins
+
+      - name: Verify plugin packaging references
+        run: npm run verify:plugins
+
+  package:
+    name: Package Root Plugin Family
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check generated plugin outputs
+        run: npm run check:plugins
+
+      - name: Prepare release artifacts
+        run: |
+          VERSION=$(node -p "require('./plugin-source/families.json').root.version")
+          mkdir -p release-artifacts/root-cursor
+          cp -R .cursor-plugin release-artifacts/root-cursor/
+          mkdir -p release-artifacts/root-cursor/plugins
+          cp -R plugins/rotifer release-artifacts/root-cursor/plugins/
+          tar -czf "release-artifacts/root-cursor-plugin-${VERSION}.tar.gz" -C release-artifacts/root-cursor .
+          mkdir -p release-artifacts/root-codebuddy
+          cp -R .codebuddy-plugin release-artifacts/root-codebuddy/
+          mkdir -p release-artifacts/root-codebuddy/plugins
+          cp -R plugins/rotifer release-artifacts/root-codebuddy/plugins/
+          tar -czf "release-artifacts/root-codebuddy-marketplace-${VERSION}.tar.gz" -C release-artifacts/root-codebuddy .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: root-plugin-family
+          path: release-artifacts/*
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/root-plugin-v')
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        with:
+          name: "Rotifer Root Plugin Family ${{ github.ref_name }}"
+          body: |
+            Root plugin family release.
+
+            This release packages the generated Cursor and CodeBuddy plugin surfaces from `plugin-source/`.
+
+            Notes:
+            - Cursor distribution remains Git-repository driven.
+            - CodeBuddy marketplace distribution remains marketplace-manifest driven.
+            - These tarballs are release artifacts for review, mirroring, and manual marketplace workflows when needed.
+          files: |
+            release-artifacts/root-cursor-plugin-*.tar.gz
+            release-artifacts/root-codebuddy-marketplace-*.tar.gz

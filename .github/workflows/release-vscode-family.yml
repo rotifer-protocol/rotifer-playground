@@ -1,0 +1,134 @@
+name: Release VSCode Family
+
+on:
+  push:
+    tags:
+      - "vscode-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Validate VSCode Family
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Check VSCode family tag matches manifest
+        if: startsWith(github.ref, 'refs/tags/vscode-v')
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/vscode-v}"
+          CONFIG_VERSION=$(node -p "require('./plugin-source/families.json').vscode.version")
+          if [ "$TAG_VERSION" != "$CONFIG_VERSION" ]; then
+            echo "::error::Tag version $TAG_VERSION does not match plugin-source/families.json vscode version $CONFIG_VERSION"
+            exit 1
+          fi
+
+      - name: Check generated plugin outputs
+        run: npm run check:plugins
+
+      - name: Verify plugin packaging references
+        run: npm run verify:plugins
+
+      - name: Install extension dependencies
+        working-directory: rotifer-vscode
+        run: npm ci
+
+      - name: Run extension tests
+        working-directory: rotifer-vscode
+        run: npm test
+
+  package:
+    name: Package VSCode Family
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install extension dependencies
+        working-directory: rotifer-vscode
+        run: npm ci
+
+      - name: Package VSCode extension
+        working-directory: rotifer-vscode
+        run: |
+          VERSION=$(node -p "require('../plugin-source/families.json').vscode.version")
+          mkdir -p ../release-artifacts
+          npx --yes @vscode/vsce package --out "../release-artifacts/rotifer-vscode-${VERSION}.vsix"
+
+      - name: Package bundled plugin manifests
+        working-directory: rotifer-vscode
+        run: |
+          VERSION=$(node -p "require('../plugin-source/families.json').vscode.version")
+          tar -czf "../release-artifacts/rotifer-vscode-family-${VERSION}.tar.gz" \
+            .cursor-plugin \
+            .codebuddy-plugin \
+            skills \
+            rules \
+            assets \
+            icon.png \
+            package.json \
+            README.md \
+            CHANGELOG.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vscode-family
+          path: release-artifacts/*
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/vscode-v')
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        with:
+          name: "Rotifer VSCode Family ${{ github.ref_name }}"
+          body: |
+            VSCode family release.
+
+            This release packages the VS Code extension and its bundled plugin manifests from `plugin-source/`.
+          files: |
+            release-artifacts/rotifer-vscode-*.vsix
+            release-artifacts/rotifer-vscode-family-*.tar.gz
+
+      - name: Publish to VS Code Marketplace
+        if: startsWith(github.ref, 'refs/tags/vscode-v')
+        working-directory: rotifer-vscode
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "VSCE_PAT not configured; skipping VS Code Marketplace publish."
+            exit 0
+          fi
+          VERSION=$(node -p "require('../plugin-source/families.json').vscode.version")
+          npx --yes @vscode/vsce publish --packagePath "../release-artifacts/rotifer-vscode-${VERSION}.vsix" -p "$VSCE_PAT"
+
+      - name: Publish to Open VSX
+        if: startsWith(github.ref, 'refs/tags/vscode-v')
+        working-directory: rotifer-vscode
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$OVSX_PAT" ]; then
+            echo "OVSX_PAT not configured; skipping Open VSX publish."
+            exit 0
+          fi
+          VERSION=$(node -p "require('../plugin-source/families.json').vscode.version")
+          npx --yes ovsx publish "../release-artifacts/rotifer-vscode-${VERSION}.vsix"

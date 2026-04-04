@@ -1,0 +1,27 @@
+<svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1e1b4b"/>
+      <stop offset="100%" stop-color="#09090b"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+  <circle cx="64" cy="34" r="5" fill="url(#brand)"/>
+  <circle cx="90" cy="49" r="5" fill="url(#brand)"/>
+  <circle cx="90" cy="79" r="5" fill="url(#brand)"/>
+  <circle cx="64" cy="94" r="5" fill="url(#brand)"/>
+  <circle cx="38" cy="79" r="5" fill="url(#brand)"/>
+  <circle cx="38" cy="49" r="5" fill="url(#brand)"/>
+  <path d="M69 34 A30 30 0 0 1 90 44" stroke="url(#brand)" stroke-width="2" fill="none" opacity="0.6"/>
+  <path d="M93 54 A30 30 0 0 1 93 74" stroke="url(#brand)" stroke-width="2" fill="none" opacity="0.6"/>
+  <path d="M88 84 A30 30 0 0 1 69 94" stroke="url(#brand)" stroke-width="2" fill="none" opacity="0.6"/>
+  <path d="M59 94 A30 30 0 0 1 38 84" stroke="url(#brand)" stroke-width="2" fill="none" opacity="0.6"/>
+  <path d="M35 74 A30 30 0 0 1 35 54" stroke="url(#brand)" stroke-width="2" fill="none" opacity="0.6"/>
+  <path d="M40 44 A30 30 0 0 1 59 34" stroke="url(#brand)" stroke-width="2" fill="none" opacity="0.6"/>
+  <circle cx="64" cy="64" r="12" fill="none" stroke="url(#brand)" stroke-width="2.5" opacity="0.35"/>
+  <circle cx="64" cy="64" r="6" fill="url(#brand)" opacity="0.9"/>
+</svg>

@@ -43,7 +43,7 @@ rotifer arena submit my-search
 
 ```bash
 rotifer search "code format"     # Find community Genes
-rotifer install <gene-id>        # Install to project
+rotifer install <gene-ref>        # Install to project
 rotifer publish my-gene          # Publish to Cloud
 ```
 

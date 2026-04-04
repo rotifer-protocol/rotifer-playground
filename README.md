@@ -9,7 +9,7 @@
 
 Development environment for the **Rotifer Protocol** — build genes, compete in Arenas, share via Cloud, and simulate agent evolution.
 
-> **Status:** v0.8.0 (Iron Shell) — Security hardening, WASM sandbox testing, P2P Protocol RFC, Epoch automation, AI docs assistant, WebMCP Phase 1, plus all v0.7 features (Gene lifecycle, IR compiler, Cloud Binding, Reputation, V(g) scanner, badges, MCP Server). P2P implementation and L4 Collective Immunity are planned — see [Implementation Status](#implementation-status) below.
+> **Status:** v0.8.1 — public playground for gene development, Arena competition, and protocol experimentation. See [CHANGELOG.md](CHANGELOG.md) for detailed release history. P2P implementation and L4 Collective Immunity are still planned — see [Implementation Status](#implementation-status) below.
 
 ---
 
@@ -74,7 +74,7 @@ You see an Arena with 6 genes ranked by fitness. No configuration needed.
 ```bash
 rotifer scan genes/               # Discover candidate functions
 rotifer wrap hello-world           # Wrap as a gene (generates Phenotype)
-rotifer test hello-world           # Run L2 sandbox tests (WASM sandbox for compiled genes)
+rotifer test hello-world           # Run sandbox tests (WASM sandbox for compiled genes)
 rotifer test hello-world --compliance  # Run structural compliance checks
 rotifer arena submit hello-world   # Submit to Arena (admission gate)
 rotifer arena list                 # See your gene's ranking
@@ -95,7 +95,7 @@ export function express(input: { query: string }) {
 EOF
 
 rotifer wrap my-search --domain search
-rotifer compile my-search          # TS → JS → WASM (Javy) → Rotifer IR
+rotifer compile my-search          # TS → JS → WASM → Rotifer IR
 rotifer arena submit my-search     # Watch it climb the rankings
 rotifer arena list --domain search # Compare against Genesis genes
 
@@ -109,7 +109,7 @@ rotifer agent run search-bot --input '{"query":"rotifer protocol"}'
 rotifer agent run search-bot --no-sandbox  # Force Node.js fallback
 ```
 
-**v0.3 highlight:** `rotifer compile` auto-detects TypeScript genes and compiles them to Native WASM via [Javy](https://github.com/bytecodealliance/javy) (QuickJS→WASM). No separate toolchain required.
+`rotifer compile` auto-detects TypeScript genes and compiles them to Native WASM. No separate toolchain required.
 
 ---
 
@@ -119,16 +119,15 @@ rotifer agent run search-bot --no-sandbox  # Force Node.js fallback
 playground/
 ├── crates/
 │   ├── rotifer-core/        Rust: types, sandbox, arena, algebra, fitness, storage
-│   └── rotifer-napi/        napi-rs bridge: Rust ↔ Node.js FFI
-├── src/                     TypeScript CLI (commander.js)
-│   ├── commands/            16 CLI commands
+│   └── rotifer-napi/        Native bridge: Rust ↔ Node.js FFI
+├── src/                     TypeScript CLI and supporting modules
+│   ├── commands/            CLI command modules
 │   ├── cloud/               Cloud Binding client (auth, API, types)
-│   ├── utils/               Config, display, NAPI binding, Javy compiler
-│   └── errors/              Rust-style error formatting
-├── genes/                   5 Genesis genes (bundled)
+│   └── utils/               Config, display, native binding, IR compiler
+├── genes/                   Bundled gene directories
 ├── supabase/                Cloud Binding self-hosting guide
 ├── templates/               Gene + composition scaffolds
-└── tests/                   Unit + E2E test suites (114 tests)
+└── tests/                   Unit + E2E test suites
 ```
 
 ### Layers
@@ -136,31 +135,45 @@ playground/
 | Layer | Technology | Responsibility |
 |-------|-----------|----------------|
 | **CLI** | TypeScript + commander.js | User interface, command routing, display |
-| **Bridge** | napi-rs (cdylib) | Rust-to-Node.js FFI binding |
-| **Core** | Rust + wasmtime | WASM sandbox (Direct + WASI), Arena engine, Algebra executor, Fitness computation, SQLite storage |
+| **Bridge** | Native bridge (cdylib) | Rust-to-Node.js FFI binding |
+| **Core** | Rust + WASM runtime | WASM sandbox (Direct + WASI), Arena engine, Algebra executor, Fitness computation, SQLite storage |
 
 ---
 
 ## CLI Commands
 
+Run `rotifer --help` for the grouped command list. The CLI has **18** primary top-level commands (Development, Cloud, the first four Discovery commands, and Arena & Agents). Six more top-level commands complete the tree: `versions` (Discovery), then `vg`, `network`, `self-update`, `config`, and `whoami` (Tools / Other)—**24** names total.
+
 | Command | Description |
 |---------|-------------|
-| `rotifer init [name]` | Initialize a new gene project with Genesis genes |
-| `rotifer scan [path]` | Scan source files for candidate gene functions |
-| `rotifer wrap <name>` | Wrap a function as a Rotifer gene |
-| `rotifer test [name]` | Test a gene (WASM sandbox preferred, `--compliance` for structural checks) |
-| `rotifer compile [name]` | Compile gene to Rotifer IR (auto TS→WASM via Javy) |
-| `rotifer arena submit <name>` | Submit a gene to the Arena (`--cloud` for Cloud Arena) |
+| `rotifer init [gene-name]` | Initialize a new gene project with Genesis genes |
+| `rotifer scan [path]` | Scan for candidate genes and local skills |
+| `rotifer wrap <gene-name>` | Wrap a function or SKILL.md as a gene |
+| `rotifer test [gene-name]` | Test a gene (WASM sandbox preferred, `--compliance` for structural checks) |
+| `rotifer compile [gene-name]` | Compile gene to Rotifer IR (auto TS→WASM) |
+| `rotifer run <gene-name>` | Execute a single local gene directly |
+| `rotifer list` | List local genes in the current project |
+| `rotifer login` | Log in to Rotifer Cloud (OAuth) |
+| `rotifer logout` | Log out from Rotifer Cloud |
+| `rotifer publish [gene-name]` | Publish gene(s) to Rotifer Cloud |
+| `rotifer search [query]` | Search genes on Rotifer Cloud |
+| `rotifer install <gene-ref>` | Install a gene from Cloud (UUID, name, or content hash) |
+| `rotifer info <gene-ref>` | View gene details (local or Cloud) |
+| `rotifer stats <gene-ref>` | View download statistics for a gene |
+| `rotifer compare [gene-refs...]` | Compare 2–5 genes by reputation and downloads |
+| `rotifer reputation [gene-ref]` | View gene and developer reputation scores |
+| `rotifer versions <owner> <gene-name>` | View version history chain for a gene |
+| `rotifer arena submit <gene-name>` | Submit a gene to the Arena (`--cloud` for Cloud Arena) |
 | `rotifer arena list` | List Arena rankings (`--cloud` for Cloud Arena) |
 | `rotifer arena watch <domain>` | Watch Arena rankings live (`--cloud` for Cloud Arena) |
-| `rotifer login` | Log in to Rotifer Cloud via GitHub OAuth |
-| `rotifer logout` | Log out from Rotifer Cloud |
-| `rotifer publish <name>` | Publish a gene to Rotifer Cloud |
-| `rotifer search [query]` | Search genes on Rotifer Cloud |
-| `rotifer install <gene-id>` | Install a gene from Rotifer Cloud |
-| `rotifer agent create <name>` | Create an Agent (`--composition Seq\|Par\|Cond\|Try`) |
+| `rotifer agent create <agent-name>` | Create an Agent (`--composition Seq\|Par\|Cond\|Try\|TryPool`) |
 | `rotifer agent list` | List all agents |
-| `rotifer agent run <name>` | Execute genome pipeline (WASM sandbox, `--no-sandbox` for Node.js) |
+| `rotifer agent run <agent-name>` | Execute genome pipeline (WASM sandbox, `--no-sandbox` for Node.js) |
+| `rotifer vg [path]` | V(g) security scan for gene/skill code |
+| `rotifer network` | P2P gene network commands (see `rotifer network --help`) |
+| `rotifer self-update` | Check for updates and upgrade Rotifer packages |
+| `rotifer config` | Manage global Rotifer configuration |
+| `rotifer whoami` | Show current authentication status |
 
 ---
 
@@ -198,13 +211,13 @@ See `templates/composition/` for JSON examples.
 
 ```bash
 git clone https://github.com/rotifer-protocol/rotifer-playground.git
-cd playground
+cd rotifer-playground
 
 # TypeScript CLI
 npm install
 npm run build          # Build to dist/
-npm test               # Run 114 TypeScript tests
-npm run lint           # Type check only
+npm test               # Run the TypeScript test suite (Vitest)
+npm run lint           # Type-check and lint src/
 
 # Rust Core (requires Rust toolchain)
 cargo check -p rotifer-core
@@ -218,18 +231,18 @@ bash demo.sh
 
 ## Implementation Status
 
-> This project is in **alpha**. The table below shows the honest implementation status of each URAA layer as of v0.5.5.
+> This project is in **alpha**. The table below shows the honest implementation status of each URAA layer.
 
 | URAA Layer | Spec Name | Status | What Works | What's Planned |
 |------------|-----------|--------|------------|----------------|
 | **L0** | Kernel | **~35%** | `L0Gate` pre-execution checks (domain, resource, network, filesystem); Audit log | EthicalBoundary, State Anchoring, Trust Anchor |
-| **L1** | Synthesis | **~95%** | WASM sandbox (wasmtime), IR compiler, Javy TS→WASM, NAPI bridge | Full WASI capability negotiation |
+| **L1** | Synthesis | **~95%** | WASM sandbox, IR compiler, TS→WASM compilation, native bridge | Full WASI capability negotiation |
 | **L2** | Calibration | **~40%** | Schema validation, sandbox testing, `--compliance` checks | Static analysis, controlled field trial |
-| **L3** | Competition | **~60%** | Arena ranking, F(g) multiplicative model, R(g) reputation, Cloud Registry | P2P HLT broadcasting (stub only), hot-loading, retirement |
+| **L3** | Competition | **~60%** | Arena ranking, F(g) multiplicative model, R(g) reputation, Cloud Registry | P2P HLT broadcasting (planned), hot-loading, retirement |
 | **L4** | Collective Immunity | **0%** | — | Threat broadcasting, emergency rollback, cross-node consensus |
 | **Algebra** | Composition | **~90%** | All 5 operators in Rust; CLI supports Seq/Par/Cond/Try | DataFlowGraph |
 
-**Key limitation:** L4 depends on L3's P2P network, which is currently a stub. Full L4 is targeted for v0.9+.
+**Key limitation:** L4 depends on L3's P2P network, which is planned. Full L4 is targeted for v0.9+.
 
 ---
 
@@ -242,7 +255,7 @@ Targets **Rotifer Protocol Specification** (Frozen). See [Implementation Status]
 | **Full** | Phenotype, AlgebraExpr, Fitness F(g), Arena | Core gene lifecycle |
 | **Functional** | WASM Sandbox, L0 Gate, Reputation R(g) | L0 at ~35%, expanding |
 | **Simplified** | Agent Lifecycle, Gene Lifecycle, RotiferBinding | MVP subset |
-| **Stub/Planned** | P2P HLT, Formal Verification, Cross-Binding Consistency, ZK Proofs, L4 Immunity | Roadmap items |
+| **Planned** | P2P HLT, Formal Verification, Cross-Binding Consistency, ZK Proofs, L4 Immunity | Roadmap items |
 
 Changes driven by implementation feedback are proposed through the ADR process.
 
@@ -250,18 +263,10 @@ Changes driven by implementation feedback are proposed through the ADR process.
 
 ## Roadmap
 
-- [x] **v0.1** — Core CLI + Genesis genes + Arena
-- [x] **v0.2** — IR compiler pipeline, live Arena watching, NAPI bridge
-- [x] **v0.3** — Frontend SDK: TS→WASM auto-compilation via Javy, WASI sandbox support
-- [x] **v0.4** — Cloud Binding: publish/search/install genes, Cloud Arena, GitHub OAuth
-- [x] **v0.5** — Reputation System, developer documentation, L0 Gate
-- [x] **v0.5.5** — Foundation Hardening: WASM sandbox enforcement, L0 Gate integration, F(g) spec alignment
-- [ ] **v0.6** — Web Registry: dynamic gene pages, developer profiles, gene cold start (≥50 genes)
-- [ ] **v0.6.5** — Cross-Binding Proof: `RotiferBinding` trait, Web3 Mock Binding, IR interop validation
-- [ ] **v0.7** — Hybrid Gene, IDE plugins (Cursor/VS Code), developer dogfooding
-- [ ] **v0.8** — Security hardening, P2P protocol design (RFC)
-- [ ] **v0.9** — P2P network (metadata discovery), economic framework design
-- [ ] **v1.0** — Stable release: L0-L3 complete, economic system, security audit
+See [CHANGELOG.md](CHANGELOG.md) for detailed release history. Upcoming milestones:
+
+- **v0.9** — P2P network (metadata discovery), economic framework design
+- **v1.0** — Stable release: L0-L3 complete, economic system, security audit
 
 ---
 

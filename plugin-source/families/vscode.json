@@ -1,0 +1,110 @@
+{
+  "packageSync": {
+    "name": "rotifer-vscode",
+    "displayName": "Rotifer Protocol",
+    "description": "Gene browser, installer, and developer tools for the Rotifer Protocol",
+    "publisher": "rotifer-foundation",
+    "license": "Apache-2.0",
+    "homepage": "https://rotifer.dev",
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/rotifer-protocol/rotifer-playground"
+    },
+    "bugs": {
+      "url": "https://github.com/rotifer-protocol/rotifer-playground/issues"
+    },
+    "icon": "icon.png",
+    "keywords": [
+      "rotifer",
+      "gene",
+      "ai-agent",
+      "mcp",
+      "wasm",
+      "arena",
+      "protocol",
+      "self-evolving",
+      "autonomous-agent",
+      "evolution",
+      "fitness",
+      "code-as-gene",
+      "ai-tools",
+      "agent-framework"
+    ],
+    "engines": {
+      "vscode": "^1.85.0"
+    },
+    "categories": [
+      "Other",
+      "Machine Learning"
+    ]
+  },
+  "cursor": {
+    "name": "rotifer-protocol",
+    "description": "Browse, install, and evolve AI agent capabilities with the Rotifer Protocol. Turn static skills into competing Genes in a live Arena.",
+    "author": {
+      "name": "Rotifer Foundation"
+    },
+    "homepage": "https://rotifer.dev",
+    "repository": "https://github.com/rotifer-protocol/rotifer-playground",
+    "license": "Apache-2.0",
+    "keywords": [
+      "rotifer",
+      "gene",
+      "ai-agent",
+      "evolution",
+      "arena",
+      "wasm",
+      "fitness"
+    ],
+    "logo": "assets/logo.png",
+    "skills": [
+      "skills/"
+    ],
+    "rules": [
+      "rules/"
+    ]
+  },
+  "codebuddy": {
+    "name": "rotifer-protocol",
+    "owner": "Rotifer Foundation",
+    "plugins": [
+      {
+        "name": "rotifer",
+        "source": ".",
+        "description": "Browse, install, and evolve AI agent capabilities with the Rotifer Protocol. Turn static skills into competing Genes in a live Arena.",
+        "author": "Rotifer Foundation",
+        "homepage": "https://rotifer.dev",
+        "repository": "https://github.com/rotifer-protocol/rotifer-playground",
+        "license": "Apache-2.0",
+        "keywords": [
+          "rotifer",
+          "gene",
+          "ai-agent",
+          "evolution",
+          "arena",
+          "wasm"
+        ],
+        "category": "Developer Tools"
+      }
+    ]
+  },
+  "codebuddyPlugin": {
+    "name": "rotifer",
+    "description": "Browse, install, and evolve AI agent capabilities with the Rotifer Protocol. Turn static skills into competing Genes in a live Arena.",
+    "author": {
+      "name": "Rotifer Foundation"
+    },
+    "homepage": "https://rotifer.dev",
+    "repository": "https://github.com/rotifer-protocol/rotifer-playground",
+    "license": "Apache-2.0",
+    "keywords": [
+      "rotifer",
+      "gene",
+      "ai-agent",
+      "evolution",
+      "arena",
+      "wasm"
+    ],
+    "category": "Developer Tools"
+  }
+}

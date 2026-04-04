@@ -1,0 +1,16 @@
+{
+  "name": "rotifer-protocol",
+  "owner": {
+    "name": "Rotifer Protocol"
+  },
+  "metadata": {
+    "description": "Rotifer plugin collection for Cursor and Git-based marketplace installs"
+  },
+  "plugins": [
+    {
+      "name": "rotifer-protocol",
+      "source": "plugins/rotifer",
+      "description": "Self-evolving AI Agent framework — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically"
+    }
+  ]
+}

@@ -9,7 +9,7 @@
 
 **Rotifer Protocol** 的开发环境——构建基因、运行 Arena 竞争、通过 Cloud 共享、模拟代理进化。
 
-> **状态：** v0.8.0（Iron Shell）— 安全加固、WASM 沙箱测试、P2P Protocol RFC、Epoch 自动化、AI 文档助手、WebMCP Phase 1，以及 v0.7 全部功能（基因生命周期、IR 编译器、Cloud Binding、声誉系统、V(g) 扫描器、徽章、MCP Server）。P2P 实现和 L4 集体免疫为规划中功能——详见下方[实现状态](#实现状态)。
+> **状态：** v0.8.1——面向基因开发、Arena 竞争和协议实验的公开 Playground。详细版本历史请参见 [CHANGELOG.md](CHANGELOG.md)。P2P 实现与 L4 集体免疫仍在规划中——详见下方[实现状态](#实现状态)。
 
 ---
 
@@ -109,7 +109,7 @@ rotifer agent run search-bot --input '{"query":"rotifer protocol"}'
 rotifer agent run search-bot --no-sandbox  # 强制 Node.js 回退
 ```
 
-**v0.3 亮点：** `rotifer compile` 自动检测 TypeScript 基因，通过 [Javy](https://github.com/bytecodealliance/javy)（QuickJS→WASM）编译为原生 WASM，无需额外工具链。
+**说明：** `rotifer compile` 自动检测 TypeScript 基因，通过 [Javy](https://github.com/bytecodealliance/javy)（QuickJS→WASM）编译为原生 WASM，无需额外工具链。
 
 ---
 
@@ -120,13 +120,14 @@ playground/
 ├── crates/
 │   ├── rotifer-core/        Rust: 类型、沙箱、Arena、代数、适应度、存储
 │   └── rotifer-napi/        napi-rs 桥接: Rust ↔ Node.js FFI
-├── src/                     TypeScript CLI (commander.js)
-│   ├── commands/            11 个 CLI 命令
-│   ├── utils/               配置、显示、NAPI 绑定、Javy 编译器
-│   └── errors/              Rust 风格的错误格式化
-├── genes/                   5 个 Genesis 基因（内置）
+├── src/                     TypeScript CLI 与支撑模块
+│   ├── commands/            CLI 命令模块
+│   ├── cloud/               Cloud Binding 客户端（auth、API、types）
+│   └── utils/               配置、显示、NAPI 绑定、IR 编译器
+├── genes/                   随仓库提供的 gene 目录
+├── supabase/                Cloud Binding 自托管指南
 ├── templates/               基因 + 组合脚手架模板
-└── tests/                   单元测试 + E2E 测试（91 个测试）
+└── tests/                   单元测试 + E2E 测试
 ```
 
 ### 分层
@@ -141,19 +142,38 @@ playground/
 
 ## CLI 命令
 
+运行 `rotifer --help` 查看按模块分组的命令列表。常用命令如下：
+
 | 命令 | 说明 |
 |------|------|
-| `rotifer init [name]` | 初始化新的基因项目（包含 Genesis 基因） |
-| `rotifer scan [path]` | 扫描源文件中的候选基因函数 |
-| `rotifer wrap <name>` | 将函数包装为 Rotifer 基因 |
-| `rotifer test [name]` | 测试基因（WASM 沙箱优先，`--compliance` 运行结构性检查） |
-| `rotifer compile [name]` | 编译基因为 Rotifer IR（自动 TS→WASM via Javy） |
-| `rotifer arena submit <name>` | 将基因提交到 Arena（`--cloud` 提交到 Cloud Arena） |
-| `rotifer arena list` | 列出 Arena 排名（`--cloud` 查看 Cloud Arena） |
-| `rotifer arena watch <domain>` | 观察 Arena 排名（`--cloud` 查看 Cloud Arena） |
-| `rotifer agent create <name>` | 创建 Agent（`--composition Seq\|Par\|Cond\|Try`） |
-| `rotifer agent list` | 列出所有 Agent |
-| `rotifer agent run <name>` | 执行基因组管线（WASM 沙箱，`--no-sandbox` 走 Node.js） |
+| `rotifer init [gene-name]` | 初始化新的 Rotifer 基因项目 |
+| `rotifer scan [path]` | 扫描候选基因和本地技能 |
+| `rotifer wrap <gene-name>` | 将函数或 `SKILL.md` 包装为基因 |
+| `rotifer test [gene-name]` | 在沙箱中测试基因 |
+| `rotifer compile [gene-name]` | 将基因编译为 Rotifer IR（WASM） |
+| `rotifer run <gene-name>` | 直接执行单个本地基因 |
+| `rotifer list` | 列出当前项目中的本地基因 |
+| `rotifer login` | 登录 Rotifer Cloud |
+| `rotifer logout` | 从 Rotifer Cloud 登出 |
+| `rotifer publish [gene-name]` | 将基因发布到 Rotifer Cloud |
+| `rotifer search [query]` | 在 Rotifer Cloud 中搜索基因 |
+| `rotifer install <gene-ref>` | 从 Rotifer Cloud 安装基因 |
+| `rotifer info <gene-ref>` | 查看基因详情（本地或 Cloud） |
+| `rotifer stats <gene-ref>` | 查看基因下载统计 |
+| `rotifer compare [gene-refs...]` | 按声誉与下载量对比 2-5 个基因 |
+| `rotifer reputation [gene-ref]` | 查看基因与开发者声誉分数 |
+| `rotifer versions <owner> <gene-name>` | 查看某个基因的版本链 |
+| `rotifer arena submit <gene-name>` | 将基因提交到 Arena 竞争 |
+| `rotifer arena list` | 列出 Arena 排名 |
+| `rotifer arena watch <domain>` | 实时观察 Arena 排名 |
+| `rotifer agent create <agent-name>` | 用基因组创建 Agent |
+| `rotifer agent list` | 列出全部 Agent |
+| `rotifer agent run <agent-name>` | 执行 Agent 的基因组管线 |
+| `rotifer vg [path]` | 对基因代码执行 V(g) 安全扫描 |
+| `rotifer network` | P2P 基因网络命令 |
+| `rotifer self-update` | 检查并升级 Rotifer 包 |
+| `rotifer config` | 管理全局 Rotifer 配置 |
+| `rotifer whoami` | 显示当前认证状态 |
 
 ---
 
@@ -191,13 +211,13 @@ JSON 示例参见 `templates/composition/`。
 
 ```bash
 git clone https://github.com/rotifer-protocol/rotifer-playground.git
-cd playground
+cd rotifer-playground
 
 # TypeScript CLI
 npm install
 npm run build          # 构建到 dist/
-npm test               # 运行 91 个 TypeScript 测试
-npm run lint           # 仅类型检查
+npm test               # 运行 TypeScript 测试套件（Vitest）
+npm run lint           # 对 src/ 做类型检查和 lint
 
 # Rust Core（需要 Rust 工具链）
 cargo check -p rotifer-core
@@ -211,7 +231,7 @@ bash demo.sh
 
 ## 实现状态
 
-> 本项目处于 **alpha** 阶段。下表展示了截至 v0.5.5 各 URAA 层级的真实实现状态。
+> 本项目处于 **alpha** 阶段。下表展示了当前各 URAA 层级的真实实现状态。
 
 | URAA 层级 | 规范名称 | 完成度 | 已可用 | 规划中 |
 |-----------|---------|--------|--------|--------|
@@ -243,18 +263,10 @@ bash demo.sh
 
 ## 路线图
 
-- [x] **v0.1** — 核心 CLI + Genesis 基因 + Arena
-- [x] **v0.2** — IR 编译器管线、实时 Arena 观察、NAPI 桥接
-- [x] **v0.3** — 前端 SDK：TS→WASM 自动编译 via Javy、WASI 沙箱支持
-- [x] **v0.4** — Cloud Binding：发布/搜索/安装基因、Cloud Arena、GitHub OAuth
-- [x] **v0.5** — 声誉系统、开发者文档、L0 Gate
-- [x] **v0.5.5** — 地基加固：WASM 沙箱强制执行、L0 Gate 集成、F(g) 规范对齐
-- [ ] **v0.6** — Web Registry：动态 Gene 页面、开发者主页、Gene 冷启动（≥50 个 Gene）
-- [ ] **v0.6.5** — 跨绑定验证：`RotiferBinding` trait、Web3 Mock Binding、IR 互操作验证
-- [ ] **v0.7** — 混合基因、IDE 插件（Cursor/VS Code）、开发者 dogfooding
-- [ ] **v0.8** — 安全加固、P2P 协议设计（RFC）
-- [ ] **v0.9** — P2P 网络（元数据发现）、经济体系设计
-- [ ] **v1.0** — 稳定版：L0-L3 完整、经济体系上线、安全审计
+详细发布历史请参见 [CHANGELOG.md](CHANGELOG.md)。接下来的里程碑：
+
+- **v0.9** — P2P 网络（元数据发现）、经济体系设计
+- **v1.0** — 稳定版：L0-L3 完整、经济体系上线、安全审计
 
 ---
 

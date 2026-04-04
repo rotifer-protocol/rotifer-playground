@@ -14,9 +14,29 @@
     "url": "https://github.com/rotifer-protocol/rotifer-playground/issues"
   },
   "icon": "icon.png",
-  "keywords": ["rotifer", "gene", "ai-agent", "mcp", "wasm", "arena", "protocol", "self-evolving", "autonomous-agent", "evolution", "fitness", "code-as-gene", "ai-tools", "agent-framework"],
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Other", "Machine Learning"],
+  "keywords": [
+    "rotifer",
+    "gene",
+    "ai-agent",
+    "mcp",
+    "wasm",
+    "arena",
+    "protocol",
+    "self-evolving",
+    "autonomous-agent",
+    "evolution",
+    "fitness",
+    "code-as-gene",
+    "ai-tools",
+    "agent-framework"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
   "activationEvents": [
     "onView:rotiferGenes",
     "onView:rotiferLocalGenes",
@@ -50,66 +70,224 @@
       ]
     },
     "commands": [
-      { "command": "rotifer.refreshGenes", "title": "Refresh Gene Registry", "icon": "$(refresh)" },
-      { "command": "rotifer.installGene", "title": "Install Gene", "icon": "$(cloud-download)" },
-      { "command": "rotifer.geneDetails", "title": "View Gene Details" },
-      { "command": "rotifer.showReputation", "title": "View Gene Reputation" },
-      { "command": "rotifer.geneStats", "title": "View Gene Statistics" },
-      { "command": "rotifer.geneVersions", "title": "View Version History" },
-      { "command": "rotifer.searchGenes", "title": "Rotifer: Search Genes", "icon": "$(search)" },
-      { "command": "rotifer.compareGenes", "title": "Rotifer: Compare Genes" },
-      { "command": "rotifer.publishSkill", "title": "Rotifer: Publish as Gene", "icon": "$(cloud-upload)" },
-      { "command": "rotifer.login", "title": "Rotifer: Sign In" },
-      { "command": "rotifer.logout", "title": "Rotifer: Sign Out" },
-      { "command": "rotifer.authMenu", "title": "Rotifer: Auth Menu" },
-      { "command": "rotifer.refreshLocalGenes", "title": "Refresh Local Genes", "icon": "$(refresh)" },
-      { "command": "rotifer.initProject", "title": "Rotifer: Initialize Project" },
-      { "command": "rotifer.scanGenes", "title": "Rotifer: Scan for Genes" },
-      { "command": "rotifer.wrapGene", "title": "Rotifer: Wrap Gene" },
-      { "command": "rotifer.testGene", "title": "Rotifer: Test Gene", "icon": "$(testing-run-icon)" },
-      { "command": "rotifer.compileGene", "title": "Rotifer: Compile Gene", "icon": "$(gear)" },
-      { "command": "rotifer.runGene", "title": "Rotifer: Run Gene", "icon": "$(play)" },
-      { "command": "rotifer.refreshArena", "title": "Refresh Arena Rankings", "icon": "$(refresh)" },
-      { "command": "rotifer.arenaSubmit", "title": "Rotifer: Submit to Arena", "icon": "$(trophy)" },
-      { "command": "rotifer.createAgent", "title": "Rotifer: Create Agent" },
-      { "command": "rotifer.listAgents", "title": "Rotifer: List Agents" },
-      { "command": "rotifer.runAgent", "title": "Rotifer: Run Agent" },
-      { "command": "rotifer.showLeaderboard", "title": "Rotifer: Developer Leaderboard" },
-      { "command": "rotifer.myReputation", "title": "Rotifer: My Reputation" }
+      {
+        "command": "rotifer.refreshGenes",
+        "title": "Refresh Gene Registry",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "rotifer.installGene",
+        "title": "Install Gene",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "rotifer.geneDetails",
+        "title": "View Gene Details"
+      },
+      {
+        "command": "rotifer.showReputation",
+        "title": "View Gene Reputation"
+      },
+      {
+        "command": "rotifer.geneStats",
+        "title": "View Gene Statistics"
+      },
+      {
+        "command": "rotifer.geneVersions",
+        "title": "View Version History"
+      },
+      {
+        "command": "rotifer.searchGenes",
+        "title": "Rotifer: Search Genes",
+        "icon": "$(search)"
+      },
+      {
+        "command": "rotifer.compareGenes",
+        "title": "Rotifer: Compare Genes"
+      },
+      {
+        "command": "rotifer.publishSkill",
+        "title": "Rotifer: Publish as Gene",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "rotifer.login",
+        "title": "Rotifer: Sign In"
+      },
+      {
+        "command": "rotifer.logout",
+        "title": "Rotifer: Sign Out"
+      },
+      {
+        "command": "rotifer.authMenu",
+        "title": "Rotifer: Auth Menu"
+      },
+      {
+        "command": "rotifer.refreshLocalGenes",
+        "title": "Refresh Local Genes",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "rotifer.initProject",
+        "title": "Rotifer: Initialize Project"
+      },
+      {
+        "command": "rotifer.scanGenes",
+        "title": "Rotifer: Scan for Genes"
+      },
+      {
+        "command": "rotifer.wrapGene",
+        "title": "Rotifer: Wrap Gene"
+      },
+      {
+        "command": "rotifer.testGene",
+        "title": "Rotifer: Test Gene",
+        "icon": "$(testing-run-icon)"
+      },
+      {
+        "command": "rotifer.compileGene",
+        "title": "Rotifer: Compile Gene",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "rotifer.runGene",
+        "title": "Rotifer: Run Gene",
+        "icon": "$(play)"
+      },
+      {
+        "command": "rotifer.refreshArena",
+        "title": "Refresh Arena Rankings",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "rotifer.arenaSubmit",
+        "title": "Rotifer: Submit to Arena",
+        "icon": "$(trophy)"
+      },
+      {
+        "command": "rotifer.createAgent",
+        "title": "Rotifer: Create Agent"
+      },
+      {
+        "command": "rotifer.listAgents",
+        "title": "Rotifer: List Agents"
+      },
+      {
+        "command": "rotifer.runAgent",
+        "title": "Rotifer: Run Agent"
+      },
+      {
+        "command": "rotifer.showLeaderboard",
+        "title": "Rotifer: Developer Leaderboard"
+      },
+      {
+        "command": "rotifer.myReputation",
+        "title": "Rotifer: My Reputation"
+      }
     ],
     "menus": {
       "view/title": [
-        { "command": "rotifer.refreshGenes", "when": "view == rotiferGenes", "group": "navigation" },
-        { "command": "rotifer.searchGenes", "when": "view == rotiferGenes", "group": "navigation" },
-        { "command": "rotifer.refreshLocalGenes", "when": "view == rotiferLocalGenes", "group": "navigation" },
-        { "command": "rotifer.refreshArena", "when": "view == rotiferArena", "group": "navigation" }
+        {
+          "command": "rotifer.refreshGenes",
+          "when": "view == rotiferGenes",
+          "group": "navigation"
+        },
+        {
+          "command": "rotifer.searchGenes",
+          "when": "view == rotiferGenes",
+          "group": "navigation"
+        },
+        {
+          "command": "rotifer.refreshLocalGenes",
+          "when": "view == rotiferLocalGenes",
+          "group": "navigation"
+        },
+        {
+          "command": "rotifer.refreshArena",
+          "when": "view == rotiferArena",
+          "group": "navigation"
+        }
       ],
       "view/item/context": [
-        { "command": "rotifer.installGene", "when": "view == rotiferGenes && viewItem == gene", "group": "inline" },
-        { "command": "rotifer.showReputation", "when": "view == rotiferGenes && viewItem == gene" },
-        { "command": "rotifer.geneStats", "when": "view == rotiferGenes && viewItem == gene" },
-        { "command": "rotifer.geneVersions", "when": "view == rotiferGenes && viewItem == gene" },
-        { "command": "rotifer.testGene", "when": "view == rotiferLocalGenes && viewItem =~ /localGene/", "group": "inline" },
-        { "command": "rotifer.compileGene", "when": "view == rotiferLocalGenes && viewItem =~ /localGene/" },
-        { "command": "rotifer.runGene", "when": "view == rotiferLocalGenes && viewItem =~ /localGene/" },
-        { "command": "rotifer.arenaSubmit", "when": "view == rotiferLocalGenes && viewItem == localGenePublished" }
+        {
+          "command": "rotifer.installGene",
+          "when": "view == rotiferGenes && viewItem == gene",
+          "group": "inline"
+        },
+        {
+          "command": "rotifer.showReputation",
+          "when": "view == rotiferGenes && viewItem == gene"
+        },
+        {
+          "command": "rotifer.geneStats",
+          "when": "view == rotiferGenes && viewItem == gene"
+        },
+        {
+          "command": "rotifer.geneVersions",
+          "when": "view == rotiferGenes && viewItem == gene"
+        },
+        {
+          "command": "rotifer.testGene",
+          "when": "view == rotiferLocalGenes && viewItem =~ /localGene/",
+          "group": "inline"
+        },
+        {
+          "command": "rotifer.compileGene",
+          "when": "view == rotiferLocalGenes && viewItem =~ /localGene/"
+        },
+        {
+          "command": "rotifer.runGene",
+          "when": "view == rotiferLocalGenes && viewItem =~ /localGene/"
+        },
+        {
+          "command": "rotifer.arenaSubmit",
+          "when": "view == rotiferLocalGenes && viewItem == localGenePublished"
+        }
       ],
       "explorer/context": [
-        { "command": "rotifer.publishSkill", "when": "resourceFilename == SKILL.md", "group": "rotifer@1" }
+        {
+          "command": "rotifer.publishSkill",
+          "when": "resourceFilename == SKILL.md",
+          "group": "rotifer@1"
+        }
       ],
       "commandPalette": [
-        { "command": "rotifer.searchGenes" },
-        { "command": "rotifer.compareGenes" },
-        { "command": "rotifer.login" },
-        { "command": "rotifer.logout" },
-        { "command": "rotifer.initProject" },
-        { "command": "rotifer.scanGenes" },
-        { "command": "rotifer.wrapGene" },
-        { "command": "rotifer.createAgent" },
-        { "command": "rotifer.listAgents" },
-        { "command": "rotifer.runAgent" },
-        { "command": "rotifer.showLeaderboard" },
-        { "command": "rotifer.myReputation" }
+        {
+          "command": "rotifer.searchGenes"
+        },
+        {
+          "command": "rotifer.compareGenes"
+        },
+        {
+          "command": "rotifer.login"
+        },
+        {
+          "command": "rotifer.logout"
+        },
+        {
+          "command": "rotifer.initProject"
+        },
+        {
+          "command": "rotifer.scanGenes"
+        },
+        {
+          "command": "rotifer.wrapGene"
+        },
+        {
+          "command": "rotifer.createAgent"
+        },
+        {
+          "command": "rotifer.listAgents"
+        },
+        {
+          "command": "rotifer.runAgent"
+        },
+        {
+          "command": "rotifer.showLeaderboard"
+        },
+        {
+          "command": "rotifer.myReputation"
+        }
       ]
     },
     "viewsWelcome": [
@@ -136,19 +314,25 @@
             "id": "browseRegistry",
             "title": "Browse the Gene Registry",
             "description": "Click the Rotifer icon in the Activity Bar to see all published Genes.\n[Open Gene Registry](command:rotiferGenes.focus)",
-            "media": { "markdown": "walkthrough/browse.md" }
+            "media": {
+              "markdown": "walkthrough/browse.md"
+            }
           },
           {
             "id": "installGene",
             "title": "Install Your First Gene",
             "description": "Right-click any Gene → Install Gene. It downloads to your `genes/` folder.\n[Search Genes](command:rotifer.searchGenes)",
-            "media": { "markdown": "walkthrough/install.md" }
+            "media": {
+              "markdown": "walkthrough/install.md"
+            }
           },
           {
             "id": "submitArena",
             "title": "Submit to the Arena",
             "description": "Your Gene competes against others. The fittest survive.\n[View Arena](command:rotiferArena.focus)",
-            "media": { "markdown": "walkthrough/arena.md" }
+            "media": {
+              "markdown": "walkthrough/arena.md"
+            }
           }
         ]
       }
@@ -174,6 +358,9 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "vitest run"
+  },
+  "overrides": {
+    "picomatch": "^4.0.4"
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0",

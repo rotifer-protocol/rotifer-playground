@@ -1,0 +1,98 @@
+{
+  "cursorMarketplace": {
+    "name": "rotifer-protocol",
+    "owner": {
+      "name": "Rotifer Protocol"
+    },
+    "metadata": {
+      "description": "Rotifer plugin collection for Cursor and Git-based marketplace installs"
+    },
+    "plugins": [
+      {
+        "name": "rotifer-protocol",
+        "source": "plugins/rotifer",
+        "description": "Self-evolving AI Agent framework — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically"
+      }
+    ]
+  },
+  "cursorPlugin": {
+    "name": "rotifer-protocol",
+    "description": "Self-evolving AI Agent framework — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically",
+    "author": {
+      "name": "Rotifer Protocol",
+      "url": "https://rotifer.dev"
+    },
+    "homepage": "https://rotifer.dev",
+    "repository": "https://github.com/rotifer-protocol/rotifer-playground",
+    "license": "Apache-2.0",
+    "keywords": [
+      "rotifer",
+      "gene",
+      "ai-agent",
+      "evolution",
+      "arena",
+      "mcp",
+      "wasm"
+    ],
+    "logo": "assets/icon.png",
+    "skills": [
+      "skills/"
+    ],
+    "rules": [
+      "rules/"
+    ],
+    "mcpServers": {
+      "rotifer": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@rotifer/mcp-server"
+        ]
+      }
+    }
+  },
+  "codebuddyMarketplace": {
+    "name": "rotifer-protocol",
+    "owner": "Rotifer Protocol",
+    "plugins": [
+      {
+        "name": "rotifer-evolving-agent",
+        "source": "plugins/rotifer",
+        "description": "Self-evolving AI Agent — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically",
+        "author": "Rotifer Protocol",
+        "homepage": "https://rotifer.dev",
+        "repository": "https://github.com/rotifer-protocol/rotifer-playground",
+        "license": "Apache-2.0",
+        "keywords": [
+          "rotifer",
+          "gene",
+          "ai-agent",
+          "evolution",
+          "arena",
+          "mcp"
+        ],
+        "category": "Developer Tools"
+      }
+    ]
+  },
+  "codebuddyPlugin": {
+    "name": "rotifer-evolving-agent",
+    "description": "Self-evolving AI Agent — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically",
+    "author": {
+      "name": "Rotifer Protocol",
+      "url": "https://rotifer.dev"
+    },
+    "homepage": "https://rotifer.dev",
+    "repository": "https://github.com/rotifer-protocol/rotifer-playground",
+    "license": "Apache-2.0",
+    "keywords": [
+      "rotifer",
+      "gene",
+      "ai-agent",
+      "evolution",
+      "arena",
+      "mcp"
+    ],
+    "category": "Developer Tools"
+  }
+}

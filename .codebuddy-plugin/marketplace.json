@@ -4,15 +4,22 @@
   "plugins": [
     {
       "name": "rotifer-evolving-agent",
-      "source": "./plugins/rotifer-evolving-agent",
+      "source": "plugins/rotifer",
       "description": "Self-evolving AI Agent — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically",
-      "version": "0.8.1",
       "author": "Rotifer Protocol",
       "homepage": "https://rotifer.dev",
       "repository": "https://github.com/rotifer-protocol/rotifer-playground",
       "license": "Apache-2.0",
-      "keywords": ["rotifer", "gene", "ai-agent", "evolution", "arena", "mcp"],
-      "category": "Developer Tools"
+      "keywords": [
+        "rotifer",
+        "gene",
+        "ai-agent",
+        "evolution",
+        "arena",
+        "mcp"
+      ],
+      "category": "Developer Tools",
+      "version": "0.8.2"
     }
   ]
 }

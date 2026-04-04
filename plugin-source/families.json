@@ -1,0 +1,30 @@
+{
+  "root": {
+    "version": "0.8.2",
+    "releaseTag": "root-plugin-v{version}",
+    "description": "Root Cursor + CodeBuddy plugin family",
+    "outputRoots": [
+      ".cursor-plugin/marketplace.json",
+      ".codebuddy-plugin/marketplace.json",
+      "plugins/rotifer/.cursor-plugin/",
+      "plugins/rotifer/.codebuddy-plugin/",
+      "plugins/rotifer/assets/",
+      "plugins/rotifer/skills/",
+      "plugins/rotifer/rules/"
+    ]
+  },
+  "vscode": {
+    "version": "0.8.1",
+    "releaseTag": "vscode-v{version}",
+    "description": "VS Code extension family",
+    "outputRoots": [
+      "rotifer-vscode/package.json",
+      "rotifer-vscode/icon.png",
+      "rotifer-vscode/assets/",
+      "rotifer-vscode/skills/",
+      "rotifer-vscode/rules/",
+      "rotifer-vscode/.cursor-plugin/",
+      "rotifer-vscode/.codebuddy-plugin/"
+    ]
+  }
+}

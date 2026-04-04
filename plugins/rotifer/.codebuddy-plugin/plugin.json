@@ -1,0 +1,21 @@
+{
+  "name": "rotifer-evolving-agent",
+  "description": "Self-evolving AI Agent — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically",
+  "author": {
+    "name": "Rotifer Protocol",
+    "url": "https://rotifer.dev"
+  },
+  "homepage": "https://rotifer.dev",
+  "repository": "https://github.com/rotifer-protocol/rotifer-playground",
+  "license": "Apache-2.0",
+  "keywords": [
+    "rotifer",
+    "gene",
+    "ai-agent",
+    "evolution",
+    "arena",
+    "mcp"
+  ],
+  "category": "Developer Tools",
+  "version": "0.8.2"
+}

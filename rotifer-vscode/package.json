@@ -37,11 +37,6 @@
     "Other",
     "Machine Learning"
   ],
-  "activationEvents": [
-    "onView:rotiferGenes",
-    "onView:rotiferLocalGenes",
-    "onView:rotiferArena"
-  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {

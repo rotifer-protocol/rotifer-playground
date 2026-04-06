@@ -3,7 +3,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-const EXPERIMENT_DIR = join(__dirname, "../../experiments/api-apocalypse");
+const EXPERIMENT_DIR = join(__dirname, "../../examples/api-apocalypse");
 
 describe("API Apocalypse experiment", () => {
   describe("file structure", () => {

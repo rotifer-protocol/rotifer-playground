@@ -1,0 +1,18 @@
+# D31: npm package ships only genesis genes (rotifer init needs them).
+# All other genes are available via Rotifer Cloud (D1: Cloud-Centric Gene ecosystem).
+# See: internal/plan/rotifer-playground-repo-tidy-plan.md §13.3
+
+# Default: exclude everything
+*
+
+# Keep genesis genes required by `rotifer init` (resolveGenesisDir)
+!genesis-web-search/
+!genesis-web-search/**
+!genesis-web-search-lite/
+!genesis-web-search-lite/**
+!genesis-file-read/
+!genesis-file-read/**
+!genesis-code-format/
+!genesis-code-format/**
+!genesis-l0-constraint/
+!genesis-l0-constraint/**

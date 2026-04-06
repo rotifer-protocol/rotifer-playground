@@ -207,6 +207,17 @@ JSON 示例参见 `templates/composition/`。
 
 ---
 
+## 示例
+
+`examples/` 目录包含参考实现和实验：
+
+| 目录 | 说明 |
+|------|------|
+| `examples/mcp-migration/` | 如何将 MCP Tool 迁移为 Rotifer Gene |
+| `examples/api-apocalypse/` | API 容错实验——基线 Agent 与 Rotifer 域故障转移 Agent 的对比 |
+
+---
+
 ## 开发
 
 ```bash

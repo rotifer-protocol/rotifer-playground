@@ -4,7 +4,7 @@
  * L2 Calibration auto-failover: when a gene fails, try the next-best
  * gene in the same domain, ranked by running fitness score.
  *
- * Ported from experiments/api-apocalypse/rotifer-agent.ts into the
+ * Ported from examples/api-apocalypse/rotifer-agent.ts into the
  * production runtime. Works with both WASM sandbox and Node.js execution.
  */
 

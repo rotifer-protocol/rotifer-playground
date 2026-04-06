@@ -207,6 +207,17 @@ See `templates/composition/` for JSON examples.
 
 ---
 
+## Examples
+
+The `examples/` directory contains reference implementations and experiments:
+
+| Directory | Description |
+|-----------|-------------|
+| `examples/mcp-migration/` | How to migrate MCP Tools into Rotifer Genes |
+| `examples/api-apocalypse/` | API fault-tolerance experiment — baseline vs Rotifer agent with domain failover |
+
+---
+
 ## Development
 
 ```bash

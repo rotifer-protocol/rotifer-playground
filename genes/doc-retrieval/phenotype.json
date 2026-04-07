@@ -37,7 +37,7 @@
     "required": ["question", "chunks"]
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1772236800000,
   "fidelity": "Hybrid",
@@ -50,5 +50,6 @@
     "maxTimeoutMs": 30000,
     "maxResponseBytes": 1048576,
     "maxRequestsPerMin": 10
-  }
+  },
+  "tags": ["rag", "embeddings", "vector-search", "supabase", "documentation"]
 }

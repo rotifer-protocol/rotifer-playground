@@ -1,28 +1,88 @@
 {
   "domain": "code.debug",
-  "description": "Systematic debugging guide for AI and Web3 applications. Diagnose errors, analyze logs, and identify root causes. Use when troubleshooting issues, analyzing errors, or when the user mentions bug, error, not working, debug, or fix.",
+  "description": "Parses error logs and stack traces to extract structured debugging information including error type, location, root cause analysis, and fix suggestions.",
   "inputSchema": {
     "type": "object",
     "properties": {
-      "prompt": {
-        "type": "string"
+      "errorLog": {
+        "type": "string",
+        "description": "Error message or log output"
+      },
+      "stackTrace": {
+        "type": "string",
+        "description": "Stack trace text"
+      },
+      "language": {
+        "type": "string",
+        "description": "Programming language",
+        "enum": [
+          "typescript",
+          "javascript",
+          "python",
+          "rust",
+          "go"
+        ]
       }
     },
-    "required": []
+    "required": [
+      "errorLog"
+    ]
   },
   "outputSchema": {
     "type": "object",
     "properties": {
-      "result": {
-        "type": "string"
+      "errorType": {
+        "type": "string",
+        "description": "Classified error type (TypeError, ReferenceError, SyntaxError, RuntimeError, NetworkError, Unknown)"
+      },
+      "errorMessage": {
+        "type": "string",
+        "description": "Clean error message extracted from log"
+      },
+      "locations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "line": {
+              "type": "number"
+            },
+            "column": {
+              "type": "number"
+            },
+            "functionName": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Extracted stack frame locations"
+      },
+      "rootCause": {
+        "type": "string",
+        "description": "Likely root cause analysis"
+      },
+      "suggestions": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Fix suggestions"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
-  "createdAt": 1771939411990,
-  "fidelity": "Wrapped",
+  "fidelity": "Native",
   "transparency": "Open",
-  "source": "skill"
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "FailFast"
+  },
+  "irHash": "502135e36746811b64c6c9a2c2ee8c4aa89928eb26eeb281082051a346d9d807",
+  "tags": ["stack-trace", "root-cause", "errors", "parsing", "diagnostics"]
 }

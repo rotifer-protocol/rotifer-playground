@@ -1,18 +1,19 @@
 import { Command } from "commander";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import chalk from "chalk";
 import * as display from "../utils/display.js";
-import { getProjectRoot, loadConfig } from "../utils/config.js";
+import { c, icon } from "../utils/palette.js";
+import { loadConfig } from "../utils/config.js";
+import { requireProjectRoot } from "../utils/project-root.js";
 import { requireAuth } from "../cloud/auth.js";
 import type { CloudCredentials } from "../cloud/types.js";
 import {
   publishGene,
-  arenaSubmit,
-  getGeneReputation,
   getDeveloperReputation,
 } from "../cloud/client.js";
 import { refreshDomainCacheFromCloud } from "../utils/domain-suggest.js";
+import { validateGeneName } from "../utils/validate-gene-name.js";
+import { contentHash } from "../utils/content-hash.js";
 import { runPrePublishChecks, type CheckItem } from "../publish/pre-publish-check.js";
 
 interface PublishOptions {
@@ -30,42 +31,42 @@ interface PublishResult {
 }
 
 function formatCheckIcon(status: CheckItem["status"]): string {
-  if (status === "pass") return chalk.green("✓");
-  if (status === "warn") return chalk.yellow("⚠");
-  return chalk.red("✗");
+  if (status === "pass") return c.success(icon.success);
+  if (status === "warn") return c.warn(icon.warn);
+  return c.error(icon.error);
 }
 
 async function publishSingleGene(
-  name: string,
+  geneName: string,
   geneDir: string,
   creds: CloudCredentials,
   options: PublishOptions,
-  quiet: boolean = false,
+  isQuiet: boolean = false,
 ): Promise<PublishResult> {
   const phenotypePath = join(geneDir, "phenotype.json");
 
   if (!existsSync(phenotypePath)) {
-    if (!quiet) {
-      display.warn(`Skipping '${name}' — no phenotype.json`);
+    if (!isQuiet) {
+      display.warn(`Skipping '${geneName}' — no phenotype.json`);
     }
-    return { name, status: "skipped", error: "no phenotype.json" };
+    return { name: geneName, status: "skipped", error: "no phenotype.json" };
   }
 
   if (!options.skipSecurity) {
-    const checkResult = runPrePublishChecks(geneDir, name);
+    const checkResult = runPrePublishChecks(geneDir, geneName);
 
-    if (!quiet) {
-      for (const c of checkResult.checks) {
-        console.log(`  ${formatCheckIcon(c.status)} ${c.name}: ${c.message}`);
+    if (!isQuiet) {
+      for (const check of checkResult.checks) {
+        console.log(`  ${formatCheckIcon(check.status)} ${check.name}: ${check.message}`);
       }
     }
 
     if (!checkResult.passed) {
       const reasons = checkResult.blocking.map((b) => `${b.name}: ${b.message}`).join("; ");
-      if (!quiet) {
-        display.error(`Security check failed for '${name}'. Use --skip-security to bypass.`);
+      if (!isQuiet) {
+        display.error(`Security check failed for '${geneName}'. Use --skip-security to bypass.`);
       }
-      return { name, status: "failed", error: `pre-publish security check failed — ${reasons}` };
+      return { name: geneName, status: "failed", error: `pre-publish security check failed — ${reasons}` };
     }
   }
 
@@ -74,12 +75,12 @@ async function publishSingleGene(
   if (phenotype.fidelity === "Hybrid") {
     const net = phenotype.network;
     if (!net || !Array.isArray(net.allowedDomains) || net.allowedDomains.length === 0) {
-      return { name, status: "failed", error: "Hybrid gene missing allowedDomains" };
+      return { name: geneName, status: "failed", error: "Hybrid gene missing allowedDomains" };
     }
     const forbidden = /^(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+|0\.0\.0\.0|\[?::1\]?)$/;
     for (const domain of net.allowedDomains) {
       if (forbidden.test(domain)) {
-        return { name, status: "failed", error: `forbidden domain: ${domain}` };
+        return { name: geneName, status: "failed", error: `forbidden domain: ${domain}` };
       }
     }
   }
@@ -93,19 +94,26 @@ async function publishSingleGene(
 
   if (fidelity === "Native" && !wasmBytes) {
     return {
-      name,
+      name: geneName,
       status: "failed",
-      error: `Native gene requires compiled WASM (gene.ir.wasm). Run 'rotifer compile ${name}' first, or set fidelity to "Wrapped" / "Hybrid" in phenotype.json`,
+      error: `Native gene requires compiled WASM (gene.ir.wasm). Run 'rotifer compile ${geneName}' first, or set fidelity to "Wrapped" / "Hybrid" in phenotype.json`,
     };
   }
 
   const version: string = phenotype.version || "0.1.0";
+  if (!/^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$/.test(version)) {
+    return {
+      name: geneName,
+      status: "failed",
+      error: `Invalid version format '${version}'. Use semver (e.g., '1.0.0', '0.1.0-beta.1').`,
+    };
+  }
   const manifestPath = join(geneDir, ".cloud-manifest.json");
   const isFirstPublish = !existsSync(manifestPath);
   if (isFirstPublish && /^[1-9]/.test(version)) {
-    if (!quiet) {
+    if (!isQuiet) {
       display.warn(
-        `First publish of '${name}' uses version ${version} (no prior version chain). Consider starting from 0.x.y.`
+        `First publish of '${geneName}' uses version ${version} (no prior version chain). Consider starting from 0.x.y.`
       );
     }
   }
@@ -113,7 +121,7 @@ async function publishSingleGene(
   const domain = phenotype.domain || "unknown";
   if (!/^[a-z0-9]+(\.[a-z0-9]+)*$/.test(domain)) {
     return {
-      name,
+      name: geneName,
       status: "failed",
       error: `Invalid domain format '${domain}'. Use lowercase letters, numbers, and dots (e.g. 'media.video').`,
     };
@@ -122,12 +130,12 @@ async function publishSingleGene(
   const description =
     options.description ||
     phenotype.description ||
-    `${name} gene (${domain})`;
+    `${geneName} gene (${domain})`;
 
   const nonAscii = (description.match(/[^\x20-\x7E]/g) || []).length;
-  if (!quiet && nonAscii > description.length * 0.5) {
+  if (!isQuiet && nonAscii > description.length * 0.5) {
     display.warn(
-      `Description for '${name}' is mostly non-English. ` +
+      `Description for '${geneName}' is mostly non-English. ` +
       `English descriptions improve global discoverability. ` +
       `Consider adding an English description in phenotype.json.`
     );
@@ -143,13 +151,14 @@ async function publishSingleGene(
 
   try {
     const result = await publishGene({
-      name,
+      name: geneName,
       domain,
       version: phenotype.version || "0.1.0",
       fidelity: phenotype.fidelity || "Wrapped",
       description,
       phenotype,
       wasmBytes,
+      contentHash: contentHash(phenotype),
       readme,
       changelog,
     });
@@ -170,59 +179,48 @@ async function publishSingleGene(
 
     const status = result.isUpdate ? "updated" : "created";
 
-    if (!options.skipArena) {
-      try {
-        const defaultFitness = {
-          value: 0.5,
-          safety_score: 1.0,
-          success_rate: 1.0,
-          latency_score: 0.8,
-          resource_efficiency: 0.8,
-        };
-        await arenaSubmit(result.id, defaultFitness);
-        await getGeneReputation(result.id);
-      } catch (arenaErr: any) {
-        if (!quiet) {
-          display.warn(
-            `Arena submission failed for '${name}': ${arenaErr?.message ?? "unknown error"}. Gene published but not ranked. Run 'rotifer arena submit --cloud ${name}' to retry.`
-          );
-        }
-      }
+    if (!options.skipArena && !isQuiet) {
+      display.info(
+        `Auto Arena submission skipped for '${geneName}' — verified runtime metrics are required. ` +
+        `Run 'rotifer arena submit ${geneName} --cloud' after evaluation.`
+      );
     }
 
-    return { name, status };
+    return { name: geneName, status };
   } catch (err: any) {
-    return { name, status: "failed", error: err.message };
+    return { name: geneName, status: "failed", error: err.message };
   }
 }
 
 export const publishCommand = new Command("publish")
   .description("Publish gene(s) to Rotifer Cloud")
-  .argument("[name]", "gene name to publish (omit when using --all)")
+  .argument("[gene-name]", "gene name to publish (omit when using --all)")
   .option("--description <text>", "gene description")
   .option("--changelog <text>", "changelog entry for this version (max 500 chars)")
   .option("--skip-arena", "skip automatic Arena submission and reputation computation")
   .option("--skip-security", "skip pre-publish security checks (dangerous API / IR / secrets scan)")
   .option("--all", "publish all valid genes in the genes directory")
-  .action(async (name: string | undefined, options: PublishOptions) => {
-    if (!name && !options.all) {
+  .action(async (geneName: string | undefined, options: PublishOptions) => {
+    if (!geneName && !options.all) {
       display.error("Provide a gene name or use --all to publish all genes.");
+      display.hint("Example: rotifer publish my-gene  or  rotifer publish --all");
       process.exit(1);
     }
 
-    const root = getProjectRoot();
+    const root = requireProjectRoot();
     const config = loadConfig(root);
 
-    if (!options.all && name) {
-      const geneDir = join(root, config.genes_dir, name);
+    if (!options.all && geneName) {
+      validateGeneName(geneName);
+      const geneDir = join(root, config.genes_dir, geneName);
       const phenotypePath = join(geneDir, "phenotype.json");
 
       if (!existsSync(phenotypePath)) {
         display.rustStyleError({
           code: "E0050",
-          message: `Gene '${name}' not found`,
+          message: `Gene '${geneName}' not found`,
           file: phenotypePath,
-          suggestion: "Run 'rotifer wrap " + name + " --domain <domain>' first",
+          suggestion: "Run 'rotifer wrap " + geneName + " --domain <domain>' first",
         });
         process.exit(1);
       }
@@ -234,11 +232,11 @@ export const publishCommand = new Command("publish")
         if (!existsSync(wasmPath)) {
           display.rustStyleError({
             code: "E0060",
-            message: `Native gene '${name}' has no compiled WASM binary`,
+            message: `Native gene '${geneName}' has no compiled WASM binary`,
             file: wasmPath,
             suggestion:
               "Run 'rotifer compile " +
-              name +
+              geneName +
               "' to generate gene.ir.wasm, or change fidelity to \"Wrapped\" in phenotype.json",
           });
           process.exit(1);
@@ -250,7 +248,7 @@ export const publishCommand = new Command("publish")
         if (!net || !Array.isArray(net.allowedDomains) || net.allowedDomains.length === 0) {
           display.rustStyleError({
             code: "E0055",
-            message: `Hybrid gene '${name}' missing allowedDomains in network config`,
+            message: `Hybrid gene '${geneName}' missing allowedDomains in network config`,
             file: phenotypePath,
             suggestion: "Add network.allowedDomains to phenotype.json",
           });
@@ -261,7 +259,7 @@ export const publishCommand = new Command("publish")
           if (forbidden.test(domain)) {
             display.rustStyleError({
               code: "E0056",
-              message: `Hybrid gene '${name}' has forbidden domain: ${domain}`,
+              message: `Hybrid gene '${geneName}' has forbidden domain: ${domain}`,
               file: phenotypePath,
               suggestion: "Remove private/local addresses from allowedDomains",
             });
@@ -289,7 +287,7 @@ export const publishCommand = new Command("publish")
         .map((d) => d.name)
         .sort();
 
-      display.info(`Found ${dirs.length} directories in ${config.genes_dir}/`);
+      display.hint(`Found ${dirs.length} directories in ${config.genes_dir}/`);
       console.log();
 
       const results: PublishResult[] = [];
@@ -316,7 +314,7 @@ export const publishCommand = new Command("publish")
           await getDeveloperReputation(creds.user.id);
         } catch (repErr: any) {
           display.warn(
-            `Developer reputation refresh failed: ${repErr?.message ?? "unknown error"}`
+            `Creator reputation refresh failed: ${repErr?.message ?? "unknown error"}`
           );
         }
       }
@@ -339,26 +337,36 @@ export const publishCommand = new Command("publish")
           display.error(`  ${r.name}: ${r.error}`);
         }
       }
-      display.success(
-        `${created + updated} published, ${skipped} skipped, ${failed} failed`
-      );
+      if (failed > 0) {
+        display.warn(
+          `${created + updated} published, ${skipped} skipped, ${failed} failed`
+        );
+      } else {
+        display.success(
+          `${created + updated} published, ${skipped} skipped, ${failed} failed`
+        );
+      }
 
       if (created + updated > 0) {
         refreshDomainCacheFromCloud().catch(() => {});
+      }
+
+      if (failed > 0) {
+        process.exit(1);
       }
     } else {
       display.header("Publish to Cloud");
       display.info(`Publishing as ${creds.user.username}`);
 
-      const geneDir = join(root, config.genes_dir, name!);
+      const geneDir = join(root, config.genes_dir, geneName!);
       const phenotypePath = join(geneDir, "phenotype.json");
 
       if (!existsSync(phenotypePath)) {
         display.rustStyleError({
           code: "E0050",
-          message: `Gene '${name}' not found`,
+          message: `Gene '${geneName}' not found`,
           file: phenotypePath,
-          suggestion: "Run 'rotifer wrap " + name + " --domain <domain>' first",
+          suggestion: "Run 'rotifer wrap " + geneName + " --domain <domain>' first",
         });
         process.exit(1);
       }
@@ -368,47 +376,48 @@ export const publishCommand = new Command("publish")
         display.header("Pre-publish Security Check");
       }
 
-      const result = await publishSingleGene(name!, geneDir, creds, options);
+      const result = await publishSingleGene(geneName!, geneDir, creds, options);
 
       if (result.status === "failed") {
         display.error(result.error || "Publish failed");
+        display.hint("Check your network connection and login status with 'rotifer whoami'.");
         process.exit(1);
       }
 
       if (result.status === "skipped") {
-        display.warn(`Gene '${name}' skipped: ${result.error}`);
+        display.warn(`Gene '${geneName}' skipped: ${result.error}`);
         process.exit(0);
       }
 
       console.log();
       const verb = result.status === "updated" ? "updated" : "created";
-      display.success(`Gene '${name}' ${verb} on cloud!`);
+      display.success(`Gene '${geneName}' ${verb} on cloud!`);
 
       const manifestPath = join(geneDir, ".cloud-manifest.json");
       if (existsSync(manifestPath)) {
         const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
         display.keyValue("ID", manifest.cloud_id);
-        display.keyValue("Owner", manifest.owner);
+        display.keyValue("Creator", manifest.owner);
         display.keyValue("Version", manifest.version);
         display.keyValue("Status", result.status === "updated" ? "Updated existing" : "Newly created");
         if (options.changelog) {
-          display.keyValue("Changelog", options.changelog.slice(0, 80) + (options.changelog.length > 80 ? "..." : ""));
+          display.keyValue("Changelog", options.changelog);
         }
       }
 
       if (!options.skipArena) {
         try {
           const devRep = await getDeveloperReputation(creds.user.id);
-          display.keyValue("Developer Reputation", devRep.score.toFixed(4));
+          display.keyValue("Creator Reputation", devRep.score.toFixed(4));
           display.keyValue("Genes Published", String(devRep.genes_published));
         } catch (repErr: any) {
           display.warn(
-            `Developer reputation refresh failed: ${repErr?.message ?? "unknown error"}`
+            `Creator reputation refresh failed: ${repErr?.message ?? "unknown error"}`
           );
         }
       } else {
-        display.info(
-          "Skipped Arena (--skip-arena). Run manually: rotifer arena submit --cloud " + name
+        display.hint(
+          "Skipped Arena (--skip-arena). Run manually: rotifer arena submit --cloud " + geneName
         );
       }
 

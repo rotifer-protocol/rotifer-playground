@@ -279,6 +279,14 @@ export function buildOutputs(rootDir = REPO_ROOT) {
     readText(join(rootDir, "plugin-source/content/root/evolve/SKILL.md")),
     { familyVersion: rootVersion },
   );
+  const rootHello = renderTemplate(
+    readText(join(rootDir, "plugin-source/content/root/hello/SKILL.md")),
+    { familyVersion: rootVersion },
+  );
+  const rootAssistant = renderTemplate(
+    readText(join(rootDir, "plugin-source/content/root/assistant/SKILL.md")),
+    { familyVersion: rootVersion },
+  );
   const sharedRule = readText(join(rootDir, "plugin-source/content/shared/rotifer-gene-dev.mdc"));
   const rootRotifer = readText(join(rootDir, "plugin-source/content/root/rotifer.md"));
   const vscodeRotifer = readText(join(rootDir, "plugin-source/content/vscode/rotifer.md"));
@@ -302,6 +310,8 @@ export function buildOutputs(rootDir = REPO_ROOT) {
       injectVersion(rootFamily.codebuddyPlugin, rootVersion),
     ),
     outputText("plugins/rotifer/skills/evolve/SKILL.md", rootEvolve),
+    outputText("plugins/rotifer/skills/hello/SKILL.md", rootHello),
+    outputText("plugins/rotifer/skills/assistant/SKILL.md", rootAssistant),
     outputText("plugins/rotifer/rules/rotifer-gene-dev.mdc", sharedRule),
     outputText("plugins/rotifer/skills/rotifer.md", rootRotifer),
     outputBinary("plugins/rotifer/assets/icon.png", brandPng),

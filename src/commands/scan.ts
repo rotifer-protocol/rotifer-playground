@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, extname } from "node:path";
 import * as display from "../utils/display.js";
-import { getProjectRoot } from "../utils/config.js";
+import { requireProjectRoot } from "../utils/project-root.js";
 
 interface Candidate {
   name: string;
@@ -60,12 +60,12 @@ function scanDirectoryForSkills(dir: string, baseDir: string): SkillCandidate[] 
 }
 
 export const scanCommand = new Command("scan")
-  .description("Scan source files for candidate gene functions, or local skills (SKILL.md)")
+  .description("Scan for candidate genes and local skills")
   .argument("[path]", "path to scan", ".")
   .option("--skills", "scan for SKILL.md files instead of source functions")
   .option("--skills-path <dir>", "when using --skills, directory to scan (default: [path] or .cursor/skills)")
   .action(async (scanPath: string, options: { skills?: boolean; skillsPath?: string }) => {
-    const root = getProjectRoot();
+    const root = requireProjectRoot();
     const fullPath = options.skills && options.skillsPath
       ? join(root, options.skillsPath)
       : join(root, scanPath);
@@ -82,13 +82,12 @@ export const scanCommand = new Command("scan")
       display.success("Found " + skillCandidates.length + " skill(s):");
       console.log();
       for (const s of skillCandidates) {
-        const desc = s.description.slice(0, 50) + (s.description.length > 50 ? "…" : "");
-        console.log("  " + s.name + "  " + s.filePath);
-        console.log("      " + desc);
+        display.kv(s.name, s.filePath);
+        display.info(`  ${s.description}`);
       }
       console.log();
-      display.info("Wrap and upload: rotifer wrap <name> --from-skill <path> --domain <domain>");
-      display.info("  then: rotifer compile <name> && rotifer publish <name>");
+      display.info("Wrap and upload: rotifer wrap <gene-name> --from-skill <path> --domain <domain>");
+      display.info("  then: rotifer compile <gene-name> && rotifer publish <gene-name>");
       return;
     }
 
@@ -110,7 +109,7 @@ export const scanCommand = new Command("scan")
       console.log("  " + lang + "  " + c.name + "  " + c.filePath + ":" + c.lineNumber);
     }
     console.log();
-    display.info("Use 'rotifer wrap <name> --domain <domain>' to create a gene");
+    display.info("Use 'rotifer wrap <gene-name> --domain <domain>' to create a gene");
   });
 
 function scanDirectory(dir: string): Candidate[] {

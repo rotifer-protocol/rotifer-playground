@@ -3,26 +3,113 @@
   "description": "Execute continuous AI-powered content generation with intelligent iteration loops. Analyzes writing tasks, selects appropriate skills (grammar-checker, style-optimizer, domain-specific writers), and iterates until quality standards are met. Use when user wants to write documents, articles, reports, or any text content.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "topic"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
-      }
-    },
-    "required": []
-  },
-  "outputSchema": {
-    "type": "object",
-    "properties": {
-      "result": {
-        "type": "string"
+      "topic": {
+        "type": "string",
+        "description": "Writing topic or brief"
+      },
+      "contentType": {
+        "type": "string",
+        "enum": [
+          "article",
+          "blog",
+          "report",
+          "documentation",
+          "email",
+          "social-post"
+        ],
+        "default": "article",
+        "description": "Type of content to generate"
+      },
+      "wordCount": {
+        "type": "integer",
+        "default": 1000,
+        "minimum": 100,
+        "maximum": 10000,
+        "description": "Target word count"
+      },
+      "qualityGates": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "grammar",
+            "readability",
+            "tone",
+            "fact-check",
+            "plagiarism"
+          ]
+        },
+        "default": [
+          "grammar",
+          "readability"
+        ],
+        "description": "Quality gates to validate against"
       }
     }
   },
-  "dependencies": [],
-  "version": "0.1.0",
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "content",
+      "iterations"
+    ],
+    "properties": {
+      "content": {
+        "type": "string",
+        "description": "Generated content"
+      },
+      "iterations": {
+        "type": "integer",
+        "description": "Number of refinement iterations performed"
+      },
+      "qualityScores": {
+        "type": "object",
+        "properties": {
+          "grammar": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "readability": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "originality": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "description": "Quality scores per gate"
+      },
+      "outline": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Content outline/structure"
+      }
+    }
+  },
+  "dependencies": [
+    "style-optimizer",
+    "tone-analyzer"
+  ],
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939389111,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "automation",
+    "content-generation",
+    "iterative",
+    "writing"
+  ]
 }

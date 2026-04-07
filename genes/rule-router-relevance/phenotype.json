@@ -13,10 +13,22 @@
         "items": {
           "type": "object",
           "properties": {
-            "name": { "type": "string" },
-            "triggerWords": { "type": "array", "items": { "type": "string" } },
-            "frequency": { "type": "integer", "description": "Historical trigger count" },
-            "sizeTokens": { "type": "integer" }
+            "name": {
+              "type": "string"
+            },
+            "triggerWords": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "frequency": {
+              "type": "integer",
+              "description": "Historical trigger count"
+            },
+            "sizeTokens": {
+              "type": "integer"
+            }
           }
         },
         "description": "Available rules with metadata"
@@ -27,14 +39,19 @@
         "default": 4096
       }
     },
-    "required": ["userMessage", "availableRules"]
+    "required": [
+      "userMessage",
+      "availableRules"
+    ]
   },
   "outputSchema": {
     "type": "object",
     "properties": {
       "selectedRules": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Ordered list of rule names to inject"
       },
       "totalTokens": {
@@ -49,8 +66,15 @@
   },
   "llmRequirements": {
     "templateFormat": "mustache",
-    "templateVariables": ["userMessage", "availableRules", "contextBudget"],
-    "targetModels": ["claude-3", "gpt-4"],
+    "templateVariables": [
+      "userMessage",
+      "availableRules",
+      "contextBudget"
+    ],
+    "targetModels": [
+      "claude-3",
+      "gpt-4"
+    ],
     "minContextWindow": 4096,
     "expectedOutputFormat": "json",
     "temperatureHint": 0.1,
@@ -61,16 +85,34 @@
   "fitnessConfig": {
     "evaluationMethod": "template-quality",
     "dimensions": {
-      "routeHitRate": { "weight": 0.40, "description": "Fraction of injected rules actually triggered by user message" },
-      "contextSavings": { "weight": 0.30, "description": "1 - (usedTokens / contextBudget)" },
-      "templateValidity": { "weight": 0.20, "description": "Template renders without error for all valid inputs" },
-      "crossModelConsistency": { "weight": 0.10, "description": "Same input produces same rule selection across models" }
+      "routeHitRate": {
+        "weight": 0.4,
+        "description": "Fraction of injected rules actually triggered by user message"
+      },
+      "contextSavings": {
+        "weight": 0.3,
+        "description": "1 - (usedTokens / contextBudget)"
+      },
+      "templateValidity": {
+        "weight": 0.2,
+        "description": "Template renders without error for all valid inputs"
+      },
+      "crossModelConsistency": {
+        "weight": 0.1,
+        "description": "Same input produces same rule selection across models"
+      }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "development-genome"
+  "source": "development-genome",
+  "tags": [
+    "rule-routing",
+    "relevance",
+    "context-management",
+    "arena"
+  ]
 }

@@ -3,26 +3,140 @@
   "description": "Analyze project requirements and recommend suitable open source licenses (MIT, Apache, GPL, AGPL, LGPL, MPL, BSL, SSPL, etc.). Use when the user asks about licensing, choosing a license, open source strategy, or mentions license names like MIT/GPL/Apache.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "projectDescription"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "projectDescription": {
+        "type": "string",
+        "description": "Project description and distribution plans"
+      },
+      "constraints": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "commercial-use",
+            "patent-grant",
+            "copyleft",
+            "permissive",
+            "network-use",
+            "dual-licensing"
+          ]
+        },
+        "description": "Licensing constraints or requirements"
+      },
+      "existingDependencies": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "license": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Existing dependency licenses to check compatibility"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "recommendation",
+      "compatibility"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "recommendation": {
+        "type": "object",
+        "properties": {
+          "license": {
+            "type": "string"
+          },
+          "spdxId": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "risks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Primary license recommendation"
+      },
+      "alternatives": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "license": {
+              "type": "string"
+            },
+            "spdxId": {
+              "type": "string"
+            },
+            "pros": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "cons": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "description": "Alternative license options"
+      },
+      "compatibility": {
+        "type": "object",
+        "properties": {
+          "compatible": {
+            "type": "boolean"
+          },
+          "conflicts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "dependency": {
+                  "type": "string"
+                },
+                "depLicense": {
+                  "type": "string"
+                },
+                "issue": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "description": "Dependency license compatibility analysis"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939420260,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "license",
+    "open-source",
+    "legal",
+    "compliance"
+  ]
 }

@@ -3,26 +3,109 @@
   "description": "Write technical documentation including README, API docs, and changelogs. Create clear, structured documentation for AI and Web3 projects. Use when writing documentation, creating README, or when the user mentions docs, documentation, readme, or api docs.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "subject"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "subject": {
+        "type": "string",
+        "description": "Documentation subject (code, API, project)"
+      },
+      "docType": {
+        "type": "string",
+        "enum": [
+          "readme",
+          "api-reference",
+          "tutorial",
+          "changelog",
+          "contributing",
+          "architecture"
+        ],
+        "default": "readme",
+        "description": "Type of documentation"
+      },
+      "codeContext": {
+        "type": "string",
+        "description": "Source code or API definitions to document"
+      },
+      "audience": {
+        "type": "string",
+        "enum": [
+          "beginner",
+          "intermediate",
+          "advanced"
+        ],
+        "default": "intermediate",
+        "description": "Target audience level"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "document",
+      "sections"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "document": {
+        "type": "string",
+        "description": "Generated documentation (markdown)"
+      },
+      "sections": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "level": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4
+            }
+          }
+        },
+        "description": "Document sections breakdown"
+      },
+      "codeExamples": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "language": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Code examples included"
+      },
+      "tableOfContents": {
+        "type": "string",
+        "description": "Generated table of contents"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939415445,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "documentation",
+    "readme",
+    "api-docs",
+    "changelog"
+  ]
 }

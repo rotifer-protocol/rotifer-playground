@@ -3,26 +3,126 @@
   "description": "World-class product manager assistant for Web2/Web3/AI domains. Writes PRDs, user stories, feature specs, and product roadmaps. Performs requirements analysis and prioritization.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "productContext"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "productContext": {
+        "type": "string",
+        "description": "Product description or existing PRD context"
+      },
+      "documentType": {
+        "type": "string",
+        "enum": [
+          "prd",
+          "user-story",
+          "feature-spec",
+          "roadmap",
+          "competitive-analysis",
+          "user-persona"
+        ],
+        "default": "prd",
+        "description": "Type of product document"
+      },
+      "audience": {
+        "type": "string",
+        "enum": [
+          "engineering",
+          "design",
+          "stakeholders",
+          "cross-functional"
+        ],
+        "default": "cross-functional",
+        "description": "Target audience"
+      },
+      "framework": {
+        "type": "string",
+        "enum": [
+          "jobs-to-be-done",
+          "lean-canvas",
+          "rice",
+          "moscow"
+        ],
+        "description": "Prioritization framework to apply"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "document",
+      "userStories"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "document": {
+        "type": "string",
+        "description": "Generated product document"
+      },
+      "userStories": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string"
+            },
+            "goal": {
+              "type": "string"
+            },
+            "benefit": {
+              "type": "string"
+            },
+            "acceptanceCriteria": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "priority": {
+              "type": "string",
+              "enum": [
+                "must-have",
+                "should-have",
+                "could-have",
+                "wont-have"
+              ]
+            }
+          }
+        },
+        "description": "User stories extracted or generated"
+      },
+      "metrics": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            },
+            "measurement": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Success metrics"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939417033,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "product",
+    "prd",
+    "user-story",
+    "roadmap",
+    "planning"
+  ]
 }

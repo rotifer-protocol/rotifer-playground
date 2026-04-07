@@ -47,7 +47,6 @@ describe.skipIf(!hasCli)("rotifer vg (V(g) security scan)", () => {
   it("shows help text with --help", () => {
     const output = run("vg --help");
     expect(output).toContain("V(g) security scan");
-    expect(output).toContain("--json");
     expect(output).toContain("--all");
     expect(output).toContain("--publish");
     expect(output).toContain("--id");

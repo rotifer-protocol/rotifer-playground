@@ -3,26 +3,102 @@
   "description": "Web3 interface component library. Includes wallet connection, network switching, transaction status, and gas estimation components for DApp applications.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "componentType"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "componentType": {
+        "type": "string",
+        "enum": [
+          "wallet-connect",
+          "network-switch",
+          "transaction-status",
+          "gas-estimator",
+          "token-balance",
+          "nft-gallery",
+          "address-display"
+        ],
+        "description": "Type of Web3 component"
+      },
+      "chain": {
+        "type": "string",
+        "enum": [
+          "ethereum",
+          "base",
+          "polygon",
+          "arbitrum",
+          "optimism"
+        ],
+        "default": "ethereum",
+        "description": "Target blockchain"
+      },
+      "walletLib": {
+        "type": "string",
+        "enum": [
+          "wagmi",
+          "ethers",
+          "web3.js",
+          "viem"
+        ],
+        "default": "wagmi",
+        "description": "Wallet library"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "code",
+      "props"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "code": {
+        "type": "string",
+        "description": "Component source code"
+      },
+      "props": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "required": {
+              "type": "boolean"
+            },
+            "description": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Component prop definitions"
+      },
+      "abi": {
+        "type": "array",
+        "description": "Required contract ABI fragments (if any)"
+      },
+      "chainConfig": {
+        "type": "object",
+        "description": "Chain-specific configuration"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939387302,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "web3",
+    "wallet",
+    "blockchain",
+    "dapp",
+    "components"
+  ]
 }

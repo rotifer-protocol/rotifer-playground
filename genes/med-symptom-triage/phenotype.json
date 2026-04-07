@@ -1,0 +1,130 @@
+{
+  "author": "rotifer-team",
+  "domain": "med.clinical",
+  "version": "0.2.0",
+  "fidelity": "Wrapped",
+  "description": "Symptom-based triage engine. Takes a list of patient symptoms and outputs recommended department, urgency level (1-5), possible conditions, and suggested next steps. Designed for pre-consultation screening, not diagnosis.",
+  "inputSchema": {
+    "type": "object",
+    "required": [
+      "symptoms"
+    ],
+    "properties": {
+      "symptoms": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "List of patient-reported symptoms (e.g., 'chest pain', 'shortness of breath')"
+      },
+      "age": {
+        "type": "number",
+        "default": 35,
+        "description": "Patient age in years"
+      },
+      "gender": {
+        "type": "string",
+        "enum": [
+          "male",
+          "female",
+          "other"
+        ],
+        "default": "male",
+        "description": "Patient gender"
+      },
+      "vitalSigns": {
+        "type": "object",
+        "properties": {
+          "heartRate": {
+            "type": "number",
+            "default": 75
+          },
+          "bloodPressureSystolic": {
+            "type": "number",
+            "default": 120
+          },
+          "bloodPressureDiastolic": {
+            "type": "number",
+            "default": 80
+          },
+          "temperature": {
+            "type": "number",
+            "default": 36.5
+          },
+          "spO2": {
+            "type": "number",
+            "default": 98
+          }
+        },
+        "description": "Optional vital signs for more accurate triage"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "department",
+      "urgencyLevel",
+      "possibleConditions"
+    ],
+    "properties": {
+      "department": {
+        "type": "string",
+        "description": "Recommended clinical department"
+      },
+      "urgencyLevel": {
+        "type": "number",
+        "description": "Urgency level 1-5 (1=immediate, 5=routine)"
+      },
+      "possibleConditions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "probability": {
+              "type": "number"
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "low",
+                "moderate",
+                "high",
+                "critical"
+              ]
+            }
+          }
+        },
+        "description": "Ranked list of possible conditions with probability estimates"
+      },
+      "nextSteps": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Recommended next steps (tests, referrals)"
+      },
+      "disclaimer": {
+        "type": "string",
+        "description": "Medical disclaimer (always present)"
+      }
+    }
+  },
+  "dependencies": [],
+  "transparency": "Open",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  },
+  "tags": [
+    "medical",
+    "triage",
+    "symptoms",
+    "clinical",
+    "routing"
+  ]
+}

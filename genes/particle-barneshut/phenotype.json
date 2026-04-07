@@ -129,9 +129,10 @@
     ]
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "fidelity": "Native",
   "transparency": "Open",
-  "ir_hash": "391614d239e64ad94d257ec59c079a1a060d0143b28f6edd8ec255858f961d1c"
+  "irHash": "391614d239e64ad94d257ec59c079a1a060d0143b28f6edd8ec255858f961d1c",
+  "tags": ["n-body", "barnes-hut", "quadtree", "approximation", "simulation"]
 }

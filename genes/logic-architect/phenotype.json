@@ -1,28 +1,94 @@
 {
   "domain": "code.architecture",
-  "description": "Ensure code has sound business logic, data flow, and technical implementation for AI and Web3 projects. Focus on architecture, edge cases, state management, agent patterns, and wallet safety. Use when writing core logic, reviewing architecture, implementing APIs, or when the user mentions logic, architecture, data flow, or asks for code review ignoring UI.",
+  "description": "Analyzes code structure to extract import/export dependencies, measure module coupling, and detect architectural issues.",
   "inputSchema": {
     "type": "object",
     "properties": {
-      "prompt": {
-        "type": "string"
+      "code": {
+        "type": "string",
+        "description": "Source code to analyze"
+      },
+      "language": {
+        "type": "string",
+        "description": "Programming language",
+        "enum": [
+          "typescript",
+          "javascript",
+          "python",
+          "rust",
+          "go"
+        ]
       }
     },
-    "required": []
+    "required": [
+      "code"
+    ]
   },
   "outputSchema": {
     "type": "object",
     "properties": {
-      "result": {
-        "type": "string"
+      "imports": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "module": {
+              "type": "string"
+            },
+            "members": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "isRelative": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "exports": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "dependencyCount": {
+        "type": "number"
+      },
+      "couplingLevel": {
+        "type": "string",
+        "enum": [
+          "low",
+          "moderate",
+          "high",
+          "very-high"
+        ]
+      },
+      "issues": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "suggestions": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
-  "createdAt": 1771939407333,
-  "fidelity": "Wrapped",
+  "fidelity": "Native",
   "transparency": "Open",
-  "source": "skill"
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "FailFast"
+  },
+  "irHash": "02d67ca86bef2307060e43db20becf097cce5a5e81f2fbeec2bf78fdb99adea7",
+  "tags": ["architecture", "imports", "coupling", "dependencies", "structure"]
 }

@@ -5,24 +5,29 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import * as display from "../utils/display.js";
-import { getProjectRoot, loadConfig } from "../utils/config.js";
+import { loadConfig } from "../utils/config.js";
+import { requireProjectRoot } from "../utils/project-root.js";
 import { getGene, downloadGeneWasm, trackDownload } from "../cloud/client.js";
 import { refreshDomainCacheFromCloud } from "../utils/domain-suggest.js";
+import { validateGeneName } from "../utils/validate-gene-name.js";
 
 export const installCommand = new Command("install")
   .description("Install a gene from Rotifer Cloud")
-  .argument("<gene-id>", "cloud gene ID to install")
+  .argument("<gene-ref>", "gene UUID, name, or content hash")
   .option("--force", "overwrite if gene already exists locally", false)
-  .action(async (geneId: string, options: { force: boolean }) => {
+  .action(async (geneRef: string, options: { force: boolean }) => {
     display.header("Install from Cloud");
 
-    const root = getProjectRoot();
+    const root = requireProjectRoot();
     const config = loadConfig(root);
 
+    const s = display.spinner("Fetching gene metadata...");
     try {
-      display.info("Fetching gene metadata...");
-      const gene = await getGene(geneId);
+      const gene = await getGene(geneRef);
+      s.stop();
+      validateGeneName(gene.name);
 
       const geneDir = join(root, config.genes_dir, gene.name);
 
@@ -46,8 +51,34 @@ export const installCommand = new Command("install")
       display.success("Phenotype saved");
 
       if (gene.wasm_url) {
-        display.info("Downloading WASM binary...");
+        const ws = display.spinner("Downloading WASM binary...");
         const wasmBytes = await downloadGeneWasm(gene.wasm_url);
+        ws.stop();
+
+        if (gene.wasm_size && wasmBytes.length !== gene.wasm_size) {
+          display.error(
+            `WASM size mismatch: expected ${gene.wasm_size} bytes, got ${wasmBytes.length}. ` +
+            `Download may be corrupted or tampered with.`,
+          );
+          process.exit(1);
+        }
+
+        if (gene.wasm_hash) {
+          const downloadHash = createHash("sha256")
+            .update(wasmBytes)
+            .digest("hex");
+          if (downloadHash !== gene.wasm_hash) {
+            display.error(
+              `WASM integrity check failed: hash mismatch.\n` +
+              `  Expected: ${gene.wasm_hash}\n` +
+              `  Got:      ${downloadHash}\n` +
+              `Download may be corrupted or tampered with.`,
+            );
+            process.exit(1);
+          }
+          display.success("WASM integrity verified (SHA-256)");
+        }
+
         writeFileSync(join(geneDir, "gene.ir.wasm"), wasmBytes);
         display.success(
           `WASM downloaded (${(wasmBytes.length / 1024).toFixed(1)}KB)`
@@ -75,15 +106,17 @@ export const installCommand = new Command("install")
       display.keyValue("Fidelity", gene.fidelity);
       display.keyValue("Location", geneDir);
       console.log();
-      display.info("Test it: rotifer test " + gene.name);
-      display.info(
+      display.hint("Test it: rotifer test " + gene.name);
+      display.hint(
         "Submit to local Arena: rotifer arena submit " + gene.name
       );
 
-      trackDownload(geneId).catch(() => {});
+      trackDownload(gene.id, "cli").catch(() => {});
       refreshDomainCacheFromCloud().catch(() => {});
     } catch (err: any) {
+      s.stop();
       display.error(err.message || "Install failed");
+      display.hint("Check the gene name/ID and try again, or run 'rotifer search' to find genes.");
       process.exit(1);
     }
   });

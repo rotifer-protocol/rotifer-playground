@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   NetworkGateway,
   NetworkGatewayError,
@@ -6,6 +6,22 @@ import {
 } from "../../src/runtime/network-gateway.js";
 
 describe("NetworkGateway", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response("ok", {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }),
+    ) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
   describe("Domain whitelist", () => {
     it("blocks domain not in whitelist", async () => {
       const gw = new NetworkGateway({ allowedDomains: ["api.example.com"] });

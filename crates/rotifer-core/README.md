@@ -4,7 +4,7 @@
 [![docs.rs](https://docs.rs/rotifer-core/badge.svg)](https://docs.rs/rotifer-core)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://github.com/rotifer-protocol/rotifer-playground/blob/main/LICENSE)
 
-Core library for the **Rotifer Protocol** — a decentralized evolution framework for autonomous AI agent capabilities.
+Core library for the **Rotifer Protocol** — a universal evolution framework for AI agents.
 
 ## Modules
 

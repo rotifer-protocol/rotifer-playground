@@ -2,7 +2,8 @@ import { Command } from "commander";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import * as display from "../utils/display.js";
-import { getProjectRoot } from "../utils/config.js";
+import { c } from "../utils/palette.js";
+import { requireProjectRoot } from "../utils/project-root.js";
 
 interface AgentInfo {
   id: string;
@@ -15,21 +16,21 @@ interface AgentInfo {
 export const agentListCommand = new Command("list")
   .description("List all agents")
   .action(async () => {
-    const root = getProjectRoot();
+    const root = requireProjectRoot();
 
     display.header("Agent Registry");
 
     const agentsDir = join(root, ".rotifer", "agents");
     if (!existsSync(agentsDir)) {
       display.warn("No agents created yet");
-      display.info("Create one: rotifer agent create <name> --genes <gene1> <gene2>");
+      display.hint("Create one: rotifer agent create <agent-name> --genes <gene1> <gene2>");
       return;
     }
 
     const files = readdirSync(agentsDir).filter((f) => f.endsWith(".json"));
     if (files.length === 0) {
       display.warn("No agents created yet");
-      display.info("Create one: rotifer agent create <name> --genes <gene1> <gene2>");
+      display.hint("Create one: rotifer agent create <agent-name> --genes <gene1> <gene2>");
       return;
     }
 
@@ -37,30 +38,29 @@ export const agentListCommand = new Command("list")
       return JSON.parse(readFileSync(join(agentsDir, f), "utf-8"));
     });
 
-    console.log();
-    console.log(
-      "  " +
-        padRight("Name", 20) +
-        padRight("State", 12) +
-        padRight("Genome", 30) +
-        "Agent ID"
+    display.table(
+      agents.map((a, i) => ({
+        "#": i + 1,
+        name: a.name,
+        state: a.state,
+        genome: a.genome.length > 0 ? a.genome.join(", ") : "(empty)",
+        id: a.id,
+      })),
+      [
+        { key: "#", label: "#", width: 4, align: "right" },
+        { key: "name", label: "Name", width: 18 },
+        {
+          key: "state",
+          label: "State",
+          width: 10,
+          format: (v: unknown) => {
+            const s = String(v);
+            return s === "idle" ? c.success(s) : s === "running" ? c.warn(s) : c.muted(s);
+          },
+        },
+        { key: "genome", label: "Genome", width: 28 },
+        { key: "id", label: "Agent ID" },
+      ],
     );
-    console.log("  " + "-".repeat(90));
-
-    for (const a of agents) {
-      const genomeStr = a.genome.length > 0 ? a.genome.join(", ") : "(empty)";
-      console.log(
-        "  " +
-          padRight(a.name, 20) +
-          padRight(a.state, 12) +
-          padRight(genomeStr, 30) +
-          a.id.slice(0, 12) + "..."
-      );
-    }
-    console.log();
-    display.info(`${agents.length} agent(s) registered`);
+    display.hint(`${agents.length} agent(s) registered`);
   });
-
-function padRight(str: string, len: number): string {
-  return str.length >= len ? str.slice(0, len) : str + " ".repeat(len - str.length);
-}

@@ -3,26 +3,118 @@
   "description": "Design RESTful and tRPC APIs with consistent patterns, error handling, and documentation. Define endpoint structure, response formats, and error codes. Use when designing APIs, creating endpoints, or when the user mentions API, endpoint, REST, tRPC, or response format.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "requirements"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "requirements": {
+        "type": "string",
+        "description": "API requirements or user story description"
+      },
+      "apiStyle": {
+        "type": "string",
+        "enum": [
+          "REST",
+          "GraphQL",
+          "tRPC"
+        ],
+        "default": "REST",
+        "description": "Target API style"
+      },
+      "authPattern": {
+        "type": "string",
+        "enum": [
+          "none",
+          "api-key",
+          "jwt",
+          "oauth2"
+        ],
+        "default": "jwt",
+        "description": "Authentication pattern"
+      },
+      "responseFormat": {
+        "type": "string",
+        "enum": [
+          "json",
+          "json-api",
+          "hal"
+        ],
+        "default": "json",
+        "description": "Response envelope format"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "endpoints",
+      "schema"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "endpoints": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": [
+                "GET",
+                "POST",
+                "PUT",
+                "PATCH",
+                "DELETE"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "requestBody": {
+              "type": "object"
+            },
+            "response": {
+              "type": "object"
+            }
+          }
+        },
+        "description": "Designed API endpoints"
+      },
+      "schema": {
+        "type": "string",
+        "description": "OpenAPI 3.0 schema (YAML string)"
+      },
+      "errorCodes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "integer"
+            },
+            "meaning": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Standard error code definitions"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939408115,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "api",
+    "rest",
+    "graphql",
+    "endpoint",
+    "design"
+  ]
 }

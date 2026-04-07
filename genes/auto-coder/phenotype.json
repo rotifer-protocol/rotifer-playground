@@ -3,26 +3,83 @@
   "description": "Execute continuous AI-powered code generation with intelligent iteration loops. Always runs in iterative mode - generates code, validates with quality skills (testing-strategist, tech-lead, logic-architect, debugger), and repeats until success or limits reached. Use when user wants to implement features, write code, or automate programming tasks.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "task"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
-      }
-    },
-    "required": []
-  },
-  "outputSchema": {
-    "type": "object",
-    "properties": {
-      "result": {
-        "type": "string"
+      "task": {
+        "type": "string",
+        "description": "Coding task description"
+      },
+      "language": {
+        "type": "string",
+        "default": "typescript",
+        "description": "Target programming language"
+      },
+      "framework": {
+        "type": "string",
+        "description": "Target framework (e.g., next.js, express, fastapi)"
+      },
+      "qualityGates": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "lint",
+            "typecheck",
+            "test",
+            "security"
+          ]
+        },
+        "default": [
+          "lint",
+          "typecheck"
+        ],
+        "description": "Quality gates to validate against"
       }
     }
   },
-  "dependencies": [],
-  "version": "0.1.0",
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "code",
+      "iterations"
+    ],
+    "properties": {
+      "code": {
+        "type": "string",
+        "description": "Generated source code"
+      },
+      "tests": {
+        "type": "string",
+        "description": "Generated test code"
+      },
+      "iterations": {
+        "type": "integer",
+        "description": "Number of refinement iterations performed"
+      },
+      "confidence": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Confidence in code correctness"
+      }
+    }
+  },
+  "dependencies": [
+    "testing-strategist",
+    "tech-lead"
+  ],
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939406563,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "automation",
+    "code-generation",
+    "iterative",
+    "ai-coding"
+  ]
 }

@@ -3,26 +3,117 @@
   "description": "Guide users through a structured workflow for co-authoring documentation. Use when user wants to write documentation, proposals, technical specs, decision docs, or similar structured content. This workflow helps users efficiently transfer context, refine content through iteration, and verify the doc works for readers. Trigger when user mentions writing docs, creating proposals, drafting specs, or similar documentation tasks.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "draft"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "draft": {
+        "type": "string",
+        "description": "Initial draft or outline to collaborate on"
+      },
+      "documentType": {
+        "type": "string",
+        "enum": [
+          "proposal",
+          "spec",
+          "decision-doc",
+          "design-doc",
+          "rfc",
+          "adr"
+        ],
+        "default": "spec",
+        "description": "Document type"
+      },
+      "feedback": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "section": {
+              "type": "string"
+            },
+            "comment": {
+              "type": "string"
+            },
+            "author": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Review feedback to incorporate"
+      },
+      "iteration": {
+        "type": "integer",
+        "default": 1,
+        "minimum": 1,
+        "description": "Current iteration number"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "document",
+      "changes"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "document": {
+        "type": "string",
+        "description": "Updated document"
+      },
+      "changes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "section": {
+              "type": "string"
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "added",
+                "modified",
+                "removed",
+                "restructured"
+              ]
+            },
+            "description": {
+              "type": "string"
+            },
+            "rationale": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Changes made in this iteration"
+      },
+      "openQuestions": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Questions that need human input"
+      },
+      "readinessScore": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Document readiness for final review"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939416271,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "documentation",
+    "collaboration",
+    "co-writing",
+    "workflow"
+  ]
 }

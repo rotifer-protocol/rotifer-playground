@@ -56,7 +56,7 @@
     "owner": "Rotifer Protocol",
     "plugins": [
       {
-        "name": "rotifer-evolving-agent",
+        "name": "rotifer-self-evolving-agent",
         "source": "plugins/rotifer",
         "description": "Self-evolving AI Agent — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically",
         "author": "Rotifer Protocol",
@@ -76,7 +76,7 @@
     ]
   },
   "codebuddyPlugin": {
-    "name": "rotifer-evolving-agent",
+    "name": "rotifer-self-evolving-agent",
     "description": "Self-evolving AI Agent — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically",
     "author": {
       "name": "Rotifer Protocol",

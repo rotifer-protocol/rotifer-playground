@@ -4,9 +4,10 @@ import { openBrowser } from "../utils/open-browser.js";
 import {
   loadCredentials,
   saveCredentials,
-  waitForOAuthCallback,
+  startOAuthCallbackServer,
   generateCodeVerifier,
   generateCodeChallenge,
+  buildOAuthCallbackUrl,
 } from "../cloud/auth.js";
 import { loadCloudConfig } from "../cloud/client.js";
 import type { AuthProvider } from "../cloud/types.js";
@@ -27,7 +28,7 @@ export const loginCommand = new Command("login")
     const existing = loadCredentials();
     if (existing) {
       display.success(`Already logged in as ${existing.user.username} (via ${existing.provider})`);
-      display.info("Run 'rotifer logout' to switch accounts");
+      display.hint("Run 'rotifer logout' to switch accounts");
       return;
     }
 
@@ -36,30 +37,40 @@ export const loginCommand = new Command("login")
       display.error(
         `Unsupported provider: '${provider}'. Supported: ${SUPPORTED_PROVIDERS.join(", ")}`
       );
+      display.hint("Example: rotifer login --provider github");
       process.exit(1);
     }
 
     const config = loadCloudConfig();
     const endpoint = options.endpoint || config.endpoint;
 
-    display.info(`Opening browser for ${provider} authorization...`);
-
-    const callbackPort = 9876;
     const codeVerifier = generateCodeVerifier();
     const codeChallenge = generateCodeChallenge(codeVerifier);
 
+    const { port: callbackPort, waitForCallback } = await startOAuthCallbackServer();
+
     const authUrl =
       `${endpoint}/auth/v1/authorize?provider=${provider}` +
-      `&redirect_to=http://localhost:${callbackPort}/callback` +
+      `&redirect_to=${encodeURIComponent(buildOAuthCallbackUrl(callbackPort))}` +
       `&code_challenge=${codeChallenge}` +
       `&code_challenge_method=S256`;
 
-    openBrowser(authUrl);
+    display.info(`Opening browser for ${provider} authorization...`);
 
-    display.info("Waiting for authorization (timeout: 120s)...");
+    const opened = openBrowser(authUrl);
+    if (!opened) {
+      display.warn("Could not open browser automatically.");
+    }
+
+    console.log();
+    display.hint("If the browser did not open, copy and paste this URL:");
+    console.log(`  ${authUrl}`);
+    console.log();
+
+    const s = display.spinner("Waiting for authorization (timeout: 120s)...");
 
     try {
-      const callbackResult = await waitForOAuthCallback(callbackPort);
+      const callbackResult = await waitForCallback;
 
       let accessToken: string;
       let refreshToken: string;
@@ -68,9 +79,9 @@ export const loginCommand = new Command("login")
         const parts = callbackResult.split(":");
         accessToken = parts.slice(1, -1).join(":");
         refreshToken = parts[parts.length - 1];
-        display.info("Received token via implicit flow");
+        s.stop();
       } else {
-        display.info("Exchanging authorization code for token...");
+        s.update("Exchanging authorization code...");
         const tokenRes = await fetch(
           `${endpoint}/auth/v1/token?grant_type=pkce`,
           {
@@ -87,14 +98,17 @@ export const loginCommand = new Command("login")
         );
 
         if (!tokenRes.ok) {
+          s.stop();
           const err = await tokenRes.text();
           display.error(`Authentication failed: ${err}`);
+          display.hint("Check your network connection and try again.");
           process.exit(1);
         }
 
         const tokenData = (await tokenRes.json()) as any;
         accessToken = tokenData.access_token;
         refreshToken = tokenData.refresh_token;
+        s.stop();
       }
 
       const userRes = await fetch(`${endpoint}/auth/v1/user`, {
@@ -131,11 +145,13 @@ export const loginCommand = new Command("login")
       console.log();
       display.success(`Logged in as ${username} (via ${provider})`);
       display.keyValue("Endpoint", endpoint);
-      display.info(
+      display.hint(
         "You can now use 'rotifer publish', 'rotifer search', etc."
       );
     } catch (err: any) {
+      s.stop();
       display.error(err.message || "Login failed");
+      display.hint("Check your network connection and try again.");
       process.exit(1);
     }
   });

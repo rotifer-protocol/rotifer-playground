@@ -41,7 +41,7 @@ export function renderGeneDetails(gene: CloudGene): string {
     <table>
       <tr><th>Domain</th><td>${gene.domain}</td></tr>
       <tr><th>Version</th><td>${gene.version}</td></tr>
-      <tr><th>Owner</th><td>${gene.owner || "unknown"}</td></tr>
+      <tr><th>Creator</th><td>${gene.owner || "unknown"}</td></tr>
       <tr><th>Downloads</th><td>${gene.downloads ?? 0}</td></tr>
       <tr><th>Reputation</th><td>${gene.reputation_score != null ? gene.reputation_score.toFixed(4) : "N/A"}</td></tr>
       <tr><th>WASM Size</th><td>${gene.wasm_size ? (gene.wasm_size / 1024).toFixed(1) + " KB" : "—"}</td></tr>
@@ -132,8 +132,8 @@ export function renderLeaderboard(entries: LeaderboardEntry[]): string {
   }).join("");
 
   return html("Leaderboard", `
-    <h1>Developer Leaderboard</h1>
-    <p class="muted">${entries.length} developers</p>
+    <h1>Creator Leaderboard</h1>
+    <p class="muted">${entries.length} creators</p>
     <div style="margin-top:16px">${rows}</div>
   `);
 }

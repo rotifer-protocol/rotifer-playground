@@ -1,0 +1,47 @@
+{
+  "name": "vuln-detector",
+  "version": "0.2.0",
+  "domain": "web3.security",
+  "fidelity": "Native",
+  "description": "Rule-based Solidity vulnerability detector. Identifies reentrancy, unchecked calls, tx.origin misuse, integer overflow risks, selfdestruct, delegatecall dangers, unlocked pragma, and missing reentrancy guards.",
+  "author": "Rotifer Protocol Contributors",
+  "license": "Apache-2.0",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "source": { "type": "string", "description": "Raw Solidity source code to analyze" },
+      "filename": { "type": "string", "description": "Optional source file name for context in reports" }
+    },
+    "required": ["source"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "vulnerabilities": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+            "location": { "type": "string" },
+            "description": { "type": "string" },
+            "recommendation": { "type": "string" }
+          }
+        }
+      },
+      "riskScore": { "type": "number", "minimum": 0, "maximum": 100 },
+      "summary": { "type": "string" }
+    },
+    "required": ["vulnerabilities", "riskScore", "summary"]
+  },
+  "displayField": "summary",
+  "tags": ["solidity", "security", "vulnerability", "audit", "web3", "smart-contract"],
+  "dependencies": [],
+  "transparency": "Open",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  }
+}

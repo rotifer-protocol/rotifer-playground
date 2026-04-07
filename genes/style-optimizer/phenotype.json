@@ -3,26 +3,80 @@
   "description": "Optimize writing style for clarity, consistency, and readability. Improve sentence structure, word choice, and flow. Use when polishing written content for better reader experience.",
   "inputSchema": {
     "type": "object",
+    "required": ["text"],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "text": {
+        "type": "string",
+        "description": "Text to optimize"
+      },
+      "targetStyle": {
+        "type": "string",
+        "enum": ["academic", "journalistic", "technical", "conversational", "marketing"],
+        "default": "technical",
+        "description": "Target writing style"
+      },
+      "priorities": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["clarity", "conciseness", "flow", "vocabulary", "consistency"]
+        },
+        "default": ["clarity", "conciseness"],
+        "description": "Optimization priorities"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": ["optimizedText", "changes"],
     "properties": {
-      "result": {
-        "type": "string"
+      "optimizedText": {
+        "type": "string",
+        "description": "Style-optimized text"
+      },
+      "changes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "original": {
+              "type": "string"
+            },
+            "replacement": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string",
+              "enum": ["clarity", "conciseness", "flow", "vocabulary", "grammar"]
+            }
+          }
+        },
+        "description": "Individual changes made"
+      },
+      "readabilityBefore": {
+        "type": "number",
+        "description": "Readability score before optimization"
+      },
+      "readabilityAfter": {
+        "type": "number",
+        "description": "Readability score after optimization"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939399973,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "style",
+    "readability",
+    "polish",
+    "writing"
+  ]
 }

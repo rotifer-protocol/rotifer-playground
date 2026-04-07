@@ -3,26 +3,99 @@
   "description": "Optimize web performance including Core Web Vitals, bundle size, and runtime efficiency. Analyze and improve LCP, FID, CLS metrics. Use when optimizing performance, reducing bundle size, or when the user mentions slow, performance, loading, lighthouse, or web vitals.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "code"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "code": {
+        "type": "string",
+        "description": "Source code or URL to analyze"
+      },
+      "targetMetrics": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "LCP",
+            "INP",
+            "CLS",
+            "FCP",
+            "TTFB",
+            "bundle-size",
+            "runtime"
+          ]
+        },
+        "default": [
+          "LCP",
+          "INP",
+          "CLS"
+        ],
+        "description": "Performance metrics to focus on"
+      },
+      "framework": {
+        "type": "string",
+        "description": "Framework context (e.g., next.js, react, vue)"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "findings",
+      "scores"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "metric": {
+              "type": "string"
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            },
+            "description": {
+              "type": "string"
+            },
+            "fix": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Performance issues found"
+      },
+      "scores": {
+        "type": "object",
+        "description": "Metric scores (key: metric name, value: score)"
+      },
+      "recommendations": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Prioritized optimization steps"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939412819,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "performance",
+    "web-vitals",
+    "optimization",
+    "lighthouse"
+  ]
 }

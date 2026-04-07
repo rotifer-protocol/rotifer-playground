@@ -3,26 +3,89 @@
   "description": "Design testing strategies for AI and Web3 applications. Create test cases, mock data, and CI configurations. Use when writing tests, setting up test infrastructure, or when the user mentions testing, test coverage, unit test, integration test, or e2e.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "codeContext"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "codeContext": {
+        "type": "string",
+        "description": "Source code or module to test"
+      },
+      "framework": {
+        "type": "string",
+        "enum": [
+          "vitest",
+          "jest",
+          "mocha",
+          "pytest"
+        ],
+        "default": "vitest",
+        "description": "Test framework"
+      },
+      "coverageTarget": {
+        "type": "number",
+        "default": 80,
+        "minimum": 0,
+        "maximum": 100,
+        "description": "Target code coverage percentage"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "testPlan",
+      "testCases"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "testPlan": {
+        "type": "string",
+        "description": "High-level test strategy description"
+      },
+      "testCases": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "unit",
+                "integration",
+                "e2e"
+              ]
+            },
+            "description": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Generated test cases"
+      },
+      "mockStrategy": {
+        "type": "string",
+        "description": "Recommended mocking approach"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939409560,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "testing",
+    "test-strategy",
+    "coverage",
+    "ci",
+    "quality"
+  ]
 }

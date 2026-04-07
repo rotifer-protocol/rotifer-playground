@@ -26,7 +26,7 @@ function makeContext(): vscode.ExtensionContext {
     extensionPath: "/ext",
     globalState: { get: vi.fn(), update: vi.fn(), keys: vi.fn().mockReturnValue([]), setKeysForSync: vi.fn() },
     workspaceState: { get: vi.fn(), update: vi.fn(), keys: vi.fn().mockReturnValue([]) },
-    secrets: { get: vi.fn(), store: vi.fn(), delete: vi.fn(), onDidChange: vi.fn() },
+    secrets: { get: vi.fn().mockResolvedValue(undefined), store: vi.fn().mockResolvedValue(undefined), delete: vi.fn().mockResolvedValue(undefined), onDidChange: vi.fn() },
     storagePath: "/tmp/storage",
     globalStoragePath: "/tmp/global-storage",
     logPath: "/tmp/log",
@@ -169,6 +169,7 @@ describe("command handlers (integration with mocks)", () => {
       ([name]) => name === "rotifer.searchGenes",
     );
     const handler = searchCall![1];
+    vi.mocked(vscode.window.showInformationMessage).mockClear();
     vi.mocked(vscode.window.showInputBox).mockResolvedValue(undefined);
     await handler();
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
@@ -255,7 +256,7 @@ describe("command handlers (integration with mocks)", () => {
     const handler = testCall![1];
     await handler({ gene: { name: "my-gene" } });
     const terminal = vi.mocked(vscode.window.createTerminal).mock.results.at(-1)?.value;
-    expect(terminal.sendText).toHaveBeenCalledWith("npx rotifer test my-gene");
+    expect(terminal.sendText).toHaveBeenCalledWith("npx rotifer 'test' 'my-gene'");
   });
 
   it("scanGenes opens terminal with scan command", async () => {
@@ -268,7 +269,7 @@ describe("command handlers (integration with mocks)", () => {
     const handler = scanCall![1];
     handler();
     const terminal = vi.mocked(vscode.window.createTerminal).mock.results.at(-1)?.value;
-    expect(terminal.sendText).toHaveBeenCalledWith("npx rotifer scan");
+    expect(terminal.sendText).toHaveBeenCalledWith("npx rotifer 'scan'");
   });
 
   it("initProject validates project name format", async () => {

@@ -3,26 +3,124 @@
   "description": "Creating algorithmic art using p5.js with seeded randomness and interactive parameter exploration. Use this when users request creating art using code, generative art, algorithmic art, flow fields, or particle systems. Create original algorithmic art rather than copying existing artists",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "concept"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "concept": {
+        "type": "string",
+        "description": "Art concept or visual description"
+      },
+      "algorithm": {
+        "type": "string",
+        "enum": [
+          "flow-field",
+          "particle-system",
+          "voronoi",
+          "fractal",
+          "cellular-automaton",
+          "wave-function",
+          "perlin-noise"
+        ],
+        "default": "flow-field",
+        "description": "Generative algorithm type"
+      },
+      "palette": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Color palette (hex codes)"
+      },
+      "dimensions": {
+        "type": "object",
+        "properties": {
+          "width": {
+            "type": "integer",
+            "default": 800
+          },
+          "height": {
+            "type": "integer",
+            "default": 600
+          }
+        },
+        "description": "Canvas dimensions"
+      },
+      "seed": {
+        "type": "integer",
+        "description": "Random seed for reproducibility"
+      },
+      "interactive": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable interactive parameters"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "code",
+      "parameters"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "code": {
+        "type": "string",
+        "description": "p5.js sketch code"
+      },
+      "parameters": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "number",
+                "color",
+                "boolean"
+              ]
+            },
+            "min": {
+              "type": "number"
+            },
+            "max": {
+              "type": "number"
+            },
+            "default": {
+              "type": "number"
+            },
+            "description": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Adjustable parameters"
+      },
+      "preview": {
+        "type": "string",
+        "description": "SVG or data URL preview"
+      },
+      "seed": {
+        "type": "integer",
+        "description": "Seed used for reproduction"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939419394,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "generative-art",
+    "p5js",
+    "creative-coding",
+    "visualization"
+  ]
 }

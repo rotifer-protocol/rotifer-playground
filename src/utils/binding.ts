@@ -63,15 +63,15 @@ export interface NativeBinding {
 }
 
 let _binding: NativeBinding | null = null;
-let _loadAttempted = false;
+let _hasLoadAttempted = false;
 
 /**
  * Try to load the napi native addon.
  * Returns null if the addon is not available (fallback to pure-TS path).
  */
 export function tryLoadBinding(): NativeBinding | null {
-  if (_loadAttempted) return _binding;
-  _loadAttempted = true;
+  if (_hasLoadAttempted) return _binding;
+  _hasLoadAttempted = true;
 
   const candidates = [
     join(__dirname, "..", "..", "index.darwin-arm64.node"),

@@ -4,31 +4,80 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "code": { "type": "string", "description": "Source code to analyze" },
-      "language": { "type": "string", "description": "Programming language", "enum": ["typescript", "javascript", "python", "rust", "go"] },
-      "threshold": { "type": "number", "description": "Complexity threshold for warnings", "default": 10 }
+      "code": {
+        "type": "string",
+        "description": "Source code to analyze"
+      },
+      "language": {
+        "type": "string",
+        "description": "Programming language",
+        "enum": [
+          "typescript",
+          "javascript",
+          "python",
+          "rust",
+          "go"
+        ]
+      },
+      "threshold": {
+        "type": "number",
+        "description": "Complexity threshold for warnings",
+        "default": 10
+      }
     },
-    "required": ["code", "language"]
+    "required": [
+      "code",
+      "language"
+    ]
   },
   "outputSchema": {
     "type": "object",
     "properties": {
-      "cyclomaticComplexity": { "type": "number", "description": "McCabe cyclomatic complexity score" },
-      "linesOfCode": { "type": "number", "description": "Non-blank, non-comment lines" },
-      "maxNestingDepth": { "type": "number", "description": "Maximum nesting depth of control structures" },
-      "functionCount": { "type": "number", "description": "Number of functions/methods found" },
-      "rating": { "type": "string", "description": "Complexity rating", "enum": ["low", "moderate", "high", "very-high"] },
-      "suggestions": { "type": "array", "items": { "type": "string" }, "description": "Improvement suggestions if complexity is high" }
+      "cyclomaticComplexity": {
+        "type": "number",
+        "description": "McCabe cyclomatic complexity score"
+      },
+      "linesOfCode": {
+        "type": "number",
+        "description": "Non-blank, non-comment lines"
+      },
+      "maxNestingDepth": {
+        "type": "number",
+        "description": "Maximum nesting depth of control structures"
+      },
+      "functionCount": {
+        "type": "number",
+        "description": "Number of functions/methods found"
+      },
+      "rating": {
+        "type": "string",
+        "description": "Complexity rating",
+        "enum": [
+          "low",
+          "moderate",
+          "high",
+          "very-high"
+        ]
+      },
+      "suggestions": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Improvement suggestions if complexity is high"
+      }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-genesis",
   "fidelity": "Native",
   "transparency": "Open",
-  "semantic_requirements": {
+  "semanticRequirements": {
     "timeModel": "Sync",
     "concurrencyModel": "Stateless",
-    "failureSemantics": "Fail"
-  }
+    "failureSemantics": "FailFast"
+  },
+  "irHash": "f7152141480752af980c6bd64894574108933e3a8ade7fcb8c032467847ab281",
+  "tags": ["cyclomatic-complexity", "metrics", "refactoring", "static-analysis", "quality"]
 }

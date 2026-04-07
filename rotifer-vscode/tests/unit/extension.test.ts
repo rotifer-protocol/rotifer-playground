@@ -80,14 +80,14 @@ describe("renderVersionHistory", () => {
 });
 
 describe("renderLeaderboard", () => {
-  it("renders ranked developers", () => {
+  it("renders ranked creators", () => {
     const html = renderLeaderboard([
       { username: "alice", avatar_url: null, score: 0.95, genes_published: 10, total_downloads: 500, arena_wins: 5 },
       { username: "bob", avatar_url: null, score: 0.80, genes_published: 5, total_downloads: 200, arena_wins: 2 },
     ]);
     expect(html).toContain("alice");
     expect(html).toContain("bob");
-    expect(html).toContain("2 developers");
+    expect(html).toContain("2 creators");
   });
 });
 

@@ -1,0 +1,38 @@
+{
+  "domain": "safety",
+  "description": "Validate a Gene against L0 safety constraints including memory limits, fuel budgets, and host function permissions.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "geneId": { "type": "string", "description": "Gene ID (hex) to check" },
+      "constraints": {
+        "type": "object",
+        "properties": {
+          "maxMemoryBytes": { "type": "integer", "default": 16777216 },
+          "maxFuel": { "type": "integer", "default": 1000000 },
+          "allowedHostFunctions": { "type": "array", "items": { "type": "string" } },
+          "deniedHostFunctions": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "required": ["geneId"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "compliant": { "type": "boolean" },
+      "violations": { "type": "array", "items": { "type": "string" } },
+      "constraintSet": { "type": "object" }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-genesis",
+  "fidelity": "Native",
+  "transparency": "Open",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  }
+}

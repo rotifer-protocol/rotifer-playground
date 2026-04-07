@@ -20,7 +20,7 @@ function cliErr(args: string): string {
   }
 }
 
-const PREFIX = "_test_hybrid_pub_";
+const PREFIX = "test.hybrid.pub.";
 const createdGenes: string[] = [];
 
 function writePhenotype(name: string, phenotype: Record<string, unknown>): string {

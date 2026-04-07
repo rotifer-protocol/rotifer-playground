@@ -1,15 +1,18 @@
 import { Command } from "commander";
 import { writeFileSync, existsSync, readFileSync, mkdirSync, copyFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
-import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
-import { execSync } from "node:child_process";
+import { contentHash } from "../utils/content-hash.js";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import https from "node:https";
 import * as display from "../utils/display.js";
-import { getProjectRoot, loadConfig } from "../utils/config.js";
+import { c } from "../utils/palette.js";
+import { loadConfig } from "../utils/config.js";
+import { requireProjectRoot } from "../utils/project-root.js";
 import { parseSkillFrontmatter } from "./scan.js";
 import { suggestDomains } from "../utils/domain-suggest.js";
+import { validateGeneName } from "../utils/validate-gene-name.js";
 
 const CLAWHUB_API = "https://clawhub.ai/api/skill";
 const CLAWHUB_DOWNLOAD = "https://wry-manatee-359.convex.site/api/v1/download";
@@ -61,7 +64,7 @@ async function downloadAndExtract(slug: string): Promise<string> {
   mkdirSync(workDir, { recursive: true });
   const zipPath = join(workDir, `${slug}.zip`);
   writeFileSync(zipPath, zipBuf);
-  execSync(`unzip -o "${zipPath}" -d "${workDir}/extracted"`, { stdio: "pipe" });
+  execFileSync("unzip", ["-o", zipPath, "-d", join(workDir, "extracted")], { stdio: "pipe" });
   const extracted = join(workDir, "extracted");
   const entries = readdirSync(extracted);
   if (entries.length === 1 && statSync(join(extracted, entries[0])).isDirectory()) {
@@ -121,14 +124,19 @@ function parseClawHubFrontmatter(content: string): Record<string, string | strin
 }
 
 async function resolveDomain(
-  name: string,
+  geneName: string,
   explicitDomain: string | undefined,
   defaultDomain: string,
   description?: string
 ): Promise<string> {
-  if (explicitDomain) return explicitDomain;
+  if (explicitDomain) {
+    if (!/^[a-z0-9]+(\.[a-z0-9]+)*$/.test(explicitDomain)) {
+      throw new Error(`Invalid domain format: "${explicitDomain}". Use lowercase letters, digits, and dots only (e.g., "nlp", "code.analysis").`);
+    }
+    return explicitDomain;
+  }
 
-  const suggestions = suggestDomains(name, description);
+  const suggestions = suggestDomains(geneName, description);
   if (suggestions.length === 0) return defaultDomain;
 
   if (!process.stdin.isTTY) {
@@ -137,7 +145,7 @@ async function resolveDomain(
   }
 
   console.log();
-  display.info("Suggested domains based on gene name:");
+  display.hint("Suggested domains based on gene name:");
   suggestions.forEach((s, i) => {
     const count = s.gene_count > 0 ? ` (${s.gene_count} genes)` : "";
     console.log(`  ${i + 1}. ${s.domain}${count}`);
@@ -164,20 +172,21 @@ async function resolveDomain(
 }
 
 export const wrapCommand = new Command("wrap")
-  .description("Wrap a function as a Rotifer gene (generates Phenotype), or a SKILL.md as a gene")
-  .argument("<name>", "function/gene directory name, or gene name when using --from-skill/--from-clawhub")
+  .description("Wrap a function or SKILL.md as a gene")
+  .argument("<gene-name>", "function/gene directory name, or gene name when using --from-skill/--from-clawhub")
   .option("-d, --domain <domain>", "gene functional domain")
   .option("--fidelity <level>", "fidelity level", "Wrapped")
   .option("--from-skill <path>", "create gene from a SKILL.md file (path to SKILL.md or its directory)")
   .option("--from-clawhub <slug>", "create gene from a ClawHub skill (downloads and converts automatically)")
-  .action(async (name: string, options: { domain?: string; fidelity: string; fromSkill?: string; fromClawhub?: string }) => {
-    const root = getProjectRoot();
+  .action(async (geneName: string, options: { domain?: string; fidelity: string; fromSkill?: string; fromClawhub?: string }) => {
+    const root = requireProjectRoot();
     const config = loadConfig(root);
-    const domain = await resolveDomain(name, options.domain, config.default_domain || "general");
+    const domain = await resolveDomain(geneName, options.domain, config.default_domain || "general");
 
     display.header("Gene Wrapper");
+    validateGeneName(geneName);
 
-    const geneDir = join(root, config.genes_dir, name);
+    const geneDir = join(root, config.genes_dir, geneName);
 
     if (options.fromClawhub) {
       const slug = options.fromClawhub;
@@ -232,7 +241,7 @@ export const wrapCommand = new Command("wrap")
       const metaJson = existsSync(metaFile) ? JSON.parse(readFileSync(metaFile, "utf-8")) : {};
 
       const description = info.summary || (clawFrontmatter.description as string) || `${info.displayName} skill`;
-      const resolvedDomain = await resolveDomain(name, options.domain, config.default_domain || "general", description);
+      const resolvedDomain = await resolveDomain(geneName, options.domain, config.default_domain || "general", description);
 
       const fidelityLevel = determineFidelity(skillDir);
       const permissions = (clawFrontmatter.permissions as string[]) || [];
@@ -245,7 +254,7 @@ export const wrapCommand = new Command("wrap")
         dependencies: [] as string[],
         version: info.version || metaJson.version || "0.1.0",
         author: config.author,
-        createdAt: Date.now(),
+        createdAt: new Date().toISOString(),
         fidelity: fidelityLevel,
         transparency: "Open",
         source: "clawhub",
@@ -274,8 +283,8 @@ export const wrapCommand = new Command("wrap")
         mkdirSync(geneDir, { recursive: true });
       }
 
+      const geneId = contentHash(phenotype);
       const phenotypeStr = JSON.stringify(phenotype, null, 2);
-      const geneId = createHash("sha256").update(phenotypeStr).digest("hex");
       writeFileSync(join(geneDir, "phenotype.json"), phenotypeStr + "\n");
 
       copyDirRecursive(skillDir, geneDir);
@@ -289,7 +298,7 @@ export const wrapCommand = new Command("wrap")
         join(geneDir, ".gene-manifest.json"),
         JSON.stringify(
           {
-            geneId, name, domain: resolvedDomain,
+            geneId, name: geneName, domain: resolvedDomain,
             fidelity: phenotype.fidelity as string,
             wrappedAt: new Date().toISOString(),
             fromClawhub: slug,
@@ -301,17 +310,18 @@ export const wrapCommand = new Command("wrap")
       );
 
       const fileCount = countFiles(geneDir);
-      display.success(`ClawHub skill '${info.displayName}' → Gene '${name}'`);
-      display.keyValue("Gene ID", display.geneId(geneId));
+      display.success(`ClawHub skill '${info.displayName}' → Gene '${geneName}'`);
+      display.keyValue("Gene ID", c.warn(geneId));
       display.keyValue("Domain", resolvedDomain);
       display.keyValue("Fidelity", phenotype.fidelity as string);
       display.keyValue("Files", `${fileCount} migrated`);
       display.keyValue("ClawHub", `@${info.owner.handle} · ${info.stats.downloads.toLocaleString()} downloads · ★${info.stats.stars}`);
       console.log();
-      display.info("Next steps:");
-      display.info("  rotifer vg " + name + "       # security scan");
-      display.info("  rotifer test " + name + "     # run tests");
-      display.info("  rotifer publish " + name + "  # upload to Rotifer Cloud");
+      display.hint("Next steps:");
+      display.hint("  rotifer compile " + geneName + "       # validate phenotype");
+      display.hint("  rotifer vg " + geneName + "            # security scan");
+      display.hint("  rotifer arena submit " + geneName + "  # compete in Arena");
+      display.hint("  rotifer publish " + geneName + "       # upload to Rotifer Cloud");
       return;
     }
 
@@ -351,7 +361,7 @@ export const wrapCommand = new Command("wrap")
         dependencies: [] as string[],
         version: "0.1.0",
         author: config.author,
-        createdAt: Date.now(),
+        createdAt: new Date().toISOString(),
         fidelity: options.fidelity,
         transparency: "Open",
         source: "skill" as const,
@@ -364,33 +374,35 @@ export const wrapCommand = new Command("wrap")
           maxRequestsPerMin: 10,
         };
       }
+      const geneId = contentHash(phenotype);
       const phenotypeStr = JSON.stringify(phenotype, null, 2);
-      const geneId = createHash("sha256").update(phenotypeStr).digest("hex");
       writeFileSync(join(geneDir, "phenotype.json"), phenotypeStr + "\n");
       copyFileSync(skillFile, join(geneDir, "SKILL.md"));
       writeFileSync(
         join(geneDir, ".gene-manifest.json"),
         JSON.stringify(
-          { geneId, name, domain, fidelity: options.fidelity, wrappedAt: new Date().toISOString(), fromSkill: relative(root, skillFile) },
+          { geneId, name: geneName, domain, fidelity: options.fidelity, wrappedAt: new Date().toISOString(), fromSkill: relative(root, skillFile) },
           null,
           2
         ) + "\n"
       );
-      display.success(`Skill '${parsed.name}' wrapped as gene '${name}'`);
-      display.keyValue("Gene ID", display.geneId(geneId));
+      display.success(`Skill '${parsed.name}' wrapped as gene '${geneName}'`);
+      display.keyValue("Gene ID", c.warn(geneId));
       display.keyValue("Domain", domain);
       display.keyValue("Fidelity", options.fidelity);
       console.log();
-      display.info("Next steps:");
-      display.info("  rotifer compile " + name + "   # validate (Wrapped, no WASM)");
-      display.info("  rotifer publish " + name + "  # upload to Rotifer Cloud");
+      display.hint("Next steps:");
+      display.hint("  rotifer compile " + geneName + "       # validate phenotype");
+      display.hint("  rotifer vg " + geneName + "            # security scan");
+      display.hint("  rotifer arena submit " + geneName + "  # compete in Arena");
+      display.hint("  rotifer publish " + geneName + "       # upload to Rotifer Cloud");
       return;
     }
 
     if (!existsSync(geneDir)) {
       display.rustStyleError({
         code: "E0001",
-        message: `Gene directory '${name}' not found`,
+        message: `Gene directory '${geneName}' not found`,
         file: geneDir,
         suggestion: `Create the directory first: mkdir -p ${geneDir}`,
         docsUrl: "https://rotifer.dev/docs/genes",
@@ -412,7 +424,7 @@ export const wrapCommand = new Command("wrap")
         dependencies: [],
         version: "0.1.0",
         author: config.author,
-        createdAt: Date.now(),
+        createdAt: new Date().toISOString(),
         fidelity: options.fidelity,
         transparency: "Open",
       };
@@ -426,23 +438,32 @@ export const wrapCommand = new Command("wrap")
       }
     }
 
+    const version: string = (phenotype.version as string) || "0.1.0";
+    if (!/^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$/.test(version)) {
+      display.error(
+        `Invalid version format '${version}'. Use semver (e.g., '1.0.0', '0.1.0-beta.1').`
+      );
+      process.exit(1);
+    }
+
+    const geneId = contentHash(phenotype);
     const phenotypeStr = JSON.stringify(phenotype, null, 2);
-    const geneId = createHash("sha256").update(phenotypeStr).digest("hex");
 
     writeFileSync(phenotypePath, phenotypeStr + "\n");
     writeFileSync(
       join(geneDir, ".gene-manifest.json"),
-      JSON.stringify({ geneId, name, domain, fidelity: options.fidelity, wrappedAt: new Date().toISOString() }, null, 2) + "\n"
+      JSON.stringify({ geneId, name: geneName, domain, fidelity: options.fidelity, wrappedAt: new Date().toISOString() }, null, 2) + "\n"
     );
 
-    display.success(`Gene '${name}' wrapped successfully`);
-    display.keyValue("Gene ID", display.geneId(geneId));
+    display.success(`Gene '${geneName}' wrapped successfully`);
+    display.keyValue("Gene ID", c.warn(geneId));
     display.keyValue("Domain", domain);
     display.keyValue("Fidelity", options.fidelity);
 
     console.log();
-    display.info("Next steps:");
-    display.info("  rotifer test " + name);
-    display.info("  rotifer compile " + name + "          # Wrapped fidelity");
-    display.info("  rotifer compile " + name + " --wasm <file>  # Native fidelity (with WASM)");
+    display.hint("Next steps:");
+    display.hint("  rotifer compile " + geneName + "          # Wrapped fidelity");
+    display.hint("  rotifer compile " + geneName + " --wasm <file>  # Native fidelity (with WASM)");
+    display.hint("  rotifer vg " + geneName + "               # security scan");
+    display.hint("  rotifer arena submit " + geneName + "     # compete in Arena");
   });

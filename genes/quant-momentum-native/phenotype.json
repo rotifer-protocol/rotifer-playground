@@ -1,0 +1,105 @@
+{
+  "author": "rotifer-team",
+  "domain": "quant.strategy",
+  "version": "0.2.0",
+  "fidelity": "Native",
+  "description": "Momentum / trend-following trading strategy with real backtesting engine. Detects price trends using dual moving average crossover (fast MA vs slow MA) and generates buy/sell signals when momentum confirms trend direction. Includes full backtesting with PnL, Sharpe ratio, max drawdown, and win rate calculation.",
+  "inputSchema": {
+    "type": "object",
+    "required": [
+      "prices"
+    ],
+    "properties": {
+      "prices": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        },
+        "description": "Historical price series (chronological order)"
+      },
+      "fastWindow": {
+        "type": "number",
+        "default": 5,
+        "description": "Fast moving average window size"
+      },
+      "slowWindow": {
+        "type": "number",
+        "default": 20,
+        "description": "Slow moving average window size"
+      },
+      "momentumThreshold": {
+        "type": "number",
+        "default": 0.02,
+        "description": "Minimum momentum magnitude to trigger signal (0-1)"
+      },
+      "stopLoss": {
+        "type": "number",
+        "default": 0.05,
+        "description": "Stop loss percentage (0-1)"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "signals",
+      "pnl",
+      "sharpeRatio",
+      "maxDrawdown"
+    ],
+    "properties": {
+      "signals": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "number"
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "BUY",
+                "SELL",
+                "HOLD"
+              ]
+            },
+            "confidence": {
+              "type": "number"
+            }
+          }
+        },
+        "description": "Trading signals with confidence scores"
+      },
+      "pnl": {
+        "type": "number",
+        "description": "Total profit and loss (percentage)"
+      },
+      "sharpeRatio": {
+        "type": "number",
+        "description": "Risk-adjusted return metric"
+      },
+      "maxDrawdown": {
+        "type": "number",
+        "description": "Maximum peak-to-trough decline (percentage)"
+      },
+      "winRate": {
+        "type": "number",
+        "description": "Percentage of profitable trades"
+      },
+      "tradeCount": {
+        "type": "number",
+        "description": "Total number of completed trades"
+      }
+    }
+  },
+  "dependencies": [],
+  "transparency": "Open",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "FailFast"
+  },
+  "irHash": "47e19f6c643c35cd17de56005273ee17d242142d0fd84e3cd6eff3cbbeceec64",
+  "tags": ["momentum", "backtesting", "moving-average", "trading-signals", "sharpe"]
+}

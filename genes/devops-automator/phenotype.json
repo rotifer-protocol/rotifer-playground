@@ -19,10 +19,17 @@
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939413757,
-  "fidelity": "Wrapped",
+  "fidelity": "Native",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "FailFast"
+  },
+  "irHash": "87f41149b3c7726e791b6761dbba3a1e689830a0f7952efa159a33f5cdd2e5be",
+  "tags": ["ci-cd", "github-actions", "docker", "deployment", "nextjs"]
 }

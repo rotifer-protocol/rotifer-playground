@@ -143,14 +143,32 @@ export function generateCodeChallenge(verifier: string): string {
   return createHash("sha256").update(verifier).digest("base64url");
 }
 
+export const OAUTH_CALLBACK_HOST = "127.0.0.1";
+
+export function buildOAuthCallbackUrl(port: number, path: string = "/callback"): string {
+  return `http://${OAUTH_CALLBACK_HOST}:${port}${path}`;
+}
+
 /**
- * Start a local HTTP server to receive the OAuth callback.
- * Handles both PKCE flow (?code=...) and implicit flow (#access_token=...).
+ * Start a local OAuth callback server on a random port (127.0.0.1:0).
+ * Returns the bound port immediately so the caller can construct the auth URL,
+ * plus a promise that resolves when the callback arrives.
  */
-export function waitForOAuthCallback(port: number = 9876): Promise<string> {
+export async function startOAuthCallbackServer(): Promise<{
+  port: number;
+  waitForCallback: Promise<string>;
+}> {
   return new Promise((resolve, reject) => {
+    let callbackResolve: (value: string) => void;
+    let callbackReject: (reason: Error) => void;
+    const waitForCallback = new Promise<string>((res, rej) => {
+      callbackResolve = res;
+      callbackReject = rej;
+    });
+
     const server = createServer((req, res) => {
-      const url = new URL(req.url || "/", `http://localhost:${port}`);
+      const boundPort = (server.address() as { port: number })?.port || 0;
+      const url = new URL(req.url || "/", buildOAuthCallbackUrl(boundPort));
 
       if (url.pathname === "/callback/token") {
         const token = url.searchParams.get("access_token");
@@ -163,7 +181,7 @@ export function waitForOAuthCallback(port: number = 9876): Promise<string> {
               "</body></html>"
           );
           server.close();
-          resolve(`implicit:${token}:${refresh || ""}`);
+          callbackResolve(`implicit:${token}:${refresh || ""}`);
           return;
         }
       }
@@ -177,7 +195,7 @@ export function waitForOAuthCallback(port: number = 9876): Promise<string> {
             "</body></html>"
         );
         server.close();
-        resolve(code);
+        callbackResolve(code);
       } else {
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(`<html><body><script>
@@ -197,8 +215,9 @@ if (window.location.hash) {
       }
     });
 
-    server.listen(port, () => {
-      // Server ready
+    server.listen(0, OAUTH_CALLBACK_HOST, () => {
+      const addr = server.address() as { port: number };
+      resolve({ port: addr.port, waitForCallback });
     });
 
     server.on("error", (err) => {
@@ -207,7 +226,7 @@ if (window.location.hash) {
 
     setTimeout(() => {
       server.close();
-      reject(new Error("Login timed out after 120 seconds"));
+      callbackReject(new Error("Login timed out after 120 seconds"));
     }, 120_000);
   });
 }

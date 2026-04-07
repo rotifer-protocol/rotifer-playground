@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SVG animation generator with rotifer.dev design system alignment
 - Experiment results with 3 reproducible runs
 
+### Changed
+
+- **Reputation model alignment** — cold-start `R(g)` now uses phase-based weights (W0/W1/W2) instead of a fixed 0.5/0.3/0.2 split
+- **Creator reputation** — now uses a diminishing-returns weighted sum of positive gene reputations, instead of a plain average
+- **Arena safety scoring** — `V(g)` now incorporates the shipped static security scanner (`Security_Leak_Risk`) during `arena submit`
+
 ## [0.8.0] - 2026-02-17
 
 ### Added
@@ -67,12 +73,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **CLI: `rotifer info <gene-id>`** — display detailed gene information (description, domain, version, fitness, reputation)
+- **CLI: `rotifer info <gene-ref>`** — display detailed gene information (description, domain, version, fitness, reputation)
 - **CLI: `rotifer list`** — list local genes in current project with optional `--domain` filter
 - **CLI: `rotifer run <gene-name>`** — directly execute a single gene with WASM sandbox or Node.js fallback
 - **CLI: `rotifer versions <owner> <name>`** — display version history chain for a gene
 - **CLI: `rotifer whoami`** — show current authentication status
-- **CLI: `rotifer stats <gene-id>`** — display download statistics for a gene
+- **CLI: `rotifer stats <gene-ref>`** — display download statistics for a gene
 - **CLI: `rotifer compare <id...>`** — compare 2-5 genes side by side by fitness and reputation
 
 ### Changed
@@ -179,7 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Phenotype schema display (inputSchema/outputSchema)
   - Stats: version, R(g), downloads, WASM size, dates
   - One-click install command copy
-- **Developer Profile Pages** — each developer has a page at `/developers/[user]/` with:
+- **Creator Profile Pages** — each creator has a page at `/developers/[user]/` with:
   - R(d) reputation score and stats grid
   - Published gene list with links
 - **Gene Registry Upgrade** — `/genes/` listing page now fetches from Cloud API
@@ -266,13 +272,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Reputation System** — measurable trust signals for genes and developers
+- **Reputation System** — measurable trust signals for genes and creators
   - Gene reputation R(g) = α·Arena + β·Usage + γ·Stability (weights: 0.5, 0.3, 0.2)
-  - Developer reputation R(d) = avg(gene reputations) + community bonus
+  - Creator reputation R(d) initially launched as a plain average of gene reputations plus community bonus
   - Time-based decay (5%/month, floor at 0.01) prevents reputation stagnation
-  - `rotifer reputation <gene-id>` — view gene reputation breakdown
-  - `rotifer reputation --mine` — view your developer reputation
-  - `rotifer reputation --leaderboard` — top developers ranked by reputation
+  - `rotifer reputation <gene-ref>` — view gene reputation breakdown
+  - `rotifer reputation --mine` — view your creator reputation
+  - `rotifer reputation --leaderboard` — top creators ranked by reputation
   - Database migration `003_reputation.sql` with `gene_reputation` and `developer_reputation` tables
   - Server-side reputation computation via PostgreSQL functions
   - Reputation leaderboard API (`get_reputation_leaderboard()`)
@@ -309,16 +315,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Cloud Binding** — Cross-developer gene sharing via Supabase-backed REST API
+- **Cloud Binding** — Cross-creator gene sharing via Supabase-backed REST API
   - `rotifer login` — GitHub OAuth authentication via PKCE flow
   - `rotifer logout` — Clear cloud credentials
   - `rotifer publish <gene>` — Upload gene (phenotype + WASM) to cloud registry, saves `.cloud-manifest.json`
   - `rotifer search [query]` — Search and browse cloud gene registry
-  - `rotifer install <gene-id>` — Download gene from cloud to local project
+  - `rotifer install <gene-ref>` — Download gene from cloud to local project
   - Cloud Binding REST API specification (`docs/cloud-binding-api.md`)
   - Supabase database schema with RLS policies (see `supabase/README.md` for self-hosting guide)
 
-- **Cloud Arena** — Remote Arena competition across developers
+- **Cloud Arena** — Remote Arena competition across creators
   - `rotifer arena submit --cloud` — Submit gene to cloud Arena
   - `rotifer arena list --cloud` — View cloud Arena rankings
   - `rotifer arena watch --cloud` — Real-time cloud ranking updates (polling)

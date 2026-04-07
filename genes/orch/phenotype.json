@@ -3,26 +3,94 @@
   "description": "Intelligent skill orchestration hub. Automatically identifies and dispatches the most suitable skills based on user intent. Analyzes conversation context, matches task types, and combines multiple skills for complex tasks.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "intent"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
-      }
-    },
-    "required": []
-  },
-  "outputSchema": {
-    "type": "object",
-    "properties": {
-      "result": {
-        "type": "string"
+      "intent": {
+        "type": "string",
+        "description": "User intent or task description to route"
+      },
+      "availableGenes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "List of available gene names to dispatch to"
+      },
+      "context": {
+        "type": "object",
+        "description": "Additional context for routing decision"
+      },
+      "maxGenes": {
+        "type": "integer",
+        "default": 3,
+        "minimum": 1,
+        "maximum": 10,
+        "description": "Maximum number of genes to invoke"
       }
     }
   },
-  "dependencies": [],
-  "version": "0.1.0",
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "plan",
+      "selectedGenes"
+    ],
+    "properties": {
+      "plan": {
+        "type": "string",
+        "description": "Execution plan description"
+      },
+      "selectedGenes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "gene": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "inputMapping": {
+              "type": "object"
+            },
+            "priority": {
+              "type": "integer"
+            }
+          }
+        },
+        "description": "Selected genes with routing rationale"
+      },
+      "executionStrategy": {
+        "type": "string",
+        "enum": [
+          "sequential",
+          "parallel",
+          "conditional"
+        ],
+        "description": "How selected genes should be executed"
+      },
+      "fallback": {
+        "type": "string",
+        "description": "Fallback gene if primary selections fail"
+      }
+    }
+  },
+  "dependencies": [
+    "*"
+  ],
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939421033,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "orchestration",
+    "routing",
+    "dispatch",
+    "meta"
+  ]
 }

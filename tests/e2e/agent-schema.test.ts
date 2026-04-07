@@ -18,7 +18,7 @@ function cliAll(args: string): string {
   }
 }
 
-const PREFIX = "_test_schema_";
+const PREFIX = "test.schema.";
 const createdGenes: string[] = [];
 
 function makeGene(name: string, input: Record<string, unknown>, output: Record<string, unknown>) {

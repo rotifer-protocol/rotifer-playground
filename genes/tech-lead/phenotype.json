@@ -3,26 +3,95 @@
   "description": "Enforce code consistency, naming conventions, and hygiene for AI and Web3 projects. Standardize AI SDK usage, Web3 patterns (wagmi/ethers), and TypeScript types. Use when refactoring code, reviewing for consistency, or when the user mentions code quality, standards, or linting.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "code"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "code": {
+        "type": "string",
+        "description": "Source code to review"
+      },
+      "language": {
+        "type": "string",
+        "default": "typescript",
+        "description": "Programming language"
+      },
+      "standards": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "naming",
+          "structure",
+          "types"
+        ],
+        "description": "Coding standards to check against"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "issues",
+      "score"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "issues": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "severity": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "error"
+              ]
+            },
+            "category": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "line": {
+              "type": "integer"
+            },
+            "suggestion": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Code quality issues"
+      },
+      "refactorSuggestions": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Refactoring recommendations"
+      },
+      "score": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 10,
+        "description": "Overall code quality score"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939410356,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "code-quality",
+    "standards",
+    "conventions",
+    "review"
+  ]
 }

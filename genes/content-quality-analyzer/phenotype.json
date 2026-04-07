@@ -1,0 +1,67 @@
+{
+  "name": "content-quality-analyzer",
+  "version": "0.2.0",
+  "domain": "quality.content",
+  "fidelity": "Native",
+  "description": "Bilingual content quality analysis — Flesch-Kincaid readability, STEPPS virality scoring, sentiment analysis, and structural diagnostics for English and Chinese text",
+  "author": "Rotifer Protocol Contributors",
+  "license": "Apache-2.0",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "text": { "type": "string", "description": "Article or document text (Markdown or plain text)" },
+      "platform": { "type": "string", "description": "Target platform for optimization hints", "enum": ["dev.to", "medium", "hashnode", "blog", "general"] },
+      "targetAudience": { "type": "string", "description": "Target audience description" }
+    },
+    "required": ["text"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "readability": {
+        "type": "object",
+        "properties": {
+          "score": { "type": "number" },
+          "grade": { "type": "string" },
+          "language": { "type": "string" }
+        }
+      },
+      "virality": {
+        "type": "object",
+        "properties": {
+          "score": { "type": "number" },
+          "factors": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "score": { "type": "number" }, "detail": { "type": "string" } } } }
+        }
+      },
+      "sentiment": {
+        "type": "object",
+        "properties": {
+          "tone": { "type": "string" },
+          "score": { "type": "number" }
+        }
+      },
+      "structure": {
+        "type": "object",
+        "properties": {
+          "paragraphs": { "type": "integer" },
+          "avgLength": { "type": "number" },
+          "hasHeadings": { "type": "boolean" },
+          "codeBlocks": { "type": "integer" },
+          "links": { "type": "integer" },
+          "wordCount": { "type": "integer" }
+        }
+      },
+      "recommendations": { "type": "array", "items": { "type": "string" } }
+    },
+    "required": ["readability", "virality", "sentiment", "structure", "recommendations"]
+  },
+  "displayField": "readability",
+  "tags": ["content", "readability", "virality", "sentiment", "bilingual", "writing", "quality"],
+  "dependencies": [],
+  "transparency": "Open",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Retry"
+  }
+}

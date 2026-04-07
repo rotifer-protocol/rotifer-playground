@@ -4,10 +4,13 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import * as display from "../utils/display.js";
-import { getProjectRoot, loadConfig } from "../utils/config.js";
+import { c } from "../utils/palette.js";
+import { loadConfig } from "../utils/config.js";
+import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding, type NativeBinding } from "../utils/binding.js";
 import { createGatewayFetch, type GatewayFetchOptions, type GatewayResponse } from "../runtime/network-gateway.js";
 import { DomainFailoverEngine, type GeneExecutionResult } from "../runtime/domain-failover.js";
+import { logGeneExecution } from "../utils/run-logger.js";
 
 interface AgentInfo {
   id: string;
@@ -28,29 +31,29 @@ interface AgentInfo {
 
 export const agentRunCommand = new Command("run")
   .description("Execute an agent's genome pipeline")
-  .argument("<name>", "agent name to run")
+  .argument("<agent-name>", "agent name to run")
   .option("--input <json>", "input JSON for the pipeline", '{"name":"world"}')
   .option("--verbose", "show intermediate results", false)
   .option("--no-sandbox", "force Node.js execution (skip WASM sandbox)", false)
-  .action(async (name: string, options: { input: string; verbose: boolean; sandbox: boolean }) => {
-    const root = getProjectRoot();
+  .action(async (agentName: string, options: { input: string; verbose: boolean; sandbox: boolean }) => {
+    const root = requireProjectRoot();
     const config = loadConfig(root);
 
     display.header("Agent Execution");
 
-    const agent = findAgent(root, name);
+    const agent = findAgent(root, agentName);
     if (!agent) {
       display.rustStyleError({
         code: "E0050",
-        message: `Agent '${name}' not found`,
-        suggestion: "Create one: rotifer agent create " + name + " --genes <g1> <g2>",
+        message: `Agent '${agentName}' not found`,
+        suggestion: "Create one: rotifer agent create " + agentName + " --genes <g1> <g2>",
       });
       process.exit(1);
     }
 
     if (agent.genome.length === 0) {
       display.error("Agent has an empty genome — nothing to execute");
-      display.info("Recreate with genes: rotifer agent create " + name + " --genes <g1> <g2>");
+      display.info("Recreate with genes: rotifer agent create " + agentName + " --genes <g1> <g2>");
       process.exit(1);
     }
 
@@ -59,6 +62,7 @@ export const agentRunCommand = new Command("run")
       input = JSON.parse(options.input);
     } catch {
       display.error("Invalid --input JSON: " + options.input);
+      display.hint('Example: --input \'{"name":"world"}\'');
       process.exit(1);
     }
 
@@ -67,7 +71,7 @@ export const agentRunCommand = new Command("run")
       (agent.genome.length >= 2 ? "Seq" : "Single");
 
     const separator = compositionType === "Par" ? " ∥ " : " → ";
-    display.info(`Agent: ${agent.name} (${agent.id.slice(0, 12)}...)`);
+    display.info(`Agent: ${agent.name} (${agent.id})`);
     display.info(`Composition: ${compositionType}`);
     display.info(`Pipeline: ${agent.genome.join(separator)}`);
     console.log();
@@ -157,11 +161,21 @@ export const agentRunCommand = new Command("run")
               durationMs: stepElapsed, inputPreview,
               outputPreview: JSON.stringify(result.output).slice(0, 200),
             });
+            logGeneExecution({
+              geneName, success: true, durationMs: stepElapsed,
+              inputSize: inputPreview.length,
+              outputSize: JSON.stringify(result.output).length,
+            });
             current = result.output;
           } else {
             pipelineLog.push({
               gene: geneName, status: "error", engine: "wasm",
               durationMs: stepElapsed, inputPreview, outputPreview: "",
+              error: result.errorMessage || "sandbox execution failed",
+            });
+            logGeneExecution({
+              geneName, success: false, durationMs: stepElapsed,
+              inputSize: inputPreview.length, outputSize: 0,
               error: result.errorMessage || "sandbox execution failed",
             });
             display.rustStyleError({
@@ -177,6 +191,11 @@ export const agentRunCommand = new Command("run")
           pipelineLog.push({
             gene: geneName, status: "error", engine: "wasm",
             durationMs: stepElapsed, inputPreview, outputPreview: "",
+            error: err.message,
+          });
+          logGeneExecution({
+            geneName, success: false, durationMs: stepElapsed,
+            inputSize: inputPreview.length, outputSize: 0,
             error: err.message,
           });
           display.rustStyleError({
@@ -257,6 +276,11 @@ export const agentRunCommand = new Command("run")
             durationMs: stepElapsed, inputPreview,
             outputPreview: JSON.stringify(result).slice(0, 200),
           });
+          logGeneExecution({
+            geneName, success: true, durationMs: stepElapsed,
+            inputSize: inputPreview.length,
+            outputSize: JSON.stringify(result).length,
+          });
 
           current = result;
         } catch (err: any) {
@@ -264,6 +288,11 @@ export const agentRunCommand = new Command("run")
           pipelineLog.push({
             gene: geneName, status: "error", engine: "node",
             durationMs: stepElapsed, inputPreview, outputPreview: "",
+            error: err.message,
+          });
+          logGeneExecution({
+            geneName, success: false, durationMs: stepElapsed,
+            inputSize: inputPreview.length, outputSize: 0,
             error: err.message,
           });
           display.rustStyleError({
@@ -293,6 +322,8 @@ export const agentRunCommand = new Command("run")
     console.log();
     display.info("Final output:");
     console.log(JSON.stringify(current, null, 2));
+
+    printProtocolInsights(agent.genome, genesDir, totalElapsed);
   });
 
 function printPipelineLog(log: Array<{
@@ -302,22 +333,29 @@ function printPipelineLog(log: Array<{
 }>): void {
   console.log();
   display.info("Pipeline execution log:");
-  console.log("  ┌─────┬──────────────────────────┬──────────┬──────────────┬───────────┐");
-  console.log("  │  #  │ Gene                     │ Status   │ Engine       │ Duration  │");
-  console.log("  ├─────┼──────────────────────────┼──────────┼──────────────┼───────────┤");
-  for (let i = 0; i < log.length; i++) {
-    const l = log[i];
-    const num = String(i + 1).padStart(3);
-    const name = l.gene.padEnd(24).slice(0, 24);
-    const status = (l.status === "success" ? "OK" : "FAIL").padEnd(8);
-    const engine = l.engine.padEnd(12).slice(0, 12);
-    const dur = `${l.durationMs.toFixed(0)}ms`.padStart(9);
-    console.log(`  │ ${num} │ ${name} │ ${status} │ ${engine} │ ${dur} │`);
+  display.table(
+    log.map((l, i) => ({
+      _idx: i + 1,
+      gene: l.gene,
+      status: l.status,
+      engine: l.engine,
+      duration: `${l.durationMs.toFixed(0)}ms`,
+      error: l.error || "",
+    })),
+    [
+      { key: "_idx", label: "#", width: 4, align: "right" },
+      { key: "gene", label: "Gene", width: 24 },
+      { key: "status", label: "Status", width: 10,
+        format: (v) => String(v) === "success" ? c.success("OK") : c.error("FAIL") },
+      { key: "engine", label: "Engine", width: 14 },
+      { key: "duration", label: "Duration", width: 10 },
+    ],
+  );
+  for (const l of log) {
     if (l.error) {
-      console.log(`  │     │  Error: ${l.error.slice(0, 60).padEnd(60)}        │`);
+      display.error(`${l.gene}: ${l.error}`);
     }
   }
-  console.log("  └─────┴──────────────────────────┴──────────┴──────────────┴───────────┘");
 }
 
 async function executeTryPool(
@@ -326,7 +364,7 @@ async function executeTryPool(
   binding: NativeBinding | null,
   input: unknown,
   root: string,
-  verbose: boolean,
+  isVerbose: boolean,
 ): Promise<void> {
   const engine = new DomainFailoverEngine();
   const startTime = performance.now();
@@ -368,7 +406,7 @@ async function executeTryPool(
 
   const results = await engine.executeAll(input);
 
-  let anyFailed = false;
+  let hasAnyFailed = false;
   const outputs: Record<string, unknown> = {};
 
   for (const r of results) {
@@ -380,7 +418,7 @@ async function executeTryPool(
       outputs[r.domain] = r.output;
     } else {
       display.error(`${r.domain}: all ${r.attempts} gene(s) failed`);
-      anyFailed = true;
+      hasAnyFailed = true;
     }
   }
 
@@ -391,7 +429,7 @@ async function executeTryPool(
   const totalElapsed = performance.now() - startTime;
   console.log();
 
-  if (verbose) {
+  if (isVerbose) {
     display.info("Fitness state:");
     const state = engine.exportFitnessState();
     for (const [name, s] of Object.entries(state)) {
@@ -402,7 +440,11 @@ async function executeTryPool(
   }
 
   const switches = results.filter((r) => r.switchedFrom).length;
-  display.success("TryPool execution complete");
+  if (hasAnyFailed) {
+    display.warn("TryPool execution finished with failures");
+  } else {
+    display.success("TryPool execution complete");
+  }
   display.keyValue("Agent", agent.name);
   display.keyValue("Domains", `${domains.length}`);
   display.keyValue("Succeeded", `${results.filter((r) => r.status === "success").length}/${domains.length}`);
@@ -414,7 +456,7 @@ async function executeTryPool(
   display.info("Output:");
   console.log(JSON.stringify(outputs, null, 2));
 
-  if (anyFailed) {
+  if (hasAnyFailed) {
     process.exit(1);
   }
 }
@@ -434,20 +476,33 @@ async function buildGeneExecutor(
       const start = performance.now();
       try {
         const result = binding.executeGene(wasmBytes, JSON.stringify(input), phenoStr);
+        const elapsed = performance.now() - start;
+        logGeneExecution({
+          geneName, success: result.success, durationMs: elapsed,
+          inputSize: JSON.stringify(input).length,
+          outputSize: result.output ? JSON.stringify(result.output).length : 0,
+          error: result.errorMessage || undefined,
+        });
         return {
           success: result.success,
           output: result.output,
           error: result.errorMessage || undefined,
           engine: "wasm",
-          durationMs: performance.now() - start,
+          durationMs: elapsed,
           fuelConsumed: result.fuelConsumed,
         };
       } catch (err: any) {
+        const elapsed = performance.now() - start;
+        logGeneExecution({
+          geneName, success: false, durationMs: elapsed,
+          inputSize: JSON.stringify(input).length, outputSize: 0,
+          error: err.message,
+        });
         return {
           success: false,
           error: err.message,
           engine: "wasm",
-          durationMs: performance.now() - start,
+          durationMs: elapsed,
         };
       }
     };
@@ -487,18 +542,30 @@ async function buildGeneExecutor(
       } else {
         result = await mod.express(input);
       }
+      const elapsed = performance.now() - start;
+      logGeneExecution({
+        geneName, success: true, durationMs: elapsed,
+        inputSize: JSON.stringify(input).length,
+        outputSize: JSON.stringify(result).length,
+      });
       return {
         success: true,
         output: result,
         engine: isHybrid ? "node+gateway" : "node",
-        durationMs: performance.now() - start,
+        durationMs: elapsed,
       };
     } catch (err: any) {
+      const elapsed = performance.now() - start;
+      logGeneExecution({
+        geneName, success: false, durationMs: elapsed,
+        inputSize: JSON.stringify(input).length, outputSize: 0,
+        error: err.message,
+      });
       return {
         success: false,
         error: err.message,
         engine: "node",
-        durationMs: performance.now() - start,
+        durationMs: elapsed,
       };
     }
   };
@@ -514,7 +581,7 @@ function executeViaAlgebra(
   binding: NativeBinding,
   input: unknown,
   compositionType: string,
-  verbose: boolean,
+  isVerbose: boolean,
 ): unknown | null {
   const comp = agent.composition;
   if (!comp) return null;
@@ -607,7 +674,7 @@ function executeViaAlgebra(
       display.success(
         `${compositionType} execution completed (${result.totalDurationMs}ms, fuel: ${result.totalFuelConsumed})`
       );
-      if (verbose) {
+      if (isVerbose) {
         display.info(`  Steps executed: ${result.stepsExecuted}`);
         display.info(`  Output: ${JSON.stringify(result.output).slice(0, 200)}`);
       }
@@ -616,7 +683,7 @@ function executeViaAlgebra(
       display.rustStyleError({
         code: "E0053",
         message: `${compositionType} execution failed: ${result.errorMessage}`,
-        suggestion: "Run 'rotifer test <gene> --verbose' to debug individual genes",
+        suggestion: "Run 'rotifer test <gene-name> --verbose' to debug individual genes",
       });
       process.exit(1);
     }
@@ -639,7 +706,7 @@ function hexToGeneIdArray(hex: string): number[] {
   return bytes;
 }
 
-function findAgent(root: string, name: string): AgentInfo | null {
+export function findAgent(root: string, agentName: string): AgentInfo | null {
   const agentsDir = join(root, ".rotifer", "agents");
   if (!existsSync(agentsDir)) return null;
 
@@ -649,7 +716,7 @@ function findAgent(root: string, name: string): AgentInfo | null {
       const agent: AgentInfo = JSON.parse(
         readFileSync(join(agentsDir, file), "utf-8")
       );
-      if (agent.name === name) return agent;
+      if (agent.name === agentName) return agent;
     } catch {
       // skip malformed
     }
@@ -663,4 +730,66 @@ function findSourceFile(geneDir: string): string | null {
     if (existsSync(join(geneDir, c))) return c;
   }
   return null;
+}
+
+export function printProtocolInsights(
+  genome: string[],
+  genesDir: string,
+  durationMs: number,
+): void {
+  if (genome.length === 0) return;
+
+  const geneStats: Array<{ name: string; domain: string; executable: boolean }> = [];
+
+  for (const name of genome) {
+    const phenotypePath = join(genesDir, name, "phenotype.json");
+    if (!existsSync(phenotypePath)) continue;
+
+    try {
+      const phenotype = JSON.parse(readFileSync(phenotypePath, "utf-8"));
+      const hasExpress = existsSync(join(genesDir, name, "index.ts")) ||
+                         existsSync(join(genesDir, name, "index.js")) ||
+                         existsSync(join(genesDir, name, "index.mjs"));
+
+      geneStats.push({
+        name,
+        domain: phenotype.domain || "general",
+        executable: hasExpress,
+      });
+    } catch {
+      // skip
+    }
+  }
+
+  if (geneStats.length === 0) return;
+
+  const primaryDomain = geneStats[0]?.domain || "general";
+  const domains = new Set(geneStats.map((g) => g.domain));
+  const executableCount = geneStats.filter((g) => g.executable).length;
+
+  console.log();
+  display.header("Genome Snapshot");
+  display.keyValue("Primary Domain", primaryDomain);
+  display.keyValue("Distinct Domains", `${domains.size}`);
+  display.keyValue("Genes in Genome", `${geneStats.length}`);
+  display.keyValue("Executable Genes", `${executableCount}/${geneStats.length}`);
+  display.keyValue("Run Duration", `${durationMs.toFixed(0)}ms`);
+  console.log();
+
+  const suggestions: string[] = [];
+  if (domains.size === 1) {
+    suggestions.push("Try adding genes from another domain for cross-domain resilience");
+  }
+  if (genome.length === 1) {
+    suggestions.push("Add a second gene with TryPool composition for automatic failover");
+  }
+  if (executableCount < geneStats.length) {
+    suggestions.push("Some genes are metadata-only — add executable implementations for end-to-end runs");
+  }
+  suggestions.push("Run `rotifer arena submit <gene>` to compete and refine fitness");
+
+  display.info("Genome suggestions:");
+  for (const s of suggestions) {
+    display.hint(`  → ${s}`);
+  }
 }

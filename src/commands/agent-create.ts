@@ -7,13 +7,100 @@ import {
   mkdirSync,
 } from "node:fs";
 import { join } from "node:path";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { contentHash } from "../utils/content-hash.js";
 import * as display from "../utils/display.js";
-import { getProjectRoot, loadConfig } from "../utils/config.js";
+import { c } from "../utils/palette.js";
+import { loadConfig } from "../utils/config.js";
+import { requireProjectRoot } from "../utils/project-root.js";
+import { validateGeneName } from "../utils/validate-gene-name.js";
+
+export interface CreateAgentParams {
+  root: string;
+  genesDir: string;
+  agentName: string;
+  genome: string[];
+  compositionType: string;
+  parMerge?: string;
+  strategy?: string;
+}
+
+export interface AgentRecord {
+  id: string;
+  name: string;
+  state: string;
+  genome: string[];
+  composition: Record<string, unknown>;
+  strategy: string;
+  createdAt: string;
+  reputation: number;
+}
+
+export function createAgentCore(params: CreateAgentParams): AgentRecord {
+  const { root, agentName, genome, parMerge } = params;
+
+  for (const geneName of genome) {
+    validateGeneName(geneName);
+    const geneDir = join(root, params.genesDir, geneName);
+    if (!existsSync(join(geneDir, "phenotype.json"))) {
+      throw new Error(`Gene '${geneName}' not found or not wrapped`);
+    }
+  }
+
+  if (genome.length >= 2) {
+    const warnings = checkSchemaCompatibility(root, params.genesDir, genome);
+    if (warnings.length > 0) {
+      display.warn("Schema compatibility warnings:");
+      for (const w of warnings) {
+        display.warn(`  ${w}`);
+      }
+      console.log();
+    }
+  }
+
+  const compositionType = genome.length >= 2 ? params.compositionType : "Single";
+  let composition: Record<string, unknown> = { type: compositionType };
+
+  if (compositionType === "Par") {
+    composition = { type: "Par", branches: genome, merge: parMerge || "first" };
+  } else if (compositionType === "Cond" && genome.length >= 2) {
+    composition = {
+      type: "Cond",
+      predicate: { field: "type", equals: "primary" },
+      thenBranch: genome[0],
+      elseBranch: genome[1],
+    };
+  } else if (compositionType === "Try" && genome.length >= 2) {
+    composition = { type: "Try", primary: genome[0], fallback: genome[1] };
+  } else if (compositionType === "TryPool") {
+    composition = { type: "TryPool" };
+  }
+
+  const agentId = randomUUID();
+  const agent: AgentRecord = {
+    id: agentId,
+    name: agentName,
+    state: "Active",
+    genome,
+    composition,
+    strategy: params.strategy || "manual",
+    createdAt: new Date().toISOString(),
+    reputation: 0.0,
+  };
+
+  const agentsDir = join(root, ".rotifer", "agents");
+  mkdirSync(agentsDir, { recursive: true });
+  writeFileSync(
+    join(agentsDir, agentId + ".json"),
+    JSON.stringify(agent, null, 2) + "\n"
+  );
+
+  return agent;
+}
 
 export const agentCreateCommand = new Command("create")
   .description("Create a new Agent with a genome of genes")
-  .argument("<name>", "agent name")
+  .argument("<agent-name>", "agent name")
   .option("-g, --genes <genes...>", "gene names to include in genome")
   .option("-d, --domain <domain>", "auto-select top genes from this domain")
   .option("-n, --top <n>", "number of top genes to auto-select", "2")
@@ -26,7 +113,7 @@ export const agentCreateCommand = new Command("create")
   .option("--par-merge <strategy>", "merge strategy for Par: first, concat, merge", "first")
   .action(
     async (
-      name: string,
+      agentName: string,
       options: {
         genes?: string[];
         domain?: string;
@@ -36,35 +123,17 @@ export const agentCreateCommand = new Command("create")
         parMerge: string;
       }
     ) => {
-      const root = getProjectRoot();
+      const root = requireProjectRoot();
       const config = loadConfig(root);
 
       display.header("Agent Creation");
 
-      const agentsDir = join(root, ".rotifer", "agents");
-      mkdirSync(agentsDir, { recursive: true });
-
-      const agentId = randomUUID();
       let genome: string[] = [];
       let selectionMode = "manual";
 
       if (options.genes && options.genes.length > 0) {
-        // Manual gene selection
-        for (const geneName of options.genes) {
-          const geneDir = join(root, config.genes_dir, geneName);
-          if (!existsSync(join(geneDir, "phenotype.json"))) {
-            display.rustStyleError({
-              code: "E0040",
-              message: `Gene '${geneName}' not found or not wrapped`,
-              file: join(geneDir, "phenotype.json"),
-              suggestion: `Run 'rotifer wrap ${geneName} --domain <domain>' first`,
-            });
-            process.exit(1);
-          }
-          genome.push(geneName);
-        }
+        genome = options.genes;
       } else {
-        // Auto-select from Arena rankings
         selectionMode = options.strategy;
         const topN = parseInt(options.top, 10) || 2;
         const ranked = getArenaRankings(root, config.genes_dir, options.domain);
@@ -72,94 +141,59 @@ export const agentCreateCommand = new Command("create")
         if (ranked.length === 0) {
           display.error(
             "No genes found in Arena" +
-              (options.domain ? ` for domain '${options.domain}'` : "") +
-              ". Submit genes first: rotifer arena submit <gene>"
+              (options.domain ? ` for domain '${options.domain}'` : "")
           );
+          display.hint("Submit genes first: rotifer arena submit <gene-name>");
           process.exit(1);
         }
 
         genome = ranked.slice(0, topN).map((r) => r.name);
-        display.info(
+        display.hint(
           `Auto-selected top ${genome.length} gene(s) from Arena` +
             (options.domain ? ` (domain: ${options.domain})` : "") +
             ` [strategy: ${selectionMode}]`
         );
       }
 
-      // Schema compatibility pre-check for Seq pipelines
-      if (genome.length >= 2) {
-        const schemaWarnings = checkSchemaCompatibility(root, config.genes_dir, genome);
-        if (schemaWarnings.length > 0) {
-          display.warn("Schema compatibility warnings:");
-          for (const w of schemaWarnings) {
-            display.warn(`  ${w}`);
-          }
-          console.log();
-        }
-      }
+      try {
+        const agent = createAgentCore({
+          root,
+          genesDir: config.genes_dir,
+          agentName,
+          genome,
+          compositionType: options.composition || "Seq",
+          parMerge: options.parMerge,
+          strategy: selectionMode,
+        });
 
-      const requestedComposition = options.composition || "Seq";
-      const compositionType = genome.length >= 2 ? requestedComposition : "Single";
-
-      let composition: Record<string, unknown> = { type: compositionType };
-      if (compositionType === "Par") {
-        composition = {
-          type: "Par",
-          branches: genome,
-          merge: options.parMerge || "first",
-        };
-      } else if (compositionType === "Cond" && genome.length >= 2) {
-        composition = {
-          type: "Cond",
-          predicate: { field: "type", equals: "primary" },
-          thenBranch: genome[0],
-          elseBranch: genome[1],
-        };
-      } else if (compositionType === "Try" && genome.length >= 2) {
-        composition = {
-          type: "Try",
-          primary: genome[0],
-          fallback: genome[1],
-        };
-      } else if (compositionType === "TryPool") {
-        composition = { type: "TryPool" };
-      }
-
-      const agent = {
-        id: agentId,
-        name,
-        state: "Active",
-        genome,
-        composition,
-        strategy: selectionMode,
-        createdAt: new Date().toISOString(),
-        reputation: 0.0,
-      };
-
-      writeFileSync(
-        join(agentsDir, agentId + ".json"),
-        JSON.stringify(agent, null, 2) + "\n"
-      );
-
-      display.success(`Agent '${name}' created`);
-      display.keyValue("Agent ID", agentId.slice(0, 12) + "...");
-      display.keyValue("State", agent.state);
-      display.keyValue("Strategy", selectionMode);
-      const separator = compositionType === "Par" ? " ∥ " : " → ";
-      display.keyValue(
-        "Genome",
-        genome.length > 0
-          ? genome.join(separator) + ` (${compositionType})`
-          : "(empty)"
-      );
-
-      console.log();
-      if (genome.length >= 2) {
-        display.info(
-          `Run: rotifer agent run ${name}  — execute the ${compositionType} pipeline`
+        const compositionType = agent.composition.type as string;
+        display.success(`Agent '${agentName}' created`);
+        display.keyValue("Agent ID", c.warn(agent.id));
+        display.keyValue("State", agent.state);
+        display.keyValue("Strategy", selectionMode);
+        const separator = compositionType === "Par" ? " ∥ " : " → ";
+        display.keyValue(
+          "Genome",
+          genome.length > 0
+            ? genome.join(separator) + ` (${compositionType})`
+            : "(empty)"
         );
+
+        console.log();
+        if (genome.length >= 2) {
+          display.hint(
+            `Run: rotifer agent run ${agentName}  — execute the ${compositionType} pipeline`
+          );
+        }
+        display.hint("View agents: rotifer agent list");
+      } catch (err: any) {
+        display.rustStyleError({
+          code: "E0040",
+          message: err.message,
+          suggestion: "Ensure all genes exist and are wrapped",
+        });
+        process.exit(1);
       }
-      display.info("View agents: rotifer agent list");
     }
   );
 
@@ -188,8 +222,7 @@ function getArenaRankings(
       const phenotype = JSON.parse(readFileSync(phenotypePath, "utf-8"));
       if (domainFilter && phenotype.domain !== domainFilter) continue;
 
-      const phenoStr = JSON.stringify(phenotype);
-      const geneId = createHash("sha256").update(phenoStr).digest("hex");
+      const geneId = contentHash(phenotype);
       const seed = parseInt(geneId.slice(0, 8), 16);
       const isNative = phenotype.fidelity === "Native";
       const baseFitness = isNative ? 0.7 : 0.45;

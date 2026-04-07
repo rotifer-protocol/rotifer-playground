@@ -1,0 +1,52 @@
+{
+  "name": "audit-reporter",
+  "version": "0.2.0",
+  "domain": "web3.reporting",
+  "fidelity": "Hybrid",
+  "description": "Generate structured Markdown audit reports from vulnerability scan results. Produces executive summary, findings table with severity badges, prioritized recommendations, and disclaimer.",
+  "author": "Rotifer Protocol Contributors",
+  "license": "Apache-2.0",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "vulnerabilities": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "severity": { "type": "string" },
+            "location": { "type": "string" },
+            "description": { "type": "string" },
+            "recommendation": { "type": "string" }
+          }
+        }
+      },
+      "riskScore": { "type": "number" },
+      "summary": { "type": "string" }
+    },
+    "required": ["vulnerabilities", "riskScore", "summary"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "report": { "type": "string", "description": "Full Markdown audit report" },
+      "executiveSummary": { "type": "string", "description": "One-paragraph executive summary" },
+      "recommendations": { "type": "array", "items": { "type": "string" } }
+    },
+    "required": ["report", "executiveSummary", "recommendations"]
+  },
+  "displayField": "executiveSummary",
+  "tags": ["audit", "report", "security", "web3", "markdown", "smart-contract"],
+  "dependencies": [],
+  "transparency": "Open",
+  "network": {
+    "allowedDomains": [],
+    "maxRequestsPerExecution": 0
+  },
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  }
+}

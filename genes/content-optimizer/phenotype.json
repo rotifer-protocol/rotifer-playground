@@ -1,0 +1,72 @@
+{
+  "name": "content-optimizer",
+  "version": "0.2.0",
+  "domain": "quality.content",
+  "fidelity": "Hybrid",
+  "description": "Generates prioritized content optimization suggestions based on quality analysis results — improves readability, virality, and structure",
+  "author": "Rotifer Protocol Contributors",
+  "license": "Apache-2.0",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "readability": {
+        "type": "object",
+        "properties": {
+          "score": { "type": "number" },
+          "grade": { "type": "string" },
+          "language": { "type": "string" }
+        }
+      },
+      "virality": {
+        "type": "object",
+        "properties": {
+          "score": { "type": "number" },
+          "factors": { "type": "array" }
+        }
+      },
+      "sentiment": {
+        "type": "object",
+        "properties": {
+          "tone": { "type": "string" },
+          "score": { "type": "number" }
+        }
+      },
+      "structure": {
+        "type": "object",
+        "properties": {
+          "paragraphs": { "type": "integer" },
+          "avgLength": { "type": "number" },
+          "hasHeadings": { "type": "boolean" },
+          "codeBlocks": { "type": "integer" },
+          "links": { "type": "integer" },
+          "wordCount": { "type": "integer" }
+        }
+      },
+      "recommendations": { "type": "array", "items": { "type": "string" } }
+    },
+    "required": ["readability", "virality", "sentiment", "structure"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "optimizedSuggestions": { "type": "array", "items": { "type": "string" } },
+      "priorityActions": { "type": "array", "items": { "type": "string" } },
+      "estimatedImpact": { "type": "string" }
+    },
+    "required": ["optimizedSuggestions", "priorityActions", "estimatedImpact"]
+  },
+  "displayField": "estimatedImpact",
+  "tags": ["content", "optimization", "writing", "suggestions"],
+  "dependencies": ["content-quality-analyzer"],
+  "transparency": "Open",
+  "network": {
+    "allowedDomains": [],
+    "maxRequestsPerExecution": 0,
+    "timeoutMs": 5000
+  },
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Retry"
+  }
+}

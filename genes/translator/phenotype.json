@@ -3,26 +3,83 @@
   "description": "Translate and localize content between languages. Ensure cultural appropriateness and maintain original meaning. Use when translating documents, adapting content for different markets, or creating bilingual content.",
   "inputSchema": {
     "type": "object",
+    "required": ["text"],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "text": {
+        "type": "string",
+        "description": "Text to translate"
+      },
+      "sourceLang": {
+        "type": "string",
+        "description": "Source language code (e.g., en, zh, ja). Auto-detected if omitted."
+      },
+      "targetLang": {
+        "type": "string",
+        "default": "en",
+        "description": "Target language code"
+      },
+      "glossary": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": ["source", "target"]
+        },
+        "description": "Custom glossary for domain-specific terms"
+      },
+      "formality": {
+        "type": "string",
+        "enum": ["formal", "neutral", "informal"],
+        "default": "neutral",
+        "description": "Desired formality level"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": ["translation", "confidence"],
     "properties": {
-      "result": {
-        "type": "string"
+      "translation": {
+        "type": "string",
+        "description": "Translated text"
+      },
+      "alternatives": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Alternative translations"
+      },
+      "confidence": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Translation confidence score"
+      },
+      "detectedSourceLang": {
+        "type": "string",
+        "description": "Detected source language code"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939395955,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "translation",
+    "localization",
+    "multilingual",
+    "i18n"
+  ]
 }

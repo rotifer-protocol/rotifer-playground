@@ -46,5 +46,6 @@
   "createdAt": 1771939404211,
   "fidelity": "Native",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": ["citations", "bibliography", "apa", "mla", "references"]
 }

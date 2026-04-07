@@ -161,7 +161,7 @@ playground/
 | `rotifer info <gene-ref>` | 查看基因详情（本地或 Cloud） |
 | `rotifer stats <gene-ref>` | 查看基因下载统计 |
 | `rotifer compare [gene-refs...]` | 按声誉与下载量对比 2-5 个基因 |
-| `rotifer reputation [gene-ref]` | 查看基因与开发者声誉分数 |
+| `rotifer reputation [gene-ref]` | 查看基因与创作者声誉分数 |
 | `rotifer versions <owner> <gene-name>` | 查看某个基因的版本链 |
 | `rotifer arena submit <gene-name>` | 将基因提交到 Arena 竞争 |
 | `rotifer arena list` | 列出 Arena 排名 |

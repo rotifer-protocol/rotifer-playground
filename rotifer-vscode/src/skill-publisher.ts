@@ -3,6 +3,20 @@ import { readFileSync } from "node:fs";
 import { dirname, basename } from "node:path";
 import { RotiferCloudClient } from "./cloud-client";
 
+const GENE_NAME_RE = /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/;
+
+function validateGeneNameInput(name: string): boolean {
+  if (!name || name.length > 128 || name.includes("..") || name.includes("/") || name.includes("\\")) {
+    vscode.window.showErrorMessage(`Invalid gene name: "${name}". Only lowercase letters, digits, dots, hyphens, underscores allowed.`);
+    return false;
+  }
+  if (!GENE_NAME_RE.test(name)) {
+    vscode.window.showErrorMessage(`Invalid gene name: "${name}". Must match pattern: ${GENE_NAME_RE.source}`);
+    return false;
+  }
+  return true;
+}
+
 export async function publishSkillAsGene(skillUri: vscode.Uri, client?: RotiferCloudClient): Promise<void> {
   const skillPath = skillUri.fsPath;
   const skillDir = dirname(skillPath);
@@ -12,9 +26,9 @@ export async function publishSkillAsGene(skillUri: vscode.Uri, client?: RotiferC
   const name = await vscode.window.showInputBox({
     prompt: "Gene name",
     value: parsed.name || basename(skillDir),
-    validateInput: (v) => /^[a-z0-9-]+$/.test(v) ? null : "lowercase letters, digits, and hyphens only",
+    validateInput: (v) => GENE_NAME_RE.test(v) ? null : "lowercase letters, digits, dots, hyphens, underscores only (must start/end with alphanumeric)",
   });
-  if (!name) return;
+  if (!name || !validateGeneNameInput(name)) return;
 
   let domainOptions = ["nlp", "code", "data", "image", "audio", "security", "devops", "web3", "other"];
   if (client) {
@@ -46,15 +60,19 @@ export async function publishSkillAsGene(skillUri: vscode.Uri, client?: RotiferC
   const folders = vscode.workspace.workspaceFolders;
   const cwd = folders?.[0]?.uri.fsPath || skillDir;
 
+  const esc = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+
   const terminal = vscode.window.createTerminal({ name: `Rotifer: publish ${name}`, cwd });
   terminal.show();
-  terminal.sendText(`npx rotifer wrap "${name}" --domain "${domain}" --fidelity Wrapped --from-skill "${skillPath}"`);
+  terminal.sendText(
+    ["npx", "rotifer", "wrap", esc(name), "--domain", esc(domain), "--fidelity", "Wrapped", "--from-skill", esc(skillPath)].join(" "),
+  );
 
-  let publishCmd = `npx rotifer publish "${name}" --description "${description}"`;
+  const publishArgs = ["npx", "rotifer", "publish", esc(name), "--description", esc(description)];
   if (changelog) {
-    publishCmd += ` --changelog "${changelog}"`;
+    publishArgs.push("--changelog", esc(changelog));
   }
-  terminal.sendText(publishCmd);
+  terminal.sendText(publishArgs.join(" "));
 
   vscode.window.showInformationMessage(`Publishing '${name}' as Gene. Check the terminal for progress.`);
 }

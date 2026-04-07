@@ -19,10 +19,17 @@
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939414660,
-  "fidelity": "Wrapped",
+  "fidelity": "Native",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "FailFast"
+  },
+  "irHash": "ce32a396360b73242c932537adf810ce356b7b93f6bf8186b40567be0bfff2a1",
+  "tags": ["git", "conventional-commits", "pull-request", "changelog", "release"]
 }

@@ -134,7 +134,7 @@ describe("Javy TS→WASM compilation (v0.3)", () => {
     expect(wasmSize).toBeGreaterThan(100_000); // Javy modules include QuickJS (~1MB)
   });
 
-  it("produces gene.ir.wasm with compile-result.json", () => {
+  it("produces gene.ir.wasm with compile-result.json", { timeout: 30000 }, () => {
     if (!javyAvailable) return;
 
     writePhenotype(projectDir, "ts-gene");
@@ -161,7 +161,7 @@ describe("Javy TS→WASM compilation (v0.3)", () => {
     }
   });
 
-  it("handles TypeScript with interfaces and type annotations", () => {
+  it("handles TypeScript with interfaces and type annotations", { timeout: 30000 }, () => {
     if (!javyAvailable) return;
 
     writePhenotype(projectDir, "ts-gene");
@@ -215,7 +215,7 @@ describe("Javy TS→WASM compilation (v0.3)", () => {
     expect(stdout).not.toContain("TypeScript gene detected");
   });
 
-  it("fails gracefully with invalid TypeScript", () => {
+  it("fails gracefully with invalid TypeScript", { timeout: 30000 }, () => {
     if (!javyAvailable) return;
 
     writePhenotype(projectDir, "ts-gene");

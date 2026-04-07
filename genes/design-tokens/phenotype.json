@@ -1,1 +1,79 @@
-{"domain":"ui.design","description":"Parameterized design token system. Dynamically generates CSS variables for colors, border-radius, spacing, and typography based on brand parameters.","inputSchema":{"type":"object","properties":{"primaryHue":{"type":"number","description":"Primary color hue (0-360)"},"mode":{"type":"string","enum":["light","dark"],"description":"Color mode"},"density":{"type":"string","enum":["compact","normal","spacious"],"description":"Spacing density"},"borderRadius":{"type":"string","enum":["sharp","rounded","pill"],"description":"Border radius style"}},"required":[]},"outputSchema":{"type":"object","properties":{"css":{"type":"string","description":"Full :root { --var: value; } block"},"tokens":{"type":"object","additionalProperties":{"type":"string"},"description":"Token name to value mapping"},"totalTokens":{"type":"number","description":"Total number of token variables"}},"required":["css","tokens","totalTokens"]},"dependencies":[],"version":"0.2.0","author":"rotifer-team","createdAt":1771939246888,"fidelity":"Native","transparency":"Open","source":"skill"}
+{
+  "domain": "ui.design",
+  "description": "Parameterized design token system. Dynamically generates CSS variables for colors, border-radius, spacing, and typography based on brand parameters.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "primaryHue": {
+        "type": "number",
+        "description": "Primary color hue (0-360)"
+      },
+      "mode": {
+        "type": "string",
+        "enum": [
+          "light",
+          "dark"
+        ],
+        "description": "Color mode"
+      },
+      "density": {
+        "type": "string",
+        "enum": [
+          "compact",
+          "normal",
+          "spacious"
+        ],
+        "description": "Spacing density"
+      },
+      "borderRadius": {
+        "type": "string",
+        "enum": [
+          "sharp",
+          "rounded",
+          "pill"
+        ],
+        "description": "Border radius style"
+      }
+    },
+    "required": []
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "css": {
+        "type": "string",
+        "description": "Full :root { --var: value; } block"
+      },
+      "tokens": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Token name to value mapping"
+      },
+      "totalTokens": {
+        "type": "number",
+        "description": "Total number of token variables"
+      }
+    },
+    "required": [
+      "css",
+      "tokens",
+      "totalTokens"
+    ]
+  },
+  "dependencies": [],
+  "version": "0.2.0",
+  "author": "rotifer-team",
+  "createdAt": 1771939246888,
+  "fidelity": "Native",
+  "transparency": "Open",
+  "source": "skill",
+  "tags": [
+    "design-tokens",
+    "css-variables",
+    "theming",
+    "spacing",
+    "branding"
+  ]
+}

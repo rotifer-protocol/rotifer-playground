@@ -3,26 +3,92 @@
   "description": "Design database schemas with Prisma for AI and Web3 applications. Define models, relations, indexes, and migrations. Use when designing databases, creating Prisma schemas, or when the user mentions database, schema, model, prisma, or migration.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "entities"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "entities": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Entity name (e.g., User, Product)"
+            },
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Field descriptions"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        },
+        "description": "Domain entities to model"
+      },
+      "orm": {
+        "type": "string",
+        "enum": [
+          "prisma",
+          "drizzle",
+          "typeorm",
+          "raw-sql"
+        ],
+        "default": "prisma",
+        "description": "Target ORM"
+      },
+      "dbType": {
+        "type": "string",
+        "enum": [
+          "postgresql",
+          "mysql",
+          "sqlite"
+        ],
+        "default": "postgresql",
+        "description": "Target database engine"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "schema",
+      "migrations"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "schema": {
+        "type": "string",
+        "description": "Generated schema definition (ORM-specific syntax)"
+      },
+      "migrations": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Migration SQL statements"
+      },
+      "erDiagram": {
+        "type": "string",
+        "description": "Entity-relationship diagram (Mermaid syntax)"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939408834,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "database",
+    "schema",
+    "prisma",
+    "modeling",
+    "orm"
+  ]
 }

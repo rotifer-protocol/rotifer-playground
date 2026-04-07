@@ -1,56 +1,170 @@
 import { Command } from "commander";
-import chalk from "chalk";
+import { existsSync, readFileSync, statSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import * as display from "../utils/display.js";
+import { scoreColor, c, fidelityColor } from "../utils/palette.js";
 import { getGene } from "../cloud/client.js";
+import { getProjectRoot, loadConfig } from "../utils/config.js";
+import { contentHash } from "../utils/content-hash.js";
+
+interface LocalGeneInfo {
+  name: string;
+  domain: string;
+  version: string;
+  fidelity: string;
+  description: string;
+  contentHash: string;
+  hasWasm: boolean;
+  wasmSize: number;
+  phenotypeKeys: string[];
+  path: string;
+}
+
+function findLocalGene(geneName: string): LocalGeneInfo | null {
+  let root: string;
+  try {
+    root = getProjectRoot();
+  } catch {
+    return null;
+  }
+
+  const config = loadConfig(root);
+  const geneDir = join(root, config.genes_dir, geneName);
+
+  if (!existsSync(join(geneDir, "phenotype.json"))) return null;
+
+  let phenotype: Record<string, unknown> = {};
+  try {
+    phenotype = JSON.parse(readFileSync(join(geneDir, "phenotype.json"), "utf-8"));
+  } catch {
+    return null;
+  }
+
+  const wasmPath = join(geneDir, "gene.ir.wasm");
+  const hasWasm = existsSync(wasmPath);
+
+  return {
+    name: geneName,
+    domain: (phenotype.domain as string) || "unknown",
+    version: (phenotype.version as string) || "0.0.0",
+    fidelity: (phenotype.fidelity as string) || "Unknown",
+    description: (phenotype.description as string) || "",
+    contentHash: contentHash(phenotype),
+    hasWasm,
+    wasmSize: hasWasm ? statSync(wasmPath).size : 0,
+    phenotypeKeys: Object.keys(phenotype),
+    path: resolve(geneDir),
+  };
+}
+
+function findLocalGeneByHash(hash: string): LocalGeneInfo | null {
+  let root: string;
+  try {
+    root = getProjectRoot();
+  } catch {
+    return null;
+  }
+
+  const config = loadConfig(root);
+  const genesDir = join(root, config.genes_dir);
+  if (!existsSync(genesDir)) return null;
+
+  for (const name of readdirSync(genesDir)) {
+    const local = findLocalGene(name);
+    if (local && local.contentHash === hash) return local;
+  }
+  return null;
+}
 
 export const infoCommand = new Command("info")
-  .description("View detailed information about a gene on Rotifer Cloud")
-  .argument("<gene-id>", "cloud gene ID")
-  .action(async (geneId: string) => {
-    display.header("Gene Detail");
+  .description("View gene details (local or Cloud)")
+  .argument("<gene-ref>", "gene UUID, name, or content hash")
+  .option("--cloud", "force Cloud lookup even if local gene exists")
+  .action(async (geneRef: string, options: { cloud?: boolean }) => {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(geneRef);
+    const isHash = /^[0-9a-f]{64}$/i.test(geneRef);
 
-    try {
-      const gene = await getGene(geneId);
+    if (!options.cloud && !isUuid) {
+      const local = isHash ? findLocalGeneByHash(geneRef) : findLocalGene(geneRef);
+      if (local) {
+        display.renderResult(local, (data) => {
+          display.header("Gene Details" + c.muted(" (local)"));
 
-      console.log();
-      display.keyValue("Name", gene.name);
-      display.keyValue("Owner", gene.owner);
-      display.keyValue("Domain", gene.domain);
-      display.keyValue("Version", gene.version);
-      display.keyValue("Fidelity", gene.fidelity);
-      display.keyValue("Description", gene.description || "(none)");
-      console.log();
+          console.log();
+          display.kv("Name", data.name);
+          display.kv("Domain", data.domain);
+          display.kv("Version", data.version);
+          display.kv("Fidelity", fidelityColor(data.fidelity));
+          display.kv("Description", data.description || c.muted("(none)"));
+          console.log();
 
-      display.keyValue("Downloads", String(gene.downloads));
-      display.keyValue(
-        "Reputation",
-        gene.reputation_score != null
-          ? formatScore(gene.reputation_score)
-          : chalk.dim("N/A")
-      );
-      display.keyValue("Created", gene.created_at);
-      display.keyValue("Updated", gene.updated_at);
-      console.log();
+          display.kv("WASM", data.hasWasm
+            ? `${(data.wasmSize / 1024).toFixed(1)}KB`
+            : c.muted("not compiled"));
+          display.kv("Content Hash", c.warn(data.contentHash));
+          display.kv("Path", c.muted(data.path));
 
-      display.keyValue("WASM", gene.wasm_url ? `${(gene.wasm_size / 1024).toFixed(1)}KB` : chalk.dim("none"));
-      display.keyValue("ID", display.geneId(gene.id));
+          if (data.phenotypeKeys.length > 0) {
+            console.log();
+            display.hint("Phenotype keys: " + data.phenotypeKeys.join(", "));
+          }
 
-      if (gene.phenotype && Object.keys(gene.phenotype).length > 0) {
-        console.log();
-        display.info("Phenotype keys: " + Object.keys(gene.phenotype).join(", "));
+          console.log();
+          display.hint("Next: rotifer info --cloud " + data.name);
+          display.hint("      rotifer publish " + data.name);
+        });
+        return;
       }
+    }
 
-      console.log();
-      display.info("Install:    rotifer install " + gene.id);
-      display.info("Reputation: rotifer reputation " + gene.id);
-    } catch (err: any) {
-      display.error(err.message || "Failed to fetch gene details");
+    const s = display.spinner("Fetching gene details...");
+    try {
+      const gene = await getGene(geneRef);
+      s.stop();
+
+      display.renderResult(gene, (data) => {
+        display.header("Gene Details" + c.muted(" (cloud)"));
+
+        console.log();
+        display.kv("Name", data.name);
+        display.kv("Creator", data.owner);
+        display.kv("Domain", data.domain);
+        display.kv("Version", data.version);
+        display.kv("Fidelity", fidelityColor(data.fidelity));
+        display.kv("Description", data.description || c.muted("(none)"));
+        console.log();
+
+        display.kv("Downloads", String(data.downloads));
+        display.kv("Reputation",
+          data.reputation_score != null
+            ? scoreColor(data.reputation_score)
+            : c.muted("N/A"));
+        display.kv("Created", data.created_at);
+        display.kv("Updated", data.updated_at);
+        console.log();
+
+        display.kv("WASM", data.wasm_url
+          ? `${(data.wasm_size / 1024).toFixed(1)}KB`
+          : c.muted("none"));
+        display.kv("Content Hash", data.content_hash
+          ? c.warn(data.content_hash)
+          : c.muted("N/A"));
+        display.kv("ID", c.warn(data.id));
+
+        if (data.phenotype && Object.keys(data.phenotype).length > 0) {
+          console.log();
+          display.hint("Phenotype keys: " + Object.keys(data.phenotype).join(", "));
+        }
+
+        console.log();
+        display.hint("Next: rotifer install " + data.name);
+        display.hint("      rotifer reputation " + data.id);
+      });
+    } catch (err: unknown) {
+      s.stop();
+      const msg = err instanceof Error ? err.message : "Failed to fetch gene details";
+      display.error(msg);
+      display.hint("Check the gene name/ID, or run 'rotifer search' to find genes.");
       process.exit(1);
     }
   });
-
-function formatScore(score: number): string {
-  if (score >= 0.7) return chalk.green(score.toFixed(4));
-  if (score >= 0.3) return chalk.yellow(score.toFixed(4));
-  return chalk.dim(score.toFixed(4));
-}

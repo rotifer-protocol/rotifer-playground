@@ -185,7 +185,7 @@ describe("Skill Import: wrap --from-skill", () => {
 
   it("wrap --from-skill creates gene directory with phenotype", () => {
     const result = run(
-      "wrap imported-skill --from-skill skills/my-skill/SKILL.md --domain ai-tools",
+      "wrap imported-skill --from-skill skills/my-skill/SKILL.md --domain ai.tools",
       { cwd: projectDir }
     );
     expect(result.exitCode).toBe(0);
@@ -205,7 +205,7 @@ describe("Skill Import: wrap --from-skill", () => {
         "utf-8"
       )
     );
-    expect(phenotype.domain).toBe("ai-tools");
+    expect(phenotype.domain).toBe("ai.tools");
     expect(phenotype.description).toContain("test skill");
     expect(phenotype.fidelity).toBe("Wrapped");
     expect(phenotype.source).toBe("skill");
@@ -231,7 +231,7 @@ describe("Skill Import: wrap --from-skill", () => {
       )
     );
     expect(manifest.name).toBe("imported-skill");
-    expect(manifest.domain).toBe("ai-tools");
+    expect(manifest.domain).toBe("ai.tools");
     expect(manifest.fromSkill).toBeDefined();
     expect(manifest.wrappedAt).toBeDefined();
     expect(manifest.geneId).toHaveLength(64);

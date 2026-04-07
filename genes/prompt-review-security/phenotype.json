@@ -4,11 +4,22 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "code": { "type": "string", "description": "Source code to review" },
-      "language": { "type": "string", "description": "Programming language" },
-      "context": { "type": "string", "description": "File path or component context" }
+      "code": {
+        "type": "string",
+        "description": "Source code to review"
+      },
+      "language": {
+        "type": "string",
+        "description": "Programming language"
+      },
+      "context": {
+        "type": "string",
+        "description": "File path or component context"
+      }
     },
-    "required": ["code"]
+    "required": [
+      "code"
+    ]
   },
   "outputSchema": {
     "type": "object",
@@ -18,22 +29,54 @@
         "items": {
           "type": "object",
           "properties": {
-            "severity": { "type": "string", "enum": ["critical", "warning", "info"] },
-            "category": { "type": "string" },
-            "message": { "type": "string" },
-            "line": { "type": "integer" },
-            "fix": { "type": "string" }
+            "severity": {
+              "type": "string",
+              "enum": [
+                "critical",
+                "warning",
+                "info"
+              ]
+            },
+            "category": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "line": {
+              "type": "integer"
+            },
+            "fix": {
+              "type": "string"
+            }
           }
         }
       },
-      "summary": { "type": "string" },
-      "riskLevel": { "type": "string", "enum": ["high", "medium", "low", "none"] }
+      "summary": {
+        "type": "string"
+      },
+      "riskLevel": {
+        "type": "string",
+        "enum": [
+          "high",
+          "medium",
+          "low",
+          "none"
+        ]
+      }
     }
   },
   "llmRequirements": {
     "templateFormat": "mustache",
-    "templateVariables": ["code", "language", "context"],
-    "targetModels": ["claude-3", "gpt-4"],
+    "templateVariables": [
+      "code",
+      "language",
+      "context"
+    ],
+    "targetModels": [
+      "claude-3",
+      "gpt-4"
+    ],
     "minContextWindow": 8192,
     "expectedOutputFormat": "json",
     "temperatureHint": 0.1,
@@ -44,17 +87,38 @@
   "fitnessConfig": {
     "evaluationMethod": "template-quality",
     "dimensions": {
-      "detectionRate": { "weight": 0.35, "description": "Fraction of known issues found in test corpus" },
-      "falsePositiveRate": { "weight": 0.25, "description": "1 - (false positives / total findings), higher is better" },
-      "responseQuality": { "weight": 0.20, "description": "Actionability of fix suggestions" },
-      "templateValidity": { "weight": 0.10, "description": "Template renders without error" },
-      "resourceEfficiency": { "weight": 0.10, "description": "Token efficiency of rendered prompt" }
+      "detectionRate": {
+        "weight": 0.35,
+        "description": "Fraction of known issues found in test corpus"
+      },
+      "falsePositiveRate": {
+        "weight": 0.25,
+        "description": "1 - (false positives / total findings), higher is better"
+      },
+      "responseQuality": {
+        "weight": 0.2,
+        "description": "Actionability of fix suggestions"
+      },
+      "templateValidity": {
+        "weight": 0.1,
+        "description": "Template renders without error"
+      },
+      "resourceEfficiency": {
+        "weight": 0.1,
+        "description": "Token efficiency of rendered prompt"
+      }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "development-genome"
+  "source": "development-genome",
+  "tags": [
+    "code-review",
+    "security",
+    "vulnerability",
+    "arena"
+  ]
 }

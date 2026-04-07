@@ -10,7 +10,7 @@ export const workspace = {
 export const window = {
   showInputBox: vi.fn(),
   showQuickPick: vi.fn(),
-  showInformationMessage: vi.fn(),
+  showInformationMessage: vi.fn().mockReturnValue(Promise.resolve(undefined)),
   showWarningMessage: vi.fn(),
   showErrorMessage: vi.fn(),
   createTerminal: vi.fn().mockReturnValue({

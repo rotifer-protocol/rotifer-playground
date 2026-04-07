@@ -161,8 +161,8 @@ describe("Guard Genes (2 variants)", () => {
     describe(name, () => {
       const phenotype = readGeneJson(name, "phenotype.json");
 
-      it("has guard.code-review domain", () => {
-        expect(phenotype.domain).toBe("guard.code-review");
+      it("has guard.security domain", () => {
+        expect(phenotype.domain).toBe("guard.security");
       });
 
       it("has reviewOutput input field", () => {
@@ -269,8 +269,9 @@ describe("LLM-Native Gene Phenotype Standard compliance", () => {
         expect(phenotype.version).toBeDefined();
       });
 
-      it("has fidelity: Wrapped", () => {
-        expect(phenotype.fidelity).toBe("Wrapped");
+      it("has correct fidelity", () => {
+        const expectedFidelity = name.startsWith("guard-") ? "Native" : "Wrapped";
+        expect(phenotype.fidelity).toBe(expectedFidelity);
       });
 
       it("has llmRequirements with templateFormat", () => {

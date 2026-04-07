@@ -3,26 +3,131 @@
   "description": "Unified UI/UX design entry point. Dispatches design tokens, components, and UX pattern sub-skills via style dimension parameters. Supports presets, fine-tuning, and full customization.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "designBrief"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
-      }
-    },
-    "required": []
-  },
-  "outputSchema": {
-    "type": "object",
-    "properties": {
-      "result": {
-        "type": "string"
+      "designBrief": {
+        "type": "string",
+        "description": "Design requirements or user story"
+      },
+      "platform": {
+        "type": "string",
+        "enum": [
+          "web",
+          "mobile",
+          "desktop",
+          "responsive"
+        ],
+        "default": "web",
+        "description": "Target platform"
+      },
+      "stylePreset": {
+        "type": "string",
+        "enum": [
+          "minimal",
+          "corporate",
+          "playful",
+          "dark",
+          "glassmorphism"
+        ],
+        "default": "minimal",
+        "description": "Visual style preset"
+      },
+      "components": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Specific components to design"
       }
     }
   },
-  "dependencies": [],
-  "version": "0.1.0",
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "design",
+      "components"
+    ],
+    "properties": {
+      "design": {
+        "type": "string",
+        "description": "Design specification (markdown with component hierarchy)"
+      },
+      "components": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "layout",
+                "navigation",
+                "form",
+                "display",
+                "feedback"
+              ]
+            },
+            "props": {
+              "type": "object"
+            },
+            "styles": {
+              "type": "object"
+            }
+          }
+        },
+        "description": "Component specifications"
+      },
+      "colorPalette": {
+        "type": "object",
+        "properties": {
+          "primary": {
+            "type": "string"
+          },
+          "secondary": {
+            "type": "string"
+          },
+          "accent": {
+            "type": "string"
+          },
+          "background": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "description": "Generated color palette"
+      },
+      "accessibilityNotes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "WCAG 2.2 compliance notes"
+      }
+    }
+  },
+  "dependencies": [
+    "ui-components",
+    "brand-personality",
+    "ux-patterns"
+  ],
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939384426,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "ui",
+    "ux",
+    "design",
+    "interface",
+    "orchestration"
+  ]
 }

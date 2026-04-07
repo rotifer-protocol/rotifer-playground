@@ -1,0 +1,108 @@
+{
+  "domain": "search",
+  "description": "This skill should be used when users need to search the web for information, find current content, look up news articles, search for images, or find videos. It uses DuckDuckGo's search API to return results in clean, formatted output (text, markdown, or JSON). Use for research, fact-checking, finding recent information, or gathering web resources.",
+  "inputSchema": {
+    "type": "object",
+    "required": [
+      "query"
+    ],
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Search query"
+      },
+      "region": {
+        "type": "string",
+        "default": "wt-wt",
+        "description": "Search region code (e.g., us-en, wt-wt for worldwide)"
+      },
+      "resultCount": {
+        "type": "integer",
+        "default": 5,
+        "minimum": 1,
+        "maximum": 20,
+        "description": "Number of results to return"
+      },
+      "safeSearch": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable safe search filtering"
+      },
+      "timeRange": {
+        "type": "string",
+        "enum": [
+          "day",
+          "week",
+          "month",
+          "year",
+          "all"
+        ],
+        "default": "all",
+        "description": "Time range filter"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "results"
+    ],
+    "properties": {
+      "results": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "snippet": {
+              "type": "string"
+            },
+            "publishedDate": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Search results"
+      },
+      "totalHits": {
+        "type": "integer",
+        "description": "Estimated total number of results"
+      },
+      "searchTime": {
+        "type": "number",
+        "description": "Search execution time in milliseconds"
+      },
+      "query": {
+        "type": "string",
+        "description": "Processed search query"
+      }
+    }
+  },
+  "dependencies": [],
+  "version": "1.0.0",
+  "author": "rotifer-team",
+  "createdAt": "2026-04-02T02:44:47.982Z",
+  "fidelity": "Wrapped",
+  "transparency": "Open",
+  "source": "clawhub",
+  "clawhub": {
+    "slug": "web-search",
+    "originalAuthor": "billyutw",
+    "originalName": "Web Search",
+    "downloads": 22841,
+    "stars": 25,
+    "versions": 1,
+    "migratedAt": "2026-04-02T02:44:47.992Z"
+  },
+  "tags": [
+    "search",
+    "web",
+    "duckduckgo",
+    "clawhub"
+  ]
+}

@@ -1,0 +1,37 @@
+name: Mutation Testing
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stryker:
+    name: Stryker Mutation Testing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Run Stryker (security & auth modules only)
+        run: npx stryker run
+        env:
+          STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_API_KEY }}
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stryker-report
+          path: reports/mutation/
+          retention-days: 30

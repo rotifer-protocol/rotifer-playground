@@ -1,7 +1,7 @@
 {
   "author": "rotifer-genesis",
   "domain": "text.summarize",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "fidelity": "Native",
   "description": "Extracts key sentences from text to produce a concise summary within a configurable word limit.",
   "inputSchema": {
@@ -56,9 +56,10 @@
     }
   },
   "transparency": "Open",
-  "semantic_requirements": {
+  "semanticRequirements": {
     "timeModel": "Sync",
     "concurrencyModel": "Stateless",
     "failureSemantics": "Fail"
-  }
+  },
+  "tags": ["summarization", "compression", "key-phrases", "nlp", "extractive"]
 }

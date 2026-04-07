@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const DAILY_LIMIT = 500;
 const COST_ALERT_THRESHOLD = 5.0; // USD

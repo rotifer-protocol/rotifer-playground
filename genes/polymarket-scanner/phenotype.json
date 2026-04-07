@@ -1,0 +1,87 @@
+{
+  "author": "rotifer-team",
+  "domain": "market.scanner",
+  "version": "0.2.0",
+  "fidelity": "Hybrid",
+  "description": "Scans Polymarket prediction markets via Gamma API. Fetches active markets with real-time prices, spreads, bid/ask, volume, and liquidity. Filters by minimum volume/liquidity thresholds and returns structured market snapshots for downstream analysis.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "minVolume": {
+        "type": "number",
+        "default": 10000,
+        "description": "Minimum 24h volume (USD) to include a market"
+      },
+      "minLiquidity": {
+        "type": "number",
+        "default": 5000,
+        "description": "Minimum liquidity (USD) to include a market"
+      },
+      "limit": {
+        "type": "number",
+        "default": 50,
+        "description": "Maximum number of markets to fetch per page"
+      },
+      "onlyMultiOutcome": {
+        "type": "boolean",
+        "default": false,
+        "description": "If true, only return markets belonging to multi-outcome events"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["markets", "scannedAt", "totalFetched"],
+    "properties": {
+      "markets": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "question": { "type": "string" },
+            "slug": { "type": "string" },
+            "outcomes": { "type": "array", "items": { "type": "string" } },
+            "outcomePrices": { "type": "array", "items": { "type": "number" } },
+            "bestBid": { "type": "number" },
+            "bestAsk": { "type": "number" },
+            "spread": { "type": "number" },
+            "volume24hr": { "type": "number" },
+            "liquidity": { "type": "number" },
+            "endDate": { "type": "string" },
+            "eventSlug": { "type": "string" },
+            "eventTitle": { "type": "string" },
+            "clobTokenIds": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "description": "Filtered market snapshots"
+      },
+      "scannedAt": {
+        "type": "string",
+        "description": "ISO timestamp of scan"
+      },
+      "totalFetched": {
+        "type": "number",
+        "description": "Total markets fetched before filtering"
+      }
+    }
+  },
+  "dependencies": [],
+  "transparency": "Open",
+  "network": {
+    "allowedDomains": [
+      "gamma-api.polymarket.com",
+      "clob.polymarket.com",
+      "*.workers.dev"
+    ],
+    "maxTimeoutMs": 15000,
+    "maxResponseBytes": 5242880,
+    "maxRequestsPerMin": 30
+  },
+  "semanticRequirements": {
+    "timeModel": "Async",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  },
+  "tags": ["polymarket", "gamma-api", "liquidity", "market-data", "scanner"]
+}

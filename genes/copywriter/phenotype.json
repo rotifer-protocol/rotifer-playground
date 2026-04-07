@@ -3,26 +3,87 @@
   "description": "Write compelling marketing copy, social media content, and advertising materials. Master platform-specific styles and persuasion techniques. Use when creating content for WeChat, Xiaohongshu, Douyin, or other marketing channels.",
   "inputSchema": {
     "type": "object",
+    "required": ["brief"],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "brief": {
+        "type": "string",
+        "description": "Creative brief or product description"
+      },
+      "platform": {
+        "type": "string",
+        "enum": ["twitter", "linkedin", "instagram", "facebook", "wechat", "xiaohongshu", "generic"],
+        "default": "generic",
+        "description": "Target platform"
+      },
+      "tone": {
+        "type": "string",
+        "enum": ["professional", "casual", "playful", "urgent", "inspirational"],
+        "default": "professional",
+        "description": "Desired tone of voice"
+      },
+      "maxLength": {
+        "type": "integer",
+        "default": 280,
+        "description": "Maximum character count"
+      },
+      "cta": {
+        "type": "string",
+        "description": "Desired call-to-action"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": ["copy", "variants"],
     "properties": {
-      "result": {
-        "type": "string"
+      "copy": {
+        "type": "string",
+        "description": "Primary copy text"
+      },
+      "variants": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "platform": {
+              "type": "string"
+            },
+            "charCount": {
+              "type": "integer"
+            }
+          }
+        },
+        "description": "Platform-specific copy variants"
+      },
+      "hashtags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Suggested hashtags"
+      },
+      "readabilityScore": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 100,
+        "description": "Flesch-Kincaid readability score"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939394693,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "marketing",
+    "copy",
+    "social-media",
+    "advertising"
+  ]
 }

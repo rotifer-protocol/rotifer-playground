@@ -3,26 +3,129 @@
   "description": "Parameterized UX interaction pattern library. Generates contextual copy and motion effects based on emotional tone and motion intensity parameters.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "pattern"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "pattern": {
+        "type": "string",
+        "enum": [
+          "loading",
+          "empty-state",
+          "error",
+          "success",
+          "onboarding",
+          "confirmation",
+          "notification",
+          "skeleton",
+          "infinite-scroll",
+          "pull-to-refresh"
+        ],
+        "description": "UX interaction pattern"
+      },
+      "emotionalTone": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.5,
+        "description": "Serious (0) to playful (1)"
+      },
+      "motionIntensity": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.3,
+        "description": "Subtle (0) to dramatic (1)"
+      },
+      "context": {
+        "type": "string",
+        "description": "Usage context for content customization"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "microcopy",
+      "animation"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "microcopy": {
+        "type": "object",
+        "properties": {
+          "heading": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "secondary": {
+            "type": "string"
+          }
+        },
+        "description": "UX microcopy texts"
+      },
+      "animation": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "fade",
+              "slide",
+              "scale",
+              "bounce",
+              "none"
+            ]
+          },
+          "duration": {
+            "type": "string"
+          },
+          "easing": {
+            "type": "string"
+          },
+          "css": {
+            "type": "string"
+          }
+        },
+        "description": "Animation specification"
+      },
+      "component": {
+        "type": "string",
+        "description": "React component implementing the pattern"
+      },
+      "a11y": {
+        "type": "object",
+        "properties": {
+          "ariaLabel": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "announceText": {
+            "type": "string"
+          }
+        },
+        "description": "Accessibility attributes"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939279231,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "ux",
+    "interaction",
+    "microcopy",
+    "animation",
+    "patterns"
+  ]
 }

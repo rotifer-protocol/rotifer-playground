@@ -1,13 +1,15 @@
 import * as vscode from "vscode";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { randomBytes, createHash } from "node:crypto";
 import { RotiferCloudClient } from "./cloud-client";
 
-const ROTIFER_HOME = join(
+const SECRETS_KEY = "rotifer.credentials";
+const LEGACY_CREDS_FILE = join(
   process.env.HOME || process.env.USERPROFILE || "/tmp",
   ".rotifer",
+  "credentials.json",
 );
-const CREDS_FILE = join(ROTIFER_HOME, "credentials.json");
 
 interface StoredCredentials {
   access_token: string;
@@ -25,8 +27,10 @@ interface StoredCredentials {
 export class AuthManager {
   private statusBarItem: vscode.StatusBarItem;
   private credentials: StoredCredentials | null = null;
+  private secrets: vscode.SecretStorage;
 
-  constructor(private client: RotiferCloudClient) {
+  constructor(private client: RotiferCloudClient, context: vscode.ExtensionContext) {
+    this.secrets = context.secrets;
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     this.statusBarItem.command = "rotifer.authMenu";
     this.loadCredentials();
@@ -47,12 +51,32 @@ export class AuthManager {
   }
 
   private loadCredentials(): void {
+    this.secrets.get(SECRETS_KEY).then((raw) => {
+      try {
+        if (raw) {
+          const creds = JSON.parse(raw) as StoredCredentials;
+          if (creds.access_token && creds.expires_at > Date.now()) {
+            this.credentials = creds;
+            this.client.setAccessToken(creds.access_token);
+            this.updateStatusBar();
+            return;
+          }
+        }
+      } catch { /* ignore malformed data */ }
+      this.migrateLegacyCredentials();
+    });
+  }
+
+  private migrateLegacyCredentials(): void {
     try {
-      if (existsSync(CREDS_FILE)) {
-        const raw = JSON.parse(readFileSync(CREDS_FILE, "utf-8"));
+      if (existsSync(LEGACY_CREDS_FILE)) {
+        const raw = JSON.parse(readFileSync(LEGACY_CREDS_FILE, "utf-8")) as StoredCredentials;
         if (raw.access_token && raw.expires_at > Date.now()) {
           this.credentials = raw;
           this.client.setAccessToken(raw.access_token);
+          this.saveCredentials(raw);
+          try { unlinkSync(LEGACY_CREDS_FILE); } catch { /* ignore */ }
+          this.updateStatusBar();
           return;
         }
       }
@@ -62,16 +86,16 @@ export class AuthManager {
   }
 
   private saveCredentials(creds: StoredCredentials): void {
-    mkdirSync(ROTIFER_HOME, { recursive: true });
-    writeFileSync(CREDS_FILE, JSON.stringify(creds, null, 2) + "\n");
     this.credentials = creds;
     this.client.setAccessToken(creds.access_token);
+    this.secrets.store(SECRETS_KEY, JSON.stringify(creds));
   }
 
   private clearCredentials(): void {
-    try { unlinkSync(CREDS_FILE); } catch { /* ignore */ }
     this.credentials = null;
     this.client.setAccessToken(null);
+    this.secrets.delete(SECRETS_KEY);
+    try { unlinkSync(LEGACY_CREDS_FILE); } catch { /* ignore */ }
   }
 
   updateStatusBar(): void {
@@ -100,14 +124,18 @@ export class AuthManager {
     ) as any;
     if (!provider) return;
 
-    const callbackPort = 9876;
-    const authUrl = `${this.client.endpoint}/auth/v1/authorize?provider=${provider.value}&redirect_to=http://localhost:${callbackPort}/callback`;
+    const codeVerifier = randomBytes(32).toString("base64url");
+    const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
+    const oauthState = randomBytes(16).toString("hex");
+
+    const { port: callbackPort, server: cbServer, waitForCallback } = this.startCallbackServer(oauthState);
+    const authUrl = `${this.client.endpoint}/auth/v1/authorize?provider=${provider.value}&redirect_to=http://localhost:${callbackPort}/callback&code_challenge=${codeChallenge}&code_challenge_method=S256&state=${oauthState}`;
 
     vscode.env.openExternal(vscode.Uri.parse(authUrl));
     vscode.window.showInformationMessage("Complete sign-in in your browser. Waiting for callback...");
 
     try {
-      const result = await this.waitForCallback(callbackPort);
+      const result = await waitForCallback;
       let accessToken: string;
       let refreshToken: string;
 
@@ -119,7 +147,7 @@ export class AuthManager {
         const tokenRes = await fetch(`${this.client.endpoint}/auth/v1/token?grant_type=pkce`, {
           method: "POST",
           headers: { "Content-Type": "application/json", apikey: this.client.anonKey },
-          body: JSON.stringify({ auth_code: result, code_verifier: "vscode" }),
+          body: JSON.stringify({ auth_code: result, code_verifier: codeVerifier }),
         });
         if (!tokenRes.ok) throw new Error("Token exchange failed");
         const tokenData = await tokenRes.json() as any;
@@ -161,18 +189,33 @@ export class AuthManager {
     vscode.window.showInformationMessage(`Signed out (was @${username})`);
   }
 
-  private waitForCallback(port: number): Promise<string> {
+  private startCallbackServer(expectedState: string): { port: number; server: any; waitForCallback: Promise<string> } {
     const http = require("node:http") as typeof import("node:http");
-    return new Promise((resolve, reject) => {
+
+    const server = http.createServer();
+    server.listen(0, "127.0.0.1");
+    const port = (server.address() as any).port as number;
+
+    const waitForCallback = new Promise<string>((resolve, reject) => {
       const timeout = setTimeout(() => {
         server.close();
         reject(new Error("Login timed out after 120 seconds"));
       }, 120_000);
 
-      const server = http.createServer((req: any, res: any) => {
+      server.on("request", (req: any, res: any) => {
         const url = new URL(req.url!, `http://localhost:${port}`);
 
         if (url.pathname === "/callback") {
+          const returnedState = url.searchParams.get("state");
+          if (returnedState !== expectedState) {
+            res.writeHead(403, { "Content-Type": "text/html" });
+            res.end("<html><body><h2>Login failed: state mismatch (possible CSRF attack)</h2></body></html>");
+            clearTimeout(timeout);
+            server.close();
+            reject(new Error("OAuth state mismatch — possible CSRF attack"));
+            return;
+          }
+
           const code = url.searchParams.get("code");
           const accessToken = url.searchParams.get("access_token");
           const refreshToken = url.searchParams.get("refresh_token");
@@ -193,11 +236,12 @@ export class AuthManager {
         }
       });
 
-      server.listen(port, () => {});
       server.on("error", (err: Error) => {
         clearTimeout(timeout);
         reject(new Error(`Cannot start callback server: ${err.message}`));
       });
     });
+
+    return { port, server, waitForCallback };
   }
 }

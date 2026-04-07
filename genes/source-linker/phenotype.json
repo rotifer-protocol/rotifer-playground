@@ -37,9 +37,10 @@
     "required": ["text", "links"]
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1772236800000,
   "fidelity": "Native",
-  "transparency": "Open"
+  "transparency": "Open",
+  "tags": ["sources", "links", "documentation", "mapping", "rag-pipeline"]
 }

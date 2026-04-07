@@ -1,0 +1,30 @@
+{
+  "domain": "filesystem",
+  "description": "Read file contents from the local filesystem with configurable encoding. Returns content, size, and encoding metadata.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": { "type": "string", "description": "File path to read" },
+      "encoding": { "type": "string", "default": "utf-8", "enum": ["utf-8", "base64"] }
+    },
+    "required": ["path"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "content": { "type": "string" },
+      "size": { "type": "integer" },
+      "encoding": { "type": "string" }
+    }
+  },
+  "dependencies": [],
+  "version": "0.1.0",
+  "author": "rotifer-genesis",
+  "fidelity": "Native",
+  "transparency": "Open",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  }
+}

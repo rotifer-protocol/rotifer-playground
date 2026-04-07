@@ -41,7 +41,7 @@ describe("rotifer reputation command", () => {
   it("--help shows usage and options", () => {
     const result = run("reputation --help");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("View gene and developer reputation scores");
+    expect(result.stdout).toContain("View gene and creator reputation scores");
     expect(result.stdout).toContain("--mine");
     expect(result.stdout).toContain("--leaderboard");
     expect(result.stdout).toContain("--top");
@@ -50,7 +50,7 @@ describe("rotifer reputation command", () => {
   it("fails with usage hint when no argument and no flag", () => {
     const result = run("reputation");
     expect(result.exitCode).not.toBe(0);
-    expect(result.stdout).toContain("Specify a gene ID");
+    expect(result.stdout).toContain("Specify a gene reference");
     expect(result.stdout).toContain("--mine");
     expect(result.stdout).toContain("--leaderboard");
   });
@@ -62,7 +62,7 @@ describe("rotifer reputation command", () => {
     expect(result.stdout).toContain("rotifer login");
   });
 
-  it("gene-id argument attempts cloud fetch (fails without endpoint)", () => {
+  it("gene-ref argument attempts cloud fetch (fails without endpoint)", () => {
     const result = run("reputation 00000000-0000-0000-0000-000000000000");
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout).toMatch(/failed|error|fetch/i);
@@ -80,7 +80,7 @@ describe("rotifer reputation command", () => {
     expect(result.stdout).not.toContain("unknown option");
   });
 
-  it("--mine takes priority over gene-id when both provided", () => {
+  it("--mine takes priority over gene-ref when both provided", () => {
     const result = run("reputation some-gene --mine");
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout).toContain("Not logged in");

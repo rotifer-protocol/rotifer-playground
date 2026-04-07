@@ -1,0 +1,110 @@
+{
+  "author": "rotifer-team",
+  "domain": "quant.strategy",
+  "version": "0.2.0",
+  "fidelity": "Wrapped",
+  "description": "Mean-reversion / contrarian trading strategy. Identifies price deviations from a rolling mean using Bollinger Bands and z-score thresholds. Generates buy signals when price is significantly below the mean (oversold) and sell signals when above (overbought). Excels in range-bound markets, underperforms in strong trends.",
+  "inputSchema": {
+    "type": "object",
+    "required": [
+      "prices"
+    ],
+    "properties": {
+      "prices": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        },
+        "description": "Historical price series (chronological order)"
+      },
+      "lookbackWindow": {
+        "type": "number",
+        "default": 20,
+        "description": "Rolling mean and standard deviation window size"
+      },
+      "entryZScore": {
+        "type": "number",
+        "default": 2,
+        "description": "Z-score threshold to trigger entry (buy when z < -threshold, sell when z > threshold)"
+      },
+      "exitZScore": {
+        "type": "number",
+        "default": 0.5,
+        "description": "Z-score threshold to close position (revert toward mean)"
+      },
+      "maxHoldingPeriod": {
+        "type": "number",
+        "default": 10,
+        "description": "Maximum bars to hold a position before forced exit"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "signals",
+      "pnl",
+      "sharpeRatio",
+      "maxDrawdown"
+    ],
+    "properties": {
+      "signals": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "number"
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "BUY",
+                "SELL",
+                "HOLD"
+              ]
+            },
+            "confidence": {
+              "type": "number"
+            }
+          }
+        },
+        "description": "Trading signals with confidence scores"
+      },
+      "pnl": {
+        "type": "number",
+        "description": "Total profit and loss (percentage)"
+      },
+      "sharpeRatio": {
+        "type": "number",
+        "description": "Risk-adjusted return metric"
+      },
+      "maxDrawdown": {
+        "type": "number",
+        "description": "Maximum peak-to-trough decline (percentage)"
+      },
+      "winRate": {
+        "type": "number",
+        "description": "Percentage of profitable trades"
+      },
+      "tradeCount": {
+        "type": "number",
+        "description": "Total number of completed trades"
+      }
+    }
+  },
+  "dependencies": [],
+  "transparency": "Open",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  },
+  "tags": [
+    "quantitative",
+    "trading",
+    "mean-reversion",
+    "strategy",
+    "arena"
+  ]
+}

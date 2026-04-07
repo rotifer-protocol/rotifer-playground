@@ -31,6 +31,8 @@ export interface CloudGene {
   phenotype: Record<string, unknown>;
   wasm_url: string | null;
   wasm_size: number;
+  wasm_hash: string | null;
+  content_hash: string | null;
   downloads: number;
   fitness: number | null;
   reputation_score: number | null;
@@ -43,6 +45,7 @@ export interface CloudGeneListResponse {
   total: number;
   page: number;
   per_page: number;
+  total_exact?: boolean;
 }
 
 export interface CloudArenaEntry {

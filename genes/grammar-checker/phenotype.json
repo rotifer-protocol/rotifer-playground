@@ -48,5 +48,6 @@
   "createdAt": 1771939397858,
   "fidelity": "Native",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": ["grammar", "spelling", "editing", "english", "lint"]
 }

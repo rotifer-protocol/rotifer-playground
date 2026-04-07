@@ -4,11 +4,22 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "code": { "type": "string", "description": "Source code to review" },
-      "language": { "type": "string", "description": "Programming language" },
-      "context": { "type": "string", "description": "File path or component context" }
+      "code": {
+        "type": "string",
+        "description": "Source code to review"
+      },
+      "language": {
+        "type": "string",
+        "description": "Programming language"
+      },
+      "context": {
+        "type": "string",
+        "description": "File path or component context"
+      }
     },
-    "required": ["code"]
+    "required": [
+      "code"
+    ]
   },
   "outputSchema": {
     "type": "object",
@@ -18,23 +29,58 @@
         "items": {
           "type": "object",
           "properties": {
-            "severity": { "type": "string", "enum": ["critical", "warning", "info"] },
-            "category": { "type": "string" },
-            "message": { "type": "string" },
-            "line": { "type": "integer" },
-            "fix": { "type": "string" },
-            "impact": { "type": "string", "description": "Estimated performance impact" }
+            "severity": {
+              "type": "string",
+              "enum": [
+                "critical",
+                "warning",
+                "info"
+              ]
+            },
+            "category": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "line": {
+              "type": "integer"
+            },
+            "fix": {
+              "type": "string"
+            },
+            "impact": {
+              "type": "string",
+              "description": "Estimated performance impact"
+            }
           }
         }
       },
-      "summary": { "type": "string" },
-      "overallImpact": { "type": "string", "enum": ["high", "medium", "low", "negligible"] }
+      "summary": {
+        "type": "string"
+      },
+      "overallImpact": {
+        "type": "string",
+        "enum": [
+          "high",
+          "medium",
+          "low",
+          "negligible"
+        ]
+      }
     }
   },
   "llmRequirements": {
     "templateFormat": "mustache",
-    "templateVariables": ["code", "language", "context"],
-    "targetModels": ["claude-3", "gpt-4"],
+    "templateVariables": [
+      "code",
+      "language",
+      "context"
+    ],
+    "targetModels": [
+      "claude-3",
+      "gpt-4"
+    ],
     "minContextWindow": 8192,
     "expectedOutputFormat": "json",
     "temperatureHint": 0.2,
@@ -45,17 +91,38 @@
   "fitnessConfig": {
     "evaluationMethod": "template-quality",
     "dimensions": {
-      "detectionRate": { "weight": 0.35, "description": "Fraction of known perf issues found" },
-      "falsePositiveRate": { "weight": 0.25, "description": "Precision of findings" },
-      "responseQuality": { "weight": 0.20, "description": "Actionability of optimization suggestions" },
-      "templateValidity": { "weight": 0.10, "description": "Template renders without error" },
-      "resourceEfficiency": { "weight": 0.10, "description": "Token efficiency" }
+      "detectionRate": {
+        "weight": 0.35,
+        "description": "Fraction of known perf issues found"
+      },
+      "falsePositiveRate": {
+        "weight": 0.25,
+        "description": "Precision of findings"
+      },
+      "responseQuality": {
+        "weight": 0.2,
+        "description": "Actionability of optimization suggestions"
+      },
+      "templateValidity": {
+        "weight": 0.1,
+        "description": "Template renders without error"
+      },
+      "resourceEfficiency": {
+        "weight": 0.1,
+        "description": "Token efficiency"
+      }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "development-genome"
+  "source": "development-genome",
+  "tags": [
+    "code-review",
+    "performance",
+    "optimization",
+    "arena"
+  ]
 }

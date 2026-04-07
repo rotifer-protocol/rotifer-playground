@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import type {
   CloudConfig,
   CloudGene,
@@ -44,7 +45,7 @@ function storageUrl(path: string): string {
   return `${base}/storage/v1${path}`;
 }
 
-function authHeaders(requireToken: boolean = false): Record<string, string> {
+function authHeaders(isTokenRequired: boolean = false): Record<string, string> {
   const config = loadCloudConfig();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -54,7 +55,7 @@ function authHeaders(requireToken: boolean = false): Record<string, string> {
   const creds = loadCredentials();
   if (creds) {
     headers["Authorization"] = `Bearer ${creds.access_token}`;
-  } else if (requireToken) {
+  } else if (isTokenRequired) {
     throw new Error("Not logged in. Run 'rotifer login' first.");
   }
 
@@ -78,18 +79,88 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 // --- Gene Registry ---
 
-function deduplicateLatestVersion(genes: CloudGene[]): CloudGene[] {
-  const map = new Map<string, CloudGene>();
-  for (const g of genes) {
-    const key = `${g.owner}\0${g.name}`;
-    const existing = map.get(key);
-    if (!existing || new Date(g.created_at) > new Date(existing.created_at)) {
-      map.set(key, g);
-    }
+interface SearchGeneRow {
+  id: string;
+  name: string;
+  domain: string;
+  version: string;
+  fidelity: string;
+  description: string | null;
+  wasm_size: number | null;
+  wasm_hash?: string | null;
+  content_hash?: string | null;
+  downloads: number | null;
+  reputation_score: number | null;
+  created_at: string;
+  updated_at: string;
+  owner_username: string | null;
+  total_count?: number | string | null;
+}
+
+function normalizeSearchSort(sort?: string): "newest" | "relevance" | "downloads" | "reputation" {
+  const requested = (sort || "newest").toLowerCase();
+  switch (requested) {
+    case "newest":
+    case "relevance":
+    case "downloads":
+    case "reputation":
+      return requested;
+    case "popular":
+      return "downloads";
+    case "fitness":
+      throw new Error(
+        "Cloud search cannot sort by F(g). Use '--sort reputation' or 'rotifer arena list --cloud' for fitness-based rankings."
+      );
+    default:
+      throw new Error(
+        `Unsupported sort order '${sort}'. Use one of: newest, relevance, popular, downloads, reputation.`
+      );
   }
-  return [...map.values()].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  );
+}
+
+function mapSearchGene(row: SearchGeneRow): CloudGene {
+  return {
+    id: row.id,
+    name: row.name,
+    owner: row.owner_username || "unknown",
+    domain: row.domain,
+    version: row.version,
+    fidelity: row.fidelity,
+    description: row.description,
+    phenotype: {},
+    wasm_url: null,
+    wasm_size: row.wasm_size || 0,
+    wasm_hash: row.wasm_hash ?? null,
+    content_hash: row.content_hash ?? null,
+    downloads: row.downloads || 0,
+    fitness: null,
+    reputation_score: row.reputation_score ?? null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function parseExactSearchTotal(rows: SearchGeneRow[]): number | null {
+  const raw = rows[0]?.total_count;
+  if (raw == null) return null;
+  const parsed = typeof raw === "number" ? raw : parseInt(String(raw), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+async function fetchSearchGenes(body: {
+  p_query: string | null;
+  p_domain: string | null;
+  p_fidelity: string | null;
+  p_sort: "newest" | "relevance" | "downloads" | "reputation";
+  p_limit: number;
+  p_offset: number;
+}): Promise<SearchGeneRow[]> {
+  const res = await fetch(apiUrl("/rpc/search_genes"), {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+  });
+  return handleResponse<SearchGeneRow[]>(res);
 }
 
 export async function listGenes(options: {
@@ -101,65 +172,80 @@ export async function listGenes(options: {
   page?: number;
   perPage?: number;
 }): Promise<CloudGeneListResponse> {
-  const params = new URLSearchParams();
-  params.set("published", "eq.true");
-  params.set("select", "id,name,domain,version,fidelity,description,wasm_size,downloads,reputation_score,created_at,updated_at,profiles(username)");
-  params.set("order", "created_at.desc");
-
-  if (options.domain) params.set("domain", `eq.${options.domain}`);
-  if (options.fidelity) params.set("fidelity", `eq.${options.fidelity}`);
-  if (options.query) params.set("or", `(name.ilike.*${options.query}*,description.ilike.*${options.query}*)`);
-
-  const limit = options.perPage || 20;
-  const fetchLimit = limit * 3;
-  params.set("limit", String(fetchLimit));
-  params.set("offset", "0");
-
-  const res = await fetch(apiUrl(`/genes?${params}`), {
-    headers: {
-      ...authHeaders(),
-      Prefer: "count=exact",
-    },
-  });
-
-  const data = await handleResponse<any[]>(res);
-
-  const allGenes: CloudGene[] = data.map((row) => ({
-    id: row.id,
-    name: row.name,
-    owner: row.profiles?.username || "unknown",
-    domain: row.domain,
-    version: row.version,
-    fidelity: row.fidelity,
-    description: row.description,
-    phenotype: {},
-    wasm_url: null,
-    wasm_size: row.wasm_size || 0,
-    downloads: row.downloads || 0,
-    fitness: null,
-    reputation_score: row.reputation_score ?? null,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  }));
-
-  const deduped = deduplicateLatestVersion(allGenes);
-  const page = options.page || 1;
+  const limit =
+    Number.isFinite(options.perPage) && (options.perPage as number) > 0
+      ? Math.min(Math.floor(options.perPage as number), 100)
+      : 20;
+  const page =
+    Number.isFinite(options.page) && (options.page as number) > 0
+      ? Math.floor(options.page as number)
+      : 1;
   const offset = (page - 1) * limit;
-  const paged = deduped.slice(offset, offset + limit);
+  const sort = normalizeSearchSort(options.sort);
+  const query = options.query?.trim() || null;
 
-  return { genes: paged, total: deduped.length, page, per_page: limit };
+  const requestBody = {
+    p_query: query,
+    p_domain: options.domain || null,
+    p_fidelity: options.fidelity || null,
+    p_sort: sort,
+    p_limit: limit,
+    p_offset: offset,
+  };
+
+  const rows = await fetchSearchGenes(requestBody);
+  const genes = rows.map(mapSearchGene);
+
+  let total = parseExactSearchTotal(rows);
+  let totalExact = total != null;
+
+  if (!totalExact) {
+    if (rows.length === 0 && page === 1) {
+      total = 0;
+      totalExact = true;
+    } else if (rows.length < limit) {
+      total = offset + rows.length;
+      totalExact = true;
+    } else {
+      const countRows = await fetchSearchGenes({ ...requestBody, p_limit: 1, p_offset: 0 });
+      total = parseExactSearchTotal(countRows);
+      totalExact = total != null;
+    }
+  }
+
+  return {
+    genes,
+    total: total ?? offset + rows.length,
+    page,
+    per_page: limit,
+    total_exact: totalExact,
+  };
 }
 
-export async function getGene(id: string): Promise<CloudGene> {
+export async function getGene(idOrName: string): Promise<CloudGene> {
+  const isUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      idOrName,
+    );
+  const isContentHash = /^[0-9a-f]{64}$/i.test(idOrName);
+
   const params = new URLSearchParams();
-  params.set("id", `eq.${id}`);
+  if (isUuid) {
+    params.set("id", `eq.${idOrName}`);
+  } else if (isContentHash) {
+    params.set("content_hash", `eq.${idOrName}`);
+  } else {
+    params.set("name", `eq.${idOrName}`);
+    params.set("order", "created_at.desc");
+    params.set("limit", "1");
+  }
   params.set("select", "*, profiles(username)");
 
   const res = await fetch(apiUrl(`/genes?${params}`), {
     headers: authHeaders(),
   });
   const data = await handleResponse<any[]>(res);
-  if (data.length === 0) throw new Error(`Gene '${id}' not found`);
+  if (data.length === 0) throw new Error(`Gene '${idOrName}' not found`);
 
   const row = data[0];
   const config = loadCloudConfig();
@@ -178,6 +264,8 @@ export async function getGene(id: string): Promise<CloudGene> {
     phenotype: row.phenotype || {},
     wasm_url: wasmUrl,
     wasm_size: row.wasm_size || 0,
+    wasm_hash: row.wasm_hash ?? null,
+    content_hash: row.content_hash ?? null,
     downloads: row.downloads || 0,
     fitness: null,
     reputation_score: row.reputation_score ?? null,
@@ -194,6 +282,7 @@ export async function publishGene(opts: {
   description: string;
   phenotype: Record<string, unknown>;
   wasmBytes: Buffer | null;
+  contentHash: string;
   readme?: string | null;
   changelog?: string | null;
 }): Promise<CloudGene & { isUpdate: boolean }> {
@@ -201,12 +290,30 @@ export async function publishGene(opts: {
   const creds = loadCredentials();
   if (!creds) throw new Error("Not logged in. Run 'rotifer login' first.");
 
+  const existCheck = await fetch(
+    apiUrl(
+      `/genes?owner_id=eq.${creds.user.id}&name=eq.${opts.name}&version=eq.${opts.version}&select=id,published`,
+    ),
+    { headers: authHeaders() },
+  );
+  const existData = existCheck.ok ? ((await existCheck.json()) as any[]) : [];
+  const isUpdate = existData.length > 0;
+
+  if (isUpdate && existData[0].published) {
+    throw new Error(
+      `Version ${opts.version} of '${opts.name}' is already published and immutable. ` +
+      `Bump the version number in phenotype.json to publish a new version.`,
+    );
+  }
+
   let wasmPath: string | null = null;
   let wasmSize = 0;
+  let wasmHash: string | null = null;
 
   if (opts.wasmBytes) {
     wasmPath = `${creds.user.id}/${opts.name}/${opts.version}/gene.ir.wasm`;
     wasmSize = opts.wasmBytes.length;
+    wasmHash = createHash("sha256").update(opts.wasmBytes).digest("hex");
 
     const uploadRes = await fetch(
       storageUrl(`/object/gene-wasm/${wasmPath}`),
@@ -227,13 +334,6 @@ export async function publishGene(opts: {
       throw new Error(`Failed to upload WASM: ${err}`);
     }
   }
-
-  const existCheck = await fetch(
-    apiUrl(`/genes?owner_id=eq.${creds.user.id}&name=eq.${opts.name}&version=eq.${opts.version}&select=id`),
-    { headers: authHeaders() }
-  );
-  const existData = existCheck.ok ? ((await existCheck.json()) as any[]) : [];
-  const isUpdate = existData.length > 0;
 
   let previousVersionId: string | null = null;
   if (!isUpdate) {
@@ -261,17 +361,19 @@ export async function publishGene(opts: {
     phenotype: opts.phenotype,
     wasm_path: wasmPath,
     wasm_size: wasmSize,
+    wasm_hash: wasmHash,
+    content_hash: opts.contentHash,
     published: true,
   };
   if (opts.readme) body.readme = opts.readme;
   if (changelog) body.changelog = changelog;
   if (previousVersionId) body.previous_version_id = previousVersionId;
 
-  const res = await fetch(apiUrl("/genes?on_conflict=owner_id,name,version"), {
+  const res = await fetch(apiUrl("/genes"), {
     method: "POST",
     headers: {
       ...authHeaders(true),
-      Prefer: "return=representation,resolution=merge-duplicates",
+      Prefer: "return=representation",
     },
     body: JSON.stringify(body),
   });
@@ -292,6 +394,8 @@ export async function publishGene(opts: {
       ? `${loadCloudConfig().endpoint}/storage/v1/object/public/gene-wasm/${wasmPath}`
       : null,
     wasm_size: row.wasm_size,
+    wasm_hash: row.wasm_hash ?? null,
+    content_hash: row.content_hash ?? null,
     downloads: 0,
     fitness: null,
     reputation_score: row.reputation_score ?? null,
@@ -302,6 +406,11 @@ export async function publishGene(opts: {
 }
 
 export async function unpublishGene(id: string): Promise<void> {
+  const geneRes = await fetch(apiUrl(`/genes?id=eq.${id}&select=wasm_path,owner_id`), {
+    headers: authHeaders(),
+  });
+  const geneData = geneRes.ok ? ((await geneRes.json()) as any[]) : [];
+
   const res = await fetch(apiUrl(`/genes?id=eq.${id}`), {
     method: "PATCH",
     headers: {
@@ -314,6 +423,17 @@ export async function unpublishGene(id: string): Promise<void> {
     const err = await res.text();
     throw new Error(`Failed to unpublish gene: ${err}`);
   }
+
+  if (geneData.length > 0 && geneData[0].wasm_path) {
+    try {
+      await fetch(storageUrl(`/object/${geneData[0].wasm_path}`), {
+        method: "DELETE",
+        headers: authHeaders(true),
+      });
+    } catch { /* WASM cleanup is best-effort */ }
+  }
+
+  // Reputation recompute after unpublish is handled by server-side triggers (service_role only)
 }
 
 export async function downloadGeneWasm(wasmUrl: string): Promise<Buffer> {
@@ -323,12 +443,15 @@ export async function downloadGeneWasm(wasmUrl: string): Promise<Buffer> {
   return Buffer.from(arrayBuf);
 }
 
-export async function trackDownload(geneId: string): Promise<void> {
+export async function trackDownload(
+  geneId: string,
+  source: "cli" | "mcp" | "api" | "web" = "cli",
+): Promise<void> {
   try {
     const res = await fetch(apiUrl("/rpc/track_download"), {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ p_gene_id: geneId }),
+      body: JSON.stringify({ p_gene_id: geneId, p_source: source }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -359,7 +482,6 @@ export async function arenaSubmit(
     success_rate: fitness.success_rate,
     latency_score: fitness.latency_score,
     resource_efficiency: fitness.resource_efficiency,
-    total_calls: 1,
   };
 
   const res = await fetch(apiUrl("/arena_entries"), {
@@ -486,17 +608,9 @@ export async function getGeneReputation(geneId: string): Promise<GeneReputationR
   const data = await handleResponse<any[]>(res);
 
   if (data.length === 0) {
-    // No reputation computed yet — compute on the fly via RPC
-    const rpcRes = await fetch(apiUrl("/rpc/compute_gene_reputation"), {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ p_gene_id: geneId }),
-    });
-    const score = await handleResponse<number>(rpcRes);
-
     return {
       gene_name: geneId,
-      score,
+      score: 0,
       arena_score: 0,
       usage_score: 0,
       stability_score: 0,
@@ -527,15 +641,8 @@ export async function getDeveloperReputation(userId: string): Promise<DeveloperR
   const data = await handleResponse<any[]>(res);
 
   if (data.length === 0) {
-    const rpcRes = await fetch(apiUrl("/rpc/compute_developer_reputation"), {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ p_user_id: userId }),
-    });
-    const score = await handleResponse<number>(rpcRes);
-
     return {
-      score,
+      score: 0,
       genes_published: 0,
       total_downloads: 0,
       arena_wins: 0,
@@ -595,7 +702,13 @@ export interface GeneStatsResponse {
   last_90d: number;
 }
 
-export async function getGeneStats(geneId: string): Promise<GeneStatsResponse> {
+export async function getGeneStats(idOrName: string): Promise<GeneStatsResponse> {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrName);
+  let geneId = idOrName;
+  if (!isUuid) {
+    const gene = await getGene(idOrName);
+    geneId = gene.id;
+  }
   const res = await fetch(apiUrl("/rpc/get_gene_stats"), {
     method: "POST",
     headers: authHeaders(),

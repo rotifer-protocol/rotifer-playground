@@ -36,6 +36,9 @@ describe("rotifer init edge cases", () => {
   it("creates project with default name", () => {
     const result = run("init", testDir);
     expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Starter Genes");
+    expect(result.stdout).not.toContain("Arena Rankings");
+    expect(result.stdout).not.toContain("F(g)");
     const configPath = join(testDir, "my-rotifer-project", "rotifer.json");
     expect(existsSync(configPath)).toBe(true);
     const config = JSON.parse(readFileSync(configPath, "utf-8"));

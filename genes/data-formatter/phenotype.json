@@ -1,0 +1,34 @@
+{
+  "name": "data-formatter",
+  "version": "0.2.0",
+  "domain": "web3.display",
+  "fidelity": "Native",
+  "description": "Format blockchain data for human readability. Converts Wei to ETH, shortens addresses, converts hex to decimal, formats timestamps, and auto-detects data types.",
+  "author": "Rotifer Protocol Contributors",
+  "license": "Apache-2.0",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "data": { "description": "Data to format — can be a hex string, number, object with known fields, etc." },
+      "format": { "type": "string", "enum": ["human", "json", "table"], "default": "human" }
+    },
+    "required": ["data"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "formatted": { "type": "string", "description": "Formatted output string" },
+      "type": { "type": "string", "description": "Detected or applied format type" }
+    },
+    "required": ["formatted", "type"]
+  },
+  "displayField": "formatted",
+  "tags": ["web3", "formatter", "display", "ethereum", "hex", "wei"],
+  "dependencies": [],
+  "transparency": "Open",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  }
+}

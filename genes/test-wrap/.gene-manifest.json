@@ -1,8 +1,0 @@
-{
-  "geneId": "0d9f7f005f3227ef9fb59c2462049d7bb86369de2fca7f58d8692dd7eeaad09c",
-  "name": "test-wrap",
-  "domain": "content.translation",
-  "fidelity": "Wrapped",
-  "wrappedAt": "2026-02-24T13:00:11.598Z",
-  "fromSkill": "../.cursor/skills/translator/SKILL.md"
-}

@@ -19,10 +19,17 @@
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939390540,
-  "fidelity": "Wrapped",
+  "fidelity": "Native",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "FailFast"
+  },
+  "irHash": "b69523301b08cf052b44f787cad7161e235a3ec8f116ca64ff11a41e32fbef57",
+  "tags": ["academic-writing", "research", "scholarly", "thesis", "formal-style"]
 }

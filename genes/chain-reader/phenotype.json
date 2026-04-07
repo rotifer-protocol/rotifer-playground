@@ -1,0 +1,45 @@
+{
+  "name": "chain-reader",
+  "version": "0.2.0",
+  "domain": "web3.data",
+  "fidelity": "Hybrid",
+  "description": "Read on-chain data from EVM-compatible networks via JSON-RPC. Supports balance queries, contract code retrieval, and transaction count lookups on Ethereum and Base.",
+  "author": "Rotifer Protocol Contributors",
+  "license": "Apache-2.0",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "address": { "type": "string", "description": "Ethereum address (0x-prefixed, 42 characters)" },
+      "chain": { "type": "string", "default": "ethereum", "description": "Target chain: ethereum or base" },
+      "action": { "type": "string", "enum": ["balance", "code", "txCount"], "description": "RPC action to perform" }
+    },
+    "required": ["address", "action"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": { "type": "string", "description": "Raw hex result from JSON-RPC" },
+      "chain": { "type": "string" },
+      "blockNumber": { "type": "number" }
+    },
+    "required": ["result", "chain"]
+  },
+  "displayField": "result",
+  "tags": ["web3", "ethereum", "base", "rpc", "blockchain", "on-chain"],
+  "dependencies": [],
+  "transparency": "Open",
+  "network": {
+    "allowedDomains": [
+      "ethereum-rpc.publicnode.com",
+      "base-rpc.publicnode.com"
+    ],
+    "maxRequestsPerExecution": 3,
+    "maxTimeoutMs": 10000,
+    "maxResponseBytes": 1048576
+  },
+  "semanticRequirements": {
+    "timeModel": "Async",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Retry"
+  }
+}

@@ -71,9 +71,9 @@ export interface ScanOptions {
 }
 
 export function scan(dir: string, skillId?: string, options?: ScanOptions): ScanResult {
-  const scanAll = options?.scanAll ?? false;
+  const shouldScanAll = options?.scanAll ?? false;
 
-  if (!scanAll && !hasSrcDirectory(dir)) {
+  if (!shouldScanAll && !hasSrcDirectory(dir)) {
     return {
       skill_id: skillId ?? dir,
       scanned_at: new Date().toISOString(),
@@ -83,7 +83,7 @@ export function scan(dir: string, skillId?: string, options?: ScanOptions): Scan
     };
   }
 
-  const scanDir = scanAll ? dir : join(dir, "src");
+  const scanDir = shouldScanAll ? dir : join(dir, "src");
   const files = collectCodeFiles(scanDir);
   const allFindings: Finding[] = [];
   let totalLines = 0;

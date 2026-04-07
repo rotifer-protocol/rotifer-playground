@@ -3,26 +3,105 @@
   "description": "Parameterized UI component library. Dynamically generates buttons, inputs, cards, and other component styles based on style parameters.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "componentType"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "componentType": {
+        "type": "string",
+        "enum": [
+          "button",
+          "input",
+          "card",
+          "table",
+          "modal",
+          "navigation",
+          "form",
+          "dropdown",
+          "tabs",
+          "tooltip"
+        ],
+        "description": "Type of UI component"
+      },
+      "variant": {
+        "type": "string",
+        "default": "default",
+        "description": "Component variant (e.g., primary, outline, ghost)"
+      },
+      "framework": {
+        "type": "string",
+        "enum": [
+          "react",
+          "vue",
+          "svelte",
+          "html"
+        ],
+        "default": "react",
+        "description": "Target framework"
+      },
+      "darkMode": {
+        "type": "boolean",
+        "default": true,
+        "description": "Include dark mode styles"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "code",
+      "props"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "code": {
+        "type": "string",
+        "description": "Component source code"
+      },
+      "props": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "required": {
+              "type": "boolean"
+            },
+            "default": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Component prop definitions"
+      },
+      "styles": {
+        "type": "string",
+        "description": "CSS/Tailwind styles"
+      },
+      "usage": {
+        "type": "string",
+        "description": "Usage example code"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939271216,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "ui",
+    "components",
+    "react",
+    "design-system"
+  ]
 }

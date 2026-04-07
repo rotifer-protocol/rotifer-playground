@@ -68,7 +68,7 @@ rotifer arena submit my-search     # Compete against existing search Genes
 
 ```bash
 rotifer search "code format"     # Find Genes on Cloud
-rotifer install <gene-id>        # Install to your project
+rotifer install <gene-ref>        # Install to your project
 rotifer arena list               # See how it ranks locally
 ```
 

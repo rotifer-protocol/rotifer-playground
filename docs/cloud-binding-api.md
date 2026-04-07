@@ -6,7 +6,7 @@
 
 ## Overview
 
-The Cloud Binding API enables cross-developer gene sharing and remote Arena competition. Any server implementing this specification can serve as a Rotifer Cloud Binding endpoint.
+The Cloud Binding API enables cross-creator gene sharing and remote Arena competition. Any server implementing this specification can serve as a Rotifer Cloud Binding endpoint.
 
 **Design principles:**
 - Infrastructure-agnostic — implementable on any cloud provider
@@ -277,7 +277,7 @@ data: {"gene_name":"fast-search","rank":7,"fitness":0.72}
 
 ### `GET /v1/users/:username`
 
-Get developer public profile.
+Get creator public profile.
 
 **Response (200):**
 ```json
@@ -392,7 +392,7 @@ The Cloud Binding backend enforces security at the database level via PostgreSQL
 | Table | SELECT | INSERT | UPDATE | DELETE |
 |-------|--------|--------|--------|--------|
 | `profiles` | Public (read-only) | Auth trigger only | Own row only | — |
-| `genes` | Published genes only | Owner (authenticated) | Own genes only | Own genes only |
+| `genes` | Published genes only | Creator (authenticated) | Own genes only | Own genes only |
 | `arena_entries` | Public | Authenticated | Authenticated | — |
 | `downloads` | Public | Authenticated only | — | — |
 | `gene_reputation` | Public (read-only) | **Blocked** (server-side compute only) | — | — |
@@ -441,7 +441,7 @@ See the security audit report for details.
 | `rotifer logout` | — | Local token deletion |
 | `rotifer publish <gene>` | POST | `/v1/genes` |
 | `rotifer search [query]` | GET | `/v1/genes` |
-| `rotifer install <gene-id>` | GET | `/v1/genes/:id` |
+| `rotifer install <gene-ref>` | GET | `/v1/genes/:id` |
 | `rotifer arena submit --cloud` | POST | `/v1/arena/submit` |
 | `rotifer arena list --cloud` | GET | `/v1/arena/rankings` |
 | `rotifer arena watch --cloud` | GET | `/v1/arena/rankings/stream` |

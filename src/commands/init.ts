@@ -9,8 +9,8 @@ import {
   statSync,
 } from "node:fs";
 import { join, dirname, resolve } from "node:path";
-import { createHash } from "node:crypto";
 import * as display from "../utils/display.js";
+import { fidelityColor } from "../utils/palette.js";
 import { type RotiferConfig, saveConfig } from "../utils/config.js";
 
 const GENESIS_GENES = [
@@ -23,20 +23,28 @@ const GENESIS_GENES = [
 
 export const initCommand = new Command("init")
   .description("Initialize a new Rotifer gene project")
-  .argument("[name]", "project name", "my-rotifer-project")
+  .argument("[gene-name]", "gene project name", "my-rotifer-project")
   .option("--domain <domain>", "default gene domain", "general")
   .option("--fidelity <level>", "example gene fidelity: Wrapped | Hybrid | Native", "Wrapped")
   .option("--no-genesis", "skip genesis genes installation")
-  .action(async (name: string, options: { domain: string; fidelity: string; genesis: boolean }) => {
-    if (/\.\.[\\/]|[\\/]\.\.|^\.\.$/.test(name)) {
-      display.error("Project name must not contain path traversal sequences: " + name);
+  .action(async (geneName: string, options: { domain: string; fidelity: string; genesis: boolean }) => {
+    if (/\.\.[\\/]|[\\/]\.\.|^\.\.$/.test(geneName)) {
+      display.error("Project name must not contain path traversal sequences: " + geneName);
       process.exit(1);
     }
 
-    const projectDir = resolve(process.cwd(), name);
+    if (!/^[a-z0-9]+(\.[a-z0-9]+)*$/.test(options.domain)) {
+      display.error(
+        `Invalid domain format: "${options.domain}". Use lowercase letters, digits, and dots only (e.g., "nlp", "code.analysis").`
+      );
+      process.exit(1);
+    }
+
+    const projectDir = resolve(process.cwd(), geneName);
 
     if (existsSync(projectDir)) {
-      display.error("Directory already exists: " + name);
+      display.error("Directory already exists: " + geneName);
+      display.hint("Choose a different name, or delete the existing directory first.");
       process.exit(1);
     }
 
@@ -47,7 +55,7 @@ export const initCommand = new Command("init")
     mkdirSync(join(projectDir, ".rotifer", "agents"), { recursive: true });
 
     const config: RotiferConfig = {
-      name,
+      name: geneName,
       version: "0.1.0",
       author: "local-dev",
       genes_dir: "genes",
@@ -112,9 +120,9 @@ export const initCommand = new Command("init")
       const genesisSourceDir = resolveGenesisDir();
       let installedCount = 0;
 
-      for (const geneName of GENESIS_GENES) {
-        const srcDir = join(genesisSourceDir, geneName);
-        const destDir = join(projectDir, "genes", geneName);
+      for (const genesisGene of GENESIS_GENES) {
+        const srcDir = join(genesisSourceDir, genesisGene);
+        const destDir = join(projectDir, "genes", genesisGene);
 
         if (existsSync(srcDir)) {
           copyDirRecursive(srcDir, destDir);
@@ -126,18 +134,23 @@ export const initCommand = new Command("init")
 
     console.log();
 
-    // Show Arena rankings — the "Wow" moment
-    showArenaRankings(projectDir);
+    showStarterGenes(projectDir);
 
-    console.log();
-    display.success("Project ready: " + name);
-    console.log();
-    display.info("Next steps:");
-    console.log("  cd " + name);
-    console.log("  rotifer scan genes/");
-    console.log("  rotifer wrap hello-world --domain " + options.domain);
-    console.log("  rotifer arena submit hello-world");
-    console.log();
+    const cliPkg = JSON.parse(
+      readFileSync(join(__dirname, "..", "..", "package.json"), "utf-8"),
+    );
+
+    display.welcomeBanner({
+      version: cliPkg.version,
+      message: `Project "${geneName}" is ready!`,
+      hints: [
+        ["cd " + geneName, "Enter project directory"],
+        ["rotifer hello", "Discover templates and create your first Agent"],
+        ["rotifer wrap hello-world", "Create your first gene"],
+        ["rotifer test hello-world", "Test in sandbox"],
+        ["rotifer publish", "Share to Rotifer Cloud"],
+      ],
+    });
   });
 
 function resolveGenesisDir(): string {
@@ -167,19 +180,17 @@ function copyDirRecursive(src: string, dest: string): void {
   }
 }
 
-interface ArenaRow {
-  rank: number;
+interface StarterGeneRow {
   name: string;
   domain: string;
-  fitness: string;
   fidelity: string;
 }
 
-function showArenaRankings(projectDir: string): void {
+function showStarterGenes(projectDir: string): void {
   const genesDir = join(projectDir, "genes");
   if (!existsSync(genesDir)) return;
 
-  const rows: ArenaRow[] = [];
+  const rows: StarterGeneRow[] = [];
 
   for (const name of readdirSync(genesDir)) {
     const phenotypePath = join(genesDir, name, "phenotype.json");
@@ -187,21 +198,9 @@ function showArenaRankings(projectDir: string): void {
 
     try {
       const phenotype = JSON.parse(readFileSync(phenotypePath, "utf-8"));
-      const phenoStr = JSON.stringify(phenotype);
-      const hash = createHash("sha256").update(phenoStr).digest("hex");
-
-      // Deterministic fitness score from content hash — stable across runs
-      const seed = parseInt(hash.slice(0, 8), 16);
-      const isNative = phenotype.fidelity === "Native";
-      const baseFitness = isNative ? 0.70 : 0.45;
-      const variance = (seed % 250) / 1000;
-      const fitness = Math.min(baseFitness + variance, 0.99);
-
       rows.push({
-        rank: 0,
         name,
         domain: phenotype.domain || "general",
-        fitness: fitness.toFixed(2),
         fidelity: phenotype.fidelity || "Wrapped",
       });
     } catch {
@@ -209,44 +208,22 @@ function showArenaRankings(projectDir: string): void {
     }
   }
 
-  // Sort by fitness descending, assign ranks
-  rows.sort((a, b) => parseFloat(b.fitness) - parseFloat(a.fitness));
-  rows.forEach((r, i) => (r.rank = i + 1));
+  rows.sort((a, b) => a.domain.localeCompare(b.domain) || a.name.localeCompare(b.name));
 
   if (rows.length === 0) return;
 
-  display.header("Arena Rankings");
+  display.header("Starter Genes");
 
-  const col = { rank: 4, name: 28, domain: 14, fitness: 8, fidelity: 10 };
-  const headerLine =
-    "  " +
-    pad("#", col.rank) +
-    pad("Name", col.name) +
-    pad("Domain", col.domain) +
-    pad("F(g)", col.fitness) +
-    "Fidelity";
-  console.log(headerLine);
-  console.log("  " + "─".repeat(headerLine.length));
-
-  for (const r of rows) {
-    const marker = r.fidelity === "Native" ? " " : " ";
-    console.log(
-      "  " +
-        pad(String(r.rank), col.rank) +
-        pad(r.name, col.name) +
-        pad(r.domain, col.domain) +
-        pad(r.fitness, col.fitness) +
-        r.fidelity + marker
-    );
-  }
-  console.log();
+  display.table(rows as unknown as Record<string, unknown>[], [
+    { key: "name", label: "Name", width: 28 },
+    { key: "domain", label: "Domain", width: 14 },
+    { key: "fidelity", label: "Fidelity", width: 10,
+      format: (v) => fidelityColor(String(v)) },
+  ]);
 
   const domains = new Set(rows.map((r) => r.domain));
-  display.info(
-    `${rows.length} genes across ${domains.size} domain(s) — Arena is alive!`
+  display.hint(
+    `${rows.length} starter gene(s) across ${domains.size} domain(s)`
   );
 }
 
-function pad(s: string, len: number): string {
-  return s.length >= len ? s : s + " ".repeat(len - s.length);
-}

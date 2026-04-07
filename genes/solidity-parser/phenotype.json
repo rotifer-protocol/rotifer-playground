@@ -1,0 +1,82 @@
+{
+  "name": "solidity-parser",
+  "version": "0.2.0",
+  "domain": "web3.analysis",
+  "fidelity": "Native",
+  "description": "Parse Solidity source code using regex-based analysis. Extracts contracts, functions, state variables, events, imports, inheritance, and modifier usage without external AST dependencies.",
+  "author": "Rotifer Protocol Contributors",
+  "license": "Apache-2.0",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "source": { "type": "string", "description": "Solidity source code to parse" },
+      "filename": { "type": "string", "description": "Optional filename for context" }
+    },
+    "required": ["source"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "source": { "type": "string", "description": "Original source passed through for downstream genes" },
+      "contracts": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "type": { "type": "string" },
+            "inherits": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      },
+      "functions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "params": { "type": "string" },
+            "visibility": { "type": "string" },
+            "modifiers": { "type": "array", "items": { "type": "string" } },
+            "mutability": { "type": "string" }
+          }
+        }
+      },
+      "stateVariables": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "type": { "type": "string" },
+            "visibility": { "type": "string" }
+          }
+        }
+      },
+      "events": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "params": { "type": "string" }
+          }
+        }
+      },
+      "imports": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    },
+    "required": ["source", "contracts", "functions", "stateVariables", "events", "imports"]
+  },
+  "displayField": "contracts",
+  "tags": ["solidity", "parser", "web3", "smart-contract", "ast"],
+  "dependencies": [],
+  "transparency": "Open",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  }
+}

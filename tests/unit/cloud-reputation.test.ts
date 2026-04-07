@@ -86,37 +86,24 @@ describe("reputation type contracts", () => {
 });
 
 describe("reputation model validation", () => {
-  it("R(g) formula: α·Arena + β·Usage + γ·Stability", () => {
-    const alpha = 0.5, beta = 0.3, gamma = 0.2;
-    const arena = 0.85, usage = 0.6, stability = 0.9;
-    const expected = alpha * arena + beta * usage + gamma * stability;
-    expect(expected).toBeCloseTo(0.785, 3);
+  it("R(g) uses W0 cold-start weights when downloads are sparse", () => {
+    const weights = { arena: 0.7, usage: 0.05, stability: 0.25 };
+    const arena = 0.85;
+    const usage = 0.6;
+    const stability = 0.9;
+    const expected = weights.arena * arena + weights.usage * usage + weights.stability * stability;
+    expect(expected).toBeCloseTo(0.85, 3);
   });
 
-  it("R(g) bounds: score ∈ [0, 1.0] for normalized inputs", () => {
-    const alpha = 0.5, beta = 0.3, gamma = 0.2;
-    const maxScore = alpha * 1.0 + beta * 1.0 + gamma * 1.0;
-    expect(maxScore).toBeCloseTo(1.0, 5);
-    const minScore = alpha * 0 + beta * 0 + gamma * 0;
-    expect(minScore).toBe(0);
-  });
-
-  it("decay reduces score by 5% per application", () => {
-    const decayRate = 0.05;
-    const original = 0.8;
-    const decayed = original * (1 - decayRate);
-    expect(decayed).toBeCloseTo(0.76, 5);
-  });
-
-  it("decay has floor at 0.01", () => {
-    const decayRate = 0.05;
-    const decayFloor = 0.01;
-    let score = 1.0;
-    for (let i = 0; i < 1000; i++) {
-      score = score * (1 - decayRate);
-      if (score < decayFloor) score = decayFloor;
+  it("R(g) weights remain normalized across W0/W1/W2 phases", () => {
+    const phases = [
+      { arena: 0.7, usage: 0.05, stability: 0.25 },
+      { arena: 0.6, usage: 0.2, stability: 0.2 },
+      { arena: 0.5, usage: 0.3, stability: 0.2 },
+    ];
+    for (const phase of phases) {
+      expect(phase.arena + phase.usage + phase.stability).toBeCloseTo(1.0, 5);
     }
-    expect(score).toBe(decayFloor);
   });
 
   it("community_bonus capped at 0.2", () => {
@@ -125,14 +112,28 @@ describe("reputation model validation", () => {
     expect(bonus).toBe(0.2);
   });
 
-  it("developer reputation is avg(gene reps) + community bonus", () => {
+  it("creator reputation uses diminishing-returns weighted sum", () => {
     const geneReps = [0.5, 0.7, 0.9];
     const arenaWins = 3;
-    const avg = geneReps.reduce((s, r) => s + r, 0) / geneReps.length;
+    const contribution =
+      geneReps.reduce((s, r) => s + r, 0) *
+      Math.log(1 + geneReps.length) /
+      geneReps.length;
     const bonus = Math.min(arenaWins * 0.02, 0.2);
-    const devRep = avg + bonus;
-    expect(avg).toBeCloseTo(0.7, 5);
+    const devRep = contribution + bonus;
+    expect(contribution).toBeCloseTo(0.9704, 4);
     expect(bonus).toBeCloseTo(0.06, 5);
-    expect(devRep).toBeCloseTo(0.76, 5);
+    expect(devRep).toBeCloseTo(1.0304, 4);
+  });
+
+  it("zero-score genes do not increase creator contribution", () => {
+    const allGeneReps = [0.8, 0, 0.6];
+    const positiveGeneReps = allGeneReps.filter((score) => score > 0);
+    const contribution =
+      positiveGeneReps.reduce((s, r) => s + r, 0) *
+      Math.log(1 + positiveGeneReps.length) /
+      positiveGeneReps.length;
+    expect(positiveGeneReps).toEqual([0.8, 0.6]);
+    expect(contribution).toBeCloseTo(0.7690, 4);
   });
 });

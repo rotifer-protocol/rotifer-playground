@@ -108,8 +108,31 @@ describe("arena submit edge cases", () => {
     );
     const { stdout, exitCode } = run("arena submit test-gene", projectDir);
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("Deterministic estimation");
+    expect(stdout).toContain("Estimated");
     expect(stdout).toContain("Wrapped");
+  });
+
+  it("rejects genes with critical security findings", () => {
+    writeFileSync(
+      join(projectDir, "genes", "test-gene", "phenotype.json"),
+      JSON.stringify({
+        domain: "general",
+        inputSchema: { type: "object" },
+        outputSchema: { type: "object" },
+        version: "0.1.0",
+        fidelity: "Wrapped",
+      }, null, 2)
+    );
+    writeFileSync(
+      join(projectDir, "genes", "test-gene", "index.js"),
+      "export function run() { return eval('1 + 1'); }\n",
+    );
+
+    const { stdout, exitCode } = run("arena submit test-gene", projectDir);
+    expect(exitCode).not.toBe(0);
+    expect(stdout).toContain("Security scan found issues");
+    expect(stdout).toContain("V(g)");
+    expect(stdout).toContain("does not meet admission threshold");
   });
 
   it("shows Fidelity in output", () => {

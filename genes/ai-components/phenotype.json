@@ -3,26 +3,110 @@
   "description": "AI interface component library. Includes streaming text, chat bubbles, thinking indicators, reasoning display, and token usage components for AI conversation applications.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "componentType"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "componentType": {
+        "type": "string",
+        "enum": [
+          "chat-bubble",
+          "streaming-text",
+          "thinking-indicator",
+          "token-counter",
+          "reasoning-panel",
+          "tool-call-display",
+          "message-list"
+        ],
+        "description": "Type of AI interface component"
+      },
+      "framework": {
+        "type": "string",
+        "enum": [
+          "react",
+          "vue",
+          "svelte"
+        ],
+        "default": "react",
+        "description": "Target framework"
+      },
+      "streamingSupport": {
+        "type": "boolean",
+        "default": true,
+        "description": "Include streaming/real-time support"
+      },
+      "theme": {
+        "type": "string",
+        "enum": [
+          "light",
+          "dark",
+          "system"
+        ],
+        "default": "dark",
+        "description": "Default theme"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "code",
+      "props"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "code": {
+        "type": "string",
+        "description": "Component source code"
+      },
+      "props": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "required": {
+              "type": "boolean"
+            },
+            "description": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Component prop definitions"
+      },
+      "hooks": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Required React hooks or composables"
+      },
+      "dependencies": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "npm package dependencies"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939385953,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "ai",
+    "ui",
+    "chat",
+    "streaming",
+    "components"
+  ]
 }

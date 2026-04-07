@@ -16,13 +16,14 @@
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-genesis",
   "fidelity": "Native",
   "transparency": "Open",
-  "semantic_requirements": {
+  "semanticRequirements": {
     "timeModel": "Async",
     "concurrencyModel": "Stateless",
     "failureSemantics": "Fallback"
-  }
+  },
+  "tags": ["web-search", "single-answer", "attribution", "lightweight", "async"]
 }

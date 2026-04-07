@@ -28,14 +28,21 @@ Thumbs.db
 # Lock files (Cargo.lock is committed for libraries)
 # package-lock.json is committed
 
-# Gene build artifacts (contains local paths, not for VCS)
+# Gene build artifacts (local by default; tracked benchmark samples stay grandfathered)
 .gene-manifest.json
+genes/**/.compile-result.json
+genes/**/.arena-cache.json
+genes/**/gene.wasm
+genes/**/gene.ir.wasm
 
 # Sandbox cache
 *.tsbuildinfo
 
 # Test artifacts
 coverage/
+
+# Local evaluation reports
+arena-reports/
 
 # Wrangler
 .wrangler/

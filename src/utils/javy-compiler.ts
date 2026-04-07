@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import * as display from "./display.js";
@@ -39,10 +39,11 @@ export function compileTypeScriptToWasm(
 
   try {
     display.info("  Step 1/3: TypeScript → JavaScript (esbuild)");
-    execSync(
-      `npx esbuild ${JSON.stringify(geneSrcPath)} --bundle --format=iife --global-name=__gene --outfile=${JSON.stringify(bundlePath)} --log-level=warning`,
-      { stdio: "pipe", timeout: 30_000 },
-    );
+    execFileSync("npx", [
+      "esbuild", geneSrcPath,
+      "--bundle", "--format=iife", "--global-name=__gene",
+      `--outfile=${bundlePath}`, "--log-level=warning",
+    ], { stdio: "pipe", timeout: 30_000 });
 
     const bundleCode = readFileSync(bundlePath, "utf-8");
     const bundleSize = Buffer.byteLength(bundleCode);
@@ -53,10 +54,9 @@ export function compileTypeScriptToWasm(
     writeFileSync(shimPath, shimCode);
 
     display.info("  Step 3/3: JavaScript → WASM (Javy / QuickJS)");
-    execSync(
-      `npx javy-cli compile ${JSON.stringify(shimPath)} -o ${JSON.stringify(outputWasmPath)}`,
-      { stdio: "pipe", timeout: 60_000 },
-    );
+    execFileSync("npx", [
+      "javy-cli", "compile", shimPath, "-o", outputWasmPath,
+    ], { stdio: "pipe", timeout: 60_000 });
 
     const wasmSize = readFileSync(outputWasmPath).length;
     const durationMs = Date.now() - startTime;
@@ -78,7 +78,7 @@ export function compileTypeScriptToWasm(
  */
 export function isJavyAvailable(): boolean {
   try {
-    execSync("npx javy-cli --version", { stdio: "pipe", timeout: 30_000 });
+    execFileSync("npx", ["javy-cli", "--version"], { stdio: "pipe", timeout: 30_000 });
     return true;
   } catch {
     return false;

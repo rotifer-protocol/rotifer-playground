@@ -1,0 +1,144 @@
+{
+  "author": "rotifer-team",
+  "domain": "med.clinical",
+  "version": "0.2.0",
+  "fidelity": "Wrapped",
+  "description": "Drug-drug interaction checker. Analyzes a list of medications for potential interactions, contraindications, and dosage conflicts. Outputs risk level, mechanism of interaction, and clinical recommendations. Based on known pharmacological interaction databases.",
+  "inputSchema": {
+    "type": "object",
+    "required": [
+      "medications"
+    ],
+    "properties": {
+      "medications": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Drug name (generic or brand)"
+            },
+            "dosage": {
+              "type": "string",
+              "description": "Dosage (e.g., '500mg')"
+            },
+            "frequency": {
+              "type": "string",
+              "description": "Frequency (e.g., 'twice daily')"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        },
+        "description": "List of current medications"
+      },
+      "patientAge": {
+        "type": "number",
+        "default": 55,
+        "description": "Patient age (affects metabolism-based interactions)"
+      },
+      "renalFunction": {
+        "type": "string",
+        "enum": [
+          "normal",
+          "mild_impairment",
+          "moderate_impairment",
+          "severe_impairment"
+        ],
+        "default": "normal",
+        "description": "Renal function status (affects drug clearance)"
+      },
+      "hepaticFunction": {
+        "type": "string",
+        "enum": [
+          "normal",
+          "mild_impairment",
+          "moderate_impairment",
+          "severe_impairment"
+        ],
+        "default": "normal",
+        "description": "Hepatic function status"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "interactions",
+      "overallRisk",
+      "recommendations"
+    ],
+    "properties": {
+      "interactions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "drugA": {
+              "type": "string"
+            },
+            "drugB": {
+              "type": "string"
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "minor",
+                "moderate",
+                "major",
+                "contraindicated"
+              ]
+            },
+            "mechanism": {
+              "type": "string"
+            },
+            "clinicalEffect": {
+              "type": "string"
+            },
+            "recommendation": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Detected drug-drug interactions"
+      },
+      "overallRisk": {
+        "type": "string",
+        "enum": [
+          "low",
+          "moderate",
+          "high",
+          "critical"
+        ],
+        "description": "Overall medication regimen risk level"
+      },
+      "recommendations": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Clinical recommendations for the prescribing physician"
+      },
+      "disclaimer": {
+        "type": "string",
+        "description": "Medical disclaimer (always present)"
+      }
+    }
+  },
+  "dependencies": [],
+  "transparency": "Open",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  },
+  "tags": [
+    "medical",
+    "drug",
+    "interaction",
+    "clinical",
+    "safety"
+  ]
+}

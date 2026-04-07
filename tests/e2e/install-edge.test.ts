@@ -57,7 +57,7 @@ describe("rotifer install edge cases", () => {
     const result = run("install --help", projectDir);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Install a gene from Rotifer Cloud");
-    expect(result.stdout).toContain("gene-id");
+    expect(result.stdout).toContain("<gene-ref>");
   });
 
   it("fails with invalid (non-UUID) gene id", () => {

@@ -4,11 +4,22 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "code": { "type": "string", "description": "Source code to review" },
-      "language": { "type": "string", "description": "Programming language" },
-      "context": { "type": "string", "description": "File path or component context" }
+      "code": {
+        "type": "string",
+        "description": "Source code to review"
+      },
+      "language": {
+        "type": "string",
+        "description": "Programming language"
+      },
+      "context": {
+        "type": "string",
+        "description": "File path or component context"
+      }
     },
-    "required": ["code"]
+    "required": [
+      "code"
+    ]
   },
   "outputSchema": {
     "type": "object",
@@ -18,22 +29,49 @@
         "items": {
           "type": "object",
           "properties": {
-            "severity": { "type": "string", "enum": ["critical", "warning", "info"] },
-            "category": { "type": "string" },
-            "message": { "type": "string" },
-            "line": { "type": "integer" },
-            "fix": { "type": "string" }
+            "severity": {
+              "type": "string",
+              "enum": [
+                "critical",
+                "warning",
+                "info"
+              ]
+            },
+            "category": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "line": {
+              "type": "integer"
+            },
+            "fix": {
+              "type": "string"
+            }
           }
         }
       },
-      "summary": { "type": "string" },
-      "readabilityScore": { "type": "number", "description": "0-10 readability score" }
+      "summary": {
+        "type": "string"
+      },
+      "readabilityScore": {
+        "type": "number",
+        "description": "0-10 readability score"
+      }
     }
   },
   "llmRequirements": {
     "templateFormat": "mustache",
-    "templateVariables": ["code", "language", "context"],
-    "targetModels": ["claude-3", "gpt-4"],
+    "templateVariables": [
+      "code",
+      "language",
+      "context"
+    ],
+    "targetModels": [
+      "claude-3",
+      "gpt-4"
+    ],
     "minContextWindow": 8192,
     "expectedOutputFormat": "json",
     "temperatureHint": 0.3,
@@ -44,17 +82,38 @@
   "fitnessConfig": {
     "evaluationMethod": "template-quality",
     "dimensions": {
-      "detectionRate": { "weight": 0.30, "description": "Coverage of known readability issues" },
-      "falsePositiveRate": { "weight": 0.25, "description": "Precision — avoid pedantic nitpicks" },
-      "responseQuality": { "weight": 0.25, "description": "Quality of rewrite suggestions" },
-      "templateValidity": { "weight": 0.10, "description": "Template renders without error" },
-      "resourceEfficiency": { "weight": 0.10, "description": "Token efficiency" }
+      "detectionRate": {
+        "weight": 0.3,
+        "description": "Coverage of known readability issues"
+      },
+      "falsePositiveRate": {
+        "weight": 0.25,
+        "description": "Precision — avoid pedantic nitpicks"
+      },
+      "responseQuality": {
+        "weight": 0.25,
+        "description": "Quality of rewrite suggestions"
+      },
+      "templateValidity": {
+        "weight": 0.1,
+        "description": "Template renders without error"
+      },
+      "resourceEfficiency": {
+        "weight": 0.1,
+        "description": "Token efficiency"
+      }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "development-genome"
+  "source": "development-genome",
+  "tags": [
+    "code-review",
+    "readability",
+    "maintainability",
+    "arena"
+  ]
 }

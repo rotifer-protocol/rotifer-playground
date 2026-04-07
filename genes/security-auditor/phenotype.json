@@ -19,10 +19,17 @@
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939411217,
-  "fidelity": "Wrapped",
+  "fidelity": "Native",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "FailFast"
+  },
+  "irHash": "158e926dadb04037d47f52a988caebf597eaef44c77c2c0a8e87fd874be176cc",
+  "tags": ["security-audit", "prompt-injection", "web3", "vulnerability", "review"]
 }

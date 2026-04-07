@@ -78,7 +78,7 @@ describe("rotifer network commands", () => {
     expect(result.stdout).toContain("Node ID");
     expect(result.stdout).toContain("gene-discovery/1.0.0");
     expect(result.stdout).toContain("P2P node initialized");
-    expect(result.stdout).toContain("foundation stage");
+    expect(result.stdout).toContain("metadata discovery is available");
 
     const configPath = join(TEST_DIR, ".rotifer", "network.json");
     expect(existsSync(configPath)).toBe(true);
@@ -130,7 +130,8 @@ describe("rotifer network commands", () => {
     const result = run("network search test-query");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("not active");
-    expect(result.stdout).toContain("Cloud search");
+    expect(result.stdout).toContain("P2P search is unavailable");
+    expect(result.stdout).toContain("rotifer search");
   });
 
   it("network search with active node shows foundation message", () => {
@@ -138,7 +139,7 @@ describe("rotifer network commands", () => {
     const result = run("network search test-query");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("test-query");
-    expect(result.stdout).toContain("foundation stage");
+    expect(result.stdout).toContain("not yet available");
   });
 
   it("network announce warns when node is inactive", () => {
@@ -153,7 +154,6 @@ describe("rotifer network commands", () => {
     const result = run("network announce my-gene");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("my-gene");
-    expect(result.stdout).toContain("GossipSub");
-    expect(result.stdout).toContain("foundation stage");
+    expect(result.stdout).toContain("not yet available");
   });
 });

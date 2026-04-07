@@ -1,0 +1,79 @@
+{
+  "author": "rotifer-team",
+  "domain": "quant.spread",
+  "version": "0.2.0",
+  "fidelity": "Native",
+  "description": "Analyzes Polymarket market snapshots to identify arbitrage opportunities. Detects three signal types: (1) mispriced binary markets where Yes+No prices deviate from 1.0, (2) multi-outcome events where total probabilities deviate from 1.0, (3) high bid-ask spread markets indicating liquidity gaps. Ranks signals by expected edge and confidence.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["markets"],
+    "properties": {
+      "markets": {
+        "type": "array",
+        "items": { "type": "object" },
+        "description": "Market snapshots from polymarket-scanner"
+      },
+      "scannedAt": {
+        "type": "string",
+        "description": "ISO timestamp from scanner (passed through)"
+      },
+      "mispricingThreshold": {
+        "type": "number",
+        "default": 0.02,
+        "description": "Minimum price deviation from 1.0 to flag as mispriced (0-1)"
+      },
+      "minSpread": {
+        "type": "number",
+        "default": 0.03,
+        "description": "Minimum bid-ask spread to flag as a spread opportunity"
+      },
+      "minConfidence": {
+        "type": "number",
+        "default": 0.3,
+        "description": "Minimum confidence score to include a signal (0-1)"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["signals", "summary"],
+    "properties": {
+      "signals": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "signalId": { "type": "string" },
+            "type": { "type": "string", "enum": ["MISPRICING", "MULTI_OUTCOME_ARB", "SPREAD"] },
+            "marketId": { "type": "string" },
+            "question": { "type": "string" },
+            "description": { "type": "string" },
+            "edge": { "type": "number" },
+            "confidence": { "type": "number" },
+            "direction": { "type": "string" },
+            "prices": { "type": "object" },
+            "timestamp": { "type": "string" }
+          }
+        },
+        "description": "Ranked arbitrage signals"
+      },
+      "summary": {
+        "type": "object",
+        "properties": {
+          "totalMarketsAnalyzed": { "type": "number" },
+          "signalsFound": { "type": "number" },
+          "avgEdge": { "type": "number" },
+          "scanTimestamp": { "type": "string" }
+        }
+      }
+    }
+  },
+  "dependencies": [],
+  "transparency": "Open",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "FailFast"
+  },
+  "tags": ["arbitrage", "polymarket", "mispricing", "spread", "prediction-markets"]
+}

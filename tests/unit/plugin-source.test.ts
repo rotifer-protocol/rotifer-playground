@@ -205,7 +205,7 @@ describe("plugin source sync pipeline", () => {
     const root = createFixture();
 
     mkdirSync(join(root, ".cursor-plugin/skills/evolve"), { recursive: true });
-    mkdirSync(join(root, ".codebuddy-plugin/plugins/rotifer-evolving-agent/skills"), {
+    mkdirSync(join(root, ".codebuddy-plugin/plugins/rotifer-self-evolving-agent/skills"), {
       recursive: true,
     });
     mkdirSync(join(root, "skills/evolve"), { recursive: true });
@@ -214,7 +214,7 @@ describe("plugin source sync pipeline", () => {
     writeFileSync(join(root, ".cursor-plugin/plugin.json"), "{}\n", "utf8");
     writeFileSync(join(root, ".cursor-plugin/skills/evolve/SKILL.md"), "legacy\n", "utf8");
     writeFileSync(
-      join(root, ".codebuddy-plugin/plugins/rotifer-evolving-agent/skills/SKILL.md"),
+      join(root, ".codebuddy-plugin/plugins/rotifer-self-evolving-agent/skills/SKILL.md"),
       "legacy\n",
       "utf8",
     );

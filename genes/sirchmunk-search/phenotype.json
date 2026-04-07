@@ -4,15 +4,24 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "query": { "type": "string", "description": "Natural language search query" },
+      "query": {
+        "type": "string",
+        "description": "Natural language search query"
+      },
       "paths": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Directories to search. Defaults to Sirchmunk configured paths."
       },
       "mode": {
         "type": "string",
-        "enum": ["FAST", "DEEP", "FILENAME_ONLY"],
+        "enum": [
+          "FAST",
+          "DEEP",
+          "FILENAME_ONLY"
+        ],
         "default": "FAST",
         "description": "FAST: greedy keyword cascade (~2 LLM calls). DEEP: Monte Carlo evidence sampling. FILENAME_ONLY: file discovery without content analysis."
       },
@@ -24,43 +33,71 @@
         "description": "Maximum number of files to return evidence from"
       }
     },
-    "required": ["query"]
+    "required": [
+      "query"
+    ]
   },
   "outputSchema": {
     "type": "object",
     "properties": {
-      "answer": { "type": "string", "description": "Synthesized answer from evidence" },
+      "answer": {
+        "type": "string",
+        "description": "Synthesized answer from evidence"
+      },
       "evidences": {
         "type": "array",
         "items": {
           "type": "object",
           "properties": {
-            "file": { "type": "string" },
-            "snippet": { "type": "string" },
-            "summary": { "type": "string" }
+            "file": {
+              "type": "string"
+            },
+            "snippet": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            }
           }
         }
       },
-      "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-      "mode": { "type": "string" },
-      "searchTime": { "type": "number" }
+      "confidence": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "mode": {
+        "type": "string"
+      },
+      "searchTime": {
+        "type": "number"
+      }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-protocol",
-  "fidelity": "Wrapped",
+  "fidelity": "Hybrid",
   "sourceFramework": "sirchmunk",
   "transparency": "Open",
-  "streaming_capability": null,
-  "semantic_requirements": {
+  "streamingCapability": null,
+  "semanticRequirements": {
     "timeModel": "Async",
     "concurrencyModel": "Stateless",
     "failureSemantics": "Retry"
   },
   "network": {
-    "allowedDomains": ["localhost", "127.0.0.1"],
+    "allowedDomains": [
+      "localhost",
+      "127.0.0.1"
+    ],
     "timeoutMs": 60000,
     "maxResponseBytes": 5242880
-  }
+  },
+  "tags": [
+    "search",
+    "local-files",
+    "agentic-search",
+    "evidence"
+  ]
 }

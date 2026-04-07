@@ -3,26 +3,85 @@
   "description": "Write professional business documents including reports, proposals, and summaries. Create clear, data-driven content for workplace communication. Use when writing work reports, annual summaries, business plans, or OKRs.",
   "inputSchema": {
     "type": "object",
+    "required": ["topic"],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "topic": {
+        "type": "string",
+        "description": "Document topic or subject"
+      },
+      "documentType": {
+        "type": "string",
+        "enum": ["report", "proposal", "executive-summary", "memo", "okr", "meeting-notes"],
+        "default": "report",
+        "description": "Type of business document"
+      },
+      "audience": {
+        "type": "string",
+        "enum": ["c-suite", "management", "technical", "general"],
+        "default": "general",
+        "description": "Target audience"
+      },
+      "dataPoints": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Key data points or metrics to include"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": ["document", "summary"],
     "properties": {
-      "result": {
-        "type": "string"
+      "document": {
+        "type": "string",
+        "description": "Generated business document"
+      },
+      "summary": {
+        "type": "string",
+        "description": "Executive summary (max 200 words)"
+      },
+      "keyMetrics": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "metric": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            },
+            "trend": {
+              "type": "string",
+              "enum": ["up", "down", "stable"]
+            }
+          }
+        },
+        "description": "Extracted key metrics"
+      },
+      "actionItems": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Recommended action items"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939391931,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "business",
+    "report",
+    "proposal",
+    "okr",
+    "writing"
+  ]
 }

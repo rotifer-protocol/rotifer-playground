@@ -3,26 +3,101 @@
   "description": "Analyze and adjust content tone to match target audience and purpose. Ensure appropriate voice, formality, and emotional impact. Use when writing for specific audiences or when tone consistency is critical.",
   "inputSchema": {
     "type": "object",
+    "required": ["text"],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "text": {
+        "type": "string",
+        "description": "Text to analyze"
+      },
+      "targetTone": {
+        "type": "string",
+        "description": "Expected or desired tone for comparison"
+      },
+      "granularity": {
+        "type": "string",
+        "enum": ["document", "paragraph", "sentence"],
+        "default": "document",
+        "description": "Analysis granularity level"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": ["dominantTone", "scores"],
     "properties": {
-      "result": {
-        "type": "string"
+      "dominantTone": {
+        "type": "string",
+        "description": "Primary detected tone"
+      },
+      "scores": {
+        "type": "object",
+        "properties": {
+          "formal": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "friendly": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "confident": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "empathetic": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "urgent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "description": "Tone dimension scores"
+      },
+      "toneShifts": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "position": {
+              "type": "string"
+            },
+            "fromTone": {
+              "type": "string"
+            },
+            "toTone": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Detected tone shifts within the text"
+      },
+      "suggestions": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Suggestions to align with target tone"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939402132,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "tone",
+    "voice",
+    "sentiment",
+    "writing-style"
+  ]
 }

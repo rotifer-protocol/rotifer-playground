@@ -27,7 +27,7 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   const client = new RotiferCloudClient();
-  const auth = new AuthManager(client);
+  const auth = new AuthManager(client, context);
 
   const geneTree = new GeneTreeProvider(client);
   const localTree = new LocalGeneTreeProvider();
@@ -145,7 +145,7 @@ export function activate(context: vscode.ExtensionContext) {
       let owner = item?.gene?.owner;
       let name = item?.gene?.name;
       if (!owner || !name) {
-        const input = await vscode.window.showInputBox({ prompt: "owner/name (e.g., alice/my-gene)" });
+        const input = await vscode.window.showInputBox({ prompt: "creator/name (e.g., alice/my-gene)" });
         if (!input) return;
         [owner, name] = input.split("/");
         if (!owner || !name) {
@@ -210,27 +210,29 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand("rotifer.testGene", async (item?: LocalGeneItem) => {
       const name = item?.gene?.name || await vscode.window.showInputBox({ prompt: "Gene name to test" });
-      if (!name) return;
-      runCliInTerminal(`test ${name}`, "test");
+      if (!name || !validateGeneNameForTerminal(name)) return;
+      runCliInTerminal(["test", name], "test");
     }),
     vscode.commands.registerCommand("rotifer.compileGene", async (item?: LocalGeneItem) => {
       const name = item?.gene?.name || await vscode.window.showInputBox({ prompt: "Gene name to compile" });
-      if (!name) return;
-      runCliInTerminal(`compile ${name}`, "compile");
+      if (!name || !validateGeneNameForTerminal(name)) return;
+      runCliInTerminal(["compile", name], "compile");
     }),
     vscode.commands.registerCommand("rotifer.runGene", async (item?: LocalGeneItem) => {
       const name = item?.gene?.name || await vscode.window.showInputBox({ prompt: "Gene name to run" });
-      if (!name) return;
+      if (!name || !validateGeneNameForTerminal(name)) return;
       const input = await vscode.window.showInputBox({ prompt: "Input JSON (optional)", value: '{"name":"world"}' });
-      runCliInTerminal(`run ${name}${input ? ` --input '${input}'` : ""}`, "run");
+      const args = ["run", name];
+      if (input) { args.push("--input", input); }
+      runCliInTerminal(args, "run");
     }),
     vscode.commands.registerCommand("rotifer.wrapGene", async () => {
       const name = await vscode.window.showInputBox({ prompt: "Gene name to wrap" });
-      if (!name) return;
-      runCliInTerminal(`wrap ${name}`, "wrap");
+      if (!name || !validateGeneNameForTerminal(name)) return;
+      runCliInTerminal(["wrap", name], "wrap");
     }),
     vscode.commands.registerCommand("rotifer.scanGenes", () => {
-      runCliInTerminal("scan", "scan");
+      runCliInTerminal(["scan"], "scan");
     }),
     vscode.commands.registerCommand("rotifer.initProject", async () => {
       const name = await vscode.window.showInputBox({
@@ -239,15 +241,15 @@ export function activate(context: vscode.ExtensionContext) {
         validateInput: (v) => /^[a-z0-9-]+$/.test(v) ? null : "lowercase, digits, hyphens only",
       });
       if (!name) return;
-      runCliInTerminal(`init ${name}`, "init");
+      runCliInTerminal(["init", name], "init");
     }),
 
     // ── Arena ──
     vscode.commands.registerCommand("rotifer.refreshArena", () => arenaTree.refresh()),
     vscode.commands.registerCommand("rotifer.arenaSubmit", async (item?: LocalGeneItem) => {
       const name = item?.gene?.name || await vscode.window.showInputBox({ prompt: "Gene name to submit to Arena" });
-      if (!name) return;
-      runCliInTerminal(`arena submit ${name}`, "arena");
+      if (!name || !validateGeneNameForTerminal(name)) return;
+      runCliInTerminal(["arena", "submit", name], "arena");
     }),
 
     // ── Agent ──
@@ -257,22 +259,25 @@ export function activate(context: vscode.ExtensionContext) {
       const genesInput = await vscode.window.showInputBox({ prompt: "Gene names (comma-separated)" });
       if (!genesInput) return;
       const genes = genesInput.split(",").map((s) => s.trim()).filter(Boolean);
-      runCliInTerminal(`agent create ${name} --genes ${genes.join(" ")}`, "agent");
+      for (const g of genes) {
+        if (!validateGeneNameForTerminal(g)) return;
+      }
+      runCliInTerminal(["agent", "create", name, "--genes", ...genes], "agent");
     }),
     vscode.commands.registerCommand("rotifer.listAgents", () => {
-      runCliInTerminal("agent list", "agent");
+      runCliInTerminal(["agent", "list"], "agent");
     }),
     vscode.commands.registerCommand("rotifer.runAgent", async () => {
       const agentId = await vscode.window.showInputBox({ prompt: "Agent ID" });
       if (!agentId) return;
-      runCliInTerminal(`agent run ${agentId}`, "agent");
+      runCliInTerminal(["agent", "run", agentId], "agent");
     }),
 
     // ── Leaderboard & My Reputation ──
     vscode.commands.registerCommand("rotifer.showLeaderboard", async () => {
       try {
         const entries = await client.getLeaderboard();
-        const panel = vscode.window.createWebviewPanel("rotiferLeaderboard", "Developer Leaderboard", vscode.ViewColumn.One, {});
+        const panel = vscode.window.createWebviewPanel("rotiferLeaderboard", "Creator Leaderboard", vscode.ViewColumn.One, {});
         panel.webview.html = webviews.renderLeaderboard(entries);
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to load leaderboard: ${err.message}`);
@@ -300,12 +305,30 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {}
 
-function runCliInTerminal(args: string, label: string): void {
+function shellEscape(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+const GENE_NAME_RE = /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/;
+
+function validateGeneNameForTerminal(name: string): boolean {
+  if (!name || name.length > 128 || name.includes("..") || name.includes("/") || name.includes("\\")) {
+    vscode.window.showErrorMessage(`Invalid gene name: "${name}". Only lowercase letters, digits, dots, hyphens, underscores allowed.`);
+    return false;
+  }
+  if (!GENE_NAME_RE.test(name)) {
+    vscode.window.showErrorMessage(`Invalid gene name: "${name}". Must match pattern: ${GENE_NAME_RE.source}`);
+    return false;
+  }
+  return true;
+}
+
+function runCliInTerminal(args: string[], label: string): void {
   const folders = vscode.workspace.workspaceFolders;
   const cwd = folders?.[0]?.uri.fsPath;
   const terminal = vscode.window.createTerminal({ name: `Rotifer: ${label}`, cwd });
   terminal.show();
-  terminal.sendText(`npx rotifer ${args}`);
+  terminal.sendText(`npx rotifer ${args.map(shellEscape).join(" ")}`);
 }
 
 export { webviews };

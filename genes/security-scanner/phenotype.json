@@ -1,0 +1,71 @@
+{
+  "name": "security-scanner",
+  "version": "0.2.0",
+  "domain": "security",
+  "fidelity": "Native",
+  "description": "Code security scanner with JS/TS pattern matching and cross-language credential prefix detection — covers XSS, SQL injection, command injection, path traversal, ReDoS, and 20+ secret patterns",
+  "author": "Rotifer Protocol Contributors",
+  "license": "Apache-2.0",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": { "type": "string", "description": "File or directory path to scan" },
+      "language": { "type": "string", "description": "Language hint (typescript, javascript, solidity, python, etc.)" },
+      "includeTests": { "type": "boolean", "default": false, "description": "Whether to include test files in scan" }
+    },
+    "required": ["path"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "vulnerabilities": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
+            "file": { "type": "string" },
+            "line": { "type": "integer" },
+            "message": { "type": "string" },
+            "recommendation": { "type": "string" }
+          }
+        }
+      },
+      "credentialLeaks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "file": { "type": "string" },
+            "line": { "type": "integer" },
+            "pattern": { "type": "string" }
+          }
+        }
+      },
+      "summary": {
+        "type": "object",
+        "properties": {
+          "critical": { "type": "integer" },
+          "high": { "type": "integer" },
+          "medium": { "type": "integer" },
+          "low": { "type": "integer" },
+          "info": { "type": "integer" }
+        }
+      },
+      "scannedFiles": { "type": "integer" },
+      "scannedLines": { "type": "integer" }
+    },
+    "required": ["vulnerabilities", "credentialLeaks", "summary", "scannedFiles", "scannedLines"]
+  },
+  "displayField": "summary",
+  "tags": ["security", "vulnerability", "credentials", "scanner", "xss", "injection", "code-analysis"],
+  "dependencies": [],
+  "transparency": "Open",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Retry"
+  }
+}

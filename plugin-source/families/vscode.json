@@ -2,7 +2,7 @@
   "packageSync": {
     "name": "rotifer-vscode",
     "displayName": "Rotifer Protocol",
-    "description": "Gene browser, installer, and developer tools for the Rotifer Protocol",
+    "description": "Gene browser, installer, and creator tools for the Rotifer Protocol",
     "publisher": "rotifer-foundation",
     "license": "Apache-2.0",
     "homepage": "https://rotifer.dev",

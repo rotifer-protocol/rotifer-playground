@@ -1,0 +1,47 @@
+{
+  "name": "gene-health-scanner",
+  "version": "0.2.0",
+  "domain": "meta.diagnostics",
+  "fidelity": "Native",
+  "description": "Seven-dimensional gene library health scanner — diagnoses capability distribution, protocol compliance, security, quality, evolution paths, runtime health, and dependency chains",
+  "author": "Rotifer Protocol Contributors",
+  "license": "Apache-2.0",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "genesDir": { "type": "string", "description": "Path to genes directory (defaults to ./genes)" },
+      "verbose": { "type": "boolean", "default": false, "description": "Output detailed Level 3 report" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "summary": { "type": "string" },
+      "dimensions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "score": { "type": "number" },
+            "findings": { "type": "array", "items": { "type": "string" } },
+            "suggestions": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      },
+      "overallScore": { "type": "number" },
+      "geneCount": { "type": "integer" },
+      "recommendations": { "type": "array", "items": { "type": "string" } }
+    },
+    "required": ["summary", "dimensions", "overallScore"]
+  },
+  "displayField": "summary",
+  "tags": ["diagnostics", "quality", "meta", "gene-library", "health-check"],
+  "dependencies": [],
+  "transparency": "Open",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Retry"
+  }
+}

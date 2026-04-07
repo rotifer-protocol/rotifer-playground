@@ -1,0 +1,4 @@
+.rotifer/
+node_modules/
+dist/
+*.wasm

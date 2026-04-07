@@ -28,14 +28,15 @@
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-genesis",
   "fidelity": "Native",
   "transparency": "Open",
-  "streaming_capability": null,
-  "semantic_requirements": {
+  "streamingCapability": null,
+  "semanticRequirements": {
     "timeModel": "Async",
     "concurrencyModel": "Stateless",
     "failureSemantics": "Retry"
-  }
+  },
+  "tags": ["web-search", "results", "snippets", "async", "retrieval"]
 }

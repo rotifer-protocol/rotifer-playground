@@ -3,26 +3,90 @@
   "description": "Write creative content including stories, scripts, and narrative works. Master storytelling techniques, character development, and emotional expression. Use when creating fiction, screenplays, or any narrative-driven content.",
   "inputSchema": {
     "type": "object",
+    "required": ["concept"],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "concept": {
+        "type": "string",
+        "description": "Story concept, theme, or writing prompt"
+      },
+      "genre": {
+        "type": "string",
+        "enum": ["sci-fi", "fantasy", "thriller", "romance", "literary", "horror", "comedy"],
+        "description": "Target genre"
+      },
+      "format": {
+        "type": "string",
+        "enum": ["short-story", "flash-fiction", "screenplay", "poem", "dialogue"],
+        "default": "short-story",
+        "description": "Output format"
+      },
+      "wordCount": {
+        "type": "integer",
+        "default": 1000,
+        "minimum": 100,
+        "maximum": 10000,
+        "description": "Target word count"
+      },
+      "pov": {
+        "type": "string",
+        "enum": ["first-person", "second-person", "third-person-limited", "third-person-omniscient"],
+        "default": "third-person-limited",
+        "description": "Point of view"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": ["content", "metadata"],
     "properties": {
-      "result": {
-        "type": "string"
+      "content": {
+        "type": "string",
+        "description": "Generated creative writing"
+      },
+      "metadata": {
+        "type": "object",
+        "properties": {
+          "wordCount": {
+            "type": "integer"
+          },
+          "genre": {
+            "type": "string"
+          },
+          "themes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "characters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Story metadata"
+      },
+      "revisionNotes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Suggestions for revision"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939393535,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "creative",
+    "fiction",
+    "storytelling",
+    "narrative"
+  ]
 }

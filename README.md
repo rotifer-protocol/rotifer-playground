@@ -161,7 +161,7 @@ Run `rotifer --help` for the grouped command list. The CLI has **18** primary to
 | `rotifer info <gene-ref>` | View gene details (local or Cloud) |
 | `rotifer stats <gene-ref>` | View download statistics for a gene |
 | `rotifer compare [gene-refs...]` | Compare 2–5 genes by reputation and downloads |
-| `rotifer reputation [gene-ref]` | View gene and developer reputation scores |
+| `rotifer reputation [gene-ref]` | View gene and creator reputation scores |
 | `rotifer versions <owner> <gene-name>` | View version history chain for a gene |
 | `rotifer arena submit <gene-name>` | Submit a gene to the Arena (`--cloud` for Cloud Arena) |
 | `rotifer arena list` | List Arena rankings (`--cloud` for Cloud Arena) |

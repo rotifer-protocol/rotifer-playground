@@ -1,0 +1,58 @@
+{
+  "name": "uiux-analyzer",
+  "version": "0.2.0",
+  "domain": "quality.uiux",
+  "fidelity": "Native",
+  "description": "WCAG 2.2 + Material Design 3 + Nielsen heuristic rule engine for HTML/CSS quality analysis — 30 rules across accessibility, visual consistency, and semantic structure",
+  "author": "Rotifer Protocol Contributors",
+  "license": "Apache-2.0",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "html": { "type": "string", "description": "HTML content to analyze" },
+      "css": { "type": "string", "description": "Optional CSS content to analyze" },
+      "format": { "type": "string", "enum": ["summary", "detailed"], "default": "summary" }
+    },
+    "required": ["html"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "score": { "type": "number", "description": "Overall quality score 0-100" },
+      "violations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "rule": { "type": "string" },
+            "severity": { "type": "string", "enum": ["critical", "warning", "info"] },
+            "message": { "type": "string" },
+            "category": { "type": "string" }
+          }
+        }
+      },
+      "warnings": { "type": "array" },
+      "passed": { "type": "integer" },
+      "total": { "type": "integer" },
+      "categories": {
+        "type": "object",
+        "properties": {
+          "accessibility": { "type": "number" },
+          "visual": { "type": "number" },
+          "semantics": { "type": "number" },
+          "consistency": { "type": "number" }
+        }
+      }
+    },
+    "required": ["score", "violations", "passed", "total"]
+  },
+  "displayField": "score",
+  "tags": ["uiux", "accessibility", "wcag", "quality", "html", "css", "design"],
+  "dependencies": [],
+  "transparency": "Open",
+  "semanticRequirements": {
+    "timeModel": "Sync",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Retry"
+  }
+}

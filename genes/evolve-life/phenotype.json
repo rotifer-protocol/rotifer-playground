@@ -125,5 +125,6 @@
   "createdAt": 1741906800000,
   "fidelity": "Native",
   "transparency": "Open",
-  "ir_hash": "f04e1e5913d7b6624630254dc97e18f2bea5b113bd52e3cd6fdddc0ce0f471c2"
+  "irHash": "f04e1e5913d7b6624630254dc97e18f2bea5b113bd52e3cd6fdddc0ce0f471c2",
+  "tags": ["cellular-automaton", "game-of-life", "simulation", "benchmark", "deterministic"]
 }

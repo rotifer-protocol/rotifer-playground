@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 import { getCorsHeaders, handleCors } from "./cors.ts";
 import { checkRateLimit, recordContentFilterHit } from "./rate-limiter.ts";
 import { getCachedResponse, setCachedResponse } from "./cache.ts";

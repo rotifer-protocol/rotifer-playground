@@ -1,7 +1,7 @@
 {
   "name": "rotifer-vscode",
   "displayName": "Rotifer Protocol",
-  "description": "Gene browser, installer, and developer tools for the Rotifer Protocol",
+  "description": "Gene browser, installer, and creator tools for the Rotifer Protocol",
   "version": "0.8.1",
   "publisher": "rotifer-foundation",
   "license": "Apache-2.0",
@@ -173,7 +173,7 @@
       },
       {
         "command": "rotifer.showLeaderboard",
-        "title": "Rotifer: Developer Leaderboard"
+        "title": "Rotifer: Creator Leaderboard"
       },
       {
         "command": "rotifer.myReputation",

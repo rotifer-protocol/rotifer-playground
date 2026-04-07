@@ -30,13 +30,14 @@
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-genesis",
   "fidelity": "Native",
   "transparency": "Open",
-  "semantic_requirements": {
+  "semanticRequirements": {
     "timeModel": "Sync",
     "concurrencyModel": "Stateless",
     "failureSemantics": "Fail"
-  }
+  },
+  "tags": ["json-schema", "validation", "errors", "strict-mode", "data-quality"]
 }

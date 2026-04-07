@@ -3,26 +3,152 @@
   "description": "Parameterized brand style system. Generates infinite style combinations through 6 dimensions: color temperature, border-radius, motion, density, emotion, and contrast.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "brandInput"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "brandInput": {
+        "type": "string",
+        "description": "Brand name, description, or existing brand guidelines"
+      },
+      "dimensions": {
+        "type": "object",
+        "properties": {
+          "colorTemperature": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.5,
+            "description": "Warm (0) to cool (1)"
+          },
+          "borderRadius": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.5,
+            "description": "Sharp (0) to round (1)"
+          },
+          "motionIntensity": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.3,
+            "description": "Subtle (0) to dramatic (1)"
+          },
+          "density": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.5,
+            "description": "Spacious (0) to dense (1)"
+          },
+          "emotionalTone": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.5,
+            "description": "Serious (0) to playful (1)"
+          },
+          "contrast": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.6,
+            "description": "Low (0) to high (1) contrast"
+          }
+        },
+        "description": "6-dimensional style parameters"
+      },
+      "preset": {
+        "type": "string",
+        "enum": [
+          "startup",
+          "enterprise",
+          "creative-agency",
+          "saas",
+          "e-commerce"
+        ],
+        "description": "Quick-start style preset"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "tokens",
+      "personality"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "tokens": {
+        "type": "object",
+        "properties": {
+          "colors": {
+            "type": "object"
+          },
+          "typography": {
+            "type": "object"
+          },
+          "spacing": {
+            "type": "object"
+          },
+          "borderRadius": {
+            "type": "object"
+          },
+          "shadows": {
+            "type": "object"
+          }
+        },
+        "description": "Design tokens (CSS custom properties)"
+      },
+      "personality": {
+        "type": "object",
+        "properties": {
+          "adjectives": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "voiceTone": {
+            "type": "string"
+          },
+          "doAndDont": {
+            "type": "object",
+            "properties": {
+              "do": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "dont": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "description": "Brand personality guide"
+      },
+      "cssVariables": {
+        "type": "string",
+        "description": "CSS custom property declarations"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939382612,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "branding",
+    "style-system",
+    "design-tokens",
+    "ui"
+  ]
 }

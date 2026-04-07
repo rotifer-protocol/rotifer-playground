@@ -3,26 +3,135 @@
   "description": "Design and optimize AI prompts for maximum effectiveness and cost efficiency. Create structured outputs, few-shot examples, and prompt templates. Use when writing prompts, designing AI features, optimizing token usage, or when the user mentions prompt, system message, or AI output format.",
   "inputSchema": {
     "type": "object",
+    "required": [
+      "task"
+    ],
     "properties": {
-      "prompt": {
-        "type": "string"
+      "task": {
+        "type": "string",
+        "description": "Task the prompt should accomplish"
+      },
+      "targetModel": {
+        "type": "string",
+        "enum": [
+          "gpt-4",
+          "claude",
+          "gemini",
+          "llama",
+          "generic"
+        ],
+        "default": "generic",
+        "description": "Target LLM model"
+      },
+      "outputFormat": {
+        "type": "string",
+        "enum": [
+          "text",
+          "json",
+          "code",
+          "structured"
+        ],
+        "default": "text",
+        "description": "Desired output format"
+      },
+      "maxTokenBudget": {
+        "type": "integer",
+        "default": 4000,
+        "description": "Token budget for the generated prompt"
+      },
+      "techniques": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "few-shot",
+            "chain-of-thought",
+            "role-play",
+            "structured-output",
+            "self-consistency"
+          ]
+        },
+        "description": "Prompting techniques to apply"
       }
-    },
-    "required": []
+    }
   },
   "outputSchema": {
     "type": "object",
+    "required": [
+      "prompt",
+      "metadata"
+    ],
     "properties": {
-      "result": {
-        "type": "string"
+      "prompt": {
+        "type": "string",
+        "description": "Optimized prompt text"
+      },
+      "systemMessage": {
+        "type": "string",
+        "description": "Recommended system message"
+      },
+      "metadata": {
+        "type": "object",
+        "properties": {
+          "estimatedTokens": {
+            "type": "integer"
+          },
+          "techniques": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "targetModel": {
+            "type": "string"
+          }
+        },
+        "description": "Prompt metadata"
+      },
+      "fewShotExamples": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "string"
+            },
+            "output": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Few-shot examples (if applicable)"
+      },
+      "testCases": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "string"
+            },
+            "expectedBehavior": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Test cases to validate prompt behavior"
       }
     }
   },
   "dependencies": [],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1771939418611,
   "fidelity": "Wrapped",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": [
+    "prompt",
+    "ai",
+    "optimization",
+    "llm",
+    "engineering"
+  ]
 }

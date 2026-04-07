@@ -28,7 +28,7 @@ Full feature parity with CLI v0.7.6 and MCP Server v0.7.6.
 - **Gene Statistics**: Download statistics webview (7d/30d/90d/total)
 - **Version History**: Version chain webview with changelog display
 - **Gene Comparison**: Side-by-side comparison of 2-5 genes
-- **Developer Leaderboard**: Reputation leaderboard webview
+- **Creator Leaderboard**: Reputation leaderboard webview
 - **My Reputation**: Personal reputation stats (requires auth)
 - **Local Operations**: Init, scan, wrap, test, compile, run commands via terminal
 - **Agent Management**: Create, list, run agents via terminal

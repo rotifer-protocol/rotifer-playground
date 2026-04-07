@@ -31,5 +31,6 @@
   "createdAt": 1771939401147,
   "fidelity": "Native",
   "transparency": "Open",
-  "source": "skill"
+  "source": "skill",
+  "tags": ["readability", "flesch-kincaid", "grade-level", "accessibility", "editing"]
 }

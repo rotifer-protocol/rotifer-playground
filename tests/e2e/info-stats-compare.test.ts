@@ -21,8 +21,8 @@ const tryRun = (cmd: string) => {
 describe("rotifer info", () => {
   it("shows help with --help", () => {
     const out = run("info --help");
-    expect(out).toContain("gene-id");
-    expect(out).toContain("detailed information");
+    expect(out).toContain("<gene-ref>");
+    expect(out).toContain("gene details");
   });
 
   it("fails gracefully with invalid gene ID", () => {
@@ -34,7 +34,7 @@ describe("rotifer info", () => {
 describe("rotifer stats", () => {
   it("shows help with --help", () => {
     const out = run("stats --help");
-    expect(out).toContain("gene-id");
+    expect(out).toContain("<gene-ref>");
     expect(out).toContain("download statistics");
   });
 
@@ -47,12 +47,12 @@ describe("rotifer stats", () => {
 describe("rotifer compare", () => {
   it("shows help with --help", () => {
     const out = run("compare --help");
-    expect(out).toContain("ids");
+    expect(out).toContain("genes");
     expect(out).toContain("Compare");
   });
 
   it("rejects fewer than 2 IDs", () => {
     const out = tryRun("compare single-id");
-    expect(out).toMatch(/at least 2|error/i);
+    expect(out).toMatch(/provide between 2 and 5 gene refs|error/i);
   });
 });

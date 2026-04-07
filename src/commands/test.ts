@@ -4,35 +4,39 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import Ajv from "ajv";
 import * as display from "../utils/display.js";
-import { getProjectRoot, loadConfig } from "../utils/config.js";
+import { loadConfig } from "../utils/config.js";
+import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding } from "../utils/binding.js";
 import { createGatewayFetch } from "../runtime/network-gateway.js";
+import { validateGeneName } from "../utils/validate-gene-name.js";
 
 export const testCommand = new Command("test")
-  .description("Test a gene in L2 sandbox")
-  .argument("[name]", "gene name to test")
+  .description("Test a gene in sandbox")
+  .argument("[gene-name]", "gene name to test")
   .option("--verbose", "show detailed output", false)
   .option("--compliance", "run structural compliance checks", false)
-  .action(async (name: string | undefined, options: { verbose: boolean; compliance: boolean }) => {
-    const root = getProjectRoot();
+  .action(async (geneName: string | undefined, options: { verbose: boolean; compliance: boolean }) => {
+    const root = requireProjectRoot();
     const config = loadConfig(root);
 
-    display.header("Gene Test Runner (L2 Sandbox)");
+    display.header("Gene Test Runner");
 
-    if (!name) {
+    if (!geneName) {
       display.error("Specify a gene name: rotifer test <gene-name>");
+      display.hint("List local genes: rotifer list");
       process.exit(1);
     }
 
-    const geneDir = join(root, config.genes_dir, name);
+    validateGeneName(geneName);
+    const geneDir = join(root, config.genes_dir, geneName);
     const phenotypePath = join(geneDir, "phenotype.json");
 
     if (!existsSync(phenotypePath)) {
       display.rustStyleError({
         code: "E0010",
-        message: "Phenotype not found for gene: " + name,
+        message: "Phenotype not found for gene: " + geneName,
         file: phenotypePath,
-        suggestion: "Run 'rotifer wrap " + name + "' first",
+        suggestion: "Run 'rotifer wrap " + geneName + "' first",
       });
       process.exit(1);
     }
@@ -41,12 +45,17 @@ export const testCommand = new Command("test")
     const ajv = new Ajv({ allErrors: true });
     let passed = 0;
     let failed = 0;
+    let skipped = 0;
+    const markSkipped = (message: string): void => {
+      skipped++;
+      display.warn(message);
+    };
 
     // --- Test 1: Phenotype schema ---
     display.info("Test 1: Phenotype Schema Validation");
     const requiredFields = ["domain", "inputSchema", "outputSchema", "version"];
-    const phenotypeValid = requiredFields.every((k) => k in phenotype);
-    if (phenotypeValid) { passed++; display.success("  Phenotype schema is valid"); }
+    const isPhenotypeValid = requiredFields.every((k) => k in phenotype);
+    if (isPhenotypeValid) { passed++; display.success("  Phenotype schema is valid"); }
     else { failed++; display.error("  Phenotype schema validation failed"); }
 
     // --- Test 2: Input schema ---
@@ -129,11 +138,17 @@ export const testCommand = new Command("test")
       }
     } else if (srcFile) {
       // Node.js fallback path — for uncompiled (Wrapped) genes
+      const isCloudGene = existsSync(join(geneDir, ".cloud-manifest.json"));
+      if (isCloudGene) {
+        failed++;
+        display.error("Test 6: Cloud-installed genes cannot run via Node.js without sandbox.");
+        display.info("  Compile the gene first: rotifer compile " + geneName);
+      } else {
       display.info("Test 6: Node.js Fallback — express() Execution");
       if (hasIrWasm) {
         display.warn("  ⚠ Native addon not available — falling back to Node.js");
       } else {
-        display.warn("  ⚠ Running without sandbox — run 'rotifer compile " + name + "' first");
+        display.warn("  ⚠ Running without sandbox — run 'rotifer compile " + geneName + "' first");
       }
       try {
         const absPath = resolve(geneDir, srcFile);
@@ -194,8 +209,9 @@ export const testCommand = new Command("test")
         failed++;
         display.error("  express() threw an error: " + err.message);
       }
+      }
     } else {
-      display.warn("  Skipped — no source file or compiled WASM");
+      markSkipped("  Skipped — no source file or compiled WASM");
     }
 
     // --- Test 8: IR verification (if gene.ir.wasm exists) ---
@@ -215,14 +231,14 @@ export const testCommand = new Command("test")
           display.error("  IR verification: " + verifyResult);
         }
       } else {
-        display.warn("  Skipped — native addon not available");
+        markSkipped("  Skipped — native addon not available");
       }
     }
 
     // --- Compliance Tests (optional, --compliance flag) ---
     if (options.compliance) {
       console.log();
-      display.header("Compliance Checks (v0.5.5)");
+      display.header("Compliance Checks");
 
       // C1: Sandbox execution verification
       display.info("C1: Sandbox Execution Verification");
@@ -241,7 +257,7 @@ export const testCommand = new Command("test")
           display.error(`  Sandbox type: ${result.sandboxType}, expected: wasm`);
         }
       } else {
-        display.warn("  Skipped — no compiled WASM or native addon");
+        markSkipped("  Skipped — no compiled WASM or native addon");
       }
 
       // C2: Fuel consumption verification
@@ -261,7 +277,7 @@ export const testCommand = new Command("test")
           display.error("  fuel_consumed is 0 — sandbox may not be metering");
         }
       } else {
-        display.warn("  Skipped — no compiled WASM or native addon");
+        markSkipped("  Skipped — no compiled WASM or native addon");
       }
 
       // C3: L0Gate check
@@ -276,7 +292,7 @@ export const testCommand = new Command("test")
           display.error(`  L0Gate violations: ${l0Result.violations.join("; ")}`);
         }
       } else {
-        display.warn("  Skipped — native addon not available");
+        markSkipped("  Skipped — native addon not available");
       }
 
       // C4: Phenotype completeness
@@ -310,7 +326,7 @@ export const testCommand = new Command("test")
           display.error("  Cannot compute F(g) — missing execution metrics");
         }
       } else {
-        display.warn("  Skipped — no compiled WASM or native addon");
+        markSkipped("  Skipped — no compiled WASM or native addon");
       }
 
       // C6: IR segment integrity
@@ -326,21 +342,23 @@ export const testCommand = new Command("test")
           display.error("  IR verification: " + verifyResult);
         }
       } else {
-        display.warn("  Skipped — no compiled WASM or native addon");
+        markSkipped("  Skipped — no compiled WASM or native addon");
       }
     }
 
     // --- Summary ---
     console.log();
-    const total = passed + failed;
-    if (failed === 0) {
+    const total = passed + failed + skipped;
+    if (failed === 0 && skipped === 0) {
       display.success(`All ${total} tests passed`);
+    } else if (failed === 0) {
+      display.warn(`${passed}/${total} checks passed, ${skipped} skipped`);
     } else {
-      display.warn(`${passed}/${total} tests passed, ${failed} failed`);
+      display.warn(`${passed}/${total} checks passed, ${failed} failed, ${skipped} skipped`);
     }
 
     console.log();
-    display.info("Next: rotifer compile " + name);
+    display.info("Next: rotifer compile " + geneName);
 
     if (failed > 0) process.exit(1);
   });

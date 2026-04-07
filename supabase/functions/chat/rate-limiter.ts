@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const HOUR_WINDOW_MS = 60 * 60 * 1000;
 const BAN_DURATION_MS = 24 * 60 * 60 * 1000;

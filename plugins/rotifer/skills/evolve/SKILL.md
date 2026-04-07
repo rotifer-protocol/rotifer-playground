@@ -1,5 +1,5 @@
 ---
-name: rotifer-evolving-agent
+name: rotifer-self-evolving-agent
 version: 0.8.2
 description: Your Agent evolves itself — scans capabilities, benchmarks against Arena rankings, and upgrades automatically
 author: rotifer-protocol
@@ -62,7 +62,7 @@ No voting, no human preference — pure runtime performance metrics determine wh
 
 ## Links
 
-- [Developer Portal](https://rotifer.dev)
+- [Creator Portal](https://rotifer.dev)
 - [Capability Marketplace](https://rotifer.ai)
 - [Protocol Specification](https://github.com/rotifer-protocol/rotifer-spec)
 - [MCP Server](https://www.npmjs.com/package/@rotifer/mcp-server)

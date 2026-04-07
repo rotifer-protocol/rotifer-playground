@@ -143,7 +143,7 @@ describe("E2E: Genesis gene execution", () => {
       expect(phenotype.domain).toBeTruthy();
       expect(phenotype.inputSchema).toBeTruthy();
       expect(phenotype.outputSchema).toBeTruthy();
-      expect(phenotype.version).toBe("0.1.0");
+      expect(phenotype.version).toBe("0.2.0");
       expect(phenotype.fidelity).toBe("Native");
     }
   });

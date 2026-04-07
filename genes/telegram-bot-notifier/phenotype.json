@@ -1,0 +1,62 @@
+{
+  "author": "rotifer-team",
+  "domain": "notify.telegram",
+  "version": "0.2.0",
+  "fidelity": "Hybrid",
+  "description": "Pushes arbitrage signals to a Telegram group via Bot API. Formats each signal as a structured message with type badge, edge percentage, market link, and confidence meter. Supports batch delivery with per-message rate limiting to avoid Telegram flood control.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["signals"],
+    "properties": {
+      "signals": {
+        "type": "array",
+        "items": { "type": "object" },
+        "description": "Arbitrage signals from spread-analyzer"
+      },
+      "summary": {
+        "type": "object",
+        "description": "Summary stats from spread-analyzer (passed through)"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["delivered", "failed", "report"],
+    "properties": {
+      "delivered": {
+        "type": "number",
+        "description": "Number of successfully sent messages"
+      },
+      "failed": {
+        "type": "number",
+        "description": "Number of failed deliveries"
+      },
+      "report": {
+        "type": "object",
+        "properties": {
+          "totalSignals": { "type": "number" },
+          "sentAt": { "type": "string" },
+          "chatId": { "type": "string" },
+          "messageIds": { "type": "array", "items": { "type": "number" } },
+          "errors": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  },
+  "dependencies": [],
+  "transparency": "Open",
+  "network": {
+    "allowedDomains": [
+      "api.telegram.org"
+    ],
+    "maxTimeoutMs": 10000,
+    "maxResponseBytes": 1048576,
+    "maxRequestsPerMin": 20
+  },
+  "semanticRequirements": {
+    "timeModel": "Async",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Fail"
+  },
+  "tags": ["telegram", "notifications", "arbitrage", "bot-api", "alerts"]
+}

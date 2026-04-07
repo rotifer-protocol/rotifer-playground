@@ -23,7 +23,7 @@ export interface GatewayResponse {
   status: number;
   headers: Record<string, string>;
   body: string;
-  truncated: boolean;
+  isTruncated: boolean;
 }
 
 export class NetworkGatewayError extends Error {
@@ -84,7 +84,7 @@ export class NetworkGateway {
         signal: controller.signal,
       });
 
-      const { text, truncated } = await this.readBodyCapped(response);
+      const { text, isTruncated } = await this.readBodyCapped(response);
 
       this.totalRequests++;
       this.totalBytes += text.length;
@@ -98,7 +98,7 @@ export class NetworkGateway {
         status: response.status,
         headers,
         body: text,
-        truncated,
+        isTruncated,
       };
     } catch (err: any) {
       if (err.name === "AbortError") {
@@ -127,14 +127,14 @@ export class NetworkGateway {
       );
     }
 
-    const allowed = this.config.allowedDomains.some((d) => {
+    const isAllowed = this.config.allowedDomains.some((d) => {
       if (d.startsWith("*.")) {
         return hostname.endsWith(d.slice(1)) || hostname === d.slice(2);
       }
       return hostname === d;
     });
 
-    if (!allowed) {
+    if (!isAllowed) {
       throw new NetworkGatewayError(
         "DOMAIN_BLOCKED",
         `Domain "${hostname}" is not in the allowed list: [${this.config.allowedDomains.join(", ")}]`,
@@ -161,26 +161,26 @@ export class NetworkGateway {
 
   private async readBodyCapped(
     response: Response,
-  ): Promise<{ text: string; truncated: boolean }> {
+  ): Promise<{ text: string; isTruncated: boolean }> {
     const reader = response.body?.getReader();
     if (!reader) {
-      return { text: "", truncated: false };
+      return { text: "", isTruncated: false };
     }
 
     const chunks: Uint8Array[] = [];
     let totalSize = 0;
-    let truncated = false;
+    let isTruncated = false;
 
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      const { done: isDone, value } = await reader.read();
+      if (isDone) break;
 
       if (totalSize + value.length > this.config.maxResponseBytes) {
         const remaining = this.config.maxResponseBytes - totalSize;
         if (remaining > 0) {
           chunks.push(value.slice(0, remaining));
         }
-        truncated = true;
+        isTruncated = true;
         reader.cancel();
         break;
       }
@@ -192,7 +192,7 @@ export class NetworkGateway {
     const decoder = new TextDecoder();
     const text = chunks.map((c) => decoder.decode(c, { stream: true })).join("") +
       decoder.decode();
-    return { text, truncated };
+    return { text, isTruncated };
   }
 }
 

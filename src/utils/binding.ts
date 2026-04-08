@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { existsSync } from "node:fs";
+import { ensurePrivateDir } from "./private-fs.js";
 
 export interface CompileResultView {
   irHash: string;
@@ -91,7 +92,7 @@ export function tryLoadBinding(): NativeBinding | null {
             ".rotifer",
             "napi-binding"
           );
-          require("node:fs").mkdirSync(tmpDir, { recursive: true });
+          ensurePrivateDir(tmpDir);
           const instance = new mod.PlaygroundBinding(tmpDir);
           _binding = instance as NativeBinding;
           return _binding;

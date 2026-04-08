@@ -48,10 +48,10 @@ afterEach(() => {
 describe("plugin source helpers", () => {
   it("renders version placeholders in canonical skill content", () => {
     const rendered = renderTemplate("version: {{familyVersion}}", {
-      familyVersion: "0.8.2",
+      familyVersion: "0.8.5",
     });
 
-    expect(rendered).toBe("version: 0.8.2");
+    expect(rendered).toBe("version: 0.8.5");
   });
 
   it("creates a valid PNG brand asset", () => {
@@ -88,21 +88,21 @@ describe("plugin source sync pipeline", () => {
     expect(rootCursorMarketplace?.kind).toBe("json");
     expect(rootCursorPlugin?.kind).toBe("json");
     expect(rootCursorPlugin && "data" in rootCursorPlugin ? rootCursorPlugin.data.version : undefined).toBe(
-      "0.8.2",
+      "0.8.5",
     );
     expect(rootCodeBuddyPlugin?.kind).toBe("json");
     expect(
       rootCodeBuddyPlugin && "data" in rootCodeBuddyPlugin
         ? rootCodeBuddyPlugin.data.version
         : undefined,
-    ).toBe("0.8.2");
+    ).toBe("0.8.5");
     expect(vscodeCursor?.kind).toBe("json");
     expect(vscodeCursor && "data" in vscodeCursor ? vscodeCursor.data.version : undefined).toBe(
-      "0.8.1",
+      "0.8.5",
     );
     expect(codebuddySkill?.kind).toBe("text");
     expect(codebuddySkill && "content" in codebuddySkill ? codebuddySkill.content : "").toContain(
-      "version: 0.8.2",
+      "version: 0.8.5",
     );
   });
 
@@ -121,7 +121,7 @@ describe("plugin source sync pipeline", () => {
       throw new Error("missing synced rotifer-vscode/package.json output");
     }
 
-    expect(syncedPackage.data.version).toBe("0.8.1");
+    expect(syncedPackage.data.version).toBe("0.8.5");
     expect("activationEvents" in syncedPackage.data).toBe(false);
     expect(syncedPackage.data.main).toBe(originalPackage.main);
     expect(syncedPackage.data.contributes.viewsContainers).toEqual(

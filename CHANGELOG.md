@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-04-08
+
+### Changed
+
+- **Public release-line consolidation** — aligned the CLI package with the current public `v0.8.5` release line across rotifer.dev, IDE/plugin distribution surfaces, and MCP installation metadata
+- **Shipped v0.8.x surface clarified** — current release messaging now reflects the already-shipped Skill→Gene migration path, CLI UX refresh, version update notifications, and related ecosystem-facing improvements from the `v0.8.x` cycle
+- **Reserved version gap documented** — `v0.8.2` to `v0.8.4` remain reserved internal iteration numbers rather than retroactively published public releases
+
 ## [0.8.1] - 2026-03-27
 
 ### Added

@@ -1,6 +1,6 @@
 ---
 name: rotifer-self-evolving-agent
-version: 0.8.2
+version: 0.8.5
 description: Your Agent evolves itself — scans capabilities, benchmarks against Arena rankings, and upgrades automatically
 author: rotifer-protocol
 ---

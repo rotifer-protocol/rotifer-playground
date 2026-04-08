@@ -1,6 +1,6 @@
 {
   "name": "@rotifer/playground",
-  "version": "0.8.1",
+  "version": "0.8.5",
   "description": "Rotifer Protocol Playground — local development environment for gene development, Arena competition, and protocol simulation",
   "license": "Apache-2.0",
   "author": "Rotifer Protocol Contributors",

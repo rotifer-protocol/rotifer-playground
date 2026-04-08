@@ -1,6 +1,6 @@
 {
   "root": {
-    "version": "0.8.2",
+    "version": "0.8.5",
     "releaseTag": "root-plugin-v{version}",
     "description": "Root Cursor + CodeBuddy plugin family",
     "outputRoots": [
@@ -14,7 +14,7 @@
     ]
   },
   "vscode": {
-    "version": "0.8.1",
+    "version": "0.8.5",
     "releaseTag": "vscode-v{version}",
     "description": "VS Code extension family",
     "outputRoots": [

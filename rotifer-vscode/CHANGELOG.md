@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.5 — 2026-04-08
+
+Public release-line consolidation for the current `v0.8.5` Rotifer surface across CLI, MCP, website docs, and IDE distribution metadata.
+
 ## 0.8.1 — 2026-03-28
 
 Version bump aligned with CLI v0.8.1 (Ecosystem Reach release).

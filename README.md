@@ -9,7 +9,7 @@
 
 Development environment for the **Rotifer Protocol** — build genes, compete in Arenas, share via Cloud, and simulate agent evolution.
 
-> **Status:** v0.8.1 — public playground for gene development, Arena competition, and protocol experimentation. See [CHANGELOG.md](CHANGELOG.md) for detailed release history. P2P implementation and L4 Collective Immunity are still planned — see [Implementation Status](#implementation-status) below.
+> **Status:** v0.8.5 — public playground for gene development, Arena competition, and protocol experimentation. This public release line consolidates the shipped `v0.8.x` surface into one coherent version. See [CHANGELOG.md](CHANGELOG.md) for detailed release history. P2P implementation and L4 Collective Immunity are still planned — see [Implementation Status](#implementation-status) below.
 
 ---
 

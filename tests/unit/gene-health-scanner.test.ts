@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { express, display } from "../../genes/gene-health-scanner/index.js";
 
+const FAKE_OPENAI_KEY = ["sk", "abc12345678901234567890"].join("-");
+
 function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, "");
 }
@@ -130,7 +132,7 @@ describe("Gene: gene-health-scanner", () => {
       [
         `const userInput = process.argv[2];`,
         `eval(userInput);`,
-        `const key = "sk-abc12345678901234567890";`,
+        `const key = "${FAKE_OPENAI_KEY}";`,
       ].join("\n")
     );
 

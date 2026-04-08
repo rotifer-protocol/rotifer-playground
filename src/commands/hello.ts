@@ -161,7 +161,7 @@ export const helloCommand = new Command("hello")
     const agentName = `hello-${selected.id}`;
 
     const input = await resolveInput(selected, options, genesDir);
-    const showProtocolInsights = hasMeaningfulHelloInput(input);
+    const shouldShowProtocolInsights = hasMeaningfulHelloInput(input);
 
     const existing = findAgent(root, agentName);
     if (existing) {
@@ -209,7 +209,7 @@ export const helloCommand = new Command("hello")
 
     await renderOutput(pipeline.result, availableGenes, genesDir, options);
 
-    if (showProtocolInsights) {
+    if (shouldShowProtocolInsights) {
       printProtocolInsights(availableGenes, genesDir, elapsed);
     }
 
@@ -364,8 +364,8 @@ async function renderOutput(
   }
 
   const lastGene = genome[genome.length - 1];
-  const rendered = await tryGeneDisplay(lastGene, genesDir, result, { verbose: options.verbose });
-  if (!rendered) {
+  const didRender = await tryGeneDisplay(lastGene, genesDir, result, { verbose: options.verbose });
+  if (!didRender) {
     display.info("Output:");
     console.log(JSON.stringify(result, null, 2));
   }
@@ -614,7 +614,7 @@ async function executeGenomePipeline(
   input: unknown,
 ): Promise<PipelineExecutionResult> {
   let current: unknown = input;
-  let failed = false;
+  let hasFailed = false;
   let failedGene: string | undefined;
   let error: string | undefined;
 
@@ -625,7 +625,7 @@ async function executeGenomePipeline(
 
     display.info(`${step} Executing gene: ${geneName}`);
 
-    if (failed) {
+    if (hasFailed) {
       display.warn(`${step} Skipping ${geneName} — upstream gene failed`);
       continue;
     }
@@ -649,13 +649,13 @@ async function executeGenomePipeline(
       display.success(`${step} ${geneName} completed`);
     } catch (err: any) {
       display.error(`${step} ${geneName} failed: ${err.message}`);
-      failed = true;
+      hasFailed = true;
       failedGene = geneName;
       error = err.message;
     }
   }
 
-  return { result: current, failed, failedGene, error };
+  return { result: current, failed: hasFailed, failedGene, error };
 }
 
 function findGeneSource(geneDir: string): string | null {

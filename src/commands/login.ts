@@ -57,8 +57,8 @@ export const loginCommand = new Command("login")
 
     display.info(`Opening browser for ${provider} authorization...`);
 
-    const opened = openBrowser(authUrl);
-    if (!opened) {
+    const didOpenBrowser = openBrowser(authUrl);
+    if (!didOpenBrowser) {
       display.warn("Could not open browser automatically.");
     }
 

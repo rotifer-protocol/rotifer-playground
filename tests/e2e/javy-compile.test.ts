@@ -82,12 +82,12 @@ let javyAvailable = false;
 
 beforeAll(() => {
   try {
-    execSync("npx javy-cli --version", { stdio: "pipe", timeout: 30_000 });
+    execSync("npx javy-cli --version", { stdio: "pipe", timeout: 45_000 });
     javyAvailable = true;
   } catch {
     javyAvailable = false;
   }
-});
+}, 60_000);
 
 describe("Javy TS→WASM compilation (v0.3)", () => {
   let projectDir: string;

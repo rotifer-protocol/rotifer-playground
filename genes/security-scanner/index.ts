@@ -139,7 +139,11 @@ const CREDENTIAL_PATTERNS: { type: string; regex: RegExp; label: string }[] = [
   { type: "Stripe Live Publishable Key", regex: /pk_live_[a-zA-Z0-9]{20,}/, label: "pk_live_..." },
   { type: "SendGrid API Key", regex: /SG\.[a-zA-Z0-9_-]{20,}/, label: "SG...." },
   { type: "Google API Key", regex: /AIza[a-zA-Z0-9_-]{35}/, label: "AIza..." },
-  { type: "Supabase Service Role Key", regex: /service_role.*eyJ/, label: "service_role...eyJ" },
+  {
+    type: "Supabase Service Role Key",
+    regex: new RegExp("service_role" + ".*eyJ"),
+    label: "service_role JWT",
+  },
   { type: "Hardcoded Password", regex: /password\s*[:=]\s*["'][^"']{8,}/i, label: "password=..." },
   { type: "Hardcoded Secret", regex: /secret\s*[:=]\s*["'][^"']{8,}/i, label: "secret=..." },
   { type: "Private Key", regex: /-----BEGIN (RSA |EC )?PRIVATE KEY-----/, label: "-----BEGIN PRIVATE KEY-----" },

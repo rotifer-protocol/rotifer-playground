@@ -451,15 +451,15 @@ export function table<T extends Record<string, unknown>>(
         .sort((a, b) => b.w - a.w);
 
       while (remaining > 0) {
-        let shrunk = false;
+        let didShrink = false;
         for (const entry of fallbackOrder) {
           if (widths[entry.i] <= 1) continue;
           widths[entry.i] -= 1;
           remaining -= 1;
-          shrunk = true;
+          didShrink = true;
           if (remaining <= 0) break;
         }
-        if (!shrunk) break;
+        if (!didShrink) break;
       }
     }
   }

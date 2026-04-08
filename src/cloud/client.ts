@@ -197,19 +197,19 @@ export async function listGenes(options: {
   const genes = rows.map(mapSearchGene);
 
   let total = parseExactSearchTotal(rows);
-  let totalExact = total != null;
+  let isTotalExact = total != null;
 
-  if (!totalExact) {
+  if (!isTotalExact) {
     if (rows.length === 0 && page === 1) {
       total = 0;
-      totalExact = true;
+      isTotalExact = true;
     } else if (rows.length < limit) {
       total = offset + rows.length;
-      totalExact = true;
+      isTotalExact = true;
     } else {
       const countRows = await fetchSearchGenes({ ...requestBody, p_limit: 1, p_offset: 0 });
       total = parseExactSearchTotal(countRows);
-      totalExact = total != null;
+      isTotalExact = total != null;
     }
   }
 
@@ -218,7 +218,7 @@ export async function listGenes(options: {
     total: total ?? offset + rows.length,
     page,
     per_page: limit,
-    total_exact: totalExact,
+    total_exact: isTotalExact,
   };
 }
 

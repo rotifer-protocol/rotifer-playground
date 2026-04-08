@@ -20,10 +20,10 @@ export function openBrowser(url: string): boolean {
   const { bin, args } = buildOpenCommand(url, process.platform);
   try {
     const child = execFile(bin, args);
-    let failed = false;
-    child.on("error", () => { failed = true; });
+    let didFail = false;
+    child.on("error", () => { didFail = true; });
     // Give the spawn a moment; if it errors synchronously we catch above
-    return !failed;
+    return !didFail;
   } catch {
     return false;
   }

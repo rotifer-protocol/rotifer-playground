@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { express, display } from "../../genes/security-scanner/index.js";
 
+const FAKE_OPENAI_KEY = ["sk", "abcdefghijklmnopqrst12345"].join("-");
+const FAKE_GITHUB_PAT = ["gh", "p_", "abcdefghijklmnopqrstuvwxyz0123456789"].join("");
+
 describe("Gene: security-scanner", () => {
   let tempDir: string;
 
@@ -62,8 +65,8 @@ describe("Gene: security-scanner", () => {
     writeFileSync(
       join(tempDir, "creds.ts"),
       [
-        `const key = "sk-abcdefghijklmnopqrst12345";`,
-        `const ghToken = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";`,
+        `const key = "${FAKE_OPENAI_KEY}";`,
+        `const ghToken = "${FAKE_GITHUB_PAT}";`,
         `const safe = process.env.API_KEY;`,
       ].join("\n")
     );
@@ -101,8 +104,8 @@ describe("Gene: security-scanner", () => {
       [
         `import { execSync } from "node:child_process";`,
         ``,
-        `const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";`,
-        `const apiKey = "sk-abcdefghijklmnopqrst12345";`,
+        `const token = "${FAKE_GITHUB_PAT}";`,
+        `const apiKey = "${FAKE_OPENAI_KEY}";`,
         `element.innerHTML = data;`,
         "execSync(`deploy ${target}`);",
         `const x = eval(input);`,

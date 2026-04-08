@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const TEST_HOME = join(tmpdir(), `rotifer-ds-test-${Date.now()}`);
+const ORIGINAL_HOME = process.env.HOME;
 
 beforeEach(() => {
   process.env.HOME = TEST_HOME;
@@ -12,6 +13,12 @@ beforeEach(() => {
 
 afterEach(() => {
   if (existsSync(TEST_HOME)) rmSync(TEST_HOME, { recursive: true });
+
+  if (ORIGINAL_HOME === undefined) {
+    delete process.env.HOME;
+  } else {
+    process.env.HOME = ORIGINAL_HOME;
+  }
 });
 
 async function loadModule() {
@@ -20,7 +27,7 @@ async function loadModule() {
 
 function writeCacheFile(domains: Array<{ domain: string; gene_count: number; description?: string }>) {
   const dir = join(TEST_HOME, ".rotifer");
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   writeFileSync(
     join(dir, "domain_registry.json"),
     JSON.stringify({ updated_at: Date.now(), domains }),
@@ -46,7 +53,7 @@ describe("domain-suggest", () => {
 
     it("returns domains even if cache is expired (graceful degradation)", async () => {
       const dir = join(TEST_HOME, ".rotifer");
-      mkdirSync(dir, { recursive: true });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
       writeFileSync(
         join(dir, "domain_registry.json"),
         JSON.stringify({ updated_at: 0, domains: [{ domain: "old", gene_count: 1 }] }),
@@ -57,7 +64,7 @@ describe("domain-suggest", () => {
 
     it("returns empty array on malformed JSON", async () => {
       const dir = join(TEST_HOME, ".rotifer");
-      mkdirSync(dir, { recursive: true });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
       writeFileSync(join(dir, "domain_registry.json"), "not json");
       const { loadDomainCache } = await loadModule();
       expect(loadDomainCache()).toEqual([]);

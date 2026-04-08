@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadCloudConfig } from "../cloud/client.js";
+import { ensurePrivateDir, tightenPrivateFile } from "./private-fs.js";
 
 const ROTIFER_HOME = join(
   process.env.HOME || process.env.USERPROFILE || "/tmp",
@@ -29,13 +30,12 @@ export function loadDomainCache(): DomainEntry[] {
 }
 
 export function saveDomainCache(domains: DomainEntry[]): void {
-  if (!existsSync(ROTIFER_HOME)) {
-    mkdirSync(ROTIFER_HOME, { recursive: true });
-  }
+  ensurePrivateDir(ROTIFER_HOME);
   writeFileSync(
     CACHE_FILE,
     JSON.stringify({ updated_at: Date.now(), domains }, null, 2) + "\n"
   );
+  tightenPrivateFile(CACHE_FILE);
 }
 
 /**

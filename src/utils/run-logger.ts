@@ -1,6 +1,7 @@
-import { appendFileSync, existsSync, mkdirSync, statSync, renameSync } from "node:fs";
+import { appendFileSync, existsSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { ensurePrivateDir, tightenPrivateFile } from "./private-fs.js";
 
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB rotation
 const LOG_DIR = join(homedir(), ".rotifer", "run-logs");
@@ -17,7 +18,7 @@ interface GeneExecutionMeta {
 
 export function logGeneExecution(meta: GeneExecutionMeta): void {
   try {
-    mkdirSync(LOG_DIR, { recursive: true });
+    ensurePrivateDir(LOG_DIR);
 
     const logFile = join(LOG_DIR, `${meta.geneName}.jsonl`);
 
@@ -40,7 +41,8 @@ export function logGeneExecution(meta: GeneExecutionMeta): void {
       resourceCost: meta.resourceCost || undefined,
     };
 
-    appendFileSync(logFile, JSON.stringify(entry) + "\n");
+    appendFileSync(logFile, JSON.stringify(entry) + "\n", { mode: 0o600 });
+    tightenPrivateFile(logFile);
   } catch {
     // Zero-disruption: never throw from logging
   }

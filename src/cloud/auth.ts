@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { randomBytes, createHash } from "node:crypto";
@@ -8,6 +8,7 @@ import {
   CLOUD_CONFIG_FILE,
   DEFAULT_CLOUD_ENDPOINT,
 } from "./types.js";
+import { ensurePrivateDir, tightenPrivateFile } from "../utils/private-fs.js";
 
 const ROTIFER_HOME = join(
   process.env.HOME || process.env.USERPROFILE || "/tmp",
@@ -15,9 +16,7 @@ const ROTIFER_HOME = join(
 );
 
 function ensureRotiferHome(): void {
-  if (!existsSync(ROTIFER_HOME)) {
-    mkdirSync(ROTIFER_HOME, { recursive: true });
-  }
+  ensurePrivateDir(ROTIFER_HOME);
 }
 
 function credentialsPath(): string {
@@ -110,6 +109,7 @@ export function saveCredentials(creds: CloudCredentials): void {
   writeFileSync(credentialsPath(), JSON.stringify(creds, null, 2) + "\n", {
     mode: 0o600,
   });
+  tightenPrivateFile(credentialsPath());
 }
 
 export function clearCredentials(): void {

@@ -5,16 +5,23 @@ import { tmpdir } from "node:os";
 
 const TEST_HOME = join(tmpdir(), `rotifer-cloud-auth-test-${Date.now()}`);
 const CREDS_PATH = join(TEST_HOME, ".rotifer", "credentials.json");
+const ORIGINAL_HOME = process.env.HOME;
 
 describe("cloud auth module", () => {
   beforeEach(() => {
-    mkdirSync(join(TEST_HOME, ".rotifer"), { recursive: true });
+    mkdirSync(join(TEST_HOME, ".rotifer"), { recursive: true, mode: 0o700 });
     process.env.HOME = TEST_HOME;
   });
 
   afterEach(() => {
     if (existsSync(TEST_HOME)) {
       rmSync(TEST_HOME, { recursive: true, force: true });
+    }
+
+    if (ORIGINAL_HOME === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = ORIGINAL_HOME;
     }
   });
 

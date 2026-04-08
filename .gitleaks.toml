@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known-safe public keys and historical test fixtures"
+paths = [
+  '''^rotifer-vscode/package\.json$''',
+  '''^tests/unit/gene-health-scanner\.test\.ts$''',
+  '''^tests/unit/security-scanner\.test\.ts$''',
+  '''^scripts/republish-native\.mjs$''',
+  '''^scripts/republish-native-curl\.sh$''',
+]

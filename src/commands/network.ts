@@ -1,9 +1,10 @@
 import { Command } from "commander";
 import * as display from "../utils/display.js";
 import { c } from "../utils/palette.js";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { ensurePrivateDir, tightenPrivateFile } from "../utils/private-fs.js";
 
 const ROTIFER_HOME = join(
   process.env.HOME || process.env.USERPROFILE || "/tmp",
@@ -37,10 +38,9 @@ function loadNetworkConfig(): NetworkConfig {
 }
 
 function saveNetworkConfig(config: NetworkConfig): void {
-  if (!existsSync(ROTIFER_HOME)) {
-    mkdirSync(ROTIFER_HOME, { recursive: true });
-  }
+  ensurePrivateDir(ROTIFER_HOME);
   writeFileSync(NETWORK_CONFIG, JSON.stringify(config, null, 2) + "\n");
+  tightenPrivateFile(NETWORK_CONFIG);
 }
 
 export const networkCommand = new Command("network")

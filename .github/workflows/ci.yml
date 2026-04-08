@@ -194,7 +194,7 @@ jobs:
 
       - name: Cargo dependency audit
         run: |
-          cargo install cargo-audit@0.21.2 --quiet
+          cargo install cargo-audit@0.22.1 --quiet
           cargo audit
 
       - name: npm dependency audit

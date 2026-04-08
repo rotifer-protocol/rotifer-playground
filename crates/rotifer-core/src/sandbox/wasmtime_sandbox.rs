@@ -1,7 +1,5 @@
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use wasmtime::*;
 
 use super::{ConstraintSet, Sandbox, SandboxError};
@@ -14,7 +12,7 @@ struct HostState {
     logical_timestamp: u64,
     stdin: Vec<u8>,
     stdin_offset: usize,
-    stdout: Rc<RefCell<Vec<u8>>>,
+    stdout: Arc<Mutex<Vec<u8>>>,
     limiter: StoreLimits,
 }
 
@@ -208,7 +206,12 @@ impl WasmtimeSandbox {
                         let end = (buf_ptr + buf_len).min(data.len());
                         let chunk = data[buf_ptr..end].to_vec();
                         if fd == 1 {
-                            caller.data().stdout.borrow_mut().extend_from_slice(&chunk);
+                            caller
+                                .data()
+                                .stdout
+                                .lock()
+                                .expect("stdout mutex poisoned")
+                                .extend_from_slice(&chunk);
                         }
                         // fd==2 (stderr) is silently discarded
                         total_written += chunk.len() as u32;
@@ -495,7 +498,12 @@ impl WasmtimeSandbox {
             }
         }
 
-        let stdout_bytes = store.data().stdout.borrow().clone();
+        let stdout_bytes = store
+            .data()
+            .stdout
+            .lock()
+            .expect("stdout mutex poisoned")
+            .clone();
         serde_json::from_slice(&stdout_bytes).map_err(|e| {
             SandboxError::ExecutionFailed(format!(
                 "WASI gene stdout is not valid JSON: {e} (got {} bytes: {:?})",
@@ -586,7 +594,7 @@ impl Sandbox for WasmtimeSandbox {
         let input_bytes = serde_json::to_vec(&input)
             .map_err(|e| SandboxError::ExecutionFailed(e.to_string()))?;
 
-        let stdout = Rc::new(RefCell::new(Vec::new()));
+        let stdout = Arc::new(Mutex::new(Vec::new()));
         let host_state = HostState {
             context_json: serde_json::to_vec(context).unwrap_or_default(),
             logical_timestamp: context.timestamp,

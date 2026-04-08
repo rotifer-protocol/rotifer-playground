@@ -1,7 +1,0 @@
-{
-  "name": "my-rotifer-project",
-  "version": "0.1.0",
-  "author": "local-dev",
-  "genes_dir": "genes",
-  "default_domain": "general"
-}

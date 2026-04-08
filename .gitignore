@@ -24,6 +24,8 @@ Thumbs.db
 
 # Runtime
 .rotifer/
+# Default `rotifer init` output when accidentally run from repo root.
+my-rotifer-project/
 
 # Lock files (Cargo.lock is committed for libraries)
 # package-lock.json is committed

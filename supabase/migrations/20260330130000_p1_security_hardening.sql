@@ -61,10 +61,9 @@ END $$;
 --    Replace anonymous insert with authenticated + rate limit
 -- ═══════════════════════════════════════════════════════════════
 
--- Note: shared_conversations lives in rotifer-dev's Supabase project.
--- This migration applies to rotifer-playground's Supabase project.
--- The shared_conversations fix must be applied separately to rotifer-dev.
--- Skipped here — will create separate migration for rotifer-dev.
+-- Note: shared_conversations is managed in a separate Supabase project.
+-- This migration applies only to rotifer-playground's Supabase project.
+-- The shared_conversations fix must be handled in that project separately.
 
 -- ═══════════════════════════════════════════════════════════════
 -- 5. total_calls server-side management (§3.12 P1#9)

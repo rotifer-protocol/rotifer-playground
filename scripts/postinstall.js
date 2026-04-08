@@ -27,7 +27,7 @@ const logo = [
 console.log("");
 for (const line of logo) console.log("  " + a + line + r);
 console.log("");
-console.log("  " + a + b + "Code as Gene" + r + " " + d + "— Universal evolution framework for AI agents" + r);
+console.log("  " + a + b + "Code as Gene" + r + " " + d + "— Open-source evolution framework for AI agents" + r);
 console.log("");
 console.log("  " + d + "Get started:" + r);
 console.log("    " + a + "rotifer init my-project    " + r + " " + d + "Create a new project" + r);

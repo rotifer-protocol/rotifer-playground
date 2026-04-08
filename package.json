@@ -78,7 +78,7 @@
     "vitest": "^4.0.0"
   },
   "optionalDependencies": {
-    "@rolldown/binding-linux-x64-gnu": "1.0.0-rc.12"
+    "@rolldown/binding-linux-x64-gnu": "1.0.0-rc.13"
   },
   "engines": {
     "node": ">=20.0.0"

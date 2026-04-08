@@ -150,8 +150,8 @@ jobs:
             ### Quick Start
             ```bash
             rotifer init my-project && cd my-project
-            rotifer scan genes/ && rotifer wrap hello-world
-            rotifer arena submit hello-world && rotifer arena list
+            rotifer hello --list-templates
+            rotifer hello
             ```
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') }}

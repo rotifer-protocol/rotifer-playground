@@ -29,6 +29,18 @@ npx @rotifer/playground init my-project
 
 ---
 
+## First Agent in Seconds
+
+```bash
+rotifer init my-project && cd my-project
+rotifer hello --list-templates
+rotifer hello
+```
+
+`rotifer init` bootstraps the local Arena and Genesis genes. `rotifer hello` is the preset-agent entrypoint: pick a curated template and run an agent immediately.
+
+---
+
 ## 30-Second Demo
 
 ```bash
@@ -55,7 +67,7 @@ $ rotifer init my-project
 ✓ Project ready: my-project
 ```
 
-One command. Five Genesis genes. A living Arena.
+One command boots the Arena. `rotifer hello` turns those bundled genes into your first preset agent.
 
 ---
 
@@ -72,21 +84,26 @@ You see an Arena with 6 genes ranked by fitness. No configuration needed.
 ### Act 2 — Aha (5 minutes)
 
 ```bash
-rotifer scan genes/               # Discover candidate functions
-rotifer wrap hello-world           # Wrap as a gene (generates Phenotype)
-rotifer test hello-world           # Run sandbox tests (WASM sandbox for compiled genes)
-rotifer test hello-world --compliance  # Run structural compliance checks
-rotifer arena submit hello-world   # Submit to Arena (admission gate)
-rotifer arena list                 # See your gene's ranking
+rotifer hello --list-templates     # See curated Quick Start and Power templates
+rotifer hello                      # Pick a template interactively and run it now
+rotifer agent list                 # Inspect the generated hello-* agent
 ```
 
-Your existing code becomes a gene and competes in the Arena.
+Bundled genes become a working preset agent in seconds.
 
 ### Act 3 — Hooked (30 minutes)
 
-Write a TypeScript gene and compile it to Native WASM automatically:
+Turn your own code into a gene, then build a custom agent:
 
 ```bash
+# Wrap existing code as a gene
+rotifer scan genes/                    # Discover candidate functions
+rotifer wrap hello-world               # Wrap as a gene (generates Phenotype)
+rotifer test hello-world               # Run sandbox tests (WASM sandbox for compiled genes)
+rotifer test hello-world --compliance  # Run structural compliance checks
+rotifer arena submit hello-world       # Submit to Arena (admission gate)
+rotifer arena list                     # See your gene's ranking
+
 # Write a gene in TypeScript — same language, zero learning curve
 mkdir genes/my-search && cat > genes/my-search/index.ts << 'EOF'
 export function express(input: { query: string }) {
@@ -95,8 +112,8 @@ export function express(input: { query: string }) {
 EOF
 
 rotifer wrap my-search --domain search
-rotifer compile my-search          # TS → JS → WASM → Rotifer IR
-rotifer arena submit my-search     # Watch it climb the rankings
+rotifer compile my-search           # TS → JS → WASM → Rotifer IR
+rotifer arena submit my-search      # Watch it climb the rankings
 rotifer arena list --domain search # Compare against Genesis genes
 
 # Create an Agent with a gene genome (supports Seq, Par, Cond, Try)
@@ -142,11 +159,12 @@ playground/
 
 ## CLI Commands
 
-Run `rotifer --help` for the grouped command list. The CLI has **18** primary top-level commands (Development, Cloud, the first four Discovery commands, and Arena & Agents). Six more top-level commands complete the tree: `versions` (Discovery), then `vg`, `network`, `self-update`, `config`, and `whoami` (Tools / Other)—**24** names total.
+Run `rotifer --help` for the grouped command list. The commands below cover the main local, cloud, arena, and agent workflows.
 
 | Command | Description |
 |---------|-------------|
 | `rotifer init [gene-name]` | Initialize a new gene project with Genesis genes |
+| `rotifer hello [--template <id>]` | Create and run a preset agent from curated templates inside a Rotifer project |
 | `rotifer scan [path]` | Scan for candidate genes and local skills |
 | `rotifer wrap <gene-name>` | Wrap a function or SKILL.md as a gene |
 | `rotifer test [gene-name]` | Test a gene (WASM sandbox preferred, `--compliance` for structural checks) |

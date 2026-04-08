@@ -29,6 +29,18 @@ npx @rotifer/playground init my-project
 
 ---
 
+## 几秒钟跑通第一个 Agent
+
+```bash
+rotifer init my-project && cd my-project
+rotifer hello --list-templates
+rotifer hello
+```
+
+`rotifer init` 先把本地 Arena 和 Genesis genes 建起来；`rotifer hello` 则是预设 agent 的主入口：从精选模板里挑一个，立刻创建并运行。
+
+---
+
 ## 30 秒演示
 
 ```bash
@@ -55,7 +67,7 @@ $ rotifer init my-project
 ✓ Project ready: my-project
 ```
 
-一条命令。五个 Genesis 基因。一个活跃的 Arena。
+一条命令先把 Arena 跑起来；`rotifer hello` 再把这些内置基因收口成你的第一个预设 agent。
 
 ---
 
@@ -72,22 +84,27 @@ rotifer init my-project && cd my-project
 ### 第二幕——Aha（5 分钟）
 
 ```bash
-rotifer scan genes/               # 发现候选基因函数
-rotifer wrap hello-world           # 包装为基因（生成 Phenotype）
-rotifer test hello-world           # 在 L2 沙箱中运行测试（已编译基因走 WASM 沙箱）
-rotifer test hello-world --compliance  # 运行结构性合规检查
-rotifer arena submit hello-world   # 提交到 Arena（准入评估）
-rotifer arena list                 # 查看你的基因排名
+rotifer hello --list-templates     # 查看 Quick Start / Power 模板
+rotifer hello                      # 交互式选择模板并立即运行
+rotifer agent list                 # 查看生成的 hello-* agent
 ```
 
-你的现有代码变成了基因，并在 Arena 中竞争。
+内置基因在几秒内就能组合成一个可运行的预设 agent。
 
 ### 第三幕——Hooked（30 分钟）
 
-用 TypeScript 编写基因，自动编译为原生 WASM：
+把自己的代码变成基因，再组合成自定义 Agent：
 
 ```bash
-# 用 TypeScript 写基因——同一语言，零学习成本
+# 先把现有代码包装成基因
+rotifer scan genes/                    # 发现候选基因函数
+rotifer wrap hello-world               # 包装为基因（生成 Phenotype）
+rotifer test hello-world               # 在 L2 沙箱中运行测试（已编译基因走 WASM 沙箱）
+rotifer test hello-world --compliance  # 运行结构性合规检查
+rotifer arena submit hello-world       # 提交到 Arena（准入评估）
+rotifer arena list                     # 查看你的基因排名
+
+# 再用 TypeScript 写一个新基因——同一语言，零学习成本
 mkdir genes/my-search && cat > genes/my-search/index.ts << 'EOF'
 export function express(input: { query: string }) {
   return { results: [`Found: ${input.query}`], total: 1 };
@@ -95,8 +112,8 @@ export function express(input: { query: string }) {
 EOF
 
 rotifer wrap my-search --domain search
-rotifer compile my-search          # TS → JS → WASM (Javy) → Rotifer IR
-rotifer arena submit my-search     # 观察它攀升排名
+rotifer compile my-search           # TS → JS → WASM (Javy) → Rotifer IR
+rotifer arena submit my-search      # 观察它攀升排名
 rotifer arena list --domain search # 与 Genesis 基因对比
 
 # 创建一个拥有基因组的 Agent（支持 Seq, Par, Cond, Try）
@@ -142,11 +159,12 @@ playground/
 
 ## CLI 命令
 
-运行 `rotifer --help` 查看按模块分组的命令列表。常用命令如下：
+运行 `rotifer --help` 查看按模块分组的命令列表。下面列出最常用的本地、Cloud、Arena 与 Agent 工作流命令：
 
 | 命令 | 说明 |
 |------|------|
 | `rotifer init [gene-name]` | 初始化新的 Rotifer 基因项目 |
+| `rotifer hello [--template <id>]` | 在 Rotifer 项目内从精选模板创建并运行一个预设 agent |
 | `rotifer scan [path]` | 扫描候选基因和本地技能 |
 | `rotifer wrap <gene-name>` | 将函数或 `SKILL.md` 包装为基因 |
 | `rotifer test [gene-name]` | 在沙箱中测试基因 |

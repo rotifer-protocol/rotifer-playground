@@ -194,6 +194,7 @@ jobs:
 
       - name: Cargo dependency audit
         run: |
+          # cargo-audit 0.22+ is required to parse current RustSec CVSS 4.0 advisories.
           cargo install cargo-audit@0.22.1 --quiet
           cargo audit
 

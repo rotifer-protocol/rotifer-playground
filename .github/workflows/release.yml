@@ -24,6 +24,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify Rust/npm version alignment
+        run: npm run verify:versions
+
       - name: Check generated plugin outputs
         run: npm run check:plugins
 
@@ -76,13 +79,17 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "22"
+
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
 
-      - name: Build and test
+      - name: Build workspace and test core
         run: |
-          cargo build -p rotifer-core
+          cargo build --workspace
           cargo test -p rotifer-core
 
   publish:

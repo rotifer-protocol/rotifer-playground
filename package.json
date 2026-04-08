@@ -48,6 +48,7 @@
     "sync:plugins": "node scripts/sync-plugin-outputs.mjs",
     "check:plugins": "node scripts/check-plugin-outputs.mjs",
     "verify:plugins": "node scripts/verify-plugin-packaging.mjs",
+    "verify:versions": "node scripts/verify-version-alignment.mjs",
     "bump:plugin-family": "node scripts/bump-plugin-family.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -57,7 +58,7 @@
     "clean": "rm -rf dist",
     "smoke-test": "npx tsx scripts/post-deploy-smoke-test.ts",
     "postinstall": "node scripts/postinstall.js",
-    "prepublishOnly": "npm run lint && npm run test && npm run build",
+    "prepublishOnly": "npm run verify:versions && npm run lint && npm run test && npm run build",
     "prepack": "npm run build"
   },
   "dependencies": {

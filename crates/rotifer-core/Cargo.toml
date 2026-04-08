@@ -3,6 +3,7 @@ name = "rotifer-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "Core library for the Rotifer Protocol — types, sandbox, arena, algebra, fitness, IR compiler"
 repository.workspace = true
 homepage = "https://rotifer.dev"

@@ -36,8 +36,8 @@ The main npm package version in `package.json` is not automatically tied to eith
 Use one command per family:
 
 ```bash
-npm run bump:plugin-family -- root 0.8.3
-npm run bump:plugin-family -- vscode 0.8.2
+npm run bump:plugin-family -- root 0.8.5
+npm run bump:plugin-family -- vscode 0.8.5
 ```
 
 That command:

@@ -7,9 +7,9 @@
 [![Protocol](https://img.shields.io/badge/Protocol-Frozen-orange)](https://github.com/rotifer-protocol/rotifer-spec)
 [![Discord](https://img.shields.io/discord/placeholder?label=Discord&logo=discord&color=5865F2)](https://rotifer.dev/discord)
 
-Development environment for the **Rotifer Protocol** — build genes, compete in Arenas, share via Cloud, and simulate agent evolution.
+Build AI agents from composable **Genes** — modular, fitness-ranked, sandbox-executed skill units. One command gives you a working agent; the Arena decides which genes survive.
 
-> **Status:** v0.8.5 — public playground for gene development, Arena competition, and protocol experimentation. This public release line consolidates the shipped `v0.8.x` surface into one coherent version. See [CHANGELOG.md](CHANGELOG.md) for detailed release history. P2P implementation and L4 Collective Immunity are still planned — see [Implementation Status](#implementation-status) below.
+> **Status:** v0.8.5 — public playground for gene development, Arena competition, and agent composition. See [CHANGELOG.md](CHANGELOG.md) for release history. P2P discovery and L4 Collective Immunity are planned — see [Implementation Status](#implementation-status).
 
 ---
 
@@ -29,82 +29,75 @@ npx @rotifer/playground init my-project
 
 ---
 
-## First Agent in Seconds
+## First Agent in 30 Seconds
 
 ```bash
+npm install -g @rotifer/playground   # or: npx @rotifer/playground init my-project
 rotifer init my-project && cd my-project
-rotifer hello --list-templates
-rotifer hello
+rotifer hello                        # pick a template → agent runs immediately
 ```
 
-`rotifer init` bootstraps the local Arena and Genesis genes. `rotifer hello` is the preset-agent entrypoint: pick a curated template and run an agent immediately.
+`rotifer init` bootstraps the Arena with 5 Genesis genes ranked by fitness.
+`rotifer hello` turns them into a working agent — no config, no boilerplate.
 
 ---
 
-## 30-Second Demo
+## `rotifer hello` — Agent Templates
+
+Six curated templates ship with every project. Each one creates an agent, wires the right genes, and runs in one step:
+
+**Quick Start** (works instantly, no setup)
+
+| Template | What it does | Example |
+|----------|-------------|---------|
+| `quality-advisor` | Diagnose & optimize your gene library | `rotifer hello --template quality-advisor --dir ./genes` |
+| `uiux-diagnosis` | Catch AI-generated-looking UI patterns | `rotifer hello --template uiux-diagnosis --file page.html` |
+| `content-analysis` | Analyze articles for virality signals | `cat draft.md \| rotifer hello --template content-analysis` |
+| `code-security` | Find vulnerabilities in gene code | `rotifer hello --template code-security --dir ./genes` |
+
+**Power Templates** (may need API key or domain knowledge)
+
+| Template | What it does | Badge |
+|----------|-------------|-------|
+| `doc-qa` | Ask your docs, get cited answers | API key |
+| `web3-toolkit` | Contract audit + chain data analysis | Web3 |
 
 ```bash
-$ rotifer init my-project
-
-  Rotifer Protocol - Project Initialization
-  ───────────────────────────────────────────
-✓ Project scaffolding created
-ℹ Installing Genesis genes...
-✓ 5 Genesis genes installed
-
-  Arena Rankings
-  ────────────────
-  #   Name                        Domain        F(g)    Fidelity
-  ────────────────────────────────────────────────────────────────
-  1   genesis-web-search          search        0.87    Native
-  2   genesis-code-format         tooling       0.81    Native
-  3   genesis-l0-constraint       safety        0.79    Native
-  4   genesis-web-search-lite     search        0.77    Native
-  5   genesis-file-read           filesystem    0.74    Native
-  6   hello-world                 general       0.57    Wrapped
-
-ℹ 6 genes across 5 domain(s) — Arena is alive!
-✓ Project ready: my-project
+rotifer hello --list-templates       # see all templates with descriptions
+rotifer hello                        # interactive TUI — pick and run
+rotifer hello --template doc-qa      # skip TUI, go straight to a template
 ```
 
-One command boots the Arena. `rotifer hello` turns those bundled genes into your first preset agent.
+Each `hello` agent is persisted as `hello-<template>` under `.rotifer/agents/` and reused on repeat runs.
 
 ---
 
-## Three-Act Experience (ADR-11)
+## Three-Act Experience
 
 ### Act 1 — Wow (30 seconds)
 
 ```bash
 rotifer init my-project && cd my-project
+rotifer hello
 ```
 
-You see an Arena with 6 genes ranked by fitness. No configuration needed.
+You see an Arena with 6 genes ranked by fitness, pick a template, and an agent runs. No configuration.
 
 ### Act 2 — Aha (5 minutes)
 
 ```bash
-rotifer hello --list-templates     # See curated Quick Start and Power templates
-rotifer hello                      # Pick a template interactively and run it now
-rotifer agent list                 # Inspect the generated hello-* agent
+rotifer agent list                 # inspect the hello-* agent that was created
+rotifer agent run hello-quality-advisor --input '{"verbose":true}'
+rotifer arena list                 # see gene rankings
 ```
 
-Bundled genes become a working preset agent in seconds.
+Agents are JSON records with a **genome** — an ordered list of genes composed via algebra operators.
 
 ### Act 3 — Hooked (30 minutes)
 
-Turn your own code into a gene, then build a custom agent:
+Write a gene in TypeScript, compile to WASM, and compose a custom agent:
 
 ```bash
-# Wrap existing code as a gene
-rotifer scan genes/                    # Discover candidate functions
-rotifer wrap hello-world               # Wrap as a gene (generates Phenotype)
-rotifer test hello-world               # Run sandbox tests (WASM sandbox for compiled genes)
-rotifer test hello-world --compliance  # Run structural compliance checks
-rotifer arena submit hello-world       # Submit to Arena (admission gate)
-rotifer arena list                     # See your gene's ranking
-
-# Write a gene in TypeScript — same language, zero learning curve
 mkdir genes/my-search && cat > genes/my-search/index.ts << 'EOF'
 export function express(input: { query: string }) {
   return { results: [`Found: ${input.query}`], total: 1 };
@@ -112,18 +105,16 @@ export function express(input: { query: string }) {
 EOF
 
 rotifer wrap my-search --domain search
-rotifer compile my-search           # TS → JS → WASM → Rotifer IR
-rotifer arena submit my-search      # Watch it climb the rankings
-rotifer arena list --domain search # Compare against Genesis genes
+rotifer compile my-search             # TS → JS → WASM → Rotifer IR
+rotifer test my-search --compliance   # sandbox + structural checks
+rotifer arena submit my-search        # watch it climb the rankings
 
-# Create an Agent with a gene genome (supports Seq, Par, Cond, Try)
+# Compose a multi-gene agent
 rotifer agent create search-bot --genes genesis-web-search my-search
-rotifer agent create parallel-bot --genes web-search doc-search --composition Par
-rotifer agent list
-
-# Run the Agent — WASM sandbox execution preferred
 rotifer agent run search-bot --input '{"query":"rotifer protocol"}'
-rotifer agent run search-bot --no-sandbox  # Force Node.js fallback
+
+# Or use parallel composition with fault tolerance
+rotifer agent create resilient-bot --genes web-search doc-search --composition TryPool
 ```
 
 `rotifer compile` auto-detects TypeScript genes and compiles them to Native WASM. No separate toolchain required.
@@ -159,39 +150,56 @@ playground/
 
 ## CLI Commands
 
-Run `rotifer --help` for the grouped command list. The commands below cover the main local, cloud, arena, and agent workflows.
+Run `rotifer --help` for the grouped command list.
+
+### Agent Workflow
 
 | Command | Description |
 |---------|-------------|
-| `rotifer init [gene-name]` | Initialize a new gene project with Genesis genes |
-| `rotifer hello [--template <id>]` | Create and run a preset agent from curated templates inside a Rotifer project |
+| `rotifer hello [--template <id>]` | Create and run a preset agent from curated templates |
+| `rotifer agent create <name>` | Create an Agent (`--composition Seq\|Par\|Cond\|Try\|TryPool`) |
+| `rotifer agent list` | List all agents in the project |
+| `rotifer agent run <name>` | Execute genome pipeline (WASM sandbox, `--no-sandbox` for Node.js) |
+
+### Gene Lifecycle
+
+| Command | Description |
+|---------|-------------|
+| `rotifer init [name]` | Initialize a new gene project with Genesis genes |
 | `rotifer scan [path]` | Scan for candidate genes and local skills |
-| `rotifer wrap <gene-name>` | Wrap a function or SKILL.md as a gene |
-| `rotifer test [gene-name]` | Test a gene (WASM sandbox preferred, `--compliance` for structural checks) |
-| `rotifer compile [gene-name]` | Compile gene to Rotifer IR (auto TS→WASM) |
-| `rotifer run <gene-name>` | Execute a single local gene directly |
-| `rotifer list` | List local genes in the current project |
-| `rotifer login` | Log in to Rotifer Cloud (OAuth) |
-| `rotifer logout` | Log out from Rotifer Cloud |
-| `rotifer publish [gene-name]` | Publish gene(s) to Rotifer Cloud |
-| `rotifer search [query]` | Search genes on Rotifer Cloud |
-| `rotifer install <gene-ref>` | Install a gene from Cloud (UUID, name, or content hash) |
-| `rotifer info <gene-ref>` | View gene details (local or Cloud) |
-| `rotifer stats <gene-ref>` | View download statistics for a gene |
-| `rotifer compare [gene-refs...]` | Compare 2–5 genes by reputation and downloads |
-| `rotifer reputation [gene-ref]` | View gene and creator reputation scores |
-| `rotifer versions <owner> <gene-name>` | View version history chain for a gene |
-| `rotifer arena submit <gene-name>` | Submit a gene to the Arena (`--cloud` for Cloud Arena) |
-| `rotifer arena list` | List Arena rankings (`--cloud` for Cloud Arena) |
-| `rotifer arena watch <domain>` | Watch Arena rankings live (`--cloud` for Cloud Arena) |
-| `rotifer agent create <agent-name>` | Create an Agent (`--composition Seq\|Par\|Cond\|Try\|TryPool`) |
-| `rotifer agent list` | List all agents |
-| `rotifer agent run <agent-name>` | Execute genome pipeline (WASM sandbox, `--no-sandbox` for Node.js) |
+| `rotifer wrap <gene>` | Wrap a function or SKILL.md as a gene |
+| `rotifer test [gene]` | Test a gene (sandbox + `--compliance` for structural checks) |
+| `rotifer compile [gene]` | Compile gene to Rotifer IR (auto TS → WASM) |
+| `rotifer run <gene>` | Execute a single local gene directly |
+| `rotifer list` | List local genes |
 | `rotifer vg [path]` | V(g) security scan for gene/skill code |
-| `rotifer network` | P2P gene network commands (see `rotifer network --help`) |
-| `rotifer self-update` | Check for updates and upgrade Rotifer packages |
-| `rotifer config` | Manage global Rotifer configuration |
+
+### Arena & Cloud
+
+| Command | Description |
+|---------|-------------|
+| `rotifer arena submit <gene>` | Submit a gene to the Arena (`--cloud` for Cloud Arena) |
+| `rotifer arena list` | List Arena rankings (`--cloud` for Cloud Arena) |
+| `rotifer arena watch <domain>` | Watch Arena rankings live |
+| `rotifer publish [gene]` | Publish gene(s) to Rotifer Cloud |
+| `rotifer search [query]` | Search genes on Rotifer Cloud |
+| `rotifer install <ref>` | Install a gene from Cloud (UUID, name, or content hash) |
+| `rotifer info <ref>` | View gene details (local or Cloud) |
+| `rotifer stats <ref>` | View download statistics |
+| `rotifer compare [refs...]` | Compare 2–5 genes by reputation and downloads |
+| `rotifer reputation [ref]` | View gene and creator reputation scores |
+| `rotifer versions <owner> <gene>` | View version history chain |
+
+### System
+
+| Command | Description |
+|---------|-------------|
+| `rotifer login` / `logout` | Rotifer Cloud OAuth (GitHub/GitLab) |
 | `rotifer whoami` | Show current authentication status |
+| `rotifer api-key create\|list\|revoke` | Manage Evolution API keys |
+| `rotifer config get\|set\|list` | Manage global configuration |
+| `rotifer network` | P2P gene network commands (stub — full P2P in v0.9) |
+| `rotifer self-update` | Check for updates and upgrade Rotifer packages |
 
 ---
 
@@ -222,6 +230,25 @@ Genes can be composed using the Rotifer Algebra:
 | **Transform** | Map/transform | Inner gene → mapper gene |
 
 See `templates/composition/` for JSON examples.
+
+---
+
+## AI IDE Integration
+
+Install the [MCP Server](https://www.npmjs.com/package/@rotifer/mcp-server) to let your AI assistant search genes, compose agents, and run pipelines from within the IDE:
+
+```json
+{
+  "mcpServers": {
+    "rotifer": {
+      "command": "npx",
+      "args": ["@rotifer/mcp-server"]
+    }
+  }
+}
+```
+
+Works with Cursor, Claude Desktop, Windsurf, and any MCP-compatible client. See [@rotifer/mcp-server](https://github.com/rotifer-protocol/rotifer-mcp-server) for the full tool list.
 
 ---
 

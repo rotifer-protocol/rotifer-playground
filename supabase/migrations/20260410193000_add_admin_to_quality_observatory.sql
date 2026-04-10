@@ -1,4 +1,4 @@
--- Allow rotifer-admin CI reports to write into the shared quality observatory.
+-- Allow dashboard CI reports to write into the shared quality observatory.
 alter table public.release_test_reports
   drop constraint if exists release_test_reports_component_check;
 

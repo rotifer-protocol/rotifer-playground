@@ -310,14 +310,14 @@ jobs:
           TOTAL=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numTotalTests || 0")
           PASSED=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numPassedTests || 0")
           FAILED=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numFailedTests || 0")
-          DURATION=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).testResults?.reduce((s,r) => s + (r.endTime - r.startTime), 0) || 0")
+          DURATION=$(node -p "Math.round(JSON.parse(require('fs').readFileSync('test-results.json','utf8')).testResults?.reduce((s,r) => s + (r.endTime - r.startTime), 0) || 0)")
 
           COVERAGE_PCT=0
           if [ -f coverage/coverage-summary.json ]; then
             COVERAGE_PCT=$(node -p "JSON.parse(require('fs').readFileSync('coverage/coverage-summary.json','utf8')).total?.lines?.pct || 0")
           fi
 
-          curl -s -X POST "${QUALITY_SUPABASE_URL}/rest/v1/release_test_reports" \
+          if curl --fail-with-body -sS -X POST "${QUALITY_SUPABASE_URL}/rest/v1/release_test_reports" \
             -H "apikey: ${QUALITY_SUPABASE_KEY}" \
             -H "Authorization: Bearer ${QUALITY_SUPABASE_KEY}" \
             -H "Content-Type: application/json" \
@@ -332,4 +332,8 @@ jobs:
               \"duration_ms\": ${DURATION},
               \"coverage_pct\": ${COVERAGE_PCT},
               \"ci_run_url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"
-            }" && echo "✅ Reported to Quality Observatory (coverage: ${COVERAGE_PCT}%)" || echo "⚠️ Report failed (non-blocking)"
+            }"; then
+            echo "✅ Reported to Quality Observatory (coverage: ${COVERAGE_PCT}%)"
+          else
+            echo "::warning::Quality test report upload failed"
+          fi

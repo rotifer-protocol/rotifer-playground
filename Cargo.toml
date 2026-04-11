@@ -15,7 +15,7 @@ sha2 = "0.10"
 thiserror = "2"
 anyhow = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
-wasmtime = "41.0.4"
+wasmtime = "42.0.2"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["full"] }

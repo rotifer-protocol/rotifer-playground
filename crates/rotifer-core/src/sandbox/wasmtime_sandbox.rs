@@ -22,7 +22,7 @@ impl ResourceLimiter for HostState {
         _current: usize,
         desired: usize,
         _maximum: Option<usize>,
-    ) -> anyhow::Result<bool> {
+    ) -> Result<bool, Error> {
         let max = self.limiter.max_memory;
         Ok(desired <= max)
     }
@@ -32,7 +32,7 @@ impl ResourceLimiter for HostState {
         _current: usize,
         desired: usize,
         _maximum: Option<usize>,
-    ) -> anyhow::Result<bool> {
+    ) -> Result<bool, Error> {
         Ok(desired <= self.limiter.max_table_elements as usize)
     }
 }
@@ -101,7 +101,7 @@ impl WasmtimeSandbox {
 
     /// Register the minimal WASI preview 1 host functions required by Javy modules.
     fn link_wasi(linker: &mut Linker<HostState>) -> Result<(), SandboxError> {
-        let map_err = |e: anyhow::Error| SandboxError::ExecutionFailed(e.to_string());
+        let map_err = |e: Error| SandboxError::ExecutionFailed(e.to_string());
 
         // fd_read(fd, iovs_ptr, iovs_len, nread_ptr) -> errno
         linker
@@ -364,7 +364,7 @@ impl WasmtimeSandbox {
 
     /// Register Rotifer spec host functions (§6.2).
     fn link_rotifer(linker: &mut Linker<HostState>) -> Result<(), SandboxError> {
-        let map_err = |e: anyhow::Error| SandboxError::ExecutionFailed(e.to_string());
+        let map_err = |e: Error| SandboxError::ExecutionFailed(e.to_string());
 
         linker
             .func_wrap(

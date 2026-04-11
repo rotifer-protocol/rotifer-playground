@@ -1,10 +1,32 @@
 name: Release VSCode Family
 
+run-name: >-
+  Release VSCode Family ${{
+    github.event_name == 'workflow_dispatch' &&
+    format('manual-{0}-vs{1}-ovsx{2}', inputs.version, inputs.publish_vscode, inputs.publish_openvsx) ||
+    github.ref_name
+  }}
+
 on:
   push:
     tags:
       - "vscode-v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "VSCode family version to publish"
+        required: true
+        type: string
+      publish_vscode:
+        description: "Publish to VS Code Marketplace"
+        required: true
+        default: true
+        type: boolean
+      publish_openvsx:
+        description: "Publish to Open VSX"
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -24,13 +46,23 @@ jobs:
       - name: Install root dependencies
         run: npm ci
 
-      - name: Check VSCode family tag matches manifest
-        if: startsWith(github.ref, 'refs/tags/vscode-v')
+      - name: Check VSCode family trigger matches manifests
         run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/vscode-v}"
           CONFIG_VERSION=$(node -p "require('./plugin-source/families.json').vscode.version")
-          if [ "$TAG_VERSION" != "$CONFIG_VERSION" ]; then
-            echo "::error::Tag version $TAG_VERSION does not match plugin-source/families.json vscode version $CONFIG_VERSION"
+          MANIFEST_VERSION=$(node -p "require('./rotifer-vscode/package.json').version")
+          if [ "$CONFIG_VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "::error::plugin-source/families.json vscode version $CONFIG_VERSION does not match rotifer-vscode/package.json version $MANIFEST_VERSION"
+            exit 1
+          fi
+
+          if [[ "${GITHUB_REF}" == refs/tags/vscode-v* ]]; then
+            TRIGGER_VERSION="${GITHUB_REF#refs/tags/vscode-v}"
+          else
+            TRIGGER_VERSION="${{ inputs.version }}"
+          fi
+
+          if [ "$TRIGGER_VERSION" != "$CONFIG_VERSION" ]; then
+            echo "::error::Trigger version $TRIGGER_VERSION does not match plugin-source/families.json vscode version $CONFIG_VERSION"
             exit 1
           fi
 
@@ -108,7 +140,7 @@ jobs:
             release-artifacts/rotifer-vscode-family-*.tar.gz
 
       - name: Publish to VS Code Marketplace
-        if: startsWith(github.ref, 'refs/tags/vscode-v')
+        if: startsWith(github.ref, 'refs/tags/vscode-v') || (github.event_name == 'workflow_dispatch' && inputs.publish_vscode)
         working-directory: rotifer-vscode
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
@@ -121,7 +153,7 @@ jobs:
           npx --yes @vscode/vsce publish --packagePath "../release-artifacts/rotifer-vscode-${VERSION}.vsix" -p "$VSCE_PAT"
 
       - name: Publish to Open VSX
-        if: startsWith(github.ref, 'refs/tags/vscode-v')
+        if: startsWith(github.ref, 'refs/tags/vscode-v') || (github.event_name == 'workflow_dispatch' && inputs.publish_openvsx)
         working-directory: rotifer-vscode
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}

@@ -77,7 +77,12 @@ jobs:
       - name: Build TypeScript
         run: npm run build
 
-      - name: Run tests
+      - name: Run coverage gate
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '22'
+        run: npm run test:coverage
+
+      - name: Run cross-platform tests
+        if: matrix.os != 'ubuntu-latest' || matrix.node-version != '22'
         run: npm test
 
   vscode-extension:
@@ -302,7 +307,7 @@ jobs:
       - name: Run tests with JSON reporter + coverage
         run: |
           npm run build
-          npx vitest run --reporter=json --outputFile=test-results.json --coverage 2>/dev/null || true
+          npm run test:coverage -- --reporter=json --outputFile=test-results.json 2>/dev/null || true
 
       - name: Report test results to Supabase
         if: env.QUALITY_SUPABASE_URL != ''
@@ -327,6 +332,7 @@ jobs:
           TOTAL=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numTotalTests || 0")
           PASSED=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numPassedTests || 0")
           FAILED=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numFailedTests || 0")
+          SKIPPED=$(node -p "const r=JSON.parse(require('fs').readFileSync('test-results.json','utf8')); (r.numPendingTests || 0) + (r.numTodoTests || 0)")
           DURATION=$(node -p "Math.round(JSON.parse(require('fs').readFileSync('test-results.json','utf8')).testResults?.reduce((s,r) => s + (r.endTime - r.startTime), 0) || 0)")
 
           COVERAGE_PCT=0
@@ -347,6 +353,7 @@ jobs:
               \"total_tests\": ${TOTAL},
               \"passed\": ${PASSED},
               \"failed\": ${FAILED},
+              \"skipped\": ${SKIPPED},
               \"duration_ms\": ${DURATION},
               \"coverage_pct\": ${COVERAGE_PCT},
               \"ci_run_url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"

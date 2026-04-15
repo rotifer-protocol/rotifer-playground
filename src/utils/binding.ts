@@ -66,37 +66,57 @@ export interface NativeBinding {
 let _binding: NativeBinding | null = null;
 let _hasLoadAttempted = false;
 
+const PLATFORM_PACKAGE_MAP: Record<string, string> = {
+  "darwin-arm64": "@rotifer/playground-darwin-arm64",
+  "darwin-x64": "@rotifer/playground-darwin-x64",
+  "linux-x64": "@rotifer/playground-linux-x64-gnu",
+  "win32-x64": "@rotifer/playground-win32-x64-msvc",
+};
+
+function initBinding(mod: Record<string, unknown>): NativeBinding | null {
+  if (!mod.PlaygroundBinding) return null;
+  const tmpDir = join(
+    process.env.HOME || process.env.USERPROFILE || "/tmp",
+    ".rotifer",
+    "napi-binding"
+  );
+  ensurePrivateDir(tmpDir);
+  return new (mod.PlaygroundBinding as new (dir: string) => NativeBinding)(tmpDir);
+}
+
 /**
  * Try to load the napi native addon.
+ * Strategy: platform npm package first, then local .node file fallback.
  * Returns null if the addon is not available (fallback to pure-TS path).
  */
 export function tryLoadBinding(): NativeBinding | null {
   if (_hasLoadAttempted) return _binding;
   _hasLoadAttempted = true;
 
-  const candidates = [
-    join(__dirname, "..", "..", "index.darwin-arm64.node"),
-    join(__dirname, "..", "..", "index.darwin-x64.node"),
-    join(__dirname, "..", "..", "index.linux-x64-gnu.node"),
-    join(__dirname, "..", "..", "index.win32-x64-msvc.node"),
+  const platformKey = `${process.platform}-${process.arch}`;
+  const pkgName = PLATFORM_PACKAGE_MAP[platformKey];
+  if (pkgName) {
+    try {
+      const mod = require(pkgName);
+      _binding = initBinding(mod);
+      if (_binding) return _binding;
+    } catch {
+      // platform package not installed — fall through to local search
+    }
+  }
+
+  const localCandidates = [
+    join(__dirname, "..", "..", `index.${platformKey}.node`),
+    join(__dirname, "..", "..", `index.${process.platform}-${process.arch}.node`),
     join(__dirname, "..", "..", `rotifer-napi.${process.platform}-${process.arch}.node`),
   ];
 
-  for (const candidate of candidates) {
+  for (const candidate of localCandidates) {
     if (existsSync(candidate)) {
       try {
         const mod = require(candidate);
-        if (mod.PlaygroundBinding) {
-          const tmpDir = join(
-            process.env.HOME || process.env.USERPROFILE || "/tmp",
-            ".rotifer",
-            "napi-binding"
-          );
-          ensurePrivateDir(tmpDir);
-          const instance = new mod.PlaygroundBinding(tmpDir);
-          _binding = instance as NativeBinding;
-          return _binding;
-        }
+        _binding = initBinding(mod);
+        if (_binding) return _binding;
       } catch {
         // addon exists but failed to load — continue
       }

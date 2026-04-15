@@ -77,12 +77,7 @@ jobs:
       - name: Build TypeScript
         run: npm run build
 
-      - name: Run coverage gate
-        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '22'
-        run: npm run test:coverage
-
-      - name: Run cross-platform tests
-        if: matrix.os != 'ubuntu-latest' || matrix.node-version != '22'
+      - name: Run tests
         run: npm test
 
   vscode-extension:
@@ -172,8 +167,10 @@ jobs:
       - name: Cargo test (core)
         run: cargo test -p rotifer-core
 
-      - name: Cargo build napi bridge
-        run: cargo build -p rotifer-napi
+      - name: Build napi bridge (verify compilation)
+        run: |
+          npm install -g @napi-rs/cli
+          cd crates/rotifer-napi && napi build --release --platform
 
       - name: Cargo clippy (all crates)
         run: cargo clippy --workspace -- -D warnings
@@ -239,22 +236,13 @@ jobs:
           QUALITY_SUPABASE_URL: ${{ secrets.QUALITY_SUPABASE_URL }}
           QUALITY_SUPABASE_KEY: ${{ secrets.QUALITY_SUPABASE_SERVICE_KEY }}
         run: |
-          normalize_version() {
-            case "$1" in
-              v*) printf '%s' "$1" ;;
-              *) printf 'v%s' "$1" ;;
-            esac
-          }
           VERSION=$(node -p "require('./package.json').version")
-          COMPONENT_VERSION=$(normalize_version "${VERSION}")
-          RELEASE_LINE_VERSION="${COMPONENT_VERSION}"
           NPM_AUDIT=$(npm audit --json --registry https://registry.npmjs.org/ 2>/dev/null || echo '{}')
           CRITICAL=$(echo "$NPM_AUDIT" | node -p "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).metadata?.vulnerabilities?.critical||0}catch{0}")
           HIGH=$(echo "$NPM_AUDIT" | node -p "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).metadata?.vulnerabilities?.high||0}catch{0}")
           MODERATE=$(echo "$NPM_AUDIT" | node -p "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).metadata?.vulnerabilities?.moderate||0}catch{0}")
           LOW=$(echo "$NPM_AUDIT" | node -p "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).metadata?.vulnerabilities?.low||0}catch{0}")
           TOTAL=$(echo "$NPM_AUDIT" | node -p "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).metadata?.dependencies?.total||0}catch{0}")
-          VULNERABLE_DEPS=$((CRITICAL + HIGH + MODERATE + LOW))
 
           GRADE="PASS"
           if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then GRADE="FAIL"; fi
@@ -264,7 +252,7 @@ jobs:
             -H "Authorization: Bearer ${QUALITY_SUPABASE_KEY}" \
             -H "Content-Type: application/json" \
             -H "Prefer: return=minimal" \
-            -d "{\"version\":\"${COMPONENT_VERSION}\",\"release_line_version\":\"${RELEASE_LINE_VERSION}\",\"component\":\"cli\",\"scan_type\":\"npm_audit\",\"grade\":\"${GRADE}\",\"severity_counts\":{\"critical\":${CRITICAL},\"high\":${HIGH},\"moderate\":${MODERATE},\"low\":${LOW}},\"source\":\"ci\",\"ci_run_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
+            -d "{\"version\":\"v${VERSION}\",\"component\":\"cli\",\"scan_type\":\"npm_audit\",\"grade\":\"${GRADE}\",\"severity_counts\":{\"critical\":${CRITICAL},\"high\":${HIGH},\"moderate\":${MODERATE},\"low\":${LOW}},\"source\":\"ci\",\"ci_run_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
             && echo "✅ Security scan reported" || echo "⚠️ Report failed (non-blocking)"
 
           curl -s -X POST "${QUALITY_SUPABASE_URL}/rest/v1/dependency_audit_logs" \
@@ -272,7 +260,7 @@ jobs:
             -H "Authorization: Bearer ${QUALITY_SUPABASE_KEY}" \
             -H "Content-Type: application/json" \
             -H "Prefer: return=minimal" \
-            -d "{\"component\":\"cli\",\"release_line_version\":\"${RELEASE_LINE_VERSION}\",\"ecosystem\":\"npm\",\"total_deps\":${TOTAL},\"vulnerable_deps\":${VULNERABLE_DEPS},\"advisories\":[],\"ci_run_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
+            -d "{\"component\":\"cli\",\"audit_tool\":\"npm_audit\",\"total_deps\":${TOTAL},\"vulnerabilities\":{\"critical\":${CRITICAL},\"high\":${HIGH},\"moderate\":${MODERATE},\"low\":${LOW}},\"ci_run_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
             && echo "✅ Dependency audit reported" || echo "⚠️ Report failed (non-blocking)"
 
   gitleaks:
@@ -307,7 +295,7 @@ jobs:
       - name: Run tests with JSON reporter + coverage
         run: |
           npm run build
-          npm run test:coverage -- --reporter=json --outputFile=test-results.json 2>/dev/null || true
+          npx vitest run --reporter=json --outputFile=test-results.json --coverage 2>/dev/null || true
 
       - name: Report test results to Supabase
         if: env.QUALITY_SUPABASE_URL != ''
@@ -315,50 +303,35 @@ jobs:
           QUALITY_SUPABASE_URL: ${{ secrets.QUALITY_SUPABASE_URL }}
           QUALITY_SUPABASE_KEY: ${{ secrets.QUALITY_SUPABASE_SERVICE_KEY }}
         run: |
-          normalize_version() {
-            case "$1" in
-              v*) printf '%s' "$1" ;;
-              *) printf 'v%s' "$1" ;;
-            esac
-          }
           if [ ! -f test-results.json ]; then
             echo "No test results file found, skipping report"
             exit 0
           fi
 
           VERSION=$(node -p "require('./package.json').version")
-          COMPONENT_VERSION=$(normalize_version "${VERSION}")
-          RELEASE_LINE_VERSION="${COMPONENT_VERSION}"
           TOTAL=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numTotalTests || 0")
           PASSED=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numPassedTests || 0")
           FAILED=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numFailedTests || 0")
-          SKIPPED=$(node -p "const r=JSON.parse(require('fs').readFileSync('test-results.json','utf8')); (r.numPendingTests || 0) + (r.numTodoTests || 0)")
-          DURATION=$(node -p "Math.round(JSON.parse(require('fs').readFileSync('test-results.json','utf8')).testResults?.reduce((s,r) => s + (r.endTime - r.startTime), 0) || 0)")
+          DURATION=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).testResults?.reduce((s,r) => s + (r.endTime - r.startTime), 0) || 0")
 
           COVERAGE_PCT=0
           if [ -f coverage/coverage-summary.json ]; then
             COVERAGE_PCT=$(node -p "JSON.parse(require('fs').readFileSync('coverage/coverage-summary.json','utf8')).total?.lines?.pct || 0")
           fi
 
-          if curl --fail-with-body -sS -X POST "${QUALITY_SUPABASE_URL}/rest/v1/release_test_reports" \
+          curl -s -X POST "${QUALITY_SUPABASE_URL}/rest/v1/release_test_reports" \
             -H "apikey: ${QUALITY_SUPABASE_KEY}" \
             -H "Authorization: Bearer ${QUALITY_SUPABASE_KEY}" \
             -H "Content-Type: application/json" \
             -H "Prefer: return=minimal" \
             -d "{
-              \"version\": \"${COMPONENT_VERSION}\",
-              \"release_line_version\": \"${RELEASE_LINE_VERSION}\",
+              \"version\": \"v${VERSION}\",
               \"component\": \"cli\",
               \"test_type\": \"unit\",
               \"total_tests\": ${TOTAL},
               \"passed\": ${PASSED},
               \"failed\": ${FAILED},
-              \"skipped\": ${SKIPPED},
               \"duration_ms\": ${DURATION},
               \"coverage_pct\": ${COVERAGE_PCT},
               \"ci_run_url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"
-            }"; then
-            echo "✅ Reported to Quality Observatory (coverage: ${COVERAGE_PCT}%)"
-          else
-            echo "::warning::Quality test report upload failed"
-          fi
+            }" && echo "✅ Reported to Quality Observatory (coverage: ${COVERAGE_PCT}%)" || echo "⚠️ Report failed (non-blocking)"

@@ -90,6 +90,34 @@ export function verifyRustVersionAlignment(rootDir = REPO_ROOT) {
     );
   }
 
+  const rootPkg = readJson(join(rootDir, "package.json"));
+  const npmVersion = rootPkg.version;
+
+  const platformPkgs = ["darwin-arm64", "darwin-x64", "linux-x64-gnu", "win32-x64-msvc"];
+  for (const platform of platformPkgs) {
+    try {
+      const pkgPath = join(rootDir, "npm", platform, "package.json");
+      const pkg = readJson(pkgPath);
+      if (pkg.version !== npmVersion) {
+        errors.push(
+          `npm/${platform}/package.json: expected version ${npmVersion}, got ${pkg.version}`,
+        );
+      }
+    } catch {
+      errors.push(`npm/${platform}/package.json: file not found`);
+    }
+  }
+
+  const optDeps = rootPkg.optionalDependencies || {};
+  for (const platform of platformPkgs) {
+    const depName = `@rotifer/playground-${platform}`;
+    if (optDeps[depName] && optDeps[depName] !== npmVersion) {
+      errors.push(
+        `package.json optionalDependencies: ${depName} expected ${npmVersion}, got ${optDeps[depName]}`,
+      );
+    }
+  }
+
   const coreCargo = readText(join(rootDir, "crates/rotifer-core/Cargo.toml"));
   if (readPackagePublishFlag(coreCargo) !== false) {
     errors.push("crates/rotifer-core/Cargo.toml: expected publish = false");

@@ -1,0 +1,20 @@
+{
+  "name": "@rotifer/playground-linux-x64-gnu",
+  "version": "0.8.5",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "index.linux-x64-gnu.node",
+  "files": [
+    "index.linux-x64-gnu.node"
+  ],
+  "description": "Rotifer Playground native binding for Linux x64 (glibc)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rotifer-protocol/rotifer-playground.git"
+  }
+}

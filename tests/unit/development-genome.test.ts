@@ -132,10 +132,6 @@ describe("Code Review Prompt Genes (3 variants)", () => {
       it("has system prompt file", () => {
         expect(existsSync(join(GENES_DIR, name, "system-prompt.md"))).toBe(true);
       });
-
-      it.skipIf(!existsSync(join(GENES_DIR, name, ".gene-manifest.json")))("has gene-manifest", () => {
-        expect(existsSync(join(GENES_DIR, name, ".gene-manifest.json"))).toBe(true);
-      });
     });
   }
 

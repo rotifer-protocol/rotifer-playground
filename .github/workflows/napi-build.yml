@@ -1,0 +1,68 @@
+name: Build Native Addons
+
+on:
+  workflow_call:
+    inputs:
+      upload:
+        description: "Upload artifacts for publishing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: index.darwin-arm64.node
+            npm-dir: darwin-arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: index.darwin-x64.node
+            npm-dir: darwin-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: index.linux-x64-gnu.node
+            npm-dir: linux-x64-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: index.win32-x64-msvc.node
+            npm-dir: win32-x64-msvc
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "22"
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+
+      - name: Install napi-rs CLI
+        run: npm install -g @napi-rs/cli
+
+      - name: Build native addon
+        working-directory: crates/rotifer-napi
+        run: napi build --release --platform --target ${{ matrix.target }}
+
+      - name: Copy artifact to npm package
+        shell: bash
+        run: cp crates/rotifer-napi/${{ matrix.artifact }} npm/${{ matrix.npm-dir }}/${{ matrix.artifact }}
+
+      - name: Upload artifact
+        if: inputs.upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-${{ matrix.npm-dir }}
+          path: npm/${{ matrix.npm-dir }}/${{ matrix.artifact }}
+          if-no-files-found: error

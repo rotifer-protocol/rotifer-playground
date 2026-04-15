@@ -1,0 +1,20 @@
+{
+  "name": "@rotifer/playground-win32-x64-msvc",
+  "version": "0.8.5",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "index.win32-x64-msvc.node",
+  "files": [
+    "index.win32-x64-msvc.node"
+  ],
+  "description": "Rotifer Playground native binding for Windows x64",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rotifer-protocol/rotifer-playground.git"
+  }
+}

@@ -49,10 +49,12 @@
     "check:plugins": "node scripts/check-plugin-outputs.mjs",
     "verify:plugins": "node scripts/verify-plugin-packaging.mjs",
     "verify:versions": "node scripts/verify-version-alignment.mjs",
+    "sync:native-versions": "node scripts/sync-native-versions.mjs",
     "bump:plugin-family": "node scripts/bump-plugin-family.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:workspace": "vitest run --config vitest.workspace.config.ts",
     "lint": "tsc --noEmit && eslint src/",
     "lint:names": "eslint src/ --rule '@typescript-eslint/naming-convention: error'",
     "clean": "rm -rf dist",
@@ -78,7 +80,11 @@
     "vitest": "^4.0.0"
   },
   "optionalDependencies": {
-    "@rolldown/binding-linux-x64-gnu": "1.0.0-rc.13"
+    "@rolldown/binding-linux-x64-gnu": "1.0.0-rc.13",
+    "@rotifer/playground-darwin-arm64": "0.8.5",
+    "@rotifer/playground-darwin-x64": "0.8.5",
+    "@rotifer/playground-linux-x64-gnu": "0.8.5",
+    "@rotifer/playground-win32-x64-msvc": "0.8.5"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as display from "../utils/display.js";
 import { getProjectRoot, loadConfig } from "../utils/config.js";
+import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 
 export const runCommand = new Command("run")
@@ -59,6 +60,8 @@ export const runCommand = new Command("run")
         return;
       }
 
+      const sandboxEnabled = !process.argv.includes("--no-sandbox");
+
       if (options.verbose) {
         display.keyValue("Gene", geneName);
         display.keyValue("Domain", phenotype.domain || "unknown");
@@ -70,15 +73,21 @@ export const runCommand = new Command("run")
       const wasmPath = join(geneDir, "gene.ir.wasm");
       const sourcePath = join(geneDir, "index.ts");
 
-      if (existsSync(wasmPath) && options.sandbox) {
+      if (existsSync(wasmPath) && sandboxEnabled) {
         display.info("Running via WASM sandbox...");
         try {
           const { tryLoadBinding } = await import("../utils/binding.js");
           const binding = tryLoadBinding();
           if (binding) {
             const wasmBytes = readFileSync(wasmPath);
-            const phenoJson = readFileSync(join(geneDir, "phenotype.json"), "utf-8");
-            const execResult = binding.executeGene(wasmBytes, JSON.stringify(input), phenoJson);
+            const rawPhenotype = JSON.parse(readFileSync(join(geneDir, "phenotype.json"), "utf-8"));
+            const { irHash: _strip, ...phenotypeForExec } = rawPhenotype;
+            const execResult = binding.executeGene(
+              wasmBytes,
+              JSON.stringify(input),
+              JSON.stringify(phenotypeForExec),
+              DEFAULT_SANDBOX_CONSTRAINTS_JSON,
+            );
             console.log();
             if (execResult.success) {
               display.success("Output:");

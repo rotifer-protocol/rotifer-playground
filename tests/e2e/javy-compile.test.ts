@@ -194,12 +194,12 @@ describe("Javy TS→WASM compilation (v0.3)", () => {
     expect(stdout).toContain("Wrapped fidelity");
   });
 
-  it("prefers existing gene.wasm over TS auto-compile", () => {
+  it("prefers TS source over a stale existing gene.wasm", () => {
     writePhenotype(projectDir, "ts-gene");
     writeGeneSource(
       projectDir,
       "ts-gene",
-      `export function express(input) { return input; }`,
+      `export function express(input) { return { greeting: "fresh:" + input.name }; }`,
     );
 
     const dummyWasm = Buffer.from([
@@ -210,9 +210,11 @@ describe("Javy TS→WASM compilation (v0.3)", () => {
       dummyWasm,
     );
 
-    const { stdout } = run("compile ts-gene", projectDir);
-    expect(stdout).toContain("existing gene.wasm");
-    expect(stdout).not.toContain("TypeScript gene detected");
+    const { stdout, exitCode } = run("compile ts-gene", projectDir);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("TypeScript gene detected");
+    expect(stdout).not.toContain("existing gene.wasm");
+    expect(readFileSync(join(projectDir, "genes", "ts-gene", "gene.wasm")).length).toBeGreaterThan(100_000);
   });
 
   it("fails gracefully with invalid TypeScript", { timeout: 30000 }, () => {

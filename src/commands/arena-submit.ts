@@ -9,6 +9,7 @@ import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding } from "../utils/binding.js";
 import { arenaSubmit as cloudArenaSubmit } from "../cloud/client.js";
 import { requireAuth } from "../cloud/auth.js";
+import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { scan } from "../scanner/index.js";
 import type { Severity } from "../scanner/types.js";
@@ -136,14 +137,6 @@ export const arenaSubmitCommand = new Command("submit")
       const irWasm = readFileSync(irWasmPath) as Buffer;
       const { irHash: _strip, ...phenotypeForExec } = phenotype;
 
-      const arenaConstraints = JSON.stringify({
-        max_fuel: 50_000_000_000,
-        max_memory_bytes: 256 * 1024 * 1024,
-        max_execution_time_ms: 60_000,
-        allowed_host_functions: [],
-        denied_host_functions: [],
-      });
-
       const runs = 3;
       const results: { success: boolean; latencyMs: number; resourceCost: number }[] = [];
 
@@ -154,7 +147,7 @@ export const arenaSubmitCommand = new Command("submit")
             irWasm,
             JSON.stringify(testInput),
             JSON.stringify(phenotypeForExec),
-            arenaConstraints
+            DEFAULT_SANDBOX_CONSTRAINTS_JSON
           );
           results.push({
             success: execResult.success,

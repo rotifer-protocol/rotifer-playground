@@ -125,6 +125,7 @@ export const compileCommand = new Command("compile")
     } else if (existsSync(join(geneDir, "gene.wasm"))) {
       wasmBytes = readFileSync(join(geneDir, "gene.wasm")) as Buffer;
       display.info("Using existing gene.wasm");
+      display.hint("No source file found; using pre-built gene.wasm");
     }
 
     if (!wasmBytes) {

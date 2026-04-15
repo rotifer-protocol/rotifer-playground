@@ -11,6 +11,7 @@ import { tryLoadBinding, type NativeBinding } from "../utils/binding.js";
 import { createGatewayFetch, type GatewayFetchOptions, type GatewayResponse } from "../runtime/network-gateway.js";
 import { DomainFailoverEngine, type GeneExecutionResult } from "../runtime/domain-failover.js";
 import { logGeneExecution } from "../utils/run-logger.js";
+import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 
 interface AgentInfo {
   id: string;
@@ -73,13 +74,6 @@ export const agentRunCommand = new Command("run")
       (agent.genome.length >= 2 ? "Seq" : "Single");
 
     const separator = compositionType === "Par" ? " ∥ " : " → ";
-    const sandboxConstraints = JSON.stringify({
-      max_fuel: 50_000_000_000,
-      max_memory_bytes: 256 * 1024 * 1024,
-      max_execution_time_ms: 60_000,
-      allowed_host_functions: [],
-      denied_host_functions: [],
-    });
     display.info(`Agent: ${agent.name} (${agent.id})`);
     display.info(`Composition: ${compositionType}`);
     display.info(`Pipeline: ${agent.genome.join(separator)}`);
@@ -154,7 +148,7 @@ export const agentRunCommand = new Command("run")
             irWasm,
             JSON.stringify(current),
             JSON.stringify(phenotypeForExec),
-            sandboxConstraints,
+            DEFAULT_SANDBOX_CONSTRAINTS_JSON,
           );
 
           const stepElapsed = performance.now() - stepStart;
@@ -484,17 +478,15 @@ async function buildGeneExecutor(
     const wasmBytes = readFileSync(irWasmPath) as Buffer;
     const { irHash: _strip, ...phenotypeForExec } = phenotype;
     const phenoStr = JSON.stringify(phenotypeForExec);
-    const sandboxConstraints = JSON.stringify({
-      max_fuel: 50_000_000_000,
-      max_memory_bytes: 256 * 1024 * 1024,
-      max_execution_time_ms: 60_000,
-      allowed_host_functions: [],
-      denied_host_functions: [],
-    });
     return async (input: unknown): Promise<GeneExecutionResult> => {
       const start = performance.now();
       try {
-        const result = binding.executeGene(wasmBytes, JSON.stringify(input), phenoStr, sandboxConstraints);
+        const result = binding.executeGene(
+          wasmBytes,
+          JSON.stringify(input),
+          phenoStr,
+          DEFAULT_SANDBOX_CONSTRAINTS_JSON,
+        );
         const elapsed = performance.now() - start;
         logGeneExecution({
           geneName, success: result.success, durationMs: elapsed,

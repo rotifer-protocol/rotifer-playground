@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as display from "../utils/display.js";
 import { getProjectRoot, loadConfig } from "../utils/config.js";
+import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 
 export const runCommand = new Command("run")
@@ -81,18 +82,11 @@ export const runCommand = new Command("run")
             const wasmBytes = readFileSync(wasmPath);
             const rawPhenotype = JSON.parse(readFileSync(join(geneDir, "phenotype.json"), "utf-8"));
             const { irHash: _strip, ...phenotypeForExec } = rawPhenotype;
-            const sandboxConstraints = JSON.stringify({
-              max_fuel: 50_000_000_000,
-              max_memory_bytes: 256 * 1024 * 1024,
-              max_execution_time_ms: 60_000,
-              allowed_host_functions: [],
-              denied_host_functions: [],
-            });
             const execResult = binding.executeGene(
               wasmBytes,
               JSON.stringify(input),
               JSON.stringify(phenotypeForExec),
-              sandboxConstraints,
+              DEFAULT_SANDBOX_CONSTRAINTS_JSON,
             );
             console.log();
             if (execResult.success) {

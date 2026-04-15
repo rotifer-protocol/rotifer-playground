@@ -11,6 +11,7 @@ function __writeStdout(v){var b=new TextEncoder().encode(JSON.stringify(v));Javy
 const WASI_SHIM_FOOTER = `\
 var __input=__readStdin();
 var __result=__gene.express(__input);
+if(__result&&typeof __result.then==="function"){throw new Error("Async express() is not supported in Javy/WASM runtime; use a synchronous gene or run without sandbox")}
 __writeStdout(__result);
 `;
 

@@ -82,8 +82,9 @@ export const compileCommand = new Command("compile")
 
     validateLlmNativePhenotype(phenotype, phenotypePath);
 
-    const geneId = contentHash(phenotype);
-    const phenoStr = canonicalSerialize(phenotype);
+    const { irHash: _strip, ...phenotypeForCompile } = phenotype;
+    const geneId = contentHash(phenotypeForCompile);
+    const phenoStr = canonicalSerialize(phenotypeForCompile);
 
     if (options.check) {
       display.success(`Validation passed for '${geneName}'`);
@@ -92,6 +93,7 @@ export const compileCommand = new Command("compile")
     }
 
     let wasmBytes: Buffer | null = null;
+    const geneSrc = findGeneSource(geneDir);
 
     if (options.wasm) {
       if (!existsSync(options.wasm)) {
@@ -104,29 +106,25 @@ export const compileCommand = new Command("compile")
       }
       wasmBytes = readFileSync(options.wasm) as Buffer;
       display.info(`Using pre-compiled WASM: ${options.wasm}`);
+    } else if (geneSrc && options.lang !== "wasm") {
+      display.info("TypeScript gene detected — compiling to Native WASM");
+      console.log();
+      const wasmOutput = join(geneDir, "gene.wasm");
+      try {
+        compileTypeScriptToWasm(geneSrc, wasmOutput);
+        wasmBytes = readFileSync(wasmOutput) as Buffer;
+      } catch (err: any) {
+        display.rustStyleError({
+          code: "E0024",
+          message: `TypeScript → WASM compilation failed: ${err.message}`,
+          suggestion: "Ensure esbuild and javy-cli are installed: npm i -g esbuild && npx javy-cli --version",
+        });
+        process.exit(1);
+      }
+      console.log();
     } else if (existsSync(join(geneDir, "gene.wasm"))) {
       wasmBytes = readFileSync(join(geneDir, "gene.wasm")) as Buffer;
       display.info("Using existing gene.wasm");
-    } else {
-      // Auto-detect TypeScript/JavaScript gene source → compile via Javy
-      const geneSrc = findGeneSource(geneDir);
-      if (geneSrc && (options.lang === "ts" || !options.lang)) {
-        display.info("TypeScript gene detected — compiling to Native WASM");
-        console.log();
-        const wasmOutput = join(geneDir, "gene.wasm");
-        try {
-          compileTypeScriptToWasm(geneSrc, wasmOutput);
-          wasmBytes = readFileSync(wasmOutput) as Buffer;
-        } catch (err: any) {
-          display.rustStyleError({
-            code: "E0024",
-            message: `TypeScript → WASM compilation failed: ${err.message}`,
-            suggestion: "Ensure esbuild and javy-cli are installed: npm i -g esbuild && npx javy-cli --version",
-          });
-          process.exit(1);
-        }
-        console.log();
-      }
     }
 
     if (!wasmBytes) {

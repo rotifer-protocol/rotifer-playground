@@ -34,7 +34,7 @@ export const agentRunCommand = new Command("run")
   .argument("<agent-name>", "agent name to run")
   .option("--input <json>", "input JSON for the pipeline", '{"name":"world"}')
   .option("--verbose", "show intermediate results", false)
-  .option("--no-sandbox", "force Node.js execution (skip WASM sandbox)", false)
+  .option("--no-sandbox", "force Node.js execution (skip WASM sandbox)")
   .action(async (agentName: string, options: { input: string; verbose: boolean; sandbox: boolean }) => {
     const root = requireProjectRoot();
     const config = loadConfig(root);
@@ -66,18 +66,27 @@ export const agentRunCommand = new Command("run")
       process.exit(1);
     }
 
+    const sandboxEnabled = !process.argv.includes("--no-sandbox");
+
     const compositionType =
       (typeof agent.composition === "object" ? agent.composition?.type : agent.composition) ||
       (agent.genome.length >= 2 ? "Seq" : "Single");
 
     const separator = compositionType === "Par" ? " ∥ " : " → ";
+    const sandboxConstraints = JSON.stringify({
+      max_fuel: 50_000_000_000,
+      max_memory_bytes: 256 * 1024 * 1024,
+      max_execution_time_ms: 60_000,
+      allowed_host_functions: [],
+      denied_host_functions: [],
+    });
     display.info(`Agent: ${agent.name} (${agent.id})`);
     display.info(`Composition: ${compositionType}`);
     display.info(`Pipeline: ${agent.genome.join(separator)}`);
     console.log();
 
     const genesDir = join(root, config.genes_dir);
-    const binding = options.sandbox ? tryLoadBinding() : null;
+    const binding = sandboxEnabled ? tryLoadBinding() : null;
     const startTime = performance.now();
 
     // TryPool: domain-based failover with fitness tracking
@@ -136,14 +145,16 @@ export const agentRunCommand = new Command("run")
         const stepStart = performance.now();
         try {
           const irWasm = readFileSync(irWasmPath) as Buffer;
-          const phenotype = existsSync(phenotypePath)
-            ? readFileSync(phenotypePath, "utf-8")
-            : "{}";
+          const rawPhenotype = existsSync(phenotypePath)
+            ? JSON.parse(readFileSync(phenotypePath, "utf-8"))
+            : {};
+          const { irHash: _strip, ...phenotypeForExec } = rawPhenotype;
 
           const result = binding.executeGene(
             irWasm,
             JSON.stringify(current),
-            phenotype
+            JSON.stringify(phenotypeForExec),
+            sandboxConstraints,
           );
 
           const stepElapsed = performance.now() - stepStart;
@@ -471,11 +482,19 @@ async function buildGeneExecutor(
 ): Promise<(input: unknown) => Promise<GeneExecutionResult>> {
   if (hasWasm && binding) {
     const wasmBytes = readFileSync(irWasmPath) as Buffer;
-    const phenoStr = JSON.stringify(phenotype);
+    const { irHash: _strip, ...phenotypeForExec } = phenotype;
+    const phenoStr = JSON.stringify(phenotypeForExec);
+    const sandboxConstraints = JSON.stringify({
+      max_fuel: 50_000_000_000,
+      max_memory_bytes: 256 * 1024 * 1024,
+      max_execution_time_ms: 60_000,
+      allowed_host_functions: [],
+      denied_host_functions: [],
+    });
     return async (input: unknown): Promise<GeneExecutionResult> => {
       const start = performance.now();
       try {
-        const result = binding.executeGene(wasmBytes, JSON.stringify(input), phenoStr);
+        const result = binding.executeGene(wasmBytes, JSON.stringify(input), phenoStr, sandboxConstraints);
         const elapsed = performance.now() - start;
         logGeneExecution({
           geneName, success: result.success, durationMs: elapsed,

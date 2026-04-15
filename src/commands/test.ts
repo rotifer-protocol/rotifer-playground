@@ -94,10 +94,19 @@ export const testCommand = new Command("test")
       display.info("Test 6: WASM Sandbox — executeGene() Execution");
       try {
         const irWasm = readFileSync(irWasmPath) as Buffer;
+        const { irHash: _strip, ...phenotypeForExec } = phenotype;
+        const sandboxConstraints = JSON.stringify({
+          max_fuel: 50_000_000_000,
+          max_memory_bytes: 256 * 1024 * 1024,
+          max_execution_time_ms: 60_000,
+          allowed_host_functions: [],
+          denied_host_functions: [],
+        });
         const result = binding.executeGene(
           irWasm,
           JSON.stringify(testInput),
-          JSON.stringify(phenotype)
+          JSON.stringify(phenotypeForExec),
+          sandboxConstraints,
         );
 
         if (result.success) {
@@ -244,10 +253,19 @@ export const testCommand = new Command("test")
       display.info("C1: Sandbox Execution Verification");
       if (hasIrWasm && binding) {
         const irWasm = readFileSync(irWasmPath) as Buffer;
+        const { irHash: _strip, ...phenotypeForExec } = phenotype;
+        const sandboxConstraints = JSON.stringify({
+          max_fuel: 50_000_000_000,
+          max_memory_bytes: 256 * 1024 * 1024,
+          max_execution_time_ms: 60_000,
+          allowed_host_functions: [],
+          denied_host_functions: [],
+        });
         const result = binding.executeGene(
           irWasm,
           JSON.stringify(testInput),
-          JSON.stringify(phenotype)
+          JSON.stringify(phenotypeForExec),
+          sandboxConstraints,
         );
         if (result.success && result.sandboxType === "wasm") {
           passed++;
@@ -264,10 +282,19 @@ export const testCommand = new Command("test")
       display.info("C2: Fuel Consumption Verification");
       if (hasIrWasm && binding) {
         const irWasm = readFileSync(irWasmPath) as Buffer;
+        const { irHash: _strip, ...phenotypeForExec } = phenotype;
+        const sandboxConstraints = JSON.stringify({
+          max_fuel: 50_000_000_000,
+          max_memory_bytes: 256 * 1024 * 1024,
+          max_execution_time_ms: 60_000,
+          allowed_host_functions: [],
+          denied_host_functions: [],
+        });
         const result = binding.executeGene(
           irWasm,
           JSON.stringify(testInput),
-          JSON.stringify(phenotype)
+          JSON.stringify(phenotypeForExec),
+          sandboxConstraints,
         );
         if (result.fuelConsumed > 0) {
           passed++;
@@ -313,10 +340,19 @@ export const testCommand = new Command("test")
       display.info("C5: Fitness Score Computability");
       if (hasIrWasm && binding) {
         const irWasm = readFileSync(irWasmPath) as Buffer;
+        const { irHash: _strip, ...phenotypeForExec } = phenotype;
+        const sandboxConstraints = JSON.stringify({
+          max_fuel: 50_000_000_000,
+          max_memory_bytes: 256 * 1024 * 1024,
+          max_execution_time_ms: 60_000,
+          allowed_host_functions: [],
+          denied_host_functions: [],
+        });
         const result = binding.executeGene(
           irWasm,
           JSON.stringify(testInput),
-          JSON.stringify(phenotype)
+          JSON.stringify(phenotypeForExec),
+          sandboxConstraints,
         );
         if (result.success && result.fuelConsumed > 0 && result.durationMs >= 0) {
           passed++;

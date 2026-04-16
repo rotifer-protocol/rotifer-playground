@@ -195,6 +195,8 @@ describe("Javy TS→WASM compilation (v0.3)", () => {
   });
 
   it("prefers TS source over a stale existing gene.wasm", () => {
+    if (!javyAvailable) return;
+
     writePhenotype(projectDir, "ts-gene");
     writeGeneSource(
       projectDir,

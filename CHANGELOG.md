@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.6] - 2026-04-16
+
+### Fixed
+
+- **Javy async Gene WASM trap** — `express()` returning a Promise now produces a clear error message instead of an opaque "Pending jobs in the event queue" WASM trap ([#29](https://github.com/rotifer-protocol/rotifer-playground/pull/29))
+- **Compile cache ignoring source changes** — `rotifer compile` now prefers TypeScript/JavaScript source files over a stale `gene.wasm`; previously, the existing WASM was reused even after source edits ([#29](https://github.com/rotifer-protocol/rotifer-playground/pull/29))
+- **irHash serialization mismatch** — phenotype `irHash` field is now stripped before passing to the native Rust binding, preventing serde deserialization failures on the native execution path ([#29](https://github.com/rotifer-protocol/rotifer-playground/pull/29))
+- **WASM sandbox fuel exhaustion** — default `max_fuel` increased from 1M to 500M; default memory raised to 256 MiB; timeout extended to 60s — Javy/QuickJS Genes no longer hit "fuel exhausted" on trivial workloads ([#29](https://github.com/rotifer-protocol/rotifer-playground/pull/29))
+
+### Added
+
+- **Native addon distribution** — prebuilt native bindings are now shipped via platform-specific npm packages (`@rotifer/playground-darwin-arm64`, `-darwin-x64`, `-linux-x64-gnu`, `-win32-x64-msvc`); `npm install` automatically pulls the correct binary for the user's platform ([#28](https://github.com/rotifer-protocol/rotifer-playground/issues/28))
+- **`napi-build.yml` reusable workflow** — 4-platform matrix build for native addons (macOS ARM/x64, Linux x64, Windows x64)
+- **`sync:native-versions` script** — one-command version sync across all platform packages
+- **Version alignment checks** — `verify:versions` now validates platform package versions and `optionalDependencies` consistency
+
+### Changed
+
+- Release pipeline now builds and publishes native addons before the main package (`native-build → publish-native → publish`)
+- CI `rust-check` job now verifies napi compilation with `@napi-rs/cli` instead of `cargo build`
+
+### Thanks
+
+- [@user](https://github.com/rotifer-protocol/rotifer-playground/issues/28) for reporting all four runtime bugs and contributing the initial fix in PR #29
+
 ## [0.8.5] - 2026-04-08
 
 ### Changed

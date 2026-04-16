@@ -60,7 +60,7 @@ export const runCommand = new Command("run")
         return;
       }
 
-      const sandboxEnabled = !process.argv.includes("--no-sandbox");
+      const isSandboxEnabled = !process.argv.includes("--no-sandbox");
 
       if (options.verbose) {
         display.keyValue("Gene", geneName);
@@ -73,7 +73,7 @@ export const runCommand = new Command("run")
       const wasmPath = join(geneDir, "gene.ir.wasm");
       const sourcePath = join(geneDir, "index.ts");
 
-      if (existsSync(wasmPath) && sandboxEnabled) {
+      if (existsSync(wasmPath) && isSandboxEnabled) {
         display.info("Running via WASM sandbox...");
         try {
           const { tryLoadBinding } = await import("../utils/binding.js");

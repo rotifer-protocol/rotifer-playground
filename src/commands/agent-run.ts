@@ -67,7 +67,7 @@ export const agentRunCommand = new Command("run")
       process.exit(1);
     }
 
-    const sandboxEnabled = !process.argv.includes("--no-sandbox");
+    const isSandboxEnabled = !process.argv.includes("--no-sandbox");
 
     const compositionType =
       (typeof agent.composition === "object" ? agent.composition?.type : agent.composition) ||
@@ -80,7 +80,7 @@ export const agentRunCommand = new Command("run")
     console.log();
 
     const genesDir = join(root, config.genes_dir);
-    const binding = sandboxEnabled ? tryLoadBinding() : null;
+    const binding = isSandboxEnabled ? tryLoadBinding() : null;
     const startTime = performance.now();
 
     // TryPool: domain-based failover with fitness tracking

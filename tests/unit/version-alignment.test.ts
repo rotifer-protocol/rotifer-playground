@@ -11,8 +11,11 @@ function writeFile(path: string, content: string) {
   writeFileSync(path, content, "utf8");
 }
 
+const PLATFORMS = ["darwin-arm64", "darwin-x64", "linux-x64-gnu", "win32-x64-msvc"];
+
 function createFixture(options?: {
   workspaceVersion?: string;
+  npmVersion?: string;
   napiPackageVersion?: string;
   rotiferCoreDependencyVersion?: string;
   corePublish?: boolean;
@@ -22,6 +25,7 @@ function createFixture(options?: {
   tempRoots.push(root);
 
   const workspaceVersion = options?.workspaceVersion ?? "0.5.0";
+  const npmVersion = options?.npmVersion ?? workspaceVersion;
   const napiPackageVersion = options?.napiPackageVersion ?? workspaceVersion;
   const rotiferCoreDependencyVersion = options?.rotiferCoreDependencyVersion ?? workspaceVersion;
   const corePublish = options?.corePublish ?? false;
@@ -40,6 +44,22 @@ license = "Apache-2.0"
 repository = "https://github.com/rotifer-protocol/rotifer-playground"
 `,
   );
+
+  const optDeps: Record<string, string> = {};
+  for (const p of PLATFORMS) {
+    optDeps[`@rotifer/playground-${p}`] = npmVersion;
+  }
+  writeFile(
+    join(root, "package.json"),
+    JSON.stringify({ name: "@rotifer/playground", version: npmVersion, optionalDependencies: optDeps }, null, 2) + "\n",
+  );
+
+  for (const p of PLATFORMS) {
+    writeFile(
+      join(root, "npm", p, "package.json"),
+      JSON.stringify({ name: `@rotifer/playground-${p}`, version: npmVersion }, null, 2) + "\n",
+    );
+  }
 
   writeFile(
     join(root, "crates/rotifer-core/Cargo.toml"),

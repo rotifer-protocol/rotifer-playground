@@ -7,7 +7,7 @@
 [![Protocol](https://img.shields.io/badge/Protocol-Frozen-orange)](https://github.com/rotifer-protocol/rotifer-spec)
 [![Discord](https://img.shields.io/discord/placeholder?label=Discord&logo=discord&color=5865F2)](https://rotifer.dev/discord)
 
-Development environment for the **Rotifer Protocol** — build genes, compete in Arenas, share via Cloud, and simulate agent evolution.
+Development environment for the **Rotifer Protocol** — **WASM-Native, Polyglot by Design**: build genes in TypeScript / Rust / AssemblyScript / Go / C, compete in Arenas, share via Cloud, and simulate agent evolution.
 
 > **Status:** v0.8.5 — public playground for gene development, Arena competition, and protocol experimentation. This public release line consolidates the shipped `v0.8.x` surface into one coherent version. See [CHANGELOG.md](CHANGELOG.md) for detailed release history. P2P implementation and L4 Collective Immunity are still planned — see [Implementation Status](#implementation-status) below.
 

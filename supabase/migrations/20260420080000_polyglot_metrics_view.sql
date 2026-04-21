@@ -19,7 +19,8 @@ WITH team AS (
   -- ⚠️ Replace placeholder usernames before deploying. Keep in sync with
   --    rotifer-admin/src/lib/team-whitelist.ts
   SELECT unnest(ARRAY[
-    'rotifer-protocol'
+    'rotifer-protocol',
+    'web3xiaoba'
   ]::text[]) AS github_username
 ),
 published_with_owner AS (

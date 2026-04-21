@@ -97,6 +97,9 @@ jobs:
     name: Publish Native Packages
     runs-on: ubuntu-latest
     needs: [cross-platform, native-build, rust-test]
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       matrix:
         pkg: [darwin-arm64, darwin-x64, linux-x64-gnu, win32-x64-msvc]
@@ -116,7 +119,7 @@ jobs:
 
       - name: Publish platform package
         working-directory: npm/${{ matrix.pkg }}
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -124,6 +127,9 @@ jobs:
     name: Publish Main Package
     runs-on: ubuntu-latest
     needs: [publish-native]
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -140,7 +146,7 @@ jobs:
         run: npm run build
 
       - name: Publish
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

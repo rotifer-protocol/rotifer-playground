@@ -9,7 +9,8 @@
   ],
   "main": "index.win32-x64-msvc.node",
   "files": [
-    "index.win32-x64-msvc.node"
+    "index.win32-x64-msvc.node",
+    "README.md"
   ],
   "description": "Rotifer Playground native binding for Windows x64",
   "license": "Apache-2.0",

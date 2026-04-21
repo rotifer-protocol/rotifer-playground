@@ -9,7 +9,7 @@
 
 Development environment for the **Rotifer Protocol** — **WASM-Native, Polyglot by Design**: build genes in TypeScript / Rust / AssemblyScript / Go / C, compete in Arenas, share via Cloud, and simulate agent evolution.
 
-> **Status:** v0.8.5 — public playground for gene development, Arena competition, and protocol experimentation. This public release line consolidates the shipped `v0.8.x` surface into one coherent version. See [CHANGELOG.md](CHANGELOG.md) for detailed release history. P2P implementation and L4 Collective Immunity are still planned — see [Implementation Status](#implementation-status) below.
+> **Status:** v0.8.6 — CLI runtime bugfix release: fixes Javy shim async traps, compile cache staleness, irHash serde incompatibility, fuel exhaustion, and native addon distribution. All four platforms now ship prebuilt `.node` binaries via optional dependencies. See [CHANGELOG.md](CHANGELOG.md) for full release history. P2P implementation and L4 Collective Immunity are still planned — see [Implementation Status](#implementation-status) below.
 
 ---
 

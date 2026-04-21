@@ -9,7 +9,8 @@
   ],
   "main": "index.linux-x64-gnu.node",
   "files": [
-    "index.linux-x64-gnu.node"
+    "index.linux-x64-gnu.node",
+    "README.md"
   ],
   "description": "Rotifer Playground native binding for Linux x64 (glibc)",
   "license": "Apache-2.0",

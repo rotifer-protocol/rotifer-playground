@@ -9,7 +9,8 @@
   ],
   "main": "index.darwin-x64.node",
   "files": [
-    "index.darwin-x64.node"
+    "index.darwin-x64.node",
+    "README.md"
   ],
   "description": "Rotifer Playground native binding for macOS x64",
   "license": "Apache-2.0",

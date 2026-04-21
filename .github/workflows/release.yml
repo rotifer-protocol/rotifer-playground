@@ -119,9 +119,7 @@ jobs:
 
       - name: Publish platform package
         working-directory: npm/${{ matrix.pkg }}
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
 
   publish:
     name: Publish Main Package
@@ -146,9 +144,7 @@ jobs:
         run: npm run build
 
       - name: Publish
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
 
   github-release:
     name: GitHub Release

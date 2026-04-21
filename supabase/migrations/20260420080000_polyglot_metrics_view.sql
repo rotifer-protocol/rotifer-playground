@@ -19,7 +19,7 @@ WITH team AS (
   -- ⚠️ Replace placeholder usernames before deploying. Keep in sync with
   --    rotifer-admin/src/lib/team-whitelist.ts
   SELECT unnest(ARRAY[
-    '__TEAM_GITHUB_USERNAME_TODO__'
+    'xiaoba-dev'
   ]::text[]) AS github_username
 ),
 published_with_owner AS (

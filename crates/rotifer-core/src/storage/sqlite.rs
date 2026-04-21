@@ -211,7 +211,7 @@ impl ArenaStore for SqliteStore {
             .filter_map(|data| serde_json::from_str::<ArenaEntry>(&data).ok())
             .collect();
 
-        entries.sort_by(|a, b| a.rank.cmp(&b.rank));
+        entries.sort_by_key(|a| a.rank);
         Ok(entries)
     }
 }

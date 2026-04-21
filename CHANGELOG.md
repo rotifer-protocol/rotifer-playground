@@ -26,10 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release pipeline now builds and publishes native addons before the main package (`native-build → publish-native → publish`)
 - CI `rust-check` job now verifies napi compilation with `@napi-rs/cli` instead of `cargo build`
 
-### Thanks
-
-- [@user](https://github.com/rotifer-protocol/rotifer-playground/issues/28) for reporting all four runtime bugs and contributing the initial fix in PR #29
-
 ## [0.8.5] - 2026-04-08
 
 ### Changed

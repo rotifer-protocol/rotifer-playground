@@ -15,6 +15,11 @@ import { refreshDomainCacheFromCloud } from "../utils/domain-suggest.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { contentHash } from "../utils/content-hash.js";
 import { runPrePublishChecks, type CheckItem } from "../publish/pre-publish-check.js";
+import {
+  detectSourceLanguage,
+  isValidSourceLanguage,
+  type SourceLanguage,
+} from "../utils/detect-source-language.js";
 
 interface PublishOptions {
   description?: string;
@@ -22,6 +27,7 @@ interface PublishOptions {
   skipArena?: boolean;
   skipSecurity?: boolean;
   all?: boolean;
+  lang?: string;
 }
 
 interface PublishResult {
@@ -127,6 +133,32 @@ async function publishSingleGene(
     };
   }
 
+  const explicitLang = options.lang?.toLowerCase();
+  if (explicitLang && !isValidSourceLanguage(explicitLang)) {
+    return {
+      name: geneName,
+      status: "failed",
+      error: `Invalid --lang value '${options.lang}'. Allowed: typescript|rust|assemblyscript|go|c|external|unknown`,
+    };
+  }
+  const detectedLang = detectSourceLanguage(geneDir);
+  const sourceLanguage: SourceLanguage =
+    (explicitLang as SourceLanguage | undefined) ??
+    (typeof phenotype.sourceLanguage === "string" &&
+    isValidSourceLanguage(phenotype.sourceLanguage)
+      ? (phenotype.sourceLanguage as SourceLanguage)
+      : detectedLang);
+  phenotype.sourceLanguage = sourceLanguage;
+
+  if (!isQuiet) {
+    const origin = explicitLang
+      ? "explicit --lang"
+      : phenotype.sourceLanguage === detectedLang
+        ? "auto-detected"
+        : "from phenotype.json";
+    display.info(`Source language: ${sourceLanguage} (${origin})`);
+  }
+
   const description =
     options.description ||
     phenotype.description ||
@@ -200,6 +232,10 @@ export const publishCommand = new Command("publish")
   .option("--skip-arena", "skip automatic Arena submission and reputation computation")
   .option("--skip-security", "skip pre-publish security checks (dangerous API / IR / secrets scan)")
   .option("--all", "publish all valid genes in the genes directory")
+  .option(
+    "--lang <lang>",
+    "explicitly declare source language (typescript|rust|assemblyscript|go|c|external)",
+  )
   .action(async (geneName: string | undefined, options: PublishOptions) => {
     if (!geneName && !options.all) {
       display.error("Provide a gene name or use --all to publish all genes.");

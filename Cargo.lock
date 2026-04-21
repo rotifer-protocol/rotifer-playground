@@ -1242,7 +1242,7 @@ dependencies = [
 
 [[package]]
 name = "rotifer-core"
-version = "0.5.0"
+version = "0.8.6"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1264,7 +1264,7 @@ dependencies = [
 
 [[package]]
 name = "rotifer-napi"
-version = "0.5.0"
+version = "0.8.6"
 dependencies = [
  "hex",
  "napi",

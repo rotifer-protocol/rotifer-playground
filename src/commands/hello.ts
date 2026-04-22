@@ -110,6 +110,13 @@ interface PipelineExecutionResult {
   error?: string;
 }
 
+interface GenomeResolution {
+  genome: string[];
+  missingPrimary: string[];
+  fallbackAvailable: string[];
+  fallbackCompatible: string[];
+}
+
 export const helloCommand = new Command("hello")
   .description("Interactive agent builder — create and run an agent in seconds")
   .option("--template <id>", "skip TUI and use a template by ID")
@@ -150,11 +157,23 @@ export const helloCommand = new Command("hello")
       selected = await promptTemplateSelection();
     }
 
-    const availableGenes = resolveAvailableGenes(selected, genesDir);
+    const resolution = resolveAvailableGenes(selected, genesDir);
+    const availableGenes = resolution.genome;
 
     if (availableGenes.length === 0) {
       display.error("None of the required genes are available in this project");
-      display.hint("Run `rotifer init` first to install genesis genes");
+      if (resolution.missingPrimary.length > 0) {
+        display.hint(`Missing primary genes: ${resolution.missingPrimary.join(", ")}`);
+      }
+      if (
+        resolution.fallbackAvailable.length > 0 &&
+        resolution.fallbackCompatible.length === 0
+      ) {
+        display.hint(
+          `Fallback genes found but incompatible with template input contract: ${resolution.fallbackAvailable.join(", ")}`
+        );
+      }
+      display.hint("Install/import the required genes, or choose another template");
       process.exit(1);
     }
 
@@ -485,16 +504,55 @@ async function promptTemplateSelection(): Promise<HelloTemplate> {
   return selected;
 }
 
-function resolveAvailableGenes(template: HelloTemplate, genesDir: string): string[] {
-  const primaryAvailable = template.genes.filter((g) =>
-    existsSync(join(genesDir, g, "phenotype.json"))
+function resolveAvailableGenes(template: HelloTemplate, genesDir: string): GenomeResolution {
+  const missingPrimary = template.genes.filter((g) =>
+    !existsSync(join(genesDir, g, "phenotype.json"))
   );
 
-  if (primaryAvailable.length > 0) return primaryAvailable;
+  if (missingPrimary.length === 0) {
+    return {
+      genome: template.genes,
+      missingPrimary: [],
+      fallbackAvailable: [],
+      fallbackCompatible: [],
+    };
+  }
 
-  return template.fallbackGenes.filter((g) =>
+  const fallbackAvailable = template.fallbackGenes.filter((g) =>
     existsSync(join(genesDir, g, "phenotype.json"))
   );
+  const fallbackCompatible = fallbackAvailable.filter((g) =>
+    isFallbackCompatibleWithTemplateInput(g, genesDir, template.exampleInput)
+  );
+
+  return {
+    genome: fallbackCompatible.length > 0 ? [fallbackCompatible[0]] : [],
+    missingPrimary,
+    fallbackAvailable,
+    fallbackCompatible,
+  };
+}
+
+function isFallbackCompatibleWithTemplateInput(
+  geneName: string,
+  genesDir: string,
+  exampleInput: Record<string, unknown>,
+): boolean {
+  const phenotypePath = join(genesDir, geneName, "phenotype.json");
+  if (!existsSync(phenotypePath)) return false;
+
+  try {
+    const phenotype = JSON.parse(readFileSync(phenotypePath, "utf-8"));
+    const required = Array.isArray(phenotype?.inputSchema?.required)
+      ? (phenotype.inputSchema.required as string[])
+      : [];
+    if (required.length === 0) return true;
+
+    const keys = new Set(Object.keys(exampleInput));
+    return required.every((key) => keys.has(key));
+  } catch {
+    return false;
+  }
 }
 
 async function promptInputSelection(

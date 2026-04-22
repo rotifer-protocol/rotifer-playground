@@ -134,6 +134,39 @@ describe("rotifer hello", () => {
     expect(stdout).toContain("None of the required genes");
   });
 
+  it("does not run incompatible fallback genome for web3 template", () => {
+    addGene(projectDir, "genesis-code-format", {
+      name: "genesis-code-format",
+      version: "0.2.0",
+      domain: "tooling",
+      fidelity: "Native",
+      inputSchema: {
+        type: "object",
+        required: ["code", "language"],
+        properties: { code: { type: "string" }, language: { type: "string" } },
+      },
+      outputSchema: { type: "object", properties: { formatted: { type: "string" } } },
+    });
+    addGene(projectDir, "genesis-file-read", {
+      name: "genesis-file-read",
+      version: "0.2.0",
+      domain: "filesystem",
+      fidelity: "Native",
+      inputSchema: {
+        type: "object",
+        required: ["path"],
+        properties: { path: { type: "string" } },
+      },
+      outputSchema: { type: "object", properties: { content: { type: "string" } } },
+    });
+
+    const { stdout, exitCode } = run("hello --template web3-toolkit", projectDir);
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain("None of the required genes");
+    expect(stdout).toContain("Fallback genes found but incompatible");
+    expect(stdout).not.toContain("Cannot read properties of undefined");
+  });
+
   it("hides protocol insights when directory scan yields no effective input", () => {
     addGene(projectDir, "solidity-parser", {
       name: "solidity-parser",

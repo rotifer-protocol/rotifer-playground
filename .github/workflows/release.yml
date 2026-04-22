@@ -97,6 +97,7 @@ jobs:
     name: Publish Native Packages
     runs-on: ubuntu-latest
     needs: [cross-platform, native-build, rust-test]
+    environment: npm
     permissions:
       contents: read
       id-token: write
@@ -108,8 +109,17 @@ jobs:
 
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
-          node-version: "22"
-          registry-url: "https://registry.npmjs.org"
+          node-version: "24"
+
+      - name: Resolve release version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [ -z "$VERSION" ]; then
+            echo "Release version is empty" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Download native artifact
         uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4
@@ -117,7 +127,28 @@ jobs:
           name: native-${{ matrix.pkg }}
           path: npm/${{ matrix.pkg }}/
 
+      - name: Ensure package version matches release version
+        working-directory: npm/${{ matrix.pkg }}
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$PKG_VERSION" != "${{ steps.version.outputs.version }}" ]; then
+            echo "package.json version ($PKG_VERSION) does not match release version (${{ steps.version.outputs.version }})" >&2
+            exit 1
+          fi
+
+      - name: Check whether platform package already exists on npm
+        id: npm_check
+        working-directory: npm/${{ matrix.pkg }}
+        run: |
+          PKG_NAME="$(node -p "require('./package.json').name")"
+          if npm view "${PKG_NAME}@${{ steps.version.outputs.version }}" version >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish platform package
+        if: steps.npm_check.outputs.already_published != 'true'
         working-directory: npm/${{ matrix.pkg }}
         run: npm publish --access public --provenance
 
@@ -125,6 +156,7 @@ jobs:
     name: Publish Main Package
     runs-on: ubuntu-latest
     needs: [publish-native]
+    environment: npm
     permissions:
       contents: read
       id-token: write
@@ -133,9 +165,18 @@ jobs:
 
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
-          node-version: "22"
-          registry-url: "https://registry.npmjs.org"
+          node-version: "24"
           cache: "npm"
+
+      - name: Resolve release version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [ -z "$VERSION" ]; then
+            echo "Release version is empty" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: npm ci
@@ -143,7 +184,25 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Ensure package version matches release version
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$PKG_VERSION" != "${{ steps.version.outputs.version }}" ]; then
+            echo "package.json version ($PKG_VERSION) does not match release version (${{ steps.version.outputs.version }})" >&2
+            exit 1
+          fi
+
+      - name: Check whether main package already exists on npm
+        id: npm_check
+        run: |
+          if npm view "@rotifer/playground@${{ steps.version.outputs.version }}" version >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish
+        if: steps.npm_check.outputs.already_published != 'true'
         run: npm publish --access public --provenance
 
   github-release:

@@ -124,7 +124,7 @@
       },
       {
         "command": "rotifer.initProject",
-        "title": "Rotifer: Initialize Project"
+        "title": "Rotifer: Initialize Agent Workspace"
       },
       {
         "command": "rotifer.scanGenes",
@@ -288,7 +288,7 @@
     "viewsWelcome": [
       {
         "view": "rotiferGenes",
-        "contents": "Welcome to Rotifer Protocol!\n\nBrowse and install self-evolving AI Genes.\n[Browse Gene Registry](command:rotifer.refreshGenes)\n[Search Genes](command:rotifer.searchGenes)\n[Initialize Project](command:rotifer.initProject)"
+        "contents": "Welcome to Rotifer Protocol!\n\nBrowse and install self-evolving AI Genes.\n[Browse Gene Registry](command:rotifer.refreshGenes)\n[Search Genes](command:rotifer.searchGenes)\n[Initialize Agent Workspace](command:rotifer.initProject)"
       },
       {
         "view": "rotiferLocalGenes",

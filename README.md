@@ -22,7 +22,7 @@ npm install -g @rotifer/playground
 Or use directly via npx:
 
 ```bash
-npx @rotifer/playground init my-project
+npx -y @rotifer/playground@latest init my-agent
 ```
 
 **Requirements:** Node.js >= 20.0.0
@@ -32,23 +32,22 @@ npx @rotifer/playground init my-project
 ## First Agent in Seconds
 
 ```bash
-rotifer init my-project && cd my-project
-rotifer hello --list-templates
-rotifer hello
+rotifer init my-agent && cd my-agent
+rotifer hello --template quality-advisor
 ```
 
-`rotifer init` bootstraps the local Arena and Genesis genes. `rotifer hello` is the preset-agent entrypoint: pick a curated template and run an agent immediately.
+`rotifer init` bootstraps the local Arena and Genesis genes. `rotifer hello --template quality-advisor` is the recommended preset-agent entrypoint for a first run.
 
 ---
 
 ## 30-Second Demo
 
 ```bash
-$ rotifer init my-project
+$ rotifer init my-agent
 
-  Rotifer Protocol - Project Initialization
+  Rotifer Protocol - Agent Workspace Initialization
   ───────────────────────────────────────────
-✓ Project scaffolding created
+✓ Agent workspace scaffolding created
 ℹ Installing Genesis genes...
 ✓ 5 Genesis genes installed
 
@@ -64,10 +63,10 @@ $ rotifer init my-project
   6   hello-world                 general       0.57    Wrapped
 
 ℹ 6 genes across 5 domain(s) — Arena is alive!
-✓ Project ready: my-project
+✓ Agent workspace ready: my-agent
 ```
 
-One command boots the Arena. `rotifer hello` turns those bundled genes into your first preset agent.
+One command boots the Arena. `rotifer hello --template quality-advisor` turns those bundled genes into your first preset agent.
 
 ---
 
@@ -76,7 +75,7 @@ One command boots the Arena. `rotifer hello` turns those bundled genes into your
 ### Act 1 — Wow (30 seconds)
 
 ```bash
-rotifer init my-project && cd my-project
+rotifer init my-agent && cd my-agent
 ```
 
 You see an Arena with 6 genes ranked by fitness. No configuration needed.
@@ -84,8 +83,7 @@ You see an Arena with 6 genes ranked by fitness. No configuration needed.
 ### Act 2 — Aha (5 minutes)
 
 ```bash
-rotifer hello --list-templates     # See curated Quick Start and Power templates
-rotifer hello                      # Pick a template interactively and run it now
+rotifer hello --template quality-advisor # Run the recommended preset Agent
 rotifer agent list                 # Inspect the generated hello-* agent
 ```
 
@@ -163,14 +161,14 @@ Run `rotifer --help` for the grouped command list. The commands below cover the 
 
 | Command | Description |
 |---------|-------------|
-| `rotifer init [gene-name]` | Initialize a new gene project with Genesis genes |
-| `rotifer hello [--template <id>]` | Create and run a preset agent from curated templates inside a Rotifer project |
+| `rotifer init [workspace-name]` | Initialize a new Agent workspace with Genesis genes |
+| `rotifer hello [--template <id>]` | Create and run a preset agent from curated templates inside a Rotifer Agent workspace |
 | `rotifer scan [path]` | Scan for candidate genes and local skills |
 | `rotifer wrap <gene-name>` | Wrap a function or SKILL.md as a gene |
 | `rotifer test [gene-name]` | Test a gene (WASM sandbox preferred, `--compliance` for structural checks) |
 | `rotifer compile [gene-name]` | Compile gene to Rotifer IR (auto TS→WASM) |
 | `rotifer run <gene-name>` | Execute a single local gene directly |
-| `rotifer list` | List local genes in the current project |
+| `rotifer list` | List local genes in the current Agent workspace |
 | `rotifer login` | Log in to Rotifer Cloud (OAuth) |
 | `rotifer logout` | Log out from Rotifer Cloud |
 | `rotifer publish [gene-name]` | Publish gene(s) to Rotifer Cloud |
@@ -197,7 +195,7 @@ Run `rotifer --help` for the grouped command list. The commands below cover the 
 
 ## Genesis Genes
 
-Five pre-installed genes ship with every project:
+Five pre-installed genes ship with every Agent workspace:
 
 | Gene | Domain | Fidelity | Description |
 |------|--------|----------|-------------|

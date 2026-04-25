@@ -22,7 +22,7 @@ npm install -g @rotifer/playground
 或通过 npx 直接使用：
 
 ```bash
-npx @rotifer/playground init my-project
+npx -y @rotifer/playground@latest init my-agent
 ```
 
 **环境要求：** Node.js >= 20.0.0
@@ -32,23 +32,22 @@ npx @rotifer/playground init my-project
 ## 几秒钟跑通第一个 Agent
 
 ```bash
-rotifer init my-project && cd my-project
-rotifer hello --list-templates
-rotifer hello
+rotifer init my-agent && cd my-agent
+rotifer hello --template quality-advisor
 ```
 
-`rotifer init` 先把本地 Arena 和 Genesis genes 建起来；`rotifer hello` 则是预设 agent 的主入口：从精选模板里挑一个，立刻创建并运行。
+`rotifer init` 先把本地 Arena 和 Genesis genes 建起来；`rotifer hello --template quality-advisor` 则是推荐的首次预设 Agent 入口。
 
 ---
 
 ## 30 秒演示
 
 ```bash
-$ rotifer init my-project
+$ rotifer init my-agent
 
-  Rotifer Protocol - Project Initialization
+  Rotifer Protocol - Agent Workspace Initialization
   ───────────────────────────────────────────
-✓ Project scaffolding created
+✓ Agent workspace scaffolding created
 ℹ Installing Genesis genes...
 ✓ 5 Genesis genes installed
 
@@ -64,10 +63,10 @@ $ rotifer init my-project
   6   hello-world                 general       0.57    Wrapped
 
 ℹ 6 genes across 5 domain(s) — Arena is alive!
-✓ Project ready: my-project
+✓ Agent workspace ready: my-agent
 ```
 
-一条命令先把 Arena 跑起来；`rotifer hello` 再把这些内置基因收口成你的第一个预设 agent。
+一条命令先把 Arena 跑起来；`rotifer hello --template quality-advisor` 再把这些内置基因收口成你的第一个预设 Agent。
 
 ---
 
@@ -76,7 +75,7 @@ $ rotifer init my-project
 ### 第一幕——Wow（30 秒）
 
 ```bash
-rotifer init my-project && cd my-project
+rotifer init my-agent && cd my-agent
 ```
 
 你将看到一个包含 6 个基因的 Arena，按适应度排名。无需任何配置。
@@ -84,8 +83,7 @@ rotifer init my-project && cd my-project
 ### 第二幕——Aha（5 分钟）
 
 ```bash
-rotifer hello --list-templates     # 查看 Quick Start / Power 模板
-rotifer hello                      # 交互式选择模板并立即运行
+rotifer hello --template quality-advisor # 运行推荐的预设 Agent
 rotifer agent list                 # 查看生成的 hello-* agent
 ```
 
@@ -163,14 +161,14 @@ playground/
 
 | 命令 | 说明 |
 |------|------|
-| `rotifer init [gene-name]` | 初始化新的 Rotifer 基因项目 |
-| `rotifer hello [--template <id>]` | 在 Rotifer 项目内从精选模板创建并运行一个预设 agent |
+| `rotifer init [workspace-name]` | 初始化新的 Rotifer Agent 工作区 |
+| `rotifer hello [--template <id>]` | 在 Rotifer Agent 工作区内从精选模板创建并运行一个预设 agent |
 | `rotifer scan [path]` | 扫描候选基因和本地技能 |
 | `rotifer wrap <gene-name>` | 将函数或 `SKILL.md` 包装为基因 |
 | `rotifer test [gene-name]` | 在沙箱中测试基因 |
 | `rotifer compile [gene-name]` | 将基因编译为 Rotifer IR（WASM） |
 | `rotifer run <gene-name>` | 直接执行单个本地基因 |
-| `rotifer list` | 列出当前项目中的本地基因 |
+| `rotifer list` | 列出当前 Agent 工作区中的本地基因 |
 | `rotifer login` | 登录 Rotifer Cloud |
 | `rotifer logout` | 从 Rotifer Cloud 登出 |
 | `rotifer publish [gene-name]` | 将基因发布到 Rotifer Cloud |
@@ -197,7 +195,7 @@ playground/
 
 ## Genesis 基因
 
-每个新项目预装五个基因：
+每个新 Agent 工作区预装五个基因：
 
 | 基因 | 领域 | 保真度 | 说明 |
 |------|------|--------|------|

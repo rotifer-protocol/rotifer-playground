@@ -72,7 +72,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!item?.gene) return;
       const folders = vscode.workspace.workspaceFolders;
       if (!folders || folders.length === 0) {
-        vscode.window.showErrorMessage("Open a Rotifer project folder first.");
+        vscode.window.showErrorMessage("Open a Rotifer Agent workspace folder first.");
         return;
       }
       try {
@@ -236,8 +236,8 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("rotifer.initProject", async () => {
       const name = await vscode.window.showInputBox({
-        prompt: "Project name",
-        value: "my-rotifer-project",
+        prompt: "Agent workspace name",
+        value: "my-agent",
         validateInput: (v) => /^[a-z0-9-]+$/.test(v) ? null : "lowercase, digits, hyphens only",
       });
       if (!name) return;

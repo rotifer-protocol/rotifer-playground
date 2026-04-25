@@ -100,7 +100,7 @@ function formatStatus(row: LocalGene): string {
 }
 
 export const listCommand = new Command("list")
-  .description("List local genes in the current project")
+  .description("List local genes in the current Agent workspace")
   .option("-d, --domain <domain>", "filter by domain")
   .option("--fidelity <type>", "filter by fidelity")
   .option("--top <n>", "show only top N entries")
@@ -110,7 +110,7 @@ export const listCommand = new Command("list")
       try {
         root = getProjectRoot();
       } catch {
-        display.error("Not in a Rotifer project. Run 'rotifer init' first.");
+        display.error("Not in a Rotifer Agent workspace. Run 'rotifer init' first.");
         process.exit(1);
         return;
       }
@@ -125,7 +125,7 @@ export const listCommand = new Command("list")
               "No genes directory found",
               "",
               c.muted("Get started:"),
-              `  ${c.accent("rotifer init")}               ${c.muted("initialize project")}`,
+              `  ${c.accent("rotifer init")}               ${c.muted("initialize Agent workspace")}`,
               `  ${c.accent("rotifer wrap <gene-name>")}    ${c.muted("create your first gene")}`,
             ],
             { title: "Local Gene Inventory" },

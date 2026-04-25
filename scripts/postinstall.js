@@ -30,7 +30,7 @@ console.log("");
 console.log("  " + a + b + "Code as Gene" + r + " " + d + "— Open-source evolution framework for AI agents" + r);
 console.log("");
 console.log("  " + d + "Get started:" + r);
-console.log("    " + a + "rotifer init my-project    " + r + " " + d + "Create a new project" + r);
+console.log("    " + a + "rotifer init my-agent      " + r + " " + d + "Create an Agent workspace" + r);
 console.log("    " + a + "rotifer search             " + r + " " + d + "Browse the gene ecosystem" + r);
 console.log("    " + a + "rotifer --help             " + r + " " + d + "See all commands" + r);
 console.log("");

@@ -36,8 +36,8 @@ Rotifer Protocol models software capabilities as **Genes** — modular, fitness-
 ### Quick Commands
 
 ```
-rotifer init my-project     # Scaffold a project
-rotifer hello               # Interactive agent builder
+rotifer init my-agent     # Scaffold an Agent workspace
+rotifer hello --template quality-advisor # Run recommended preset Agent
 rotifer gene list            # See installed genes
 rotifer search <keyword>     # Find genes
 ```

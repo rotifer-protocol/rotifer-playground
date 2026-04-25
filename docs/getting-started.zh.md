@@ -1,6 +1,6 @@
 # 快速入门
 
-本指南将带你在约 10 分钟内走完完整的 Rotifer 基因生命周期——从项目初始化到运行多基因 Agent 管道。
+本指南将带你在约 10 分钟内走完完整的 Rotifer 基因生命周期——从 Agent 工作区初始化到运行多基因 Agent 管道。
 
 ## 前提条件
 
@@ -10,19 +10,19 @@
 
 > **v0.3 新功能：** `rotifer compile` 现在自动将 TypeScript 基因编译为 Native WASM（通过 [Javy](https://github.com/bytecodealliance/javy)）。无需额外的 Rust/WASM 工具链！
 
-## 1. 初始化项目
+## 1. 初始化 Agent 工作区
 
 ```bash
-npx @rotifer/playground init my-project
-cd my-project
+npx -y @rotifer/playground@latest init my-agent
+cd my-agent
 ```
 
 预期输出：
 
 ```
-  Rotifer Protocol - Project Initialization
+  Rotifer Protocol - Agent Workspace Initialization
   ───────────────────────────────────────────
-✓ Project scaffolding created
+✓ Agent workspace scaffolding created
 ℹ Installing Genesis genes...
 ✓ 5 Genesis genes installed
 
@@ -36,14 +36,14 @@ cd my-project
   4   genesis-web-search-lite     search        0.77    Native
   5   genesis-file-read           filesystem    0.74    Native
 
-✓ Project ready: my-project
+✓ Agent workspace ready: my-agent
 ```
 
 项目结构：
 
 ```
-my-project/
-├── rotifer.config.json
+my-agent/
+├── rotifer.json
 ├── genes/
 │   ├── genesis-web-search/
 │   ├── genesis-web-search-lite/

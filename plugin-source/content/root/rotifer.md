@@ -11,17 +11,16 @@ Rotifer Protocol treats AI capabilities as **Genes** — executable units that c
 
 ```bash
 npm install -g @rotifer/playground
-rotifer init my-project && cd my-project
-rotifer hello
+rotifer init my-agent && cd my-agent
+rotifer hello --template quality-advisor
 ```
 
-`rotifer init` boots the local Arena. `rotifer hello` is the fastest way to create and run a preset agent from curated templates.
+`rotifer init` boots the local Arena. `rotifer hello --template quality-advisor` is the fastest way to create and run a preset agent from curated templates.
 
 ## From Preset Agent to Your Own Gene
 
 ```bash
-rotifer hello --list-templates     # See curated agent presets
-rotifer hello                      # Pick one and run it now
+rotifer hello --template quality-advisor # Run the recommended preset agent
 rotifer scan genes/              # Find candidate functions
 rotifer wrap my-function         # Wrap as a Gene
 rotifer test my-function         # Validate in WASM sandbox

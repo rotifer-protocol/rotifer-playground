@@ -232,9 +232,8 @@ jobs:
 
             ### Quick Start
             ```bash
-            rotifer init my-project && cd my-project
-            rotifer hello --list-templates
-            rotifer hello
+            rotifer init my-agent && cd my-agent
+            rotifer hello --template quality-advisor
             ```
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') }}

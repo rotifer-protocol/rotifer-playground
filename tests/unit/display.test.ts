@@ -380,9 +380,9 @@ describe("display", () => {
       display.setOutputMode("human");
       const origCI = process.env.CI;
       delete process.env.CI;
-      display.welcomeBanner({ version: "1.0.0", message: "Project ready!" });
+      display.welcomeBanner({ version: "1.0.0", message: "Agent workspace ready!" });
       const allOutput = consoleSpy.mock.calls.map((c) => c[0] as string).join("\n");
-      expect(allOutput).toContain("Project ready!");
+      expect(allOutput).toContain("Agent workspace ready!");
       if (origCI !== undefined) process.env.CI = origCI;
     });
 

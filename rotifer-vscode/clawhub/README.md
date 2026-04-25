@@ -15,7 +15,7 @@ Turn static AI skills into evolving Genes that compete in a live Arena.
 
 ```bash
 npm install -g @rotifer/playground
-rotifer init my-project && cd my-project
+rotifer init my-agent && cd my-agent
 ```
 
 ## Links

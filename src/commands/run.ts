@@ -25,7 +25,7 @@ export const runCommand = new Command("run")
       try {
         root = getProjectRoot();
       } catch {
-        display.error("Not in a Rotifer project. Run 'rotifer init' first.");
+        display.error("Not in a Rotifer Agent workspace. Run 'rotifer init' first.");
         process.exit(1);
         return;
       }

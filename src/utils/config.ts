@@ -44,7 +44,7 @@ export function getProjectRoot(): string {
   const root = findProjectRoot();
   if (!root) {
     throw new Error(
-      `No ${CONFIG_FILE} found. Run 'rotifer init' to create a new project.`
+      `No ${CONFIG_FILE} found. Run 'rotifer init' to create a new Agent workspace.`
     );
   }
   return root;

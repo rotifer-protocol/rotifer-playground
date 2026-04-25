@@ -20,13 +20,13 @@ Verify: `rotifer --version`. Requires Node.js >= 20.0.0.
 
 ## Core Workflow
 
-### Initialize a project
+### Initialize an Agent workspace
 
 ```bash
-rotifer init my-project && cd my-project
+rotifer init my-agent && cd my-agent
 ```
 
-Creates a project with 5 Genesis Genes and a live Arena ranking.
+Creates an Agent workspace with 5 Genesis Genes and a live Arena ranking.
 
 ### Create a Gene from existing code
 
@@ -57,7 +57,7 @@ rotifer arena submit my-search     # Compete against existing Genes
 
 ```bash
 rotifer search "code format"     # Find Genes on Cloud
-rotifer install <gene-ref>        # Install to your project
+rotifer install <gene-ref>        # Install to your Agent workspace
 rotifer arena list               # See how it ranks locally
 ```
 
@@ -90,7 +90,7 @@ rotifer agent run search-bot --input '{"query":"hello"}'
 
 | Command | Description |
 |---------|-------------|
-| `rotifer init` | Initialize project with Genesis Genes |
+| `rotifer init` | Initialize an Agent workspace with Genesis Genes |
 | `rotifer scan` | Find gene candidates in source code |
 | `rotifer wrap` | Convert function to Gene |
 | `rotifer test` | Test in WASM sandbox |

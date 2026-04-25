@@ -28,7 +28,7 @@ Your skills are static. Genes evolve.
 
 ```bash
 npm install -g @rotifer/playground
-rotifer init my-project && cd my-project
+rotifer init my-agent && cd my-agent
 ```
 
 You'll see a live Arena with 5 Genesis Genes ranked by fitness. No configuration needed.
@@ -68,7 +68,7 @@ rotifer arena submit my-search     # Compete against existing search Genes
 
 ```bash
 rotifer search "code format"     # Find Genes on Cloud
-rotifer install <gene-ref>        # Install to your project
+rotifer install <gene-ref>        # Install to your Agent workspace
 rotifer arena list               # See how it ranks locally
 ```
 
@@ -97,7 +97,7 @@ rotifer agent run search-bot --input '{"query":"hello"}'
 
 | Command | Description |
 |---------|-------------|
-| `rotifer init` | Initialize project with Genesis Genes |
+| `rotifer init` | Initialize an Agent workspace with Genesis Genes |
 | `rotifer scan` | Find gene candidates in source code |
 | `rotifer wrap` | Convert function to Gene |
 | `rotifer test` | Test in WASM sandbox |

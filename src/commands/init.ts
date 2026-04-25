@@ -22,14 +22,14 @@ const GENESIS_GENES = [
 ];
 
 export const initCommand = new Command("init")
-  .description("Initialize a new Rotifer gene project")
-  .argument("[gene-name]", "gene project name", "my-rotifer-project")
+  .description("Initialize a new Rotifer Agent workspace")
+  .argument("[workspace-name]", "Agent workspace directory name", "my-agent")
   .option("--domain <domain>", "default gene domain", "general")
   .option("--fidelity <level>", "example gene fidelity: Wrapped | Hybrid | Native", "Wrapped")
   .option("--no-genesis", "skip genesis genes installation")
   .action(async (geneName: string, options: { domain: string; fidelity: string; genesis: boolean }) => {
     if (/\.\.[\\/]|[\\/]\.\.|^\.\.$/.test(geneName)) {
-      display.error("Project name must not contain path traversal sequences: " + geneName);
+      display.error("Agent workspace name must not contain path traversal sequences: " + geneName);
       process.exit(1);
     }
 
@@ -48,7 +48,7 @@ export const initCommand = new Command("init")
       process.exit(1);
     }
 
-    display.header("Rotifer Protocol - Project Initialization");
+    display.header("Rotifer Protocol - Agent Workspace Initialization");
 
     mkdirSync(join(projectDir, "genes"), { recursive: true });
     mkdirSync(join(projectDir, "tests"), { recursive: true });
@@ -112,7 +112,7 @@ export const initCommand = new Command("init")
       ".rotifer/\nnode_modules/\ndist/\n*.wasm\n"
     );
 
-    display.success("Project scaffolding created");
+    display.success("Agent workspace scaffolding created");
 
     // Install genesis genes
     if (options.genesis) {
@@ -142,10 +142,10 @@ export const initCommand = new Command("init")
 
     display.welcomeBanner({
       version: cliPkg.version,
-      message: `Project "${geneName}" is ready!`,
+      message: `Agent workspace "${geneName}" is ready!`,
       hints: [
-        ["cd " + geneName, "Enter project directory"],
-        ["rotifer hello", "Discover templates and create your first Agent"],
+        ["cd " + geneName, "Enter Agent workspace"],
+        ["rotifer hello --template quality-advisor", "Run the recommended preset Agent"],
         ["rotifer wrap hello-world", "Create your first gene"],
         ["rotifer test hello-world", "Test in sandbox"],
         ["rotifer publish", "Share to Rotifer Cloud"],

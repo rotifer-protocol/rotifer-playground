@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide walks you through the full Rotifer gene lifecycle in about 10 minutes — from project setup to running a multi-gene Agent pipeline.
+This guide walks you through the full Rotifer gene lifecycle in about 10 minutes — from Agent workspace setup to running a multi-gene Agent pipeline.
 
 ## Prerequisites
 
@@ -10,19 +10,19 @@ This guide walks you through the full Rotifer gene lifecycle in about 10 minutes
 
 > **v0.3 New:** `rotifer compile` now auto-compiles TypeScript genes to Native WASM via [Javy](https://github.com/bytecodealliance/javy). No separate Rust/WASM toolchain required!
 
-## 1. Initialize a Project
+## 1. Initialize an Agent Workspace
 
 ```bash
-npx @rotifer/playground init my-project
-cd my-project
+npx -y @rotifer/playground@latest init my-agent
+cd my-agent
 ```
 
 Expected output:
 
 ```
-  Rotifer Protocol - Project Initialization
+  Rotifer Protocol - Agent Workspace Initialization
   ───────────────────────────────────────────
-✓ Project scaffolding created
+✓ Agent workspace scaffolding created
 ℹ Installing Genesis genes...
 ✓ 5 Genesis genes installed
 
@@ -36,14 +36,14 @@ Expected output:
   4   genesis-web-search-lite     search        0.77    Native
   5   genesis-file-read           filesystem    0.74    Native
 
-✓ Project ready: my-project
+✓ Agent workspace ready: my-agent
 ```
 
 Your project now contains:
 
 ```
-my-project/
-├── rotifer.config.json
+my-agent/
+├── rotifer.json
 ├── genes/
 │   ├── genesis-web-search/
 │   ├── genesis-web-search-lite/

@@ -144,7 +144,7 @@ describe("command handlers (integration with mocks)", () => {
     vi.mocked(vscode.workspace as any).workspaceFolders = [];
     await handler(mockItem);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      "Open a Rotifer project folder first.",
+      "Open a Rotifer Agent workspace folder first.",
     );
   });
 
@@ -290,6 +290,8 @@ describe("command handlers (integration with mocks)", () => {
       ([opts]) => opts && typeof opts === "object" && "validateInput" in opts,
     );
     expect(initInputCall).toBeDefined();
+    expect(initInputCall![0]?.prompt).toBe("Agent workspace name");
+    expect(initInputCall![0]?.value).toBe("my-agent");
     const validateFn = initInputCall![0]?.validateInput;
     expect(validateFn).toBeDefined();
     expect(validateFn!("valid-name")).toBeNull();

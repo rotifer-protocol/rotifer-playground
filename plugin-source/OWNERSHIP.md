@@ -14,7 +14,8 @@ This file defines which plugin-facing files are canonical sources and which file
 | `plugin-source/content/root/rotifer.md` | Root family generic Rotifer skill |
 | `plugin-source/content/vscode/rotifer.md` | VSCode family Rotifer skill |
 | `plugin-source/content/vscode/rotifer-conventions.mdc` | VSCode family rule |
-| `plugin-source/assets/brandmark.svg` | Canonical brand art source |
+| `plugin-source/assets/brandmark.svg` | Canonical brand vector source |
+| `plugin-source/assets/brandmark.png` | Canonical 128x128 marketplace icon raster |
 
 ## Generated Outputs
 
@@ -27,14 +28,14 @@ This file defines which plugin-facing files are canonical sources and which file
 | `plugins/rotifer/skills/evolve/SKILL.md` | `plugin-source/content/root/evolve/SKILL.md` |
 | `plugins/rotifer/rules/rotifer-gene-dev.mdc` | `plugin-source/content/shared/rotifer-gene-dev.mdc` |
 | `plugins/rotifer/skills/rotifer.md` | `plugin-source/content/root/rotifer.md` |
-| `plugins/rotifer/assets/icon.png` | Generated brand PNG |
+| `plugins/rotifer/assets/icon.png` | `plugin-source/assets/brandmark.png` |
 | `rotifer-vscode/.cursor-plugin/plugin.json` | `plugin-source/families/vscode.json` + `plugin-source/families.json` |
 | `rotifer-vscode/.codebuddy-plugin/marketplace.json` | `plugin-source/families/vscode.json` + `plugin-source/families.json` |
 | `rotifer-vscode/.codebuddy-plugin/plugin.json` | `plugin-source/families/vscode.json` + `plugin-source/families.json` |
 | `rotifer-vscode/skills/rotifer.md` | `plugin-source/content/vscode/rotifer.md` |
 | `rotifer-vscode/rules/rotifer-conventions.mdc` | `plugin-source/content/vscode/rotifer-conventions.mdc` |
-| `rotifer-vscode/icon.png` | Generated brand PNG |
-| `rotifer-vscode/assets/logo.png` | Generated brand PNG |
+| `rotifer-vscode/icon.png` | `plugin-source/assets/brandmark.png` |
+| `rotifer-vscode/assets/logo.png` | `plugin-source/assets/brandmark.png` |
 
 ## Hand-Authored VSCode Fields
 

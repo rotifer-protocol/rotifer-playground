@@ -123,69 +123,8 @@ function drawDiagonalGradient(size, topLeft, bottomRight) {
 }
 
 export function createBrandPng(size = 128) {
-  const pixels = drawDiagonalGradient(size, colorFromHex("#1e1b4b"), colorFromHex("#09090b"));
-  const brandA = colorFromHex("#818cf8");
-  const brandB = colorFromHex("#6366f1");
-
-  const nodes = [
-    [0.5, 0.265],
-    [0.705, 0.382],
-    [0.705, 0.618],
-    [0.5, 0.735],
-    [0.295, 0.618],
-    [0.295, 0.382],
-  ];
-
-  for (let index = 0; index < nodes.length; index += 1) {
-    const [x, y] = nodes[index];
-    const ratio = index / Math.max(1, nodes.length - 1);
-    fillCircle(
-      pixels,
-      size,
-      x * size,
-      y * size,
-      size * 0.04,
-      interpolateRgba(brandA, brandB, ratio),
-    );
-  }
-
-  strokeCircle(pixels, size, size * 0.5, size * 0.5, size * 0.235, size * 0.016, [
-    109,
-    114,
-    241,
-    160,
-  ]);
-  strokeCircle(pixels, size, size * 0.5, size * 0.5, size * 0.095, size * 0.018, [
-    109,
-    114,
-    241,
-    110,
-  ]);
-  fillCircle(pixels, size, size * 0.5, size * 0.5, size * 0.048, brandB);
-
-  const scanlines = [];
-  for (let y = 0; y < size; y += 1) {
-    const row = Buffer.alloc(size * 4 + 1);
-    row[0] = 0;
-    pixels.copy(row, 1, y * size * 4, (y + 1) * size * 4);
-    scanlines.push(row);
-  }
-
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 6;
-  ihdr[10] = 0;
-  ihdr[11] = 0;
-  ihdr[12] = 0;
-
-  return Buffer.concat([
-    PNG_SIGNATURE,
-    pngChunk("IHDR", ihdr),
-    pngChunk("IDAT", deflateSync(Buffer.concat(scanlines))),
-    pngChunk("IEND", Buffer.alloc(0)),
-  ]);
+  void size;
+  return readFileSync(join(PLUGIN_SOURCE_ROOT, "assets/brandmark.png"));
 }
 
 export function renderTemplate(content, variables) {

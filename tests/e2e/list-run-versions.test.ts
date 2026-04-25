@@ -67,7 +67,7 @@ describe("rotifer run", () => {
 
   it("fails when not in a project", () => {
     const out = tryRun("run nonexistent-gene", "/tmp");
-    expect(out).toMatch(/not.*rotifer project|not found|error/i);
+    expect(out).toMatch(/not.*rotifer agent workspace|not found|error/i);
   });
 });
 

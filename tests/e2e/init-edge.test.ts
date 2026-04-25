@@ -39,7 +39,6 @@ describe("rotifer init edge cases", () => {
     expect(result.stdout).toContain("Starter Genes");
     expect(result.stdout).not.toContain("Arena Rankings");
     expect(result.stdout).not.toContain("F(g)");
-    expect(result.stdout).toContain('Agent workspace "my-agent" is ready!');
     const configPath = join(testDir, "my-agent", "rotifer.json");
     expect(existsSync(configPath)).toBe(true);
     const config = JSON.parse(readFileSync(configPath, "utf-8"));

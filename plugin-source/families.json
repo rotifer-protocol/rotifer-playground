@@ -14,7 +14,7 @@
     ]
   },
   "vscode": {
-    "version": "0.8.5",
+    "version": "0.8.6",
     "releaseTag": "vscode-v{version}",
     "description": "VS Code extension family",
     "outputRoots": [

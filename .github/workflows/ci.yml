@@ -309,10 +309,11 @@ jobs:
           fi
 
           VERSION=$(node -p "require('./package.json').version")
+          RELEASE_LINE_VERSION="v${VERSION}"
           TOTAL=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numTotalTests || 0")
           PASSED=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numPassedTests || 0")
           FAILED=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numFailedTests || 0")
-          DURATION=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).testResults?.reduce((s,r) => s + (r.endTime - r.startTime), 0) || 0")
+          DURATION=$(node -p "Math.round(JSON.parse(require('fs').readFileSync('test-results.json','utf8')).testResults?.reduce((s,r) => s + (r.endTime - r.startTime), 0) || 0)")
 
           COVERAGE_PCT=0
           if [ -f coverage/coverage-summary.json ]; then
@@ -326,6 +327,7 @@ jobs:
             -H "Prefer: return=minimal" \
             -d "{
               \"version\": \"v${VERSION}\",
+              \"release_line_version\": \"${RELEASE_LINE_VERSION}\",
               \"component\": \"cli\",
               \"test_type\": \"unit\",
               \"total_tests\": ${TOTAL},

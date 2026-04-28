@@ -3,14 +3,17 @@
  * Post-deploy security smoke test for the chat Edge Function.
  *
  * Verifies all security features are intact after deployment:
- *   1. CORS — rejects disallowed origins
+ *   1. CORS — accepts rotifer.dev + www.rotifer.dev, rejects unknown origins
  *   2. Rate limit headers present
  *   3. Content filter — blocks prompt injection
  *   4. Input validation — rejects missing/oversized input
  *   5. Normal flow — returns a valid response
  *
  * Usage:
- *   npx tsx scripts/post-deploy-smoke-test.ts [endpoint-url]
+ *   SUPABASE_ANON_KEY=<key> npx tsx scripts/post-deploy-smoke-test.ts [endpoint-url]
+ *
+ * Required env: SUPABASE_ANON_KEY (Supabase Edge Functions require auth header at platform layer).
+ * Get the anon key from: Supabase Dashboard → rotifer-cloud → Project Settings → API.
  *
  * Default endpoint: https://vihbmpuqlamhxbmahcje.supabase.co/functions/v1/chat
  */
@@ -20,6 +23,25 @@ const DEFAULT_ENDPOINT =
 
 const endpoint = process.argv[2] || DEFAULT_ENDPOINT;
 
+// Supabase Edge Functions 平台层默认要求 Authorization: Bearer <anon-key>，
+// 否则返回 401 UNAUTHORIZED_NO_AUTH_HEADER 在 chat function 之前拦截。
+// 浏览器侧 ChatWidget 会自动附带（通过 supabase-js client）；smoke test 必须显式提供。
+// anon key 是 🟢 Public 级别凭证（rotifer-credential-hygiene §2），可在 CI/local terminal 中显式传入。
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+
+if (!SUPABASE_ANON_KEY) {
+  console.error(
+    "\n  ❌ Missing SUPABASE_ANON_KEY environment variable.\n" +
+      "  Supabase Edge Functions require Authorization: Bearer <anon-key>.\n" +
+      "  Without this header, all requests fail at platform layer with 401 before reaching chat function.\n\n" +
+      "  Get the anon key from:\n" +
+      "    Supabase Dashboard → rotifer-cloud → Project Settings → API → 'anon' / 'public' key\n\n" +
+      "  Then run:\n" +
+      "    SUPABASE_ANON_KEY=<key> npx tsx scripts/post-deploy-smoke-test.ts [endpoint-url]\n",
+  );
+  process.exit(1);
+}
+
 interface TestResult {
   name: string;
   passed: boolean;
@@ -28,6 +50,16 @@ interface TestResult {
 }
 
 const results: TestResult[] = [];
+
+// Inter-test cooldown to avoid Supabase Edge Runtime isolate throttling.
+// 2026-04-25: discovered after burst calls (4 tests in 140-148ms range) returned
+// `503 SUPABASE_EDGE_RUNTIME_ERROR: Service is temporarily unavailable`.
+// Each chat function invocation consumes isolate CPU budget; isolates need recovery time.
+// 1500ms cooldown empirically restores 9/9 pass rate on Pro tier.
+const INTER_TEST_DELAY_MS = 1500;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 async function runTest(
   name: string,
@@ -45,6 +77,7 @@ async function runTest(
       durationMs: Date.now() - start,
     });
   }
+  await sleep(INTER_TEST_DELAY_MS);
 }
 
 async function postChat(
@@ -55,6 +88,7 @@ async function postChat(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
       Origin: "https://rotifer.dev",
       ...headers,
     },
@@ -63,23 +97,31 @@ async function postChat(
 }
 
 async function main() {
+  // Test ordering rationale (2026-04-25 P2 reorder):
+  //   Phase 1 (lightweight, no RAG/LLM): preflight + input validation tests.
+  //     chat function returns 400 in early validation path (L125-144) without
+  //     invoking RAG embedding or LLM, so these tests are fast and cheap.
+  //   Phase 2 (medium, full chat function): CORS regression tests.
+  //     Use question="test" which triggers full RAG+LLM pipeline (~3-7s each).
+  //   Phase 3 (heavy, full chat function): real LLM responses with parsing.
+  //     ~10s each. Failure here is most diagnostic.
+  // Combined with INTER_TEST_DELAY_MS sleep between tests, this minimizes
+  // Supabase Edge Runtime isolate throttling risk.
+
+  // ─── Phase 1: Lightweight (no RAG/LLM) ──────────────────────────────
+
   await runTest("OPTIONS preflight returns 204", async () => {
     const res = await fetch(endpoint, {
       method: "OPTIONS",
-      headers: { Origin: "https://rotifer.dev" },
+      headers: {
+        Origin: "https://rotifer.dev",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,content-type",
+      },
     });
     return {
       passed: res.status === 204,
       detail: `Status: ${res.status}`,
-    };
-  });
-
-  await runTest("CORS allows rotifer.dev origin", async () => {
-    const res = await postChat({ question: "test" });
-    const acao = res.headers.get("Access-Control-Allow-Origin");
-    return {
-      passed: acao === "https://rotifer.dev",
-      detail: `ACAO: ${acao}`,
     };
   });
 
@@ -115,6 +157,37 @@ async function main() {
       detail: `Status: ${res.status}, error: ${body.error?.slice(0, 60) || "n/a"}`,
     };
   });
+
+  // ─── Phase 2: CORS regression (full chat function ~3-7s each) ────────
+
+  await runTest("CORS allows rotifer.dev origin", async () => {
+    const res = await postChat({ question: "test" });
+    const acao = res.headers.get("Access-Control-Allow-Origin");
+    return {
+      passed: acao === "https://rotifer.dev",
+      detail: `ACAO: ${acao}`,
+    };
+  });
+
+  await runTest("CORS allows www.rotifer.dev origin (regression: 2026-04-25)", async () => {
+    const res = await postChat({ question: "test" }, { Origin: "https://www.rotifer.dev" });
+    const acao = res.headers.get("Access-Control-Allow-Origin");
+    return {
+      passed: acao === "https://www.rotifer.dev",
+      detail: `ACAO: ${acao}`,
+    };
+  });
+
+  await runTest("CORS rejects unknown origin (returns fallback, not echoes attacker)", async () => {
+    const res = await postChat({ question: "test" }, { Origin: "https://attacker.example" });
+    const acao = res.headers.get("Access-Control-Allow-Origin");
+    return {
+      passed: acao !== "https://attacker.example",
+      detail: `ACAO: ${acao}`,
+    };
+  });
+
+  // ─── Phase 3: Heavy (full RAG + LLM ~10s each) ──────────────────────
 
   await runTest("Normal question returns 200 with valid response", async () => {
     const res = await postChat({

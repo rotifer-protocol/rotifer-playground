@@ -57,7 +57,12 @@ export async function recordCost(model: string, _responseChars: number): Promise
   resetIfNewDay();
   dailyCount++;
 
-  const costPerCall = model.includes("deepseek") ? 0.0005 : model.includes("haiku") ? 0.002 : 0.005;
+  const costPerCall =
+    model.includes("v4-pro") ? 0.0044 :
+    model.includes("v4-flash") ? 0.0004 :
+    model.includes("deepseek") ? 0.0005 :
+    model.includes("haiku") ? 0.002 :
+    0.005;
   estimatedCost += costPerCall;
 
   if (estimatedCost > COST_ALERT_THRESHOLD) {

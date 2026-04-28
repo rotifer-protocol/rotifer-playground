@@ -1,7 +1,13 @@
-const PROD_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://rotifer.dev";
+const ALLOWED_ORIGINS = (
+  Deno.env.get("ALLOWED_ORIGIN") ||
+  "https://rotifer.dev,https://www.rotifer.dev"
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 function isAllowedOrigin(origin: string): boolean {
-  if (origin === PROD_ORIGIN) return true;
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
   try {
     const url = new URL(origin);
     return url.hostname === "localhost" || url.hostname === "127.0.0.1";
@@ -13,7 +19,7 @@ function isAllowedOrigin(origin: string): boolean {
 export function getCorsHeaders(requestOrigin?: string | null): Record<string, string> {
   const allowedOrigin = requestOrigin && isAllowedOrigin(requestOrigin)
     ? requestOrigin
-    : PROD_ORIGIN;
+    : ALLOWED_ORIGINS[0];
 
   return {
     "Access-Control-Allow-Origin": allowedOrigin,

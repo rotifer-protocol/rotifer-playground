@@ -11,7 +11,7 @@ export const userConfigCommand = new Command("config")
       .action((key: string) => {
         if (!isValidKey(key)) {
           display.error(`Unknown config key: ${key}`);
-          display.hint("Valid keys: update-check, last-version");
+          display.hint("Valid keys: update-check, last-version, default-publish");
           process.exit(1);
         }
         display.kv(key, String(getUserConfigValue(key)));
@@ -25,7 +25,7 @@ export const userConfigCommand = new Command("config")
       .action((key: string, value: string) => {
         if (!isValidKey(key)) {
           display.error(`Unknown config key: ${key}`);
-          display.hint("Valid keys: update-check, last-version");
+          display.hint("Valid keys: update-check, last-version, default-publish");
           process.exit(1);
         }
         setUserConfigValue(key, value);

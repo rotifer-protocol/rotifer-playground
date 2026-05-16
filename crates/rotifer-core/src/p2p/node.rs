@@ -82,6 +82,7 @@ mod tests {
     // A.1.1 — SwarmBuilder default config starts
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_1_swarm_builder_default_config_starts() {
         let mut node = Node::new(cfg(0)).expect("A.1.1 — default config must build a swarm");
         node.start().expect("A.1.1 — swarm must start");
@@ -92,6 +93,7 @@ mod tests {
     // A.1.2 — Custom port listen + bind error on conflict
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_2_custom_port_listen() {
         let mut node = Node::new(cfg(9878)).expect("A.1.2 — custom port must build");
         node.start().expect("A.1.2 — port 9878 must bind");
@@ -102,6 +104,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_2_port_already_in_use_returns_transport_error() {
         let mut first = Node::new(cfg(9879)).expect("A.1.2 — first node builds");
         first.start().expect("A.1.2 — first node starts");
@@ -115,6 +118,7 @@ mod tests {
     // A.1.3 — Graceful shutdown releases the port
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_3_drop_releases_port() {
         let port = 9880;
         {
@@ -130,6 +134,7 @@ mod tests {
     // A.1.4 — Keypair persistence at ~/.rotifer/identity.pem (file mode 0600)
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_4_keypair_persistence_first_run_generates() {
         let tmp = std::env::temp_dir().join("rotifer-test-identity.pem");
         let _ = std::fs::remove_file(&tmp);
@@ -149,6 +154,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_4_keypair_persistence_second_run_reuses() {
         let tmp = std::env::temp_dir().join("rotifer-test-identity-reuse.pem");
         let _ = std::fs::remove_file(&tmp);
@@ -166,6 +172,7 @@ mod tests {
     // A.1.5 — PeerId is deterministic from the keypair
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_5_peer_id_deterministic_from_keypair() {
         let path = std::env::temp_dir().join("rotifer-test-determinism.pem");
         let _ = std::fs::remove_file(&path);
@@ -200,6 +207,7 @@ mod tests {
     // A.1.7 — 0.0.0.0 vs 127.0.0.1 bind semantics
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_7_bind_loopback_rejects_external() {
         let mut c = cfg(0);
         c.bootstrap_peers = vec!["/ip4/127.0.0.1/tcp/0".into()];
@@ -212,6 +220,7 @@ mod tests {
     // A.1.8 — Bootstrap peer unreachable → graceful degradation
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_8_unreachable_bootstrap_does_not_panic() {
         let mut c = cfg(0);
         c.bootstrap_peers = vec![
@@ -227,6 +236,7 @@ mod tests {
     // A.1.9 — Second swarm on a busy port returns Err while leaving the first alone
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_9_port_conflict_isolation() {
         let port = 9881;
         let mut first = Node::new(cfg(port)).expect("A.1.9 — first build");

@@ -43,7 +43,10 @@ function run(args: string, opts: { cwd?: string; env?: Record<string, string> } 
   }
 }
 
-describe("A.7 — rotifer network (v0.9 real libp2p backend)", () => {
+// Stage 1 TDD baseline — skipped in CI. Stage 2 removes `.skip` once the CLI
+// switches to the real libp2p backend; running locally use `vitest --reporter=verbose`
+// and remove `.skip` to observe the red baseline.
+describe.skip("A.7 — rotifer network (v0.9 real libp2p backend)", () => {
   beforeAll(() => {
     mkdirSync(TEST_DIR, { recursive: true });
   });

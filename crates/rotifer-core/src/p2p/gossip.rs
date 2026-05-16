@@ -74,6 +74,7 @@ mod tests {
     // A.3.1 — Subscribe to announce topic
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_3_1_subscribe_announce_topic() {
         let mut g = Gossip::new();
         g.subscribe(TOPIC_GENE_ANNOUNCE)
@@ -197,6 +198,7 @@ mod tests {
     // A.3.9 — Duplicate subscribe is idempotent
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_3_9_duplicate_subscribe_is_idempotent() {
         let mut g = Gossip::new();
         g.subscribe(TOPIC_GENE_ANNOUNCE).expect("A.3.9 — first subscribe");

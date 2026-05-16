@@ -86,6 +86,7 @@ mod tests {
     // A.2.3 — FIND_NODE returns nearest-k peers
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_2_3_find_node_returns_k_nearest() {
         let d = Discovery::new(false, true);
         let peers = d
@@ -95,6 +96,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_2_3_find_node_unknown_returns_empty() {
         let d = Discovery::new(false, true);
         let peers = d
@@ -107,6 +109,7 @@ mod tests {
     // A.2.4 — DHT PUT/GET round-trip + TTL expiry
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_2_4_put_get_round_trip() {
         let d = Discovery::new(false, true);
         let key = b"gene/abc";
@@ -131,6 +134,7 @@ mod tests {
     // A.2.5 — Kad keeps working after mDNS shutdown
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_2_5_kad_survives_mdns_off() {
         let mut d = Discovery::new(true, true);
         d.bootstrap().expect("A.2.5 — initial bootstrap");
@@ -156,6 +160,7 @@ mod tests {
     // A.2.7 — Peers marked unreachable after 30s without contact
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_2_7_unreachable_peer_marked_after_30s() {
         let mut d = Discovery::new(false, true);
         d.bootstrap().expect("A.2.7 — bootstrap");

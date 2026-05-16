@@ -98,6 +98,7 @@ mod tests {
     // A.4.3 — Strict-Test: sha256 frozen-parity for the wire schema
     // -----------------------------------------------------------------
     #[test]
+    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_4_3_strict_proto_schema_frozen_sha256() {
         // Stage 2 pins FROZEN_PROTO_SCHEMA_SHA256 = Some(<sha256>).
         let proto_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

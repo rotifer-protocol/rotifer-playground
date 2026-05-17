@@ -126,7 +126,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, plugin-source, test, rust-check, security-check, vscode-extension, vscode-packaging]
+    needs: [lint, plugin-source, test, rust-check, security-check, vscode-extension, vscode-packaging, supabase-migrations]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -285,21 +285,21 @@ jobs:
         # (rotifer-playground commit 9d8076b + this sprint).
         run: supabase start
 
-      - name: Run pgTAP test suite (advisory)
+      - name: Run pgTAP test suite
         run: |
-          # Known failures pending v0.9 stage-2 B-R6 fixture/RLS sprint:
-          #   - B.2.1 (no-active-season fixture missing — needs DELETE
-          #     FROM seasons preamble in test setup)
-          #   - B.2.8 / B.7.5 (anon role still has EXECUTE on
-          #     reset_season — needs REVOKE in v0.9 stage-1 hardening)
-          #   - B.7.2 (anon role still has INSERT/UPDATE/DELETE on
-          #     seasons table — needs REVOKE)
-          # Plus a plan(46) vs ran(57) test-file count bug in
-          # seasons.sql (cosmetic; tests run correctly).
-          # These are not migration-replay defects — replay correctness
-          # is already enforced by the step above. The pgTAP run is kept
-          # advisory until B-R6 lands.
-          supabase test db || echo "::warning::pgTAP suite has 4 known v0.9 stage-2 fixture/RLS failures pending B-R6 sprint (see seasons.sql comments)"
+          # B-R6 sprint (2026-05-17) closed every known v0.9 stage-2 failure:
+          #   - plan() count corrected to 57 (B.1=11, B.2=9, B.3=9,
+          #     B.4=7, B.5=6, B.6=7, B.7=5, B.8=3)
+          #   - B.2.1 uses SAVEPOINT to mark every season ended,
+          #     exercise the no-active-season branch, then ROLLBACK so
+          #     B.2.2 happy path still sees an active season
+          #   - B.2.8 / B.7.5 anon EXECUTE drop closed by hardening
+          #     migration 20260517040000 (REVOKE FROM PUBLIC, not just
+          #     anon — Postgres functions default to PUBLIC EXECUTE)
+          #   - B.7.2 anon table privs reduced to SELECT-only by the
+          #     same hardening migration
+          # The suite is now blocking — any drift fails CI.
+          supabase test db
 
       - name: Stop supabase
         if: always()

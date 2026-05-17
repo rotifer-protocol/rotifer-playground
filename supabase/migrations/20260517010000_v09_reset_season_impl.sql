@@ -27,6 +27,16 @@
 --      (per-domain ranking matches arena_entries.idx_arena_fitness intent)
 --   4. Added pg_try_advisory_lock for B.2.7 / B.9.1 concurrency contract.
 --   5. Wrapped body in EXCEPTION block to release the lock on any error.
+--   6. Carryover UPDATE on arena_entries carries an explicit
+--      `WHERE fitness_value IS NOT NULL` filter. Two reasons:
+--      (a) Supabase's PostgREST gateway rejects WHERE-less UPDATE/DELETE
+--          even inside SECURITY DEFINER functions reached via /rpc/* —
+--          PostgREST returns SQLSTATE 21000 "UPDATE requires a WHERE
+--          clause" before the function body runs. Direct psql calls
+--          succeed, RPC calls fail. The filter satisfies that guard.
+--      (b) Multiplying NULL by v_retention is a no-op in pgsql, so the
+--          filter only excludes rows already excluded by NULL semantics
+--          — zero behavior change on the surviving update set.
 
 -- ------------------------------------------------------------
 -- 1. reset_season() — full implementation (CREATE OR REPLACE the stub)
@@ -101,8 +111,11 @@ BEGIN
     WHERE id = v_active_id;
 
     -- F(g) half-life carryover into next season.
+    -- Filter `fitness_value IS NOT NULL` keeps PostgREST's no-WHERE
+    -- guard happy without altering behavior (NULL × scalar = NULL).
     UPDATE arena_entries
-    SET fitness_value = fitness_value * v_retention;
+    SET fitness_value = fitness_value * v_retention
+    WHERE fitness_value IS NOT NULL;
 
     -- B.2.5: trigger reputation recompute (idempotent per UTC day).
     PERFORM compute_all_reputations();

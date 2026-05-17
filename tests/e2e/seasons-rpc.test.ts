@@ -43,8 +43,9 @@ const ready = createClient !== null && SUPABASE_ANON_KEY !== "" && SUPABASE_SERV
 describe.skipIf(!ready)("B.9 — Season RPC E2E (real Supabase)", () => {
   let anonClient: any;
   let serviceClient: any;
+  let originalActiveConfig: any = null;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     if (!createClient) {
       throw new Error(
         `@supabase/supabase-js not installed (${importError?.message ?? "unknown"}). ` +
@@ -53,10 +54,25 @@ describe.skipIf(!ready)("B.9 — Season RPC E2E (real Supabase)", () => {
     }
     anonClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    // Snapshot the active season config so afterAll can restore it.
+    // pgTAP suite B.2.3 / B.6.4 read active config defaults — leaving
+    // mutated state here would cross-contaminate the next test run.
+    const { data: snap } = await anonClient
+      .from("seasons")
+      .select("config")
+      .eq("status", "active")
+      .single();
+    originalActiveConfig = snap?.config ?? null;
   });
 
   afterAll(async () => {
-    // Stage 2: clean up fixture data.
+    if (originalActiveConfig) {
+      await serviceClient
+        .from("seasons")
+        .update({ config: originalActiveConfig })
+        .eq("status", "active");
+    }
   });
 
   // ----------------------------------------------------------

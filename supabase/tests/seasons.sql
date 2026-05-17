@@ -13,17 +13,18 @@
 --   B.7 — RLS policy (5 tests)
 --   B.8 — pg_cron automation (3 tests)
 --
--- Total: ~46 assertions. Stage 1 expectation: ALL FAIL (red phase).
+-- Total: 57 assertions (B.1=11, B.2=9, B.3=9, B.4=7, B.5=6, B.6=7, B.7=5, B.8=3).
+-- Stage 2 expectation: PASS once v0.9 RPC bodies + RLS hardening land.
 --
 -- Run inside supabase test container:
---   supabase db test
+--   supabase test db
 --
 -- Or directly via psql:
 --   psql ... -f supabase/tests/seasons.sql
 
 BEGIN;
 
-SELECT plan(46);
+SELECT plan(57);
 
 -- ============================================================
 -- B.1 Schema migration
@@ -80,16 +81,21 @@ SELECT col_is_fk('public', 'season_archives', 'season_id', 'B.1.5: FK enforces a
 
 SELECT has_function('public', 'reset_season', 'B.2.0: reset_season() function exists');
 
--- B.2.1 — Raises EXCEPTION when no active season
--- Stage 1 stub raises 'NOT_IMPLEMENTED' for ALL paths — this assertion is expected
--- to fail until stage 2 differentiates the "no active season" branch.
-PREPARE p_b21 AS SELECT reset_season();
+-- B.2.1 — Raises EXCEPTION when no active season.
+--
+-- Bootstrap migration installs season 1 as active. To exercise the
+-- no-active-season branch we mark every season ended inside a savepoint,
+-- run the assertion, then rollback to the savepoint so subsequent tests
+-- (B.2.2 happy path, B.2.3 config read) still see an active season.
+SAVEPOINT sp_b21_no_active_season;
+UPDATE seasons SET status = 'ended', ended_at = COALESCE(ended_at, now());
 SELECT throws_like(
-  'p_b21',
+  $$ SELECT reset_season() $$,
   '%No active season found%',
   'B.2.1: reset_season() raises when no active season'
 );
-DEALLOCATE p_b21;
+ROLLBACK TO SAVEPOINT sp_b21_no_active_season;
+RELEASE SAVEPOINT sp_b21_no_active_season;
 
 -- B.2.2 — Happy path: archives created + arena × retention + new season +1
 SELECT lives_ok(

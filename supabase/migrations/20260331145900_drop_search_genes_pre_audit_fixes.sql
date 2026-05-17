@@ -1,0 +1,39 @@
+-- ============================================================
+-- v0.8.8 dev/prod parity fix: drop search_genes pre-audit_fixes
+-- ============================================================
+--
+-- PROBLEM: 20260331150000_audit_fixes.sql does
+--   `CREATE OR REPLACE FUNCTION search_genes(...) RETURNS TABLE (...)`
+-- but changes the RETURNS TABLE column types vs the prior search_genes
+-- definition (last seen in 20260330120000_security_hardening_v081.sql):
+--
+--   wasm_size:        bigint            → INTEGER
+--   downloads:        bigint            → INTEGER
+--   reputation_score: double precision  → NUMERIC
+--
+-- PostgreSQL CREATE OR REPLACE FUNCTION cannot change the RETURNS TABLE
+-- column types of an existing function (SQLSTATE 42P13 — Row type
+-- defined by OUT parameters is different).
+--
+-- Production worked because the migration was applied incrementally
+-- against an already-existing function instance — a sequence of subtle
+-- accumulated type changes; the type drift error only surfaces on a
+-- clean replay (which production has never done since the audit_fixes
+-- migration landed).
+--
+-- FIX: drop search_genes in this migration (timestamp 1 minute before
+-- audit_fixes) so the audit_fixes CREATE OR REPLACE behaves as a fresh
+-- CREATE.
+--
+-- PRODUCTION RISK: low — applying this migration via `supabase db push`
+-- causes search_genes to briefly disappear (microseconds, between this
+-- DROP and the subsequent audit_fixes CREATE). Recommendation: schedule
+-- the push during low-query-traffic window. The next migration after
+-- audit_fixes (20260407153000_search_genes_exact_total.sql) further
+-- evolves the function with another OR REPLACE — that one succeeds
+-- because audit_fixes has already established the new RETURN signature.
+--
+-- IDEMPOTENCY: IF EXISTS is safe (no-op when search_genes does not
+-- exist, e.g. in mid-replay before fulltext_search.sql had created it).
+
+DROP FUNCTION IF EXISTS public.search_genes(text, text, text, text, integer, integer);

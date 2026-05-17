@@ -52,6 +52,7 @@ arena-reports/
 # Temp files
 .temp/
 supabase/.temp/
+supabase/.branches/
 
 # npm pack artifacts
 package/

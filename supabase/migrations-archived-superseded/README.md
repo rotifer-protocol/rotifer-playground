@@ -19,7 +19,8 @@
 
 | 文件 | 取代/吸收路径 | 账目状态 | 归档日期 |
 |---|---|---|---|
-| `20260331150000_audit_fixes.sql` | Fix 2 (search_genes ESCAPE) 已被 v0.9 stage-2 search_genes 重写吸收（MCP 验证 2026-05-18 当前 search_genes 含 ESCAPE 子句）；Fix 1 (validate_content_hash_on_publish hash mismatch) 待 Phase 4 #6 重写时合并 | **从未在 rotifer-cloud schema_migrations 登记**——本文件历史上从未在生产应用，不需要 retroactive 账目（Phase 3 一度尝试 INSERT 但发现 dry-run 会报"local missing"错误，遂 DELETE 撤回——CLI 仅匹配 `migrations/` 目录，archived 文件应同步从 schema_migrations 删除以保持一致性）| 2026-05-18 (Sprint C Phase 3) |
+| `20260331140000_content_hash_server_validation.sql` | 被 `20260518173445_content_hash_validation_with_mismatch_check.sql` 取代——新版本合并了 audit_fixes Fix 1 (hash mismatch check) 形成单条 forward-compat migration | **从未在 rotifer-cloud schema_migrations 登记**——本文件历史上从未在生产应用 | 2026-05-18 (Sprint C Phase 4) |
+| `20260331150000_audit_fixes.sql` | Fix 2 (search_genes ESCAPE) 已被 v0.9 stage-2 search_genes 重写吸收（MCP 验证 2026-05-18 当前 search_genes 含 ESCAPE 子句）；Fix 1 (validate_content_hash_on_publish hash mismatch) 已合并到 `20260518173445_content_hash_validation_with_mismatch_check.sql` | **从未在 rotifer-cloud schema_migrations 登记** | 2026-05-18 (Sprint C Phase 3) |
 
 ---
 

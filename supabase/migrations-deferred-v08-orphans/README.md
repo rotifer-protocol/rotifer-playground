@@ -4,6 +4,7 @@
 **Decision date**: 2026-05-18 (S2 strategy in v0.9 F2 push prep)
 **Decision authority**: Founder
 **Audit reference**: meta-lesson **S2-L11** (private; 2026-05-18; dev/prod parity sprint)
+**Last MCP verification**: 2026-05-18 (CC1 conservative apply)
 
 ---
 
@@ -11,130 +12,145 @@
 
 During the 2026-05-18 v0.9 F2 push prep audit, an MCP query against the
 production `supabase_migrations.schema_migrations` table revealed that
-**10 local migration files have no corresponding entry in the
+**12 local migration files have no corresponding entry in the
 production migration history table**, despite their SQL effects being
-(almost certainly) already present in the production schema.
+**hypothesized** to already be present in the production schema.
 
-**Note**: An initial pass mistakenly included `20260328200000_get_gene_detail_rpc.sql`
-and `20260328210000_gene_detail_rpc_v2.sql` here because the
-`list_migrations` MCP tool truncated its output at 30 rows and skipped
-those two timestamps. A direct `SELECT version FROM supabase_migrations.schema_migrations`
-revealed those two ARE in production. They were moved back to
-`../migrations/` before this README was finalized.
-
-**Hypothesis**: These 12 SQLs were applied to production via Supabase
-Dashboard SQL Editor or direct psql during v0.8.0 / v0.8.1 sprints,
-bypassing the `supabase db push` CLI path. The production schema reflects
-these changes (e.g., `quality_observatory_tables` are queryable in
-production), but `schema_migrations` was never updated.
-
-**Why deferred**: The founder chose strategy S2 — "minimal action, do
-not block v0.9" — over strategy S1 — "thorough cleanup with per-file MCP
-verification". These 12 files are isolated here so the v0.9 push can
-proceed cleanly. A future dedicated sprint will:
-
-1. MCP-verify each migration's schema effects exist in production
-2. Use `supabase migration repair --status applied <version>` to
-   register each verified file in `schema_migrations`
-3. Move files back to `../migrations/` once the table is repaired
+**A 2026-05-18 follow-up MCP verification of each migration's schema
+effects against `rotifer-cloud` (production) showed that the original
+hypothesis was largely WRONG** — most files were in fact NOT applied to
+production. See "MCP-verified status" table below.
 
 ---
 
-## File classification
+## CC1 conservative-apply outcome (2026-05-18)
 
-### 🔴 Class O1 — v0.8.x sprint orphans (8 files)
+After per-file MCP verification, the founder chose strategy **CC1**:
+**only mark as `applied` the migrations whose schema effects are
+verifiably complete in production**. Files for which production schema
+disagrees with the local file are kept in this deferred directory until
+a future dedicated sprint resolves them.
 
-These were authored during v0.8.0 and v0.8.1 sprints. SQL effects
-should already be in production schema; only the `schema_migrations`
-table entry is missing.
+### MCP-verified status table
 
-| File | Authored sprint | What it does |
-|---|---|---|
-| `20260330130000_p1_security_hardening.sql` | v0.8.0 | P1 security audit followup |
-| `20260330140000_content_hash_enforcement.sql` | v0.8.0 | Content hash validation |
-| `20260331100000_quality_observatory_tables.sql` | v0.8.0 | Quality observatory tables (`release_test_reports`, `security_scan_results`, `dependency_audit_logs`) |
-| `20260331120000_protocol_consistency_checks.sql` | v0.8.0 | Protocol consistency check RPCs |
-| `20260331130000_rls_tightening_v081.sql` | v0.8.1 | RLS policy hardening |
-| `20260331140000_content_hash_server_validation.sql` | v0.8.1 | Server-side content hash validation |
-| `20260331150000_audit_fixes.sql` | v0.8.1 | Audit-driven fixes (search_genes etc.) |
-| `20260331160000_deduplicate_unique_constraint.sql` | v0.8.1 | Deduplicate unique constraints |
+| File | Verified status | Action taken | Now lives in |
+|---|---|---|---|
+| `20260330130000_p1_security_hardening.sql` | ✅ Complete (functions, constraints, triggers all present) | `repair --status applied` | `../migrations/` |
+| `20260330140000_content_hash_enforcement.sql` | ✅ Complete (functions + trigger present) | `repair --status applied` | `../migrations/` |
+| `20260331160000_deduplicate_unique_constraint.sql` | ✅ DROP-only operation, idempotent | `repair --status applied` | `../migrations/` |
+| `20260331100000_quality_observatory_tables.sql` | ❌ **NOT in rotifer-cloud** (tables only exist in `rotifer-quality` project) | DEFER | this directory |
+| `20260331120000_protocol_consistency_checks.sql` | ❌ **NOT applied** (`update_arena_total_calls` / `enforce_version_chain_name` functions absent) | DEFER | this directory |
+| `20260331130000_rls_tightening_v081.sql` | ❌ **NOT applied** (`downloads` table still has old "Authenticated users can log downloads" policy) | DEFER | this directory |
+| `20260331140000_content_hash_server_validation.sql` | ❌ **NOT applied** (`validate_content_hash_on_publish` function absent) | DEFER | this directory |
+| `20260331150000_audit_fixes.sql` | ⚠️ **Inconsistent** (production `search_genes` is a NEWER version with `total_count` field; this migration's effects superseded by later work) | DEFER | this directory |
 
-### 🟢 Class O2 — Local dev-only baseline fixes (2 files)
+### Class O2 — Local dev-only baseline fixes (2 files, still deferred)
 
 These exist solely to make `supabase reset` succeed in local development.
-Production never needed them. **Should NOT be marked as `repair --status
-applied`** — should be marked `--status reverted` (i.e., production
-correctly skips them).
+Production never needed them.
 
 | File | Why dev-only |
 |---|---|
 | `20260101000000_enable_pg_cron.sql` | Production `pg_cron` was enabled via Dashboard Extensions panel; this file is local-only to make `supabase reset` work in fresh local replays |
 | `20260331145900_drop_search_genes_pre_audit_fixes.sql` | Local-only DROP to enable `supabase reset` cleanly through `audit_fixes` (production was incremental, never needed this DROP) |
 
+These should be marked `--status reverted` (not `applied`) when the
+future cleanup sprint runs. They are kept here for now because the
+broader v0.8 orphan cleanup is deferred as a single coherent unit.
+
 ---
 
-## Recovery sprint (when authorized)
+## Why these 5 + 2 = 7 files remain deferred
+
+The original README hypothesis was that all v0.8 orphan files were
+already applied to production but missing from `schema_migrations`.
+The CC1 verification proved this hypothesis WRONG for at least 5 of
+the 8 Class-O1 files. Each of these has a different reason for not
+being trivially repairable:
+
+- **#3 quality_observatory_tables** — Schema lives in a different
+  Supabase project (`rotifer-quality`), not `rotifer-cloud`. Marking
+  it `applied` to `rotifer-cloud` would create a false history entry.
+
+- **#4 protocol_consistency_checks** — SQL effects are genuinely
+  absent from production. Pushing it now would create new triggers
+  on the `genes` and `arena_entries` tables that may conflict with
+  v0.9 logic. Needs careful diff against current production state.
+
+- **#5 rls_tightening_v081** — Production downloads/arena_entries
+  RLS is still the OLD permissive policy. Pushing this migration now
+  would tighten the policy without coordinated client-side migration
+  to use `track_download()` instead of direct INSERT. Could break
+  existing CLI/SDK clients.
+
+- **#6 content_hash_server_validation** — Function and CHECK
+  constraint absent. Pushing now would add a CHECK constraint that
+  requires `content_hash IS NOT NULL` on every published gene; if
+  any historical published row lacks `content_hash` the constraint
+  validation will fail.
+
+- **#7 audit_fixes** — Production `search_genes` is a NEWER version
+  (with `total_count` field, written for v0.9 stage-2 pagination).
+  Pushing the v0.8 version would REGRESS the function. Needs to be
+  rewritten as a forward-compat patch rather than a re-issue of the
+  v0.8 version.
+
+The proper resolution path for each is non-trivial and warrants a
+dedicated sprint with cross-team review.
+
+---
+
+## Future cleanup sprint checklist (not yet authorized)
 
 ```bash
 cd rotifer-playground
 
-# Step 1: Move 8 Class-O1 files back
-mv supabase/migrations-deferred-v08-orphans/20260330130000_p1_security_hardening.sql \
-   supabase/migrations-deferred-v08-orphans/20260330140000_content_hash_enforcement.sql \
-   supabase/migrations-deferred-v08-orphans/20260331100000_quality_observatory_tables.sql \
-   supabase/migrations-deferred-v08-orphans/20260331120000_protocol_consistency_checks.sql \
-   supabase/migrations-deferred-v08-orphans/20260331130000_rls_tightening_v081.sql \
-   supabase/migrations-deferred-v08-orphans/20260331140000_content_hash_server_validation.sql \
-   supabase/migrations-deferred-v08-orphans/20260331150000_audit_fixes.sql \
-   supabase/migrations-deferred-v08-orphans/20260331160000_deduplicate_unique_constraint.sql \
-   supabase/migrations/
+# Step 1: For #4 / #5 / #6, diff each migration's intended schema
+# against current production state. Adapt the migration to be
+# additive-safe given v0.9 baseline. Push each one separately with
+# careful review.
 
-# Step 2: Per-file MCP verification (use plugin-supabase-supabase-execute_sql)
-# For each migration, query production for the schema objects it claims to create.
-# Examples:
-#   - quality_observatory_tables.sql → SELECT tablename FROM pg_tables WHERE tablename IN ('release_test_reports','security_scan_results','dependency_audit_logs');
-#   - rls_tightening_v081.sql → SELECT * FROM pg_policies WHERE tablename = 'genes';
-#   - audit_fixes.sql → SELECT proname FROM pg_proc WHERE proname = 'search_genes';
-# If verification confirms presence → mark applied. Otherwise → push or fix manually.
+# Step 2: For #3 quality_observatory_tables, decide: should the tables
+# also exist in rotifer-cloud, or should this migration be retired
+# entirely? (rotifer-quality already has the tables, so cross-project
+# duplication may not be desired.)
 
-# Step 3: Mark verified files as applied
-supabase migration repair --status applied \
-  20260330130000 20260330140000 20260331100000 20260331120000 \
-  20260331130000 20260331140000 20260331150000 20260331160000
+# Step 3: For #7 audit_fixes, rewrite as a forward-compat patch that
+# preserves the v0.9 search_genes signature (with total_count) while
+# adding any missing audit-fix improvements.
 
-# Step 4: Mark 2 dev-only baseline fixes as reverted (production correctly skips them)
-# Move them back first:
+# Step 4: For 2 Class-O2 dev-only files, decide:
+#   Option A: repair --status reverted (account-clean, file moves back to migrations/)
+#   Option B: keep in deferred (account-implicit, file stays here)
 mv supabase/migrations-deferred-v08-orphans/20260101000000_enable_pg_cron.sql \
    supabase/migrations-deferred-v08-orphans/20260331145900_drop_search_genes_pre_audit_fixes.sql \
    supabase/migrations/
-
-supabase migration repair --status reverted 20260101000000 20260331145900
-
-# Step 5: Verify dry-run is clean
-supabase db push --dry-run --linked
+supabase migration repair --status reverted 20260101000000 20260331145900 --linked
 ```
 
 ---
 
 ## Local dev environment effect
 
-Same as `migrations-deferred-2026-04/` — `supabase reset` (local) does
-NOT replay these files. This means local dev environment will lack:
+`supabase reset` (local) does NOT replay these files. This means local
+dev environment will lack:
 
-- `get_gene_detail` RPC
-- `quality_observatory_tables` (release_test_reports etc.)
-- `audit_fixes` search_genes refinements
+- `quality_observatory_tables` (release_test_reports etc.) — but those
+  belong to `rotifer-quality` anyway, not `rotifer-cloud`
+- `protocol_consistency_checks` triggers
+- `rls_tightening_v081` policies — local will have the older
+  permissive RLS, which may mask production behavior
+- `content_hash_server_validation` trigger
+- `audit_fixes` search_genes refinements (production has newer v0.9
+  version anyway)
 - pg_cron extension (local only — production has it via Dashboard)
-- ... etc.
 
-**Trade-off**: Local-prod parity broken. If local dev needs these
-features, restore individual files temporarily, then move them back
-to this deferred directory after testing.
-
-**Note**: `get_gene_detail` RPC IS in production (it's not in this
-deferred list). The `gene_detail_rpc` tests in CLI / VSCode extension
-should still work against production.
+**Trade-off**: Local-prod parity broken on these 7 dimensions. If
+local dev needs any of these features, restore the relevant file
+temporarily, then move it back to this deferred directory after
+testing.
 
 ---
 
-**Last updated**: 2026-05-18 S2 by AI co-pilot, founder authorization
+**Last updated**: 2026-05-18 CC1 conservative apply by AI co-pilot,
+founder authorization. Reflects post-MCP-verification reality.

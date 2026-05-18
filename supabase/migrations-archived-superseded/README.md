@@ -19,6 +19,7 @@
 
 | 文件 | 取代/吸收路径 | 账目状态 | 归档日期 |
 |---|---|---|---|
+| `20260331120000_protocol_consistency_checks.sql` | 4 大段中 3 段被现状取代（§2 enforce_version_chain_name 与已应用的 check_prev_version_same_owner 重复 / §3 uq_owner_name_prev_version 已被 #8 删除 / §4a-b CHECK 已存在）；§1 mcp→arena 联动 + §4c chk_arena_domain_format 抽取为 `20260518173918_protocol_consistency_v09_baseline.sql` | **从未在 rotifer-cloud schema_migrations 登记** | 2026-05-18 (Sprint C Phase 5) |
 | `20260331140000_content_hash_server_validation.sql` | 被 `20260518173445_content_hash_validation_with_mismatch_check.sql` 取代——新版本合并了 audit_fixes Fix 1 (hash mismatch check) 形成单条 forward-compat migration | **从未在 rotifer-cloud schema_migrations 登记**——本文件历史上从未在生产应用 | 2026-05-18 (Sprint C Phase 4) |
 | `20260331150000_audit_fixes.sql` | Fix 2 (search_genes ESCAPE) 已被 v0.9 stage-2 search_genes 重写吸收（MCP 验证 2026-05-18 当前 search_genes 含 ESCAPE 子句）；Fix 1 (validate_content_hash_on_publish hash mismatch) 已合并到 `20260518173445_content_hash_validation_with_mismatch_check.sql` | **从未在 rotifer-cloud schema_migrations 登记** | 2026-05-18 (Sprint C Phase 3) |
 

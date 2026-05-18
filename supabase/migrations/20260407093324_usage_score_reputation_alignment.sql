@@ -1,3 +1,20 @@
+-- ============================================================
+-- RESTORED FROM PRODUCTION schema_migrations — 2026-05-18
+-- ============================================================
+-- This migration was applied directly via Supabase Dashboard SQL Editor
+-- on 2026-04-07 09:33:24 UTC. A duplicate file existed locally at
+--   supabase/migrations-deferred-2026-04/20260407160000_usage_score_reputation_alignment.sql
+-- but its compute_developer_reputation (D57) had been silently amended
+-- with the followup logic (excluding reputation_score > 0 genes from the
+-- ln scaling denominator). The version below is the FIRST DEPLOYMENT
+-- form as actually applied to production at 09:33:24, before the
+-- followup migration (20260407103141) refined it.
+--
+-- Production timestamp:  20260407093324
+-- Production name:       usage_score_reputation_alignment
+-- Restored on:           2026-05-18 (v0.9 F2 push prep audit)
+-- See:                   meta-lesson S2-L11 (private; 2026-05-18; dev/prod parity sprint)
+-- ============================================================
 -- ADR-214: downloads.source field + track_download p_source parameter
 -- ADR-214: compute_gene_reputation dynamic weights (W0/W1/W2)
 -- ADR-216: compute_developer_reputation AVG → weighted Σ
@@ -55,24 +72,6 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = 'public';
 
--- Preserve the legacy one-argument RPC for older clients.
-CREATE OR REPLACE FUNCTION track_download(p_gene_id UUID)
-RETURNS VOID AS $$
-BEGIN
-  PERFORM track_download(p_gene_id, 'cli');
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = 'public';
-
-REVOKE EXECUTE ON FUNCTION track_download(UUID) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION track_download(UUID, TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION track_download(UUID) TO authenticated;
-GRANT EXECUTE ON FUNCTION track_download(UUID) TO anon;
-GRANT EXECUTE ON FUNCTION track_download(UUID) TO service_role;
-GRANT EXECUTE ON FUNCTION track_download(UUID, TEXT) TO authenticated;
-GRANT EXECUTE ON FUNCTION track_download(UUID, TEXT) TO anon;
-GRANT EXECUTE ON FUNCTION track_download(UUID, TEXT) TO service_role;
-
 ------------------------------------------------------------------------
 -- D53: compute_gene_reputation with dynamic weights (W0/W1/W2)
 ------------------------------------------------------------------------
@@ -91,21 +90,16 @@ DECLARE
   v_w_usage DOUBLE PRECISION;
   v_w_stability DOUBLE PRECISION;
 BEGIN
-  -- Determine ecosystem phase from total downloads
   SELECT COALESCE(SUM(downloads), 0) INTO v_ecosystem_dl FROM genes;
 
   IF v_ecosystem_dl < 100 THEN
-    -- W0: Cold start — usage data too sparse to be meaningful
     v_w_arena := 0.70;  v_w_usage := 0.05;  v_w_stability := 0.25;
   ELSIF v_ecosystem_dl < 10000 THEN
-    -- W1: Normal growth
     v_w_arena := 0.60;  v_w_usage := 0.20;  v_w_stability := 0.20;
   ELSE
-    -- W2: Mature ecosystem
     v_w_arena := 0.50;  v_w_usage := 0.30;  v_w_stability := 0.20;
   END IF;
 
-  -- Arena score: latest fitness_value
   SELECT fitness_value INTO v_fitness
   FROM arena_entries
   WHERE gene_id = p_gene_id
@@ -116,7 +110,6 @@ BEGIN
     v_arena_score := v_fitness;
   END IF;
 
-  -- Usage score: log-scaled downloads
   SELECT downloads INTO v_downloads
   FROM genes
   WHERE id = p_gene_id;
@@ -125,7 +118,6 @@ BEGIN
     v_usage_score := LEAST(ln(v_downloads::DOUBLE PRECISION + 1) / ln(1000.0), 1.0);
   END IF;
 
-  -- Stability score: log-scaled arena call depth
   SELECT COALESCE(SUM(total_calls), 0) INTO v_total_calls
   FROM arena_entries
   WHERE gene_id = p_gene_id;
@@ -151,40 +143,27 @@ SET search_path = 'public';
 
 ------------------------------------------------------------------------
 -- D57: compute_developer_reputation AVG → quality-weighted Σ
+-- (FIRST DEPLOYMENT FORM — refined later by 20260407103141 followup)
 ------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION compute_developer_reputation(p_user_id UUID)
 RETURNS DOUBLE PRECISION AS $$
 DECLARE
   v_gene_contribution DOUBLE PRECISION := 0.0;
   v_sum_rep DOUBLE PRECISION := 0.0;
-  v_contributing_gene_count INTEGER := 0;
-  v_genes_published INTEGER := 0;
+  v_genes_count INTEGER := 0;
   v_total_dl BIGINT := 0;
   v_arena_wins INTEGER := 0;
   v_community_bonus DOUBLE PRECISION := 0.0;
   v_reputation DOUBLE PRECISION;
 BEGIN
-  -- Public metadata should reflect all latest published genes, regardless of score.
-  SELECT COUNT(*),
-         COALESCE(SUM(lg.downloads), 0)
-  INTO v_genes_published, v_total_dl
-  FROM (
-    SELECT DISTINCT ON (g.owner_id, g.name)
-      g.downloads
-    FROM genes g
-    WHERE g.owner_id = p_user_id
-      AND g.published = true
-    ORDER BY g.owner_id, g.name, g.created_at DESC
-  ) lg;
-
-  -- Quality-weighted sum: SUM(R(g)) × ln(1+count) / count
-  -- Excludes zero-score genes to prevent spam inflation
   SELECT COALESCE(SUM(lg.reputation_score), 0.0),
-         COUNT(*)
-  INTO v_sum_rep, v_contributing_gene_count
+         COUNT(*),
+         COALESCE(SUM(lg.downloads), 0)
+  INTO v_sum_rep, v_genes_count, v_total_dl
   FROM (
     SELECT DISTINCT ON (g.owner_id, g.name)
-      g.reputation_score
+      g.reputation_score,
+      g.downloads
     FROM genes g
     WHERE g.owner_id = p_user_id
       AND g.published = true
@@ -192,12 +171,10 @@ BEGIN
     ORDER BY g.owner_id, g.name, g.created_at DESC
   ) lg;
 
-  IF v_contributing_gene_count > 0 THEN
-    -- ln(1+count)/count provides diminishing marginal returns per gene
-    v_gene_contribution := v_sum_rep * ln(1.0 + v_contributing_gene_count) / v_contributing_gene_count;
+  IF v_genes_count > 0 THEN
+    v_gene_contribution := v_sum_rep * ln(1.0 + v_genes_count) / v_genes_count;
   END IF;
 
-  -- Arena wins (rank #1 count)
   SELECT COUNT(*) INTO v_arena_wins
   FROM arena_entries ae
   JOIN genes g ON ae.gene_id = g.id
@@ -210,7 +187,7 @@ BEGIN
   v_reputation := v_gene_contribution + v_community_bonus;
 
   INSERT INTO developer_reputation (user_id, score, genes_published, total_downloads, arena_wins, community_bonus)
-  VALUES (p_user_id, v_reputation, v_genes_published, v_total_dl, v_arena_wins, v_community_bonus)
+  VALUES (p_user_id, v_reputation, v_genes_count, v_total_dl, v_arena_wins, v_community_bonus)
   ON CONFLICT (user_id) DO UPDATE SET
     score = EXCLUDED.score,
     genes_published = EXCLUDED.genes_published,

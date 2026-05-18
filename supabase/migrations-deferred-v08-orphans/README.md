@@ -1,10 +1,24 @@
-# Deferred Migrations — v0.8.x Schema-Migrations Orphans
+# Deferred Migrations — v0.8.x Schema-Migrations Orphans (CLOSED)
 
-**Status**: ⏸️ DEFERRED (do NOT move back without explicit founder authorization)
-**Decision date**: 2026-05-18 (S2 strategy in v0.9 F2 push prep)
+**Status**: ✅ **CLOSED** — Sprint C completed 2026-05-18; this directory is preserved for historical reference only
+**Original deferral date**: 2026-05-18 (S2 strategy in v0.9 F2 push prep)
+**Sprint C closure date**: 2026-05-18
 **Decision authority**: Founder
 **Audit reference**: meta-lesson **S2-L11** (private; 2026-05-18; dev/prod parity sprint)
-**Last MCP verification**: 2026-05-18 (CC1 conservative apply)
+
+**Sprint C resolution summary** (see `internal/plan/protocol/protocol-v0.9-sprint-c-deferred-migrations-cleanup.md` for full narrative):
+
+| File | Final disposition |
+|---|---|
+| `20260101000000_enable_pg_cron.sql` | ✅ Phase 1: moved to `../migrations/`; bookkeeping row INSERTed in production schema_migrations |
+| `20260331145900_drop_search_genes_pre_audit_fixes.sql` | ✅ Phase 1: same as above |
+| `20260331100000_quality_observatory_tables.sql` | ✅ Phase 2: bookkeeping row INSERTed in **rotifer-quality** schema_migrations; file moved to `../migrations-applied-rotifer-quality/` |
+| `20260331150000_audit_fixes.sql` | ✅ Phase 3: archived as superseded (Fix 2 absorbed into v0.9 search_genes; Fix 1 merged into Phase 4 rewrite); moved to `../migrations-archived-superseded/` |
+| `20260331140000_content_hash_server_validation.sql` | ✅ Phase 4: superseded by `20260518173445_content_hash_validation_with_mismatch_check.sql` (combines #6 design + audit_fixes Fix 1); old file moved to `../migrations-archived-superseded/` |
+| `20260331120000_protocol_consistency_checks.sql` | ✅ Phase 5: 3 of 4 sections superseded by current state; only §1 mcp→arena trigger + §4c chk_arena_domain_format extracted to `20260518173918_protocol_consistency_v09_baseline.sql`; old file moved to `../migrations-archived-superseded/` |
+| `20260331130000_rls_tightening_v081.sql` | ✅ Phase 6: split — downloads portion superseded by `20260518174553_lock_downloads_direct_insert.sql`; arena_entries portion deferred to v0.9.x patch in `../migrations-deferred-v09x-arena-rls/` (requires arena INSERT RPC-ization first) |
+
+After Sprint C this directory contains only this README — all 7 files have been moved to their appropriate destinations.
 
 ---
 

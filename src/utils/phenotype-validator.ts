@@ -31,7 +31,7 @@ function collectDiagnostics(phenotype: Record<string, unknown>): ValidationDiagn
 
   const llm = phenotype.llmRequirements as Record<string, unknown> | undefined;
   if (llm) {
-    if (!llm.templateFormat || !VALID_TEMPLATE_FORMATS.includes(llm.templateFormat as string)) {
+    if (!llm.templateFormat || !(VALID_TEMPLATE_FORMATS as readonly string[]).includes(llm.templateFormat as string)) {
       diags.push({
         level: "warning",
         code: "W0080",
@@ -74,7 +74,7 @@ function collectDiagnostics(phenotype: Record<string, unknown>): ValidationDiagn
 
   const guard = phenotype.guardConfig as Record<string, unknown> | undefined;
   if (guard) {
-    if (!guard.position || !VALID_GUARD_POSITIONS.includes(guard.position as string)) {
+    if (!guard.position || !(VALID_GUARD_POSITIONS as readonly string[]).includes(guard.position as string)) {
       diags.push({
         level: "error",
         code: "E0082",
@@ -110,7 +110,7 @@ function collectDiagnostics(phenotype: Record<string, unknown>): ValidationDiagn
   }
 
   const sm = phenotype.synthesisMethod as string | undefined;
-  if (sm !== undefined && !VALID_SYNTHESIS_METHODS.includes(sm)) {
+  if (sm !== undefined && !(VALID_SYNTHESIS_METHODS as readonly string[]).includes(sm)) {
     diags.push({
       level: "error",
       code: "E0090",
@@ -120,7 +120,7 @@ function collectDiagnostics(phenotype: Record<string, unknown>): ValidationDiagn
 
   // v0.9.1 §3.3: executionModel enum validation.
   const em = phenotype.executionModel as string | undefined;
-  if (em !== undefined && !VALID_EXECUTION_MODELS.includes(em)) {
+  if (em !== undefined && !(VALID_EXECUTION_MODELS as readonly string[]).includes(em)) {
     diags.push({
       level: "error",
       code: "E0100",

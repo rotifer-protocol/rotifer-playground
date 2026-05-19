@@ -391,7 +391,9 @@ impl PlaygroundBinding {
 
         let max_mem_kb = (sandbox.constraints().max_memory_bytes / 1024) as i64;
         let gene_id_short = context.trace_id.as_deref().unwrap_or("unknown");
-        let audit_path = self.project_dir.join("audit.jsonl");
+        let audit_dir = self.project_dir.join(".rotifer");
+        let _ = std::fs::create_dir_all(&audit_dir);
+        let audit_path = audit_dir.join("audit.jsonl");
         let audit = AuditLog::new(&audit_path).ok();
 
         // L0 pre-check for audit logging

@@ -55,7 +55,11 @@ export const agentListCommand = new Command("list")
           width: 10,
           format: (v: unknown) => {
             const s = String(v);
-            return s === "idle" ? c.success(s) : s === "running" ? c.warn(s) : c.muted(s);
+            const lower = s.toLowerCase();
+            if (lower === "active" || lower === "idle") return c.success(s);
+            if (lower === "running") return c.warn(s);
+            if (lower === "terminated" || lower === "error") return c.error(s);
+            return c.muted(s);
           },
         },
         { key: "genome", label: "Genome", width: 28 },

@@ -93,6 +93,10 @@ async function publishSingleGene(
 
   const fidelity: string = phenotype.fidelity || "Wrapped";
 
+  if (!phenotype.synthesisMethod) {
+    phenotype.synthesisMethod = "MANUAL";
+  }
+
   const irWasmPath = join(geneDir, "gene.ir.wasm");
   const wasmBytes = existsSync(irWasmPath)
     ? (readFileSync(irWasmPath) as Buffer)

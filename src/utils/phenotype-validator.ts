@@ -1,7 +1,21 @@
 import * as display from "./display.js";
+import {
+  EXECUTION_MODELS,
+  GUARD_POSITIONS,
+  SYNTHESIS_METHODS,
+  TEMPLATE_FORMATS,
+} from "../types/phenotype.js";
 
-const VALID_TEMPLATE_FORMATS = ["mustache", "handlebars", "jinja2", "fstring", "raw"];
-const VALID_GUARD_POSITIONS = ["input", "output", "both"];
+// Validator imports the enum const arrays from src/types/phenotype.ts (the
+// single source of truth — v0.9.1 §3.3). Local aliases keep call-sites compact.
+const VALID_TEMPLATE_FORMATS = TEMPLATE_FORMATS;
+const VALID_GUARD_POSITIONS = GUARD_POSITIONS;
+const VALID_SYNTHESIS_METHODS = SYNTHESIS_METHODS;
+// v0.9.1 §3.3 (ADR-253 D4.4): execution-model enum on the Phenotype.
+// Legacy Genes are pre-§3.3 and lack the field — those are treated as BATCH at
+// runtime (silent default in rotifer.ai's chat URL guard). The validator only
+// flags the field when it IS present but with an unknown value.
+const VALID_EXECUTION_MODELS = EXECUTION_MODELS;
 
 interface ValidationDiagnostic {
   level: "error" | "warning" | "info";
@@ -93,6 +107,52 @@ function collectDiagnostics(phenotype: Record<string, unknown>): ValidationDiagn
         message: `Gene has guardConfig but domain '${domain}' does not start with 'guard.'`,
       });
     }
+  }
+
+  const sm = phenotype.synthesisMethod as string | undefined;
+  if (sm !== undefined && !VALID_SYNTHESIS_METHODS.includes(sm)) {
+    diags.push({
+      level: "error",
+      code: "E0090",
+      message: `synthesisMethod must be one of: ${VALID_SYNTHESIS_METHODS.join(", ")} (got '${sm}')`,
+    });
+  }
+
+  // v0.9.1 §3.3: executionModel enum validation.
+  const em = phenotype.executionModel as string | undefined;
+  if (em !== undefined && !VALID_EXECUTION_MODELS.includes(em)) {
+    diags.push({
+      level: "error",
+      code: "E0100",
+      message: `executionModel must be one of: ${VALID_EXECUTION_MODELS.join(", ")} (got '${em}')`,
+    });
+  }
+
+  // CHAT Agents should have a description (used as system prompt by rotifer.ai's
+  // chat surface — without it the LLM has no Agent identity and replies generically).
+  if (em === "CHAT") {
+    const desc = phenotype.description as string | undefined;
+    if (!desc || desc.trim().length < 10) {
+      diags.push({
+        level: "warning",
+        code: "W0100",
+        message:
+          "CHAT executionModel Phenotype has empty or very short description (<10 chars); " +
+          "the chat surface uses description as the Agent system prompt, so a richer description " +
+          "directly improves conversation quality",
+      });
+    }
+  }
+
+  // BATCH/EVENT_DRIVEN Genes should not declare a chat-style systemPrompt
+  // (forward-compat: if a future field 'systemPrompt' is added, warn when misused).
+  const sp = phenotype.systemPrompt as string | undefined;
+  if (sp !== undefined && em !== undefined && em !== "CHAT") {
+    diags.push({
+      level: "warning",
+      code: "W0101",
+      message: `systemPrompt is set but executionModel is '${em}', not 'CHAT' — systemPrompt is ignored outside chat surfaces`,
+    });
   }
 
   if (isPrompt && phenotype.fidelity === "Native") {

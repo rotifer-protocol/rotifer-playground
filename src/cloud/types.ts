@@ -5,6 +5,9 @@ export interface CloudConfig {
 
 export type AuthProvider = "github" | "gitlab" | "email";
 
+export type SynthesisMethod = "MANUAL" | "LLM_ASSISTED" | "LLM_AUTO" | "MUTATION" | "DE_NOVO";
+export const VALID_SYNTHESIS_METHODS: SynthesisMethod[] = ["MANUAL", "LLM_ASSISTED", "LLM_AUTO", "MUTATION", "DE_NOVO"];
+
 export interface CloudCredentials {
   access_token: string;
   refresh_token: string;

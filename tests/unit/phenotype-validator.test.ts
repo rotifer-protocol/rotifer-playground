@@ -289,4 +289,92 @@ describe("validateLlmNativePhenotype", () => {
       expect(exitSpy).not.toHaveBeenCalled();
     });
   });
+
+  // ─── v0.9.1 §3.3: executionModel + systemPrompt ────────────────────────────
+
+  describe("executionModel validation (v0.9.1 §3.3)", () => {
+    it("accepts CHAT / BATCH / EVENT_DRIVEN", () => {
+      for (const em of ["CHAT", "BATCH", "EVENT_DRIVEN"]) {
+        validateLlmNativePhenotype(
+          basePhenotype({
+            executionModel: em,
+            description: "A sufficiently long description for chat Agents.",
+          }),
+          "test.json",
+        );
+      }
+      expect(display.rustStyleError).not.toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E0100" }),
+      );
+    });
+
+    it("errors on unknown executionModel value", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({ executionModel: "STREAMING" }),
+        "test.json",
+      );
+      expect(display.rustStyleError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E0100" }),
+      );
+      expect(exitSpy).toHaveBeenCalled();
+    });
+
+    it("treats absent executionModel as OK (legacy Gene compat)", () => {
+      validateLlmNativePhenotype(basePhenotype(), "test.json");
+      expect(display.rustStyleError).not.toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E0100" }),
+      );
+      expect(display.warn).not.toHaveBeenCalledWith(expect.stringContaining("W0100"));
+    });
+
+    it("warns when CHAT executionModel has empty description", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({ executionModel: "CHAT", description: "" }),
+        "test.json",
+      );
+      expect(display.warn).toHaveBeenCalledWith(expect.stringContaining("W0100"));
+    });
+
+    it("warns when CHAT executionModel has too-short description (<10 chars)", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({ executionModel: "CHAT", description: "Helper." }),
+        "test.json",
+      );
+      expect(display.warn).toHaveBeenCalledWith(expect.stringContaining("W0100"));
+    });
+
+    it("no warning for CHAT with sufficient description", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({
+          executionModel: "CHAT",
+          description: "An assistant that drafts weekly status reports.",
+        }),
+        "test.json",
+      );
+      expect(display.warn).not.toHaveBeenCalledWith(expect.stringContaining("W0100"));
+    });
+
+    it("warns when systemPrompt is set on non-CHAT executionModel", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({
+          executionModel: "BATCH",
+          systemPrompt: "You are helpful.",
+        }),
+        "test.json",
+      );
+      expect(display.warn).toHaveBeenCalledWith(expect.stringContaining("W0101"));
+    });
+
+    it("no warning when systemPrompt is set with CHAT executionModel", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({
+          executionModel: "CHAT",
+          description: "An assistant that helps users.",
+          systemPrompt: "You are helpful.",
+        }),
+        "test.json",
+      );
+      expect(display.warn).not.toHaveBeenCalledWith(expect.stringContaining("W0101"));
+    });
+  });
 });

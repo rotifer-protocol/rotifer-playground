@@ -1,0 +1,58 @@
+name: DCO
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    runs-on: ubuntu-latest
+    name: DCO Sign-off Check
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check DCO Sign-off
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+
+          echo "Checking commits from $BASE to $HEAD..."
+          echo ""
+
+          MISSING=""
+          while IFS= read -r sha; do
+            [ -z "$sha" ] && continue
+            SUBJECT=$(git log -1 --format='%s' "$sha")
+            SIGNOFF=$(git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha")
+            if [ -z "$SIGNOFF" ]; then
+              MISSING="${MISSING}❌ ${sha:0:8} ${SUBJECT}\n"
+            else
+              echo "✅ ${sha:0:8} ${SUBJECT}"
+            fi
+          done < <(git log --no-merges --format='%H' "$BASE..$HEAD")
+
+          if [ -n "$MISSING" ]; then
+            echo ""
+            echo "═════════════════════════════════════════════════════════════"
+            echo "DCO Check Failed — the following commits are missing Sign-off:"
+            echo "═════════════════════════════════════════════════════════════"
+            printf "%b" "$MISSING"
+            echo ""
+            echo "To fix:"
+            echo "  - Last commit:  git commit --amend -s --no-edit"
+            echo "  - Multiple:     git rebase HEAD~N --signoff"
+            echo "  - Then:         git push --force-with-lease"
+            echo ""
+            echo "See https://developercertificate.org/ for DCO v1.1 details."
+            echo "See CONTRIBUTING.md §'Developer Certificate of Origin' for help."
+            exit 1
+          fi
+
+          echo ""
+          echo "✅ All commits in this PR are signed off — DCO compliant."

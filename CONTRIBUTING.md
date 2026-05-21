@@ -115,6 +115,53 @@ When implementing spec features:
 - Rust: standard `cargo fmt` + `cargo clippy`
 - No comments that merely narrate code — comments explain *why*, not *what*
 
+## Developer Certificate of Origin (DCO)
+
+All contributions to this project must be **signed off**, certifying
+compliance with the [Developer Certificate of Origin v1.1](https://developercertificate.org/).
+
+### How to Sign Off
+
+Sign your commits with the `-s` flag:
+
+```bash
+git commit -s -m "your commit message"
+```
+
+This automatically appends a `Signed-off-by:` line to the commit message:
+
+```
+Signed-off-by: Your Name <your@email.com>
+```
+
+If you forgot to sign off and need to amend the last commit:
+
+```bash
+git commit --amend -s --no-edit
+```
+
+For multiple commits, use rebase with the `--signoff` flag:
+
+```bash
+git rebase HEAD~N --signoff   # N = number of commits to sign off
+```
+
+### Why DCO
+
+By signing off, you certify that:
+
+1. You wrote the contribution (or have the right to submit it under the
+   project's license);
+2. You understand the contribution is public and the sign-off is recorded
+   permanently in the project's git history;
+3. You agree to the [Developer Certificate of Origin v1.1](https://developercertificate.org/) (full text).
+
+### Enforcement
+
+Pull requests with any unsigned commits will be **blocked** by the automated
+DCO check (`.github/workflows/dco.yml`). Please sign all commits before
+opening a PR.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under Apache-2.0 with the Rotifer Safety Clause. See [LICENSE](LICENSE) for details.

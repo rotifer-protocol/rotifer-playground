@@ -20,12 +20,17 @@ import {
   isValidSourceLanguage,
   type SourceLanguage,
 } from "../utils/detect-source-language.js";
+import { decideBadgeAction, uploadSafetyBadge } from "../cloud/badge.js";
+import type { ScanResult } from "../scanner/types.js";
+
+const VG_SCANNER_VERSION = "0.8.0";
 
 interface PublishOptions {
   description?: string;
   changelog?: string;
   skipArena?: boolean;
   skipSecurity?: boolean;
+  skipVg?: boolean;
   all?: boolean;
   lang?: string;
 }
@@ -58,8 +63,10 @@ async function publishSingleGene(
     return { name: geneName, status: "skipped", error: "no phenotype.json" };
   }
 
+  let scanResult: ScanResult | null = null;
   if (!options.skipSecurity) {
     const checkResult = runPrePublishChecks(geneDir, geneName);
+    scanResult = checkResult.scanResult;
 
     if (!isQuiet) {
       for (const check of checkResult.checks) {
@@ -215,6 +222,8 @@ async function publishSingleGene(
 
     const status = result.isUpdate ? "updated" : "created";
 
+    await tryUploadVgBadge(result.id, scanResult, options, isQuiet);
+
     if (!options.skipArena && !isQuiet) {
       display.info(
         `Auto Arena submission skipped for '${geneName}' — verified runtime metrics are required. ` +
@@ -228,6 +237,52 @@ async function publishSingleGene(
   }
 }
 
+/**
+ * Upload V(g) safety badge after successful publish (v0.9 §3.8 Phase 1).
+ *
+ * Behavior matrix (see `decideBadgeAction` in src/cloud/badge.ts).
+ * Failures are non-blocking: badge is observability, not protocol.
+ */
+async function tryUploadVgBadge(
+  geneUuid: string,
+  scanResult: ScanResult | null,
+  options: PublishOptions,
+  isQuiet: boolean,
+): Promise<void> {
+  const token = process.env.ROTIFER_BADGE_TOKEN;
+  if (!token) {
+    if (!isQuiet) {
+      display.hint("Skipping V(g) badge upload (ROTIFER_BADGE_TOKEN not set)");
+    }
+    return;
+  }
+
+  const action = decideBadgeAction({
+    skipVg: options.skipVg,
+    skipSecurity: options.skipSecurity,
+    hasScanResult: scanResult !== null,
+  });
+
+  if (action.kind === "skip") {
+    if (!isQuiet) {
+      display.hint(`Skipping V(g) badge upload (${action.reason})`);
+    }
+    return;
+  }
+
+  const payload = action.mode === "skipped" ? null : scanResult;
+  const r = await uploadSafetyBadge(geneUuid, payload, VG_SCANNER_VERSION, action.mode, token);
+  if (!isQuiet) {
+    if (r.ok) {
+      const detail = action.mode === "skipped" ? "skipped" : `grade ${payload?.grade ?? "?"}`;
+      display.success(`V(g) badge uploaded (${detail})`);
+    } else {
+      const detail = r.status ? `${r.status} ${r.error ?? ""}` : (r.error ?? "");
+      display.warn(`V(g) badge upload failed (non-blocking): ${detail}`);
+    }
+  }
+}
+
 export const publishCommand = new Command("publish")
   .description("Publish gene(s) to Rotifer Cloud")
   .argument("[gene-name]", "gene name to publish (omit when using --all)")
@@ -235,6 +290,7 @@ export const publishCommand = new Command("publish")
   .option("--changelog <text>", "changelog entry for this version (max 500 chars)")
   .option("--skip-arena", "skip automatic Arena submission and reputation computation")
   .option("--skip-security", "skip pre-publish security checks (dangerous API / IR / secrets scan)")
+  .option("--skip-vg", "skip V(g) safety scan and upload 'skipped' badge placeholder (badge displays 'skipped')")
   .option("--all", "publish all valid genes in the genes directory")
   .option(
     "--lang <lang>",

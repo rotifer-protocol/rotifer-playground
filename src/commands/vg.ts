@@ -4,8 +4,7 @@ import * as display from "../utils/display.js";
 import { c } from "../utils/palette.js";
 import { scan } from "../scanner/index.js";
 import type { Finding, ScanResult } from "../scanner/types.js";
-
-const BADGE_WORKER_URL = "https://badge.rotifer.dev";
+import { uploadSafetyBadge } from "../cloud/badge.js";
 
 const GRADE_COLORS: Record<string, (s: string) => string> = {
   A: c.success,
@@ -39,31 +38,12 @@ async function publishSafety(
     return;
   }
 
-  const body = {
-    gene_id: geneId,
-    grade: result.grade,
-    scanner_version: scannerVersion,
-    findings_count: result.findings.length,
-  };
-
-  try {
-    const res = await fetch(`${BADGE_WORKER_URL}/safety/${geneId}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (res.ok) {
-      display.success(`Safety grade ${result.grade} published to badge.rotifer.dev (self-reported)`);
-    } else {
-      const err = await res.text();
-      display.warn(`Failed to publish safety grade: ${res.status} ${err}`);
-    }
-  } catch (e) {
-    display.warn(`Failed to publish safety grade: ${(e as Error).message}`);
+  const r = await uploadSafetyBadge(geneId, result, scannerVersion, "self-reported", token);
+  if (r.ok) {
+    display.success(`Safety grade ${result.grade} published to badge.rotifer.dev (self-reported)`);
+  } else {
+    const detail = r.status ? `${r.status} ${r.error ?? ""}` : (r.error ?? "");
+    display.warn(`Failed to publish safety grade: ${detail}`);
   }
 }
 

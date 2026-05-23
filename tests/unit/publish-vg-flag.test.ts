@@ -74,7 +74,7 @@ describe("uploadSafetyBadge (fetch wire format)", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(`${BADGE_WORKER_URL}/safety/${VALID_UUID}`);
+    expect(url).toBe(`${BADGE_WORKER_URL}/safety`);
     expect(init.method).toBe("POST");
     const headers = init.headers as Record<string, string>;
     expect(headers.Authorization).toBe(`Bearer ${TOKEN}`);
@@ -147,7 +147,7 @@ describe("uploadSafetyBadge (fetch wire format)", () => {
     );
 
     const [url] = fetchSpy.mock.calls[0] as [string];
-    expect(url).toBe(`https://staging.badge.example/safety/${VALID_UUID}`);
+    expect(url).toBe(`https://staging.badge.example/safety`);
   });
 
   it("findings_count reflects actual scan findings length", async () => {

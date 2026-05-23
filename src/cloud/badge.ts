@@ -72,7 +72,7 @@ export async function uploadSafetyBadge(
   }
 
   try {
-    const res = await fetch(`${workerUrl}/safety/${geneId}`, {
+    const res = await fetch(`${workerUrl}/safety`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

@@ -31,27 +31,68 @@
   },
   "outputSchema": {
     "type": "object",
-    "required": ["markets", "scannedAt", "totalFetched"],
+    "required": [
+      "markets",
+      "scannedAt",
+      "totalFetched"
+    ],
     "properties": {
       "markets": {
         "type": "array",
         "items": {
           "type": "object",
           "properties": {
-            "id": { "type": "string" },
-            "question": { "type": "string" },
-            "slug": { "type": "string" },
-            "outcomes": { "type": "array", "items": { "type": "string" } },
-            "outcomePrices": { "type": "array", "items": { "type": "number" } },
-            "bestBid": { "type": "number" },
-            "bestAsk": { "type": "number" },
-            "spread": { "type": "number" },
-            "volume24hr": { "type": "number" },
-            "liquidity": { "type": "number" },
-            "endDate": { "type": "string" },
-            "eventSlug": { "type": "string" },
-            "eventTitle": { "type": "string" },
-            "clobTokenIds": { "type": "array", "items": { "type": "string" } }
+            "id": {
+              "type": "string"
+            },
+            "question": {
+              "type": "string"
+            },
+            "slug": {
+              "type": "string"
+            },
+            "outcomes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "outcomePrices": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            },
+            "bestBid": {
+              "type": "number"
+            },
+            "bestAsk": {
+              "type": "number"
+            },
+            "spread": {
+              "type": "number"
+            },
+            "volume24hr": {
+              "type": "number"
+            },
+            "liquidity": {
+              "type": "number"
+            },
+            "endDate": {
+              "type": "string"
+            },
+            "eventSlug": {
+              "type": "string"
+            },
+            "eventTitle": {
+              "type": "string"
+            },
+            "clobTokenIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         },
         "description": "Filtered market snapshots"
@@ -67,6 +108,32 @@
     }
   },
   "dependencies": [],
+  "externalDependencies": [
+    {
+      "apiType": "http",
+      "semanticTag": "polymarket.markets.list",
+      "sla": {
+        "expectedLatency": 2000,
+        "expectedAvailability": 0.995
+      },
+      "degradationBehavior": "SilentDegrade"
+    }
+  ],
+  "simulationSpec": {
+    "supportsDryRun": true,
+    "resourceEstimate": {
+      "estimatedLatencyMs": 1500
+    }
+  },
+  "degradationSpec": {
+    "mode": "PARTIAL_OUTPUT",
+    "fallbackOutputSchema": {
+      "markets": [],
+      "scannedAt": "",
+      "totalFetched": 0
+    },
+    "minimumDependencies": []
+  },
   "transparency": "Open",
   "network": {
     "allowedDomains": [
@@ -81,7 +148,14 @@
   "semanticRequirements": {
     "timeModel": "Async",
     "concurrencyModel": "Stateless",
-    "failureSemantics": "Fail"
+    "failureSemantics": "FailFast"
   },
-  "tags": ["polymarket", "gamma-api", "liquidity", "market-data", "scanner"]
+  "tags": [
+    "polymarket",
+    "gamma-api",
+    "liquidity",
+    "market-data",
+    "scanner"
+  ],
+  "irHash": "cab9ea9ab012f2268a59c27d7386c5dcdf77be6395120603f7d34535958bb5db"
 }

@@ -389,7 +389,7 @@ describe("validateLlmNativePhenotype", () => {
             {
               apiType: "rest",
               semanticTag: "cve-database",
-              degradationBehavior: "cache",
+              degradationBehavior: "PartialRetry",
             },
           ],
         }),
@@ -415,7 +415,7 @@ describe("validateLlmNativePhenotype", () => {
         basePhenotype({
           fidelity: "Hybrid",
           externalDependencies: [
-            { semanticTag: "git-cli", degradationBehavior: "fail" },
+            { semanticTag: "git-cli", degradationBehavior: "FailFast" },
           ],
         }),
         "test.json",
@@ -430,7 +430,7 @@ describe("validateLlmNativePhenotype", () => {
         basePhenotype({
           fidelity: "Hybrid",
           externalDependencies: [
-            { apiType: "graphql", degradationBehavior: "fallback" },
+            { apiType: "graphql", degradationBehavior: "SilentDegrade" },
           ],
         }),
         "test.json",
@@ -448,7 +448,7 @@ describe("validateLlmNativePhenotype", () => {
             {
               apiType: "rest",
               semanticTag: "llm-judge",
-              degradationBehavior: "retry",
+              degradationBehavior: "retry_then_skip",
             },
           ],
         }),

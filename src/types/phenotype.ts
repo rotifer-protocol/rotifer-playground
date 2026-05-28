@@ -96,15 +96,30 @@ export interface ExternalDependency {
     expectedLatency?: number;
     expectedAvailability?: number;
   };
-  /** How the gene behaves when this dependency is unreachable. */
-  degradationBehavior: "fail" | "fallback" | "cache" | "skip";
+  /**
+   * How the gene behaves when this dependency is unreachable.
+   *
+   * This enum tracks the Rust IR compiler's PascalCase 5-variant
+   * (`crates/rotifer-core/src/types/gene.rs`::FailureSemantics). The
+   * protocol spec declares an UPPERCASE 4-variant set; this drift
+   * (spec / TS / Rust IR) is tracked for a future spec alignment review.
+   * TS follows the Rust IR because it is the downstream `compile` ground
+   * truth; the spec stays unmodified pending that review.
+   */
+  degradationBehavior:
+    | "FailFast"
+    | "SilentDegrade"
+    | "Retry"
+    | "PartialRetry"
+    | "AtomicRollback";
 }
 
 export const DEGRADATION_BEHAVIORS: readonly ExternalDependency["degradationBehavior"][] = [
-  "fail",
-  "fallback",
-  "cache",
-  "skip",
+  "FailFast",
+  "SilentDegrade",
+  "Retry",
+  "PartialRetry",
+  "AtomicRollback",
 ] as const;
 
 /**

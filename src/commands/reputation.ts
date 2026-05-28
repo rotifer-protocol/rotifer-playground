@@ -1,18 +1,25 @@
 import { Command } from "commander";
 import * as display from "../utils/display.js";
-import { scoreColor, c } from "../utils/palette.js";
-import { getGeneReputation, getDeveloperReputation, getReputationLeaderboard } from "../cloud/client.js";
+import { scoreColor } from "../utils/palette.js";
+import {
+  getGene,
+  getGeneReputation,
+  getDeveloperReputation,
+  getProfileByUsername,
+  getReputationLeaderboard,
+} from "../cloud/client.js";
 import { loadCredentials } from "../cloud/auth.js";
+import { parseUserRef } from "../cloud/gene-ref.js";
 
 export const reputationCommand = new Command("reputation")
   .description("View gene and creator reputation scores")
-  .argument("[gene-ref]", "gene UUID, name, or content hash")
+  .argument("[ref]", "gene ref (UUID, name, content hash, @owner/name) or @username")
   .option("--mine", "show your creator reputation", false)
   .option("--leaderboard", "show creator leaderboard", false)
   .option("--top <n>", "number of entries in leaderboard", "10")
   .action(
     async (
-      geneRef: string | undefined,
+      ref: string | undefined,
       options: { mine: boolean; leaderboard: boolean; top: string }
     ) => {
       if (options.leaderboard) {
@@ -25,13 +32,19 @@ export const reputationCommand = new Command("reputation")
         return;
       }
 
-      if (geneRef) {
-        await showGeneReputation(geneRef);
+      if (ref) {
+        const userRef = parseUserRef(ref);
+        if (userRef) {
+          await showUserReputation(userRef.username);
+          return;
+        }
+        await showGeneReputation(ref);
         return;
       }
 
-      display.error("Specify a gene reference, --mine, or --leaderboard");
-      display.hint("Usage: rotifer reputation <gene-ref>");
+      display.error("Specify a gene reference, @username, --mine, or --leaderboard");
+      display.hint("Usage: rotifer reputation <gene-ref>          # by UUID, name, or @owner/name");
+      display.hint("       rotifer reputation @username            # creator reputation");
       display.hint("       rotifer reputation --mine");
       display.hint("       rotifer reputation --leaderboard");
       process.exit(1);
@@ -41,7 +54,11 @@ export const reputationCommand = new Command("reputation")
 async function showGeneReputation(geneRef: string): Promise<void> {
   const s = display.spinner("Fetching gene reputation...");
   try {
-    const rep = await getGeneReputation(geneRef);
+    // Resolve any user-facing ref (UUID / contentHash / @owner/name / plain
+    // name) into the gene UUID first; getGeneReputation expects a UUID and
+    // PostgreSQL throws a UUID-parse error otherwise (Issue #50 Bug 3).
+    const gene = await getGene(geneRef);
+    const rep = await getGeneReputation(gene.id);
     s.stop();
 
     display.renderResult(rep, (data) => {
@@ -79,16 +96,52 @@ async function showMyReputation(): Promise<void> {
     process.exit(1);
     return;
   }
+  await renderCreatorReputation(creds.user.username, creds.user.id, {
+    header: "My Creator Reputation",
+  });
+}
 
+async function showUserReputation(username: string): Promise<void> {
+  const s = display.spinner(`Looking up @${username}...`);
+  let profile;
+  try {
+    profile = await getProfileByUsername(username);
+  } catch (err: unknown) {
+    s.stop();
+    const msg = err instanceof Error ? err.message : "Failed to look up user";
+    display.error(msg);
+    display.hint("Check your network connection and try again.");
+    process.exit(1);
+    return;
+  }
+  s.stop();
+
+  if (!profile) {
+    display.error(`Creator @${username} not found in Rotifer Cloud.`);
+    display.hint("Check the @username spelling, or run 'rotifer reputation --leaderboard' to discover creators.");
+    process.exit(1);
+    return;
+  }
+
+  await renderCreatorReputation(profile.username, profile.id, {
+    header: `Creator Reputation: @${profile.username}`,
+  });
+}
+
+async function renderCreatorReputation(
+  username: string,
+  userId: string,
+  opts: { header: string },
+): Promise<void> {
   const s = display.spinner("Fetching creator reputation...");
   try {
-    const rep = await getDeveloperReputation(creds.user.id);
+    const rep = await getDeveloperReputation(userId);
     s.stop();
 
     display.renderResult(
-      { username: creds.user.username, ...rep },
+      { username, ...rep },
       (data) => {
-        display.header("My Creator Reputation");
+        display.header(opts.header);
 
         console.log();
         display.kv("Creator", `@${data.username}`);

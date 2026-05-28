@@ -12,6 +12,7 @@ import type {
 } from "./types.js";
 import { DEFAULT_CLOUD_ENDPOINT, CLOUD_CONFIG_FILE } from "./types.js";
 import { loadCredentials, refreshTokenIfNeeded } from "./auth.js";
+import { parseGeneRef } from "./gene-ref.js";
 
 const ROTIFER_HOME = join(
   process.env.HOME || process.env.USERPROFILE || "/tmp",
@@ -223,23 +224,36 @@ export async function listGenes(options: {
 }
 
 export async function getGene(idOrName: string): Promise<CloudGene> {
-  const isUuid =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-      idOrName,
-    );
-  const isContentHash = /^[0-9a-f]{64}$/i.test(idOrName);
-
+  const ref = parseGeneRef(idOrName);
   const params = new URLSearchParams();
-  if (isUuid) {
-    params.set("id", `eq.${idOrName}`);
-  } else if (isContentHash) {
-    params.set("content_hash", `eq.${idOrName}`);
-  } else {
-    params.set("name", `eq.${idOrName}`);
-    params.set("order", "created_at.desc");
-    params.set("limit", "1");
+
+  switch (ref.kind) {
+    case "uuid":
+      params.set("id", `eq.${ref.raw}`);
+      params.set("select", "*, profiles(username)");
+      break;
+    case "contentHash":
+      params.set("content_hash", `eq.${ref.raw}`);
+      params.set("select", "*, profiles(username)");
+      break;
+    case "ownerName":
+      // PostgREST embedded-resource filter requires `!inner` so the
+      // server applies the profiles.username constraint as a JOIN filter
+      // rather than dropping it silently. See:
+      //   https://postgrest.org/en/stable/references/api/resource_embedding.html#hint-disambiguation
+      params.set("name", `eq.${ref.name}`);
+      params.set("profiles.username", `eq.${ref.owner}`);
+      params.set("select", "*, profiles!inner(username)");
+      params.set("order", "created_at.desc");
+      params.set("limit", "1");
+      break;
+    case "name":
+      params.set("name", `eq.${ref.raw}`);
+      params.set("select", "*, profiles(username)");
+      params.set("order", "created_at.desc");
+      params.set("limit", "1");
+      break;
   }
-  params.set("select", "*, profiles(username)");
 
   const res = await fetch(apiUrl(`/genes?${params}`), {
     headers: authHeaders(),
@@ -593,6 +607,40 @@ export interface LeaderboardEntry {
   genes_published: number;
   total_downloads: number;
   arena_wins: number;
+}
+
+export interface ProfileSummary {
+  id: string;
+  username: string;
+  avatar_url: string | null;
+}
+
+/**
+ * Look up a profile (user) by username. Returns null when no profile matches.
+ *
+ * Used by `rotifer reputation @username` to resolve the @-handle into the
+ * UUID that `getDeveloperReputation` requires. Without this, passing the
+ * @-handle straight through ends up in a `user_id=eq.@username` query that
+ * PostgreSQL rejects with a UUID-parse error (Issue #50 Bug 3).
+ */
+export async function getProfileByUsername(
+  username: string,
+): Promise<ProfileSummary | null> {
+  const params = new URLSearchParams();
+  params.set("username", `eq.${username}`);
+  params.set("select", "id,username,avatar_url");
+  params.set("limit", "1");
+
+  const res = await fetch(apiUrl(`/profiles?${params}`), {
+    headers: authHeaders(),
+  });
+  const data = await handleResponse<any[]>(res);
+  if (data.length === 0) return null;
+  return {
+    id: data[0].id,
+    username: data[0].username,
+    avatar_url: data[0].avatar_url ?? null,
+  };
 }
 
 export async function getGeneReputation(geneId: string): Promise<GeneReputationResponse> {

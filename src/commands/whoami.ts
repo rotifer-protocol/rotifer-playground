@@ -1,11 +1,17 @@
 import { Command } from "commander";
 import * as display from "../utils/display.js";
 import { c } from "../utils/palette.js";
-import { loadCredentials } from "../cloud/auth.js";
+import { loadCredentials, refreshTokenIfNeeded } from "../cloud/auth.js";
 
 export const whoamiCommand = new Command("whoami")
   .description("Show current authentication status")
-  .action(() => {
+  .action(async () => {
+    // Auto-refresh before reading so an expired access token doesn't make
+    // whoami report "Not logged in" when the refresh token is still valid.
+    // refreshTokenIfNeeded is silent on failure (the call below still sees
+    // null creds in the truly-logged-out case), so this is safe to await
+    // unconditionally — Issue #50 UX 4.
+    await refreshTokenIfNeeded();
     const creds = loadCredentials();
 
     if (!creds) {

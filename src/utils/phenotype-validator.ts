@@ -1,5 +1,7 @@
 import * as display from "./display.js";
 import {
+  DEGRADATION_BEHAVIORS,
+  DEGRADATION_MODES,
   EXECUTION_MODELS,
   GUARD_POSITIONS,
   SYNTHESIS_METHODS,
@@ -16,6 +18,11 @@ const VALID_SYNTHESIS_METHODS = SYNTHESIS_METHODS;
 // runtime (silent default in rotifer.ai's chat URL guard). The validator only
 // flags the field when it IS present but with an unknown value.
 const VALID_EXECUTION_MODELS = EXECUTION_MODELS;
+// v0.9 §3.11 Hybrid Fidelity (spec §4.2 v2.11, ADR-220 D-04): three Optional
+// Phenotype fields enabling external API integration with explicit semantic
+// declaration, dry-run protocol, and graceful degradation contracts.
+const VALID_DEGRADATION_BEHAVIORS = DEGRADATION_BEHAVIORS;
+const VALID_DEGRADATION_MODES = DEGRADATION_MODES;
 
 interface ValidationDiagnostic {
   level: "error" | "warning" | "info";
@@ -169,6 +176,117 @@ function collectDiagnostics(phenotype: Record<string, unknown>): ValidationDiagn
       code: "I0080",
       message: "Guard domain gene missing guardConfig — consider adding it for V(g) integration",
     });
+  }
+
+  // v0.9 §3.11 Hybrid Fidelity validation (spec §4.2 v2.11, ADR-220 §"D-04").
+  const extDeps = phenotype.externalDependencies as unknown[] | undefined;
+  if (extDeps !== undefined) {
+    if (!Array.isArray(extDeps)) {
+      diags.push({
+        level: "error",
+        code: "E0110",
+        message: "externalDependencies must be an array",
+      });
+    } else {
+      for (let i = 0; i < extDeps.length; i++) {
+        const dep = extDeps[i] as Record<string, unknown> | undefined;
+        if (!dep || typeof dep !== "object") {
+          diags.push({
+            level: "error",
+            code: "E0111",
+            message: `externalDependencies[${i}] must be an object`,
+          });
+          continue;
+        }
+        if (typeof dep.apiType !== "string" || dep.apiType.length === 0) {
+          diags.push({
+            level: "error",
+            code: "E0112",
+            message: `externalDependencies[${i}].apiType is required (non-empty string)`,
+          });
+        }
+        if (typeof dep.semanticTag !== "string" || dep.semanticTag.length === 0) {
+          diags.push({
+            level: "error",
+            code: "E0113",
+            message: `externalDependencies[${i}].semanticTag is required (non-empty string)`,
+          });
+        }
+        const db = dep.degradationBehavior as string | undefined;
+        if (db === undefined || !(VALID_DEGRADATION_BEHAVIORS as readonly string[]).includes(db)) {
+          diags.push({
+            level: "error",
+            code: "E0114",
+            message:
+              `externalDependencies[${i}].degradationBehavior must be one of: ` +
+              `${VALID_DEGRADATION_BEHAVIORS.join(", ")} (got '${db ?? "<undefined>"}')`,
+          });
+        }
+      }
+    }
+  }
+
+  // Hybrid fidelity should declare external dependencies — case-insensitive
+  // match per Q2=c (Phase 5 normalization deferred): spec enum is "HYBRID"
+  // (uppercase) but plan / runtime use "Hybrid" / "hybrid", so accept all.
+  const fidelityRaw = phenotype.fidelity as string | undefined;
+  const fidelityLower = fidelityRaw?.toLowerCase();
+  if (fidelityLower === "hybrid" && (extDeps === undefined || (Array.isArray(extDeps) && extDeps.length === 0))) {
+    diags.push({
+      level: "warning",
+      code: "W0110",
+      message:
+        "Gene has fidelity 'Hybrid' but does not declare externalDependencies — " +
+        "Hybrid genes that perform external calls SHOULD declare both `network` (protocol layer) " +
+        "and `externalDependencies` (semantic layer) per spec §3.11",
+    });
+  }
+
+  const sim = phenotype.simulationSpec as Record<string, unknown> | undefined;
+  if (sim !== undefined) {
+    if (typeof sim.supportsDryRun !== "boolean") {
+      diags.push({
+        level: "error",
+        code: "E0120",
+        message: "simulationSpec.supportsDryRun must be a boolean",
+      });
+    }
+    const re = sim.resourceEstimate as Record<string, unknown> | undefined;
+    if (!re || typeof re !== "object") {
+      diags.push({
+        level: "error",
+        code: "E0121",
+        message: "simulationSpec.resourceEstimate is required (object with estimatedLatencyMs)",
+      });
+    } else if (typeof re.estimatedLatencyMs !== "number" || re.estimatedLatencyMs < 0) {
+      diags.push({
+        level: "error",
+        code: "E0122",
+        message: "simulationSpec.resourceEstimate.estimatedLatencyMs must be a non-negative number",
+      });
+    }
+  }
+
+  const deg = phenotype.degradationSpec as Record<string, unknown> | undefined;
+  if (deg !== undefined) {
+    const mode = deg.mode as string | undefined;
+    if (mode === undefined || !(VALID_DEGRADATION_MODES as readonly string[]).includes(mode)) {
+      diags.push({
+        level: "error",
+        code: "E0130",
+        message:
+          `degradationSpec.mode must be one of: ${VALID_DEGRADATION_MODES.join(", ")} ` +
+          `(got '${mode ?? "<undefined>"}')`,
+      });
+    }
+    const minDeps = deg.minimumDependencies;
+    if (!Array.isArray(minDeps)) {
+      diags.push({
+        level: "error",
+        code: "E0131",
+        message: "degradationSpec.minimumDependencies must be an array of semanticTag strings",
+      });
+    }
   }
 
   return diags;

@@ -377,4 +377,215 @@ describe("validateLlmNativePhenotype", () => {
       expect(display.warn).not.toHaveBeenCalledWith(expect.stringContaining("W0101"));
     });
   });
+
+  // ─── v0.9 §3.11 Hybrid Fidelity (spec §4.2 v2.11, ADR-220 D-04) ────────────
+
+  describe("externalDependencies validation (v0.9 §3.11)", () => {
+    it("accepts a valid externalDependencies declaration", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({
+          fidelity: "Hybrid",
+          externalDependencies: [
+            {
+              apiType: "rest",
+              semanticTag: "cve-database",
+              degradationBehavior: "cache",
+            },
+          ],
+        }),
+        "test.json",
+      );
+      expect(display.rustStyleError).not.toHaveBeenCalled();
+      expect(exitSpy).not.toHaveBeenCalled();
+    });
+
+    it("errors when externalDependencies is not an array", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({ externalDependencies: "rest" }),
+        "test.json",
+      );
+      expect(display.rustStyleError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E0110" }),
+      );
+      expect(exitSpy).toHaveBeenCalled();
+    });
+
+    it("errors when externalDependencies[i].apiType is missing", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({
+          fidelity: "Hybrid",
+          externalDependencies: [
+            { semanticTag: "git-cli", degradationBehavior: "fail" },
+          ],
+        }),
+        "test.json",
+      );
+      expect(display.rustStyleError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E0112" }),
+      );
+    });
+
+    it("errors when externalDependencies[i].semanticTag is missing", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({
+          fidelity: "Hybrid",
+          externalDependencies: [
+            { apiType: "graphql", degradationBehavior: "fallback" },
+          ],
+        }),
+        "test.json",
+      );
+      expect(display.rustStyleError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E0113" }),
+      );
+    });
+
+    it("errors on unknown degradationBehavior value", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({
+          fidelity: "Hybrid",
+          externalDependencies: [
+            {
+              apiType: "rest",
+              semanticTag: "llm-judge",
+              degradationBehavior: "retry",
+            },
+          ],
+        }),
+        "test.json",
+      );
+      expect(display.rustStyleError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E0114" }),
+      );
+    });
+
+    it("warns when fidelity='Hybrid' but externalDependencies is missing", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({ fidelity: "Hybrid" }),
+        "test.json",
+      );
+      expect(display.warn).toHaveBeenCalledWith(expect.stringContaining("W0110"));
+    });
+
+    it("warns case-insensitively for fidelity='hybrid' (Q2=c normalization)", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({ fidelity: "hybrid" }),
+        "test.json",
+      );
+      expect(display.warn).toHaveBeenCalledWith(expect.stringContaining("W0110"));
+    });
+
+    it("does not warn for fidelity='Native' without externalDependencies", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({ fidelity: "Native" }),
+        "test.json",
+      );
+      expect(display.warn).not.toHaveBeenCalledWith(expect.stringContaining("W0110"));
+    });
+  });
+
+  describe("simulationSpec validation (v0.9 §3.11, ADR-220 T1)", () => {
+    it("accepts a valid simulationSpec", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({
+          simulationSpec: {
+            supportsDryRun: true,
+            resourceEstimate: { estimatedLatencyMs: 250 },
+          },
+        }),
+        "test.json",
+      );
+      expect(display.rustStyleError).not.toHaveBeenCalled();
+    });
+
+    it("errors when supportsDryRun is not a boolean", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({
+          simulationSpec: {
+            supportsDryRun: "yes",
+            resourceEstimate: { estimatedLatencyMs: 100 },
+          },
+        }),
+        "test.json",
+      );
+      expect(display.rustStyleError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E0120" }),
+      );
+    });
+
+    it("errors when resourceEstimate.estimatedLatencyMs is missing", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({
+          simulationSpec: {
+            supportsDryRun: true,
+            resourceEstimate: {},
+          },
+        }),
+        "test.json",
+      );
+      expect(display.rustStyleError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E0122" }),
+      );
+    });
+  });
+
+  describe("degradationSpec validation (v0.9 §3.11, ADR-220 E2)", () => {
+    it("accepts a valid degradationSpec", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({
+          degradationSpec: {
+            mode: "PARTIAL_OUTPUT",
+            minimumDependencies: ["cve-database"],
+            fallbackOutputSchema: { type: "object" },
+          },
+        }),
+        "test.json",
+      );
+      expect(display.rustStyleError).not.toHaveBeenCalled();
+    });
+
+    it("errors on unknown degradationSpec.mode value", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({
+          degradationSpec: {
+            mode: "GRACEFUL",
+            minimumDependencies: [],
+          },
+        }),
+        "test.json",
+      );
+      expect(display.rustStyleError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E0130" }),
+      );
+    });
+
+    it("errors when minimumDependencies is not an array", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({
+          degradationSpec: {
+            mode: "FAIL_FAST",
+            minimumDependencies: "cve-database",
+          },
+        }),
+        "test.json",
+      );
+      expect(display.rustStyleError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E0131" }),
+      );
+    });
+  });
+
+  describe("FIDELITY_DISCOUNT constants (spec §5.1 v2.11)", () => {
+    it("exposes the canonical lowercase tier keys", async () => {
+      const { FIDELITY_DISCOUNT } = await import("../../src/types/phenotype.js");
+      expect(FIDELITY_DISCOUNT.native).toBe(1.0);
+      expect(FIDELITY_DISCOUNT.hybrid).toBe(0.85);
+      expect(FIDELITY_DISCOUNT.wrapped).toBe(0.7);
+    });
+
+    it("is frozen (mutation throws in strict mode)", async () => {
+      const { FIDELITY_DISCOUNT } = await import("../../src/types/phenotype.js");
+      expect(Object.isFrozen(FIDELITY_DISCOUNT)).toBe(true);
+    });
+  });
 });

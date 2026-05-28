@@ -53,6 +53,97 @@ export const SYNTHESIS_METHODS: readonly SynthesisMethod[] = [
 
 export type Fidelity = "Wrapped" | "Hybrid" | "Native" | "Unknown";
 
+// ─── Hybrid Fidelity (Spec §4.2 v2.11 + §3.11 v0.9 plan + ADR-220) ───────────
+
+/**
+ * FIDELITY_DISCOUNT — protocol parameter (spec §5.1 v2.11).
+ *
+ * Multiplied into F(g) so that Native, Hybrid, and Wrapped genes can compete
+ * on a single Arena ranking without privileging external-API-shaped genes.
+ *
+ *   F(g) = base_fitness × FIDELITY_DISCOUNT[gene.fidelity]
+ *
+ * Keys are the lowercase canonical form (Q2=c 2026-05-28 — case
+ * normalization between spec enum (UPPER) and runtime keys (lower) is
+ * deferred to Phase 5 / v0.9.1; current binding implementations should
+ * normalize via lowercasing before lookup).
+ *
+ * PAP minor adjustment: Δ ≤ 0.05 per discount tier per cycle (spec §14.6).
+ */
+export const FIDELITY_DISCOUNT: Readonly<Record<string, number>> = Object.freeze({
+  native: 1.0,
+  hybrid: 0.85,
+  wrapped: 0.7,
+});
+
+/**
+ * Semantic-layer external API dependency declaration.
+ *
+ * Complements the protocol-layer NetworkConfig — `network` declares the
+ * sandbox's domain whitelist + timeouts, while `externalDependencies`
+ * declares the *semantic* contract (what kind of service, expected SLA,
+ * and degradation behavior).
+ *
+ * Spec §4.2 v2.11; v0.9 plan §3.11 (A2=b decision); ADR-220 §"D-04".
+ */
+export interface ExternalDependency {
+  /** Protocol family — "rest" | "graphql" | "grpc" | "websocket". */
+  apiType: string;
+  /** Semantic identifier (e.g. "cve-database", "llm-judge", "git-cli"). */
+  semanticTag: string;
+  /** Optional expected SLA. */
+  sla?: {
+    expectedLatency?: number;
+    expectedAvailability?: number;
+  };
+  /** How the gene behaves when this dependency is unreachable. */
+  degradationBehavior: "fail" | "fallback" | "cache" | "skip";
+}
+
+export const DEGRADATION_BEHAVIORS: readonly ExternalDependency["degradationBehavior"][] = [
+  "fail",
+  "fallback",
+  "cache",
+  "skip",
+] as const;
+
+/**
+ * Dry-run protocol declaration (ADR-220 T1, "Tesla mind simulation" pattern).
+ *
+ * Spec §4.2 v2.11; v0.9 plan §3.11.
+ */
+export interface SimulationSpec {
+  supportsDryRun: boolean;
+  /** Inline expression that generates representative test input. */
+  syntheticInputGenerator?: string;
+  /** Inline expression that validates dry-run output. */
+  expectedOutputValidator?: string;
+  resourceEstimate: {
+    estimatedLatencyMs: number;
+    /** SHOULD for LLM-Native genes. */
+    estimatedTokens?: number;
+  };
+}
+
+/**
+ * Graceful degradation declaration (ADR-220 E2, "Euler post-blindness").
+ *
+ * Spec §4.2 v2.11; v0.9 plan §3.11.
+ */
+export interface DegradationSpec {
+  mode: "FAIL_FAST" | "PARTIAL_OUTPUT" | "FALLBACK_LOGIC";
+  /** SHOULD for PARTIAL_OUTPUT mode — schema of degraded output. */
+  fallbackOutputSchema?: unknown;
+  /** Set of `externalDependencies[].semanticTag` values whose absence is tolerable. */
+  minimumDependencies: string[];
+}
+
+export const DEGRADATION_MODES: readonly DegradationSpec["mode"][] = [
+  "FAIL_FAST",
+  "PARTIAL_OUTPUT",
+  "FALLBACK_LOGIC",
+] as const;
+
 // ─── LLM template + guard config (used by prompt.* / guard.* domain Genes) ───
 
 export type TemplateFormat = "mustache" | "handlebars" | "jinja2" | "fstring" | "raw";
@@ -116,6 +207,15 @@ export interface Phenotype {
   // Domain-conditional config
   llmRequirements?: LlmRequirements;
   guardConfig?: GuardConfig;
+
+  // v0.9 §3.11 Hybrid Fidelity (spec §4.2 v2.11, ADR-220 D-04).
+  // Hybrid genes that perform external API calls SHOULD declare both
+  // `externalDependencies` (semantic layer) and `network` (protocol layer,
+  // currently typed via JSON Schema documents — full NetworkConfig type
+  // lives in spec §4.2; runtime validator only structurally checks shape).
+  externalDependencies?: ExternalDependency[];
+  simulationSpec?: SimulationSpec;
+  degradationSpec?: DegradationSpec;
 
   // Forward-compat: unknown fields are preserved by publish.ts when stored in
   // Supabase as JSONB.

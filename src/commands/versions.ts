@@ -3,12 +3,47 @@ import * as display from "../utils/display.js";
 import { c, icon } from "../utils/palette.js";
 import { listGeneVersions } from "../cloud/client.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
+import { parseGeneRef } from "../cloud/gene-ref.js";
 
 export const versionsCommand = new Command("versions")
   .description("View version history chain for a gene")
-  .argument("<owner>", "gene owner username")
-  .argument("<gene-name>", "gene name")
-  .action(async (owner: string, geneName: string) => {
+  .argument("<ref-or-owner>", "@owner/name (preferred) OR owner username")
+  .argument("[gene-name]", "gene name (only when first arg is a bare owner)")
+  .action(async (refOrOwner: string, geneNameArg: string | undefined) => {
+    // Unify the user-facing ref syntax across all subcommands (Issue #50
+    // "Inconsistency surfaced"): historically `versions` was the lone
+    // outlier accepting `<owner> <gene-name>` as two positional args
+    // while everything else used `@owner/name`. Now we accept both:
+    //   rotifer versions @alice/foo        (preferred — single ref)
+    //   rotifer versions alice foo         (legacy — kept for compat)
+    let owner: string;
+    let geneName: string;
+
+    const ref = parseGeneRef(refOrOwner);
+    if (ref.kind === "ownerName") {
+      if (geneNameArg) {
+        display.error(
+          "Pass either '@owner/name' as a single argument OR '<owner> <gene-name>' as two arguments — not both.",
+        );
+        display.hint("Try: rotifer versions @" + ref.owner + "/" + ref.name);
+        process.exit(1);
+        return;
+      }
+      owner = ref.owner;
+      geneName = ref.name;
+    } else if (geneNameArg) {
+      owner = refOrOwner;
+      geneName = geneNameArg;
+    } else {
+      display.error(
+        "Provide either '@owner/name' (single argument) or '<owner> <gene-name>' (two arguments).",
+      );
+      display.hint("Try: rotifer versions @alice/my-gene");
+      display.hint("     rotifer versions alice my-gene");
+      process.exit(1);
+      return;
+    }
+
     validateGeneName(geneName);
 
     const s = display.spinner("Fetching version history...");

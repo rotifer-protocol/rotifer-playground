@@ -21,13 +21,36 @@
 
 BEGIN;
 
--- 3 functions safe to pin to '' as-is
-ALTER FUNCTION public.handle_new_user()               SET search_path = '';
-ALTER FUNCTION public.set_share_ip()                  SET search_path = '';
-ALTER FUNCTION public.update_blog_posts_updated_at()  SET search_path = '';
+-- Guard each ALTER with an existence check: some of these functions exist in
+-- production but predate the local migration chain (created via dashboard /
+-- orphan migrations), so a from-scratch replay (CI) must skip the ones that
+-- aren't present. In production all exist and get pinned; semantics unchanged.
+-- (Underlying reverse-parity debt — missing CREATE migrations — is tracked
+-- separately; this only restores replay-safety.)
+DO $$
+BEGIN
+  -- handle_new_user / set_share_ip / update_blog_posts_updated_at: safe to pin to ''
+  IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'public' AND p.proname = 'handle_new_user') THEN
+    ALTER FUNCTION public.handle_new_user() SET search_path = '';
+  END IF;
 
--- jsonb_to_compact: pin to public (recursive func call resolves; pg_temp never hijacks funcs)
-ALTER FUNCTION public.jsonb_to_compact(jsonb)         SET search_path = 'public';
+  IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'public' AND p.proname = 'set_share_ip') THEN
+    ALTER FUNCTION public.set_share_ip() SET search_path = '';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'public' AND p.proname = 'update_blog_posts_updated_at') THEN
+    ALTER FUNCTION public.update_blog_posts_updated_at() SET search_path = '';
+  END IF;
+
+  -- jsonb_to_compact: pin to public (recursive func call resolves; pg_temp never hijacks funcs)
+  IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'public' AND p.proname = 'jsonb_to_compact') THEN
+    ALTER FUNCTION public.jsonb_to_compact(jsonb) SET search_path = 'public';
+  END IF;
+END $$;
 
 -- get_gene_stats: fully-qualify table refs so '' (gold standard) works for this SECURITY DEFINER func
 CREATE OR REPLACE FUNCTION public.get_gene_stats(p_gene_id uuid)

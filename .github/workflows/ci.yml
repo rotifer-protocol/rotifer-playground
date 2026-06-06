@@ -201,7 +201,6 @@ jobs:
           # RUSTSEC-2026-0114: wasmtime 42.0.2 panic on oversized table alloc.
           # Medium severity (5.9) — DoS via panic, NOT RCE; sandbox isolation contains impact.
           # Tracked for upgrade to wasmtime 43.0.2+ in a dedicated PR.
-          # See internal/plan/protocol/v0.9-stage-1-tdd-test-cases.md Appendix C TD-1.
           cargo audit --ignore RUSTSEC-2026-0114
 
       - name: npm dependency audit

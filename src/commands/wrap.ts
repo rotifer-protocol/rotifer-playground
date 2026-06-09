@@ -181,10 +181,32 @@ export const wrapCommand = new Command("wrap")
   .action(async (geneName: string, options: { domain?: string; fidelity: string; fromSkill?: string; fromClawhub?: string }) => {
     const root = requireProjectRoot();
     const config = loadConfig(root);
-    const domain = await resolveDomain(geneName, options.domain, config.default_domain || "general");
+
+    let domain: string;
+    try {
+      domain = await resolveDomain(geneName, options.domain, config.default_domain || "general");
+    } catch (e) {
+      display.rustStyleError({
+        code: "E0004",
+        message: e instanceof Error ? e.message : "Invalid domain",
+        suggestion: "Pass a valid --domain, or check the configured default_domain.",
+        docsUrl: "https://rotifer.dev/docs/genes",
+      });
+      process.exit(1);
+    }
 
     display.header("Gene Wrapper");
-    validateGeneName(geneName);
+    try {
+      validateGeneName(geneName);
+    } catch (e) {
+      display.rustStyleError({
+        code: "E0004",
+        message: e instanceof Error ? e.message : "Invalid gene name",
+        suggestion: "Use a short name without path separators or '..' (letters, digits, '-', '_').",
+        docsUrl: "https://rotifer.dev/docs/genes",
+      });
+      process.exit(1);
+    }
 
     const geneDir = join(root, config.genes_dir, geneName);
 

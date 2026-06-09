@@ -65,4 +65,19 @@ describe("Security: path traversal", () => {
     const result = run("wrap foo/bar/baz --domain test", projDir);
     expect(result.exitCode).not.toBe(0);
   });
+
+  it("wrap validation errors are structured and do not leak stack traces or absolute paths (#51)", () => {
+    const projDir = join(testDir, "proj3");
+    run("init proj3 --no-genesis", testDir);
+    const result = run("wrap ../../etc/passwd --domain test", projDir);
+    expect(result.exitCode).not.toBe(0);
+    // Structured CLI error, not a raw thrown exception
+    expect(result.stdout).toContain("error[E0004]");
+    // No Node.js stack frames leaked
+    expect(result.stdout).not.toMatch(/\n\s+at\s+/);
+    expect(result.stdout).not.toContain("node:internal");
+    // No absolute install/runtime paths leaked
+    expect(result.stdout).not.toContain("/dist/commands/");
+    expect(result.stdout).not.toMatch(/\/Users\//);
+  });
 });

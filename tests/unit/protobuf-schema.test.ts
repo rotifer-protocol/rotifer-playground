@@ -1,25 +1,20 @@
 /**
  * Gap #9: Protobuf schema validation
  * Extracts .proto from RFC markdown and validates structure.
- * Requires internal/spec-internal — skipped in CI where monorepo root is absent.
+ * Requires the ROTIFER_PROTO_RFC env var (monorepo dev) — skipped when unset.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
 
-const RFC_PATH = join(
-  import.meta.dirname,
-  "../../../internal/spec-internal/p2p-protocol-rfc.md"
-);
-
-const HAS_RFC = existsSync(RFC_PATH);
+const RFC_PATH = process.env.ROTIFER_PROTO_RFC;
+const HAS_RFC = RFC_PATH ? existsSync(RFC_PATH) : false;
 
 function extractAllProtoSchemas(markdown: string): string {
   const matches = [...markdown.matchAll(/```protobuf\n([\s\S]*?)```/g)];
   return matches.map((m) => m[1]).join("\n");
 }
 
-const rfcContent = HAS_RFC ? readFileSync(RFC_PATH, "utf-8") : "";
+const rfcContent = HAS_RFC ? readFileSync(RFC_PATH!, "utf-8") : "";
 const proto = extractAllProtoSchemas(rfcContent);
 
 // ─── Schema Extraction ───────────────────────────────────────

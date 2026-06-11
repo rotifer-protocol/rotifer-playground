@@ -6,7 +6,7 @@
 **Decision authority**: Founder
 **Audit reference**: meta-lesson **S2-L11** (private; 2026-05-18; dev/prod parity sprint)
 
-**Sprint C resolution summary** (see `internal/plan/protocol/protocol-v0.9-sprint-c-deferred-migrations-cleanup.md` for full narrative):
+**Sprint C resolution summary**:
 
 | File | Final disposition |
 |---|---|

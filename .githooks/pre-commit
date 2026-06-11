@@ -14,3 +14,19 @@ if git diff --cached --name-only | grep -q "^internal/"; then
   git diff --cached --name-only | grep "^internal/"
   exit 1
 fi
+
+# === Content Leak Guard (A5) ===
+# Scans only ADDED lines of the staged diff for NEW internal references.
+# Escape hatch: append 'leak-allow: <reason>' on the offending line.
+LEAK_PAT='internal/(products|plan|adr|spec-internal|market|strategy|reports|infra|founder-kb)|ALPHA-PRD-[0-9]|spec-internal'
+LEAK_EXCL='leak-allow|http://internal/|internal/ (files|content|dependency)|reject internal|introduces internal|internal-only|CONTAMINATED'
+LEAK_HITS=$(git diff --cached -U0 --no-color -- . ':(exclude).githooks' ':(exclude).githooks/*' \
+  | grep '^+' | grep -v '^+++' \
+  | grep -E "$LEAK_PAT" | grep -vE "$LEAK_EXCL" || true)
+if [ -n "$LEAK_HITS" ]; then
+  echo "⛔ pre-commit blocked: internal reference(s) in added content:"
+  echo "$LEAK_HITS"
+  echo ""
+  echo "Remove the internal path/ID, or append 'leak-allow: <reason>' on that line if intentional."
+  exit 1
+fi

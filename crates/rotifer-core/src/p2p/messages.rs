@@ -1,6 +1,6 @@
 //! A.4 — Protobuf serialisation for P2P messages (v0.9 stage 1 placeholder).
 //!
-//! Authoritative schema lives in `internal/spec-internal/p2p-protocol.proto`.
+//! Authoritative schema lives in the monorepo protocol spec.
 //! Stage 1 uses serde_json round-trips as a placeholder so the test suite
 //! exercises encode/decode semantics; stage 2 swaps to prost-generated types
 //! and tightens with sha256 frozen-parity (A.4.3) + cross-language parity
@@ -27,7 +27,7 @@ pub const MAX_TIMESTAMP_SKEW_SECS: u64 = 300; // 5 minutes
 /// sha256 of the canonical `.proto` schema (frozen parity — A.4.3).
 ///
 /// Stage 1 leaves this as `None`; stage 2 will pin to the hash of
-/// `internal/spec-internal/p2p-protocol.proto` once the file is finalised.
+/// the canonical protocol schema once the file is finalised.
 pub const FROZEN_PROTO_SCHEMA_SHA256: Option<&str> = None;
 
 #[cfg(test)]
@@ -101,11 +101,12 @@ mod tests {
     #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_4_3_strict_proto_schema_frozen_sha256() {
         // Stage 2 pins FROZEN_PROTO_SCHEMA_SHA256 = Some(<sha256>).
-        let proto_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(3) // crates/rotifer-core/Cargo.toml -> rotifer-playground/.. -> repo root
-            .expect("repo root")
-            .join("internal/spec-internal/p2p-protocol.proto");
+        // Monorepo-dev only: schema path via env var (this strict test is
+        // #[ignore]d and unused in standalone builds).
+        let proto_path = std::path::PathBuf::from(
+            std::env::var("ROTIFER_PROTO_PATH")
+                .expect("set ROTIFER_PROTO_PATH to the p2p protocol schema"),
+        );
 
         match FROZEN_PROTO_SCHEMA_SHA256 {
             None => panic!(

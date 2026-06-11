@@ -122,7 +122,7 @@ const TEST_MESSAGES: TestMessage[] = [
     description: "数据库迁移场景",
   },
   {
-    text: "把这个文件移到 internal/adr/ 目录",
+    text: "把这个文件移到 internal/adr/ 目录", // leak-allow: 测试夹具文本，非真实内部路径
     expectedRules: [
       "rotifer-file-move-protocol",
       "rotifer-doc-taxonomy",

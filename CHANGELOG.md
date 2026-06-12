@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Starter template traps in Native WASM** — `rotifer init` now scaffolds a synchronous
+  `express()`; the previous `async express()` starter compiled fine but trapped in the
+  Javy/QuickJS sandbox with an opaque backtrace (#57)
+- **Async `express()` now rejected at compile time** — `rotifer compile` statically detects
+  `async function express` / Promise-returning signatures and fails with `E0025` and an
+  actionable message, instead of deferring to a runtime trap whose error text was swallowed
+  by the WASM host (#57)
+- **Toolchain failures get a diagnosis instead of `spawnSync npx ETIMEDOUT`** — the TS→WASM
+  pipeline preflights esbuild/javy offline (`npx --no-install`, falling back to the `javy`
+  binary that `javy-cli@3` actually installs) and reports per-tool status, the active `npx`
+  path, and exact install commands; npx no longer hits the npm registry implicitly (#58)
+- **Stale WASM warning on `rotifer run`** — when `index.ts` is newer than `gene.ir.wasm`,
+  run now warns that it is executing stale WASM and suggests recompiling (#58)
+
 ## [0.8.6] - 2026-04-16
 
 ### Fixed

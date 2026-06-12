@@ -114,11 +114,25 @@ export const compileCommand = new Command("compile")
         compileTypeScriptToWasm(geneSrc, wasmOutput);
         wasmBytes = readFileSync(wasmOutput) as Buffer;
       } catch (err: any) {
-        display.rustStyleError({
-          code: "E0024",
-          message: `TypeScript → WASM compilation failed: ${err.message}`,
-          suggestion: "Ensure esbuild and javy-cli are installed: npm i -g esbuild && npx javy-cli --version",
-        });
+        if (err?.name === "AsyncExpressError") {
+          display.rustStyleError({
+            code: "E0025",
+            message: err.message,
+            suggestion: "Javy/QuickJS has no event loop — export a synchronous express(), or use --no-sandbox / a Hybrid Gene for async I/O.",
+          });
+        } else if (err?.name === "ToolchainError") {
+          display.rustStyleError({
+            code: "E0024",
+            message: err.message,
+            suggestion: "Install the toolchain (npm i -g esbuild javy-cli) and re-run; rotifer never downloads tools implicitly.",
+          });
+        } else {
+          display.rustStyleError({
+            code: "E0024",
+            message: `TypeScript → WASM compilation failed: ${err.message}`,
+            suggestion: "Ensure esbuild and javy-cli are installed: npm i -g esbuild javy-cli && npx --no-install esbuild --version",
+          });
+        }
         process.exit(1);
       }
       console.log();

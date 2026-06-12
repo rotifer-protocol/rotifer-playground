@@ -74,6 +74,14 @@ export const runCommand = new Command("run")
       const sourcePath = join(geneDir, "index.ts");
 
       if (existsSync(wasmPath) && isSandboxEnabled) {
+        // #58: warn when the source was edited after the last compile — the
+        // sandbox would otherwise silently execute stale WASM.
+        const { isWasmStale } = await import("../utils/javy-compiler.js");
+        if (isWasmStale(wasmPath, sourcePath)) {
+          display.warn(
+            `gene.ir.wasm is older than index.ts — running stale WASM. Re-run \`rotifer compile ${geneName}\` to refresh.`,
+          );
+        }
         display.info("Running via WASM sandbox...");
         try {
           const { tryLoadBinding } = await import("../utils/binding.js");

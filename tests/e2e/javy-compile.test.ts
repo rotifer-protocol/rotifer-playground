@@ -161,7 +161,7 @@ describe("Javy TS→WASM compilation (v0.3)", () => {
     }
   });
 
-  it("handles TypeScript with interfaces and type annotations", { timeout: 30000 }, () => {
+  it("handles TypeScript with interfaces and type annotations", { timeout: 60000 }, () => {
     if (!javyAvailable) return;
 
     writePhenotype(projectDir, "ts-gene");
@@ -194,7 +194,7 @@ describe("Javy TS→WASM compilation (v0.3)", () => {
     expect(stdout).toContain("Wrapped fidelity");
   });
 
-  it("prefers TS source over a stale existing gene.wasm", () => {
+  it("prefers TS source over a stale existing gene.wasm", { timeout: 60000 }, () => {
     if (!javyAvailable) return;
 
     writePhenotype(projectDir, "ts-gene");

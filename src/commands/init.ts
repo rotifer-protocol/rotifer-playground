@@ -100,7 +100,9 @@ export const initCommand = new Command("init")
     writeFileSync(
       join(exampleGeneDir, "index.ts"),
       [
-        'export async function express(input: { name: string }): Promise<{ greeting: string }> {',
+        '// Native (Javy/QuickJS) WASM Genes need a synchronous express() — see issue #57.',
+        '// For async I/O, use a Hybrid Gene or run via Node (--no-sandbox).',
+        'export function express(input: { name: string }): { greeting: string } {',
         '  return { greeting: "Hello, " + input.name + "! Welcome to Rotifer Protocol." };',
         "}",
         "",

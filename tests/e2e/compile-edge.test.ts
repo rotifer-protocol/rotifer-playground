@@ -171,3 +171,34 @@ describe("compile edge cases", () => {
     }
   });
 });
+
+describe("async express() guard (#57)", () => {
+  let projectDir: string;
+
+  beforeEach(() => {
+    projectDir = makeProject();
+  });
+
+  afterEach(() => {
+    if (existsSync(projectDir)) {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("compile fails fast with E0025 and an actionable message (no WASM backtrace)", () => {
+    writePhenotype(projectDir, "test-gene");
+    writeFileSync(
+      join(projectDir, "genes", "test-gene", "index.ts"),
+      "export async function express(input: { name: string }): Promise<{ greeting: string }> {\n" +
+        '  return { greeting: "hi " + input.name };\n}\n',
+    );
+    const { stdout, exitCode } = run("compile test-gene", projectDir);
+    expect(exitCode).not.toBe(0);
+    expect(stdout).toContain("E0025");
+    expect(stdout).toMatch(/synchronous express/i);
+    expect(stdout).not.toMatch(/wasm backtrace/i);
+  });
+
+  // The sync-express happy path (full esbuild+javy pipeline) is covered by
+  // tests/e2e/javy-compile.test.ts — no need to repeat the heavy compile here.
+});

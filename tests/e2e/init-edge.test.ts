@@ -72,3 +72,17 @@ describe("rotifer init edge cases", () => {
     expect(config.default_domain).toBe("search.web");
   });
 });
+
+describe("starter template is Native-WASM-safe (#57)", () => {
+  it("generates a synchronous express() (async traps in Javy/QuickJS)", () => {
+    const result = run("init sync-starter-proj --no-genesis", testDir);
+    expect(result.exitCode).toBe(0);
+    const starter = readFileSync(
+      join(testDir, "sync-starter-proj", "genes", "hello-world", "index.ts"),
+      "utf-8",
+    );
+    expect(starter).toContain("export function express");
+    expect(starter).not.toContain("async function express");
+    expect(starter).not.toMatch(/:\s*Promise</);
+  });
+});

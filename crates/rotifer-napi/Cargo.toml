@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 rotifer-core = { version = "0.8.6", path = "../rotifer-core" }
-napi = { version = "2", features = ["serde-json"] }
+napi = { version = "3", features = ["serde-json"] }
 napi-derive = "2"
 serde.workspace = true
 serde_json.workspace = true

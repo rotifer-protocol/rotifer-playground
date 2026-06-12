@@ -690,7 +690,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
  "foldhash 0.1.5",
- "serde",
 ]
 
 [[package]]
@@ -1270,7 +1269,7 @@ dependencies = [
  "tracing",
  "uuid",
  "wasm-encoder 0.221.3",
- "wasmparser 0.221.3",
+ "wasmparser 0.245.1",
  "wasmtime",
 ]
 
@@ -1863,10 +1862,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d06bfa36ab3ac2be0dee563380147a5b81ba10dd8885d7fbbc9eb574be67d185"
 dependencies = [
  "bitflags",
- "hashbrown 0.15.5",
  "indexmap",
  "semver",
- "serde",
 ]
 
 [[package]]

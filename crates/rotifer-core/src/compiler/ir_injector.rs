@@ -65,12 +65,17 @@ fn validate_wasm_exports(wasm: &[u8]) -> Result<(), CompilerError> {
                 }
             }
             Payload::ImportSection(reader) => {
-                for import in reader {
-                    let import = import.map_err(|e| {
+                for imports in reader {
+                    let imports = imports.map_err(|e| {
                         CompilerError::WasmCompilationFailed(format!("import section: {e}"))
                     })?;
-                    if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
-                        import_func_count += 1;
+                    for entry in imports {
+                        let (_, import) = entry.map_err(|e| {
+                            CompilerError::WasmCompilationFailed(format!("import section: {e}"))
+                        })?;
+                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                            import_func_count += 1;
+                        }
                     }
                 }
             }

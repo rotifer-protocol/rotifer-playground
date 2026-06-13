@@ -83,7 +83,7 @@
     "vitest": "^4.0.0"
   },
   "optionalDependencies": {
-    "@rolldown/binding-linux-x64-gnu": "1.1.0",
+    "@rolldown/binding-linux-x64-gnu": "1.1.1",
     "@rotifer/playground-darwin-arm64": "0.8.6",
     "@rotifer/playground-darwin-x64": "0.8.6",
     "@rotifer/playground-linux-x64-gnu": "0.8.6",

@@ -21,6 +21,10 @@ pub mod messages;
 pub mod node;
 pub mod security;
 
+// Exploratory two-node connectivity spike (test-only).
+#[cfg(test)]
+mod spike;
+
 /// Protocol identifier for gene discovery.
 pub const GENE_DISCOVERY_PROTOCOL: &str = "/rotifer/gene-discovery/1.0.0";
 

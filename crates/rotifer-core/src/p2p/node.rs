@@ -13,6 +13,7 @@
 //! call hands work to the event loop over a channel and, where it needs a
 //! result (e.g. the first listen address), blocks on the node's runtime.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -21,7 +22,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use libp2p::futures::StreamExt;
 use libp2p::identity::Keypair;
-use libp2p::swarm::{SwarmEvent, dummy};
+use libp2p::kad::{self, store::MemoryStore};
+use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
 use libp2p::{Multiaddr, PeerId as Libp2pPeerId, Swarm};
 use tokio::sync::{mpsc, oneshot};
 
@@ -38,6 +40,18 @@ enum Command {
     Shutdown,
 }
 
+/// Composite network behaviour driven by the node's Swarm. Kademlia provides
+/// peer discovery + a distributed record store; gossip/identify land here in
+/// follow-up changes.
+#[derive(NetworkBehaviour)]
+struct NodeBehaviour {
+    kademlia: kad::Behaviour<MemoryStore>,
+}
+
+/// Peers the node has discovered (present in the Kademlia routing table),
+/// shared between the synchronous API and the event loop.
+type DiscoveredPeers = Arc<Mutex<HashSet<String>>>;
+
 /// libp2p-backed P2P node.
 pub struct Node {
     pub config: NetworkConfig,
@@ -50,6 +64,8 @@ pub struct Node {
     peer_id: Libp2pPeerId,
     /// Live listen addresses, updated by the Swarm event loop.
     listen_addrs: Arc<Mutex<Vec<String>>>,
+    /// Peers discovered via Kademlia, updated by the event loop.
+    discovered: DiscoveredPeers,
     /// Dedicated runtime hosting the Swarm event loop (`None` until `start`).
     runtime: Option<tokio::runtime::Runtime>,
     /// Command channel into the event loop (`None` until `start`).
@@ -93,6 +109,7 @@ impl Node {
             keypair,
             peer_id,
             listen_addrs: Arc::new(Mutex::new(Vec::new())),
+            discovered: Arc::new(Mutex::new(HashSet::new())),
             runtime: None,
             cmd_tx: None,
             task: None,
@@ -110,6 +127,15 @@ impl Node {
             .lock()
             .expect("listen_addrs mutex")
             .clone()
+    }
+
+    /// Peers discovered via Kademlia so far (empty until the Swarm is started
+    /// and its routing table populates).
+    pub fn discovered_peers(&self) -> Vec<String> {
+        self.discovered
+            .lock()
+            .map(|peers| peers.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Start the Swarm: bind the listener and drive events from a background
@@ -143,6 +169,7 @@ impl Node {
         let port = self.config.listen_port;
         let bootstrap = self.config.bootstrap_peers.clone();
         let listen_addrs = Arc::clone(&self.listen_addrs);
+        let discovered = Arc::clone(&self.discovered);
         let (ready_tx, ready_rx) = oneshot::channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
 
@@ -151,6 +178,7 @@ impl Node {
             port,
             bootstrap,
             listen_addrs,
+            discovered,
             ready_tx,
             cmd_rx,
         ));
@@ -200,6 +228,9 @@ impl Node {
         self.listening = false;
         if let Ok(mut addrs) = self.listen_addrs.lock() {
             addrs.clear();
+        }
+        if let Ok(mut peers) = self.discovered.lock() {
+            peers.clear();
         }
     }
 }
@@ -327,9 +358,9 @@ fn write_new_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
 }
 
 /// Build a libp2p Swarm with TCP + QUIC transports (Noise + Yamux) over the
-/// tokio runtime. The behaviour is a placeholder; discovery/gossip protocols
-/// are added in follow-up changes.
-fn build_swarm(keypair: Keypair) -> Result<Swarm<dummy::Behaviour>, NetworkError> {
+/// tokio runtime, carrying the node's composite behaviour (Kademlia in server
+/// mode). Gossip/identify protocols are added in follow-up changes.
+fn build_swarm(keypair: Keypair) -> Result<Swarm<NodeBehaviour>, NetworkError> {
     let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
         .with_tcp(
@@ -341,8 +372,13 @@ fn build_swarm(keypair: Keypair) -> Result<Swarm<dummy::Behaviour>, NetworkError
         .with_quic()
         .with_dns()
         .map_err(|e| NetworkError::Transport(format!("dns transport: {e}")))?
-        .with_behaviour(|_| dummy::Behaviour)
-        .expect("dummy behaviour construction is infallible")
+        .with_behaviour(|key| {
+            let peer_id = key.public().to_peer_id();
+            let mut kademlia = kad::Behaviour::new(peer_id, MemoryStore::new(peer_id));
+            kademlia.set_mode(Some(kad::Mode::Server));
+            NodeBehaviour { kademlia }
+        })
+        .expect("behaviour construction is infallible")
         .build();
     Ok(swarm)
 }
@@ -357,6 +393,7 @@ async fn run_event_loop(
     port: u16,
     bootstrap: Vec<String>,
     listen_addrs: Arc<Mutex<Vec<String>>>,
+    discovered: DiscoveredPeers,
     ready_tx: oneshot::Sender<Result<(), NetworkError>>,
     mut cmd_rx: mpsc::UnboundedReceiver<Command>,
 ) {
@@ -420,6 +457,22 @@ async fn run_event_loop(
                             Err(e) => format!("listener closed: {e}"),
                         };
                         let _ = tx.send(Err(NetworkError::Transport(msg)));
+                    }
+                }
+                SwarmEvent::ConnectionEstablished {
+                    peer_id, endpoint, ..
+                } => {
+                    // Feed the connected peer's address into Kademlia so it
+                    // enters the routing table — this drives discovery of
+                    // dialed (e.g. bootstrap) peers.
+                    let addr = endpoint.get_remote_address().clone();
+                    swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
+                    kad::Event::RoutingUpdated { peer, .. },
+                )) => {
+                    if let Ok(mut peers) = discovered.lock() {
+                        peers.insert(peer.to_string());
                     }
                 }
                 _ => {}
@@ -614,5 +667,54 @@ mod tests {
             !first.listen_addrs().is_empty(),
             "first listener must survive"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Two-node Kademlia discovery over loopback (integration)
+    // -----------------------------------------------------------------
+    #[test]
+    #[ignore = "two-node integration: real kad discovery over loopback — run with --ignored"]
+    fn two_nodes_discover_via_kademlia() {
+        // Distinct identity files so the two nodes get distinct PeerIds
+        // (Node::new would share the default identity path).
+        let a_id = std::env::temp_dir().join("rotifer-2node-a.pem");
+        let b_id = std::env::temp_dir().join("rotifer-2node-b.pem");
+        let _ = std::fs::remove_file(&a_id);
+        let _ = std::fs::remove_file(&b_id);
+
+        // Node A: listener with no bootstrap peers.
+        let mut cfg_a = cfg(0);
+        cfg_a.bootstrap_peers = vec![];
+        let mut a = Node::with_keypair_path(cfg_a, a_id.clone()).expect("A build");
+        a.start().expect("A start");
+        let a_addr = a
+            .listen_addrs()
+            .into_iter()
+            .next()
+            .expect("A must have a listen address");
+        let a_peer = a.local_peer_id().0;
+
+        // Node B: bootstraps from A's address.
+        let mut cfg_b = cfg(0);
+        cfg_b.bootstrap_peers = vec![a_addr];
+        let mut b = Node::with_keypair_path(cfg_b, b_id.clone()).expect("B build");
+        b.start().expect("B start");
+        assert_ne!(a_peer, b.local_peer_id().0, "nodes must have distinct PeerIds");
+
+        // Poll until B's Kademlia routing table holds A (discovery is async).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if b.discovered_peers().iter().any(|p| p == &a_peer) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "B did not discover A via Kademlia within 10s"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        let _ = std::fs::remove_file(&a_id);
+        let _ = std::fs::remove_file(&b_id);
     }
 }

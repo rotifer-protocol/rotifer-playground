@@ -4,37 +4,58 @@
 //!   - generate or load a persistent Ed25519 identity keypair
 //!     (`~/.rotifer/identity.pem`, file mode 0600), from which the node's
 //!     stable `PeerId` is derived;
-//!   - construct a `libp2p` Swarm (tokio transport + Noise + Yamux) driven
-//!     from a background task — wired in a follow-up change;
-//!   - listen on the configured port (0 = OS-allocated) and shut down cleanly.
+//!   - construct a `libp2p` Swarm (tokio transport + Noise + Yamux) and drive
+//!     it from a background task on a dedicated runtime;
+//!   - listen on the configured port (0 = OS-allocated) and shut down cleanly,
+//!     releasing the port.
 //!
-//! This change implements the identity layer. The Swarm event loop
-//! (`start` / `stop` / `listen_addrs`) is still a stub that returns
-//! `NetworkError::Transport`.
+//! The Swarm runs asynchronously, but `Node` exposes a synchronous API: each
+//! call hands work to the event loop over a channel and, where it needs a
+//! result (e.g. the first listen address), blocks on the node's runtime.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use libp2p::PeerId as Libp2pPeerId;
+use libp2p::futures::StreamExt;
 use libp2p::identity::Keypair;
+use libp2p::swarm::{SwarmEvent, dummy};
+use libp2p::{Multiaddr, PeerId as Libp2pPeerId, Swarm};
+use tokio::sync::{mpsc, oneshot};
 
 use super::{NetworkConfig, NetworkError, PeerId};
 
 /// PEM armor label for the persisted node identity.
 const IDENTITY_PEM_LABEL: &str = "ROTIFER IDENTITY";
 
+/// How long `start` waits for the first listen address before giving up.
+const LISTEN_READY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Commands sent from the synchronous `Node` API to the Swarm event loop.
+enum Command {
+    Shutdown,
+}
+
 /// libp2p-backed P2P node.
 pub struct Node {
     pub config: NetworkConfig,
     pub keypair_path: PathBuf,
     pub listening: bool,
-    /// Persistent Ed25519 identity; consumed by the Swarm in a follow-up
-    /// change, never logged.
-    #[allow(dead_code)]
+    /// Persistent Ed25519 identity, cloned into the Swarm on `start`; never
+    /// logged.
     keypair: Keypair,
     /// PeerId derived from `keypair` — stable across restarts.
     peer_id: Libp2pPeerId,
+    /// Live listen addresses, updated by the Swarm event loop.
+    listen_addrs: Arc<Mutex<Vec<String>>>,
+    /// Dedicated runtime hosting the Swarm event loop (`None` until `start`).
+    runtime: Option<tokio::runtime::Runtime>,
+    /// Command channel into the event loop (`None` until `start`).
+    cmd_tx: Option<mpsc::UnboundedSender<Command>>,
+    /// Handle to the spawned event-loop task (`None` until `start`).
+    task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl std::fmt::Debug for Node {
@@ -71,6 +92,10 @@ impl Node {
             listening: false,
             keypair,
             peer_id,
+            listen_addrs: Arc::new(Mutex::new(Vec::new())),
+            runtime: None,
+            cmd_tx: None,
+            task: None,
         })
     }
 
@@ -81,23 +106,109 @@ impl Node {
 
     /// Active listen addresses (empty until the Swarm is started).
     pub fn listen_addrs(&self) -> Vec<String> {
-        Vec::new()
+        self.listen_addrs
+            .lock()
+            .expect("listen_addrs mutex")
+            .clone()
     }
 
-    /// Start the Swarm event loop — not yet wired.
+    /// Start the Swarm: bind the listener and drive events from a background
+    /// task on a dedicated runtime.
+    ///
+    /// Blocks until the first listen address is confirmed, or returns
+    /// `Transport` if the bind fails (e.g. the port is already in use).
+    /// Idempotent — a second call on a running node is a no-op.
     pub fn start(&mut self) -> Result<(), NetworkError> {
-        Err(NetworkError::Transport("swarm event loop not yet wired".into()))
+        if self.cmd_tx.is_some() {
+            return Ok(());
+        }
+
+        // Pre-flight a busy-port check. libp2p's TCP transport sets
+        // SO_REUSEPORT, which would otherwise let a second node silently share
+        // a fixed port; a plain bind (without SO_REUSEPORT) fails fast instead.
+        // Skipped for port 0, where the OS allocates a free port.
+        if self.config.listen_port != 0 {
+            std::net::TcpListener::bind(("127.0.0.1", self.config.listen_port))
+                .map_err(|e| NetworkError::Transport(format!("listen: {e}")))?;
+            // Probe dropped here — the port is free for the Swarm to bind.
+        }
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .map_err(|e| NetworkError::Transport(format!("runtime: {e}")))?;
+
+        let keypair = self.keypair.clone();
+        let port = self.config.listen_port;
+        let bootstrap = self.config.bootstrap_peers.clone();
+        let listen_addrs = Arc::clone(&self.listen_addrs);
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+
+        let task = runtime.spawn(run_event_loop(
+            keypair,
+            port,
+            bootstrap,
+            listen_addrs,
+            ready_tx,
+            cmd_rx,
+        ));
+
+        // Block until the listener comes up (or fails) before returning.
+        let ready =
+            runtime.block_on(async { tokio::time::timeout(LISTEN_READY_TIMEOUT, ready_rx).await });
+        match ready {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(e))) => return Err(e),
+            Ok(Err(_)) => {
+                return Err(NetworkError::Transport(
+                    "listener task ended before binding".into(),
+                ));
+            }
+            Err(_) => {
+                return Err(NetworkError::Transport(
+                    "timed out waiting for listener".into(),
+                ));
+            }
+        }
+
+        self.runtime = Some(runtime);
+        self.cmd_tx = Some(cmd_tx);
+        self.task = Some(task);
+        self.listening = true;
+        Ok(())
     }
 
-    /// Stop the Swarm and release the port — not yet wired.
+    /// Stop the Swarm, abort the event loop, and release the listener port.
     pub fn stop(&mut self) -> Result<(), NetworkError> {
-        Err(NetworkError::Transport("swarm event loop not yet wired".into()))
+        self.shutdown();
+        Ok(())
+    }
+
+    /// Tear down the runtime + event loop. Safe to call when not started.
+    fn shutdown(&mut self) {
+        if let Some(tx) = self.cmd_tx.take() {
+            let _ = tx.send(Command::Shutdown);
+        }
+        // Detach the join handle; the runtime shutdown below finishes or aborts
+        // the task, which drops the Swarm and releases the port.
+        self.task = None;
+        if let Some(rt) = self.runtime.take() {
+            rt.shutdown_timeout(Duration::from_secs(1));
+        }
+        self.listening = false;
+        if let Ok(mut addrs) = self.listen_addrs.lock() {
+            addrs.clear();
+        }
     }
 }
 
 impl Drop for Node {
     fn drop(&mut self) {
-        // Swarm task abort + port release land with the event-loop change.
+        if self.runtime.is_some() {
+            self.shutdown();
+        }
     }
 }
 
@@ -109,36 +220,56 @@ fn default_identity_path() -> PathBuf {
     home.join(".rotifer").join("identity.pem")
 }
 
-/// Load an existing identity keypair from `path`, or generate + persist one.
+/// Load an existing identity keypair from `path`, or generate + persist a new
+/// one. Race-safe: the file is created atomically, so if two nodes generate
+/// concurrently the loser adopts the winner's persisted identity.
 fn load_or_generate_keypair(path: &Path) -> Result<Keypair, NetworkError> {
-    if path.exists() {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| NetworkError::Transport(format!("read identity: {e}")))?;
-        let bytes = decode_identity_pem(&text)?;
-        Keypair::from_protobuf_encoding(&bytes)
-            .map_err(|e| NetworkError::Transport(format!("parse identity: {e}")))
-    } else {
-        let keypair = Keypair::generate_ed25519();
-        persist_keypair(path, &keypair)?;
+    if let Some(keypair) = try_read_keypair(path)? {
+        return Ok(keypair);
+    }
+    let keypair = Keypair::generate_ed25519();
+    let written = persist_new_keypair(path, &keypair)
+        .map_err(|e| NetworkError::Transport(format!("write identity: {e}")))?;
+    if written {
         Ok(keypair)
+    } else {
+        // Another node won the create race — adopt its persisted identity.
+        try_read_keypair(path)?
+            .ok_or_else(|| NetworkError::Transport("identity missing after create race".into()))
     }
 }
 
-/// Serialize a keypair to PEM and write it with private-key permissions.
-fn persist_keypair(path: &Path, keypair: &Keypair) -> Result<(), NetworkError> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| NetworkError::Transport(format!("create identity dir: {e}")))?;
+/// Read and decode the identity at `path`, or `None` if it does not exist.
+fn try_read_keypair(path: &Path) -> Result<Option<Keypair>, NetworkError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => {
+            let bytes = decode_identity_pem(&text)?;
+            let keypair = Keypair::from_protobuf_encoding(&bytes)
+                .map_err(|e| NetworkError::Transport(format!("parse identity: {e}")))?;
+            Ok(Some(keypair))
         }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(NetworkError::Transport(format!("read identity: {e}"))),
+    }
+}
+
+/// Serialize a keypair to PEM and create the file atomically (mode 0600).
+/// Returns `Ok(false)` if the file already exists (lost a create race).
+fn persist_new_keypair(path: &Path, keypair: &Keypair) -> std::io::Result<bool> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
     }
     let bytes = keypair
         .to_protobuf_encoding()
-        .map_err(|e| NetworkError::Transport(format!("encode identity: {e}")))?;
+        .map_err(std::io::Error::other)?;
     let pem = encode_identity_pem(&bytes);
-    write_private(path, pem.as_bytes())
-        .map_err(|e| NetworkError::Transport(format!("write identity: {e}")))?;
-    Ok(())
+    match write_new_private(path, pem.as_bytes()) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 /// PEM-armor raw bytes with the identity label, wrapped at 64 base64 chars.
@@ -167,15 +298,15 @@ fn decode_identity_pem(text: &str) -> Result<Vec<u8>, NetworkError> {
         .map_err(|e| NetworkError::Transport(format!("decode identity: {e}")))
 }
 
-/// Write `data` to `path`, owner read/write only (0600), created atomically.
+/// Write `data` to a freshly created `path`, owner read/write only (0600).
+/// Fails with `AlreadyExists` if the file is already there (atomic create).
 #[cfg(unix)]
-fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+fn write_new_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let mut f = std::fs::OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .mode(0o600)
         .open(path)?;
     f.write_all(data)?;
@@ -186,8 +317,118 @@ fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, data)
+fn write_new_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    f.write_all(data)
+}
+
+/// Build a libp2p Swarm with TCP + QUIC transports (Noise + Yamux) over the
+/// tokio runtime. The behaviour is a placeholder; discovery/gossip protocols
+/// are added in follow-up changes.
+fn build_swarm(keypair: Keypair) -> Result<Swarm<dummy::Behaviour>, NetworkError> {
+    let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
+        .with_tokio()
+        .with_tcp(
+            libp2p::tcp::Config::default(),
+            libp2p::noise::Config::new,
+            libp2p::yamux::Config::default,
+        )
+        .map_err(|e| NetworkError::Transport(format!("tcp transport: {e}")))?
+        .with_quic()
+        .with_dns()
+        .map_err(|e| NetworkError::Transport(format!("dns transport: {e}")))?
+        .with_behaviour(|_| dummy::Behaviour)
+        .expect("dummy behaviour construction is infallible")
+        .build();
+    Ok(swarm)
+}
+
+/// Drive the Swarm: bind the listener, best-effort dial bootstrap peers, then
+/// pump events (tracking listen addresses) until told to shut down.
+///
+/// Signals `ready_tx` exactly once: `Ok(())` on the first listen address, or
+/// `Err` if the listener fails to bind.
+async fn run_event_loop(
+    keypair: Keypair,
+    port: u16,
+    bootstrap: Vec<String>,
+    listen_addrs: Arc<Mutex<Vec<String>>>,
+    ready_tx: oneshot::Sender<Result<(), NetworkError>>,
+    mut cmd_rx: mpsc::UnboundedReceiver<Command>,
+) {
+    let mut swarm = match build_swarm(keypair) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = ready_tx.send(Err(e));
+            return;
+        }
+    };
+
+    // Bind to loopback only; the listen address never reports the 0.0.0.0
+    // wildcard. Port 0 lets the OS allocate.
+    let listen_on: Multiaddr = match format!("/ip4/127.0.0.1/tcp/{port}").parse() {
+        Ok(addr) => addr,
+        Err(e) => {
+            let _ = ready_tx.send(Err(NetworkError::Transport(format!("listen addr: {e}"))));
+            return;
+        }
+    };
+    if let Err(e) = swarm.listen_on(listen_on) {
+        let _ = ready_tx.send(Err(NetworkError::Transport(format!("listen: {e}"))));
+        return;
+    }
+
+    // Best-effort: malformed or unreachable bootstrap entries are skipped
+    // without failing startup.
+    for addr in &bootstrap {
+        if let Ok(ma) = addr.parse::<Multiaddr>() {
+            let _ = swarm.dial(ma);
+        }
+    }
+
+    let mut ready_tx = Some(ready_tx);
+    loop {
+        tokio::select! {
+            event = swarm.select_next_some() => match event {
+                SwarmEvent::NewListenAddr { address, .. } => {
+                    if let Ok(mut addrs) = listen_addrs.lock() {
+                        addrs.push(address.to_string());
+                    }
+                    if let Some(tx) = ready_tx.take() {
+                        let _ = tx.send(Ok(()));
+                    }
+                }
+                SwarmEvent::ExpiredListenAddr { address, .. } => {
+                    if let Ok(mut addrs) = listen_addrs.lock() {
+                        let gone = address.to_string();
+                        addrs.retain(|a| a != &gone);
+                    }
+                }
+                SwarmEvent::ListenerError { .. } => {
+                    if let Some(tx) = ready_tx.take() {
+                        let _ = tx.send(Err(NetworkError::Transport("listener error".into())));
+                    }
+                }
+                SwarmEvent::ListenerClosed { reason, .. } => {
+                    if let Some(tx) = ready_tx.take() {
+                        let msg = match reason {
+                            Ok(()) => "listener closed before binding".to_string(),
+                            Err(e) => format!("listener closed: {e}"),
+                        };
+                        let _ = tx.send(Err(NetworkError::Transport(msg)));
+                    }
+                }
+                _ => {}
+            },
+            cmd = cmd_rx.recv() => match cmd {
+                Some(Command::Shutdown) | None => break,
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -206,18 +447,19 @@ mod tests {
     // A.1.1 — SwarmBuilder default config starts
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_1_swarm_builder_default_config_starts() {
         let mut node = Node::new(cfg(0)).expect("A.1.1 — default config must build a swarm");
         node.start().expect("A.1.1 — swarm must start");
-        assert!(!node.listen_addrs().is_empty(), "must allocate a listen address");
+        assert!(
+            !node.listen_addrs().is_empty(),
+            "must allocate a listen address"
+        );
     }
 
     // -----------------------------------------------------------------
     // A.1.2 — Custom port listen + bind error on conflict
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_2_custom_port_listen() {
         let mut node = Node::new(cfg(9878)).expect("A.1.2 — custom port must build");
         node.start().expect("A.1.2 — port 9878 must bind");
@@ -228,7 +470,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_2_port_already_in_use_returns_transport_error() {
         let mut first = Node::new(cfg(9879)).expect("A.1.2 — first node builds");
         first.start().expect("A.1.2 — first node starts");
@@ -242,7 +483,6 @@ mod tests {
     // A.1.3 — Graceful shutdown releases the port
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_3_drop_releases_port() {
         let port = 9880;
         {
@@ -251,7 +491,8 @@ mod tests {
         }
         // Port should now be free again.
         let mut b = Node::new(cfg(port)).expect("A.1.3 — second build");
-        b.start().expect("A.1.3 — second start must succeed after drop");
+        b.start()
+            .expect("A.1.3 — second start must succeed after drop");
     }
 
     // -----------------------------------------------------------------
@@ -286,7 +527,10 @@ mod tests {
         let n2 = Node::with_keypair_path(cfg(0), tmp.clone()).expect("second run");
         let id2 = n2.local_peer_id();
 
-        assert_eq!(id1.0, id2.0, "PeerId must persist across runs (same keypair)");
+        assert_eq!(
+            id1.0, id2.0,
+            "PeerId must persist across runs (same keypair)"
+        );
         let _ = std::fs::remove_file(&tmp);
     }
 
@@ -328,7 +572,6 @@ mod tests {
     // A.1.7 — 0.0.0.0 vs 127.0.0.1 bind semantics
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_7_bind_loopback_rejects_external() {
         let mut c = cfg(0);
         c.bootstrap_peers = vec!["/ip4/127.0.0.1/tcp/0".into()];
@@ -341,7 +584,6 @@ mod tests {
     // A.1.8 — Bootstrap peer unreachable → graceful degradation
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_8_unreachable_bootstrap_does_not_panic() {
         let mut c = cfg(0);
         c.bootstrap_peers = vec![
@@ -350,14 +592,14 @@ mod tests {
         ];
         let mut node = Node::new(c).expect("A.1.8 — build with unreachable bootstrap");
         // Should not panic — should return Ok with empty peer set.
-        node.start().expect("A.1.8 — start must succeed with unreachable bootstrap");
+        node.start()
+            .expect("A.1.8 — start must succeed with unreachable bootstrap");
     }
 
     // -----------------------------------------------------------------
     // A.1.9 — Second swarm on a busy port returns Err while leaving the first alone
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_9_port_conflict_isolation() {
         let port = 9881;
         let mut first = Node::new(cfg(port)).expect("A.1.9 — first build");
@@ -368,6 +610,9 @@ mod tests {
         assert!(matches!(err, NetworkError::Transport(_)));
 
         // First must still be listening.
-        assert!(!first.listen_addrs().is_empty(), "first listener must survive");
+        assert!(
+            !first.listen_addrs().is_empty(),
+            "first listener must survive"
+        );
     }
 }

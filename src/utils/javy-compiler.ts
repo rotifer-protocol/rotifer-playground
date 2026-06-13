@@ -76,20 +76,36 @@ export function preflightToolchain(): ToolchainStatus {
 }
 
 /** Full diagnosis for a failed preflight: per-tool status, environment, exact fixes. */
-export function buildToolchainErrorMessage(status: ToolchainStatus): string {
-  let npxPath = "not found";
+/** Resolve the active `npx` path (impure: PATH lookup). Returns "not found" if absent. */
+export function resolveActiveNpxPath(): string {
   try {
-    npxPath = execFileSync(process.platform === "win32" ? "where" : "which", ["npx"], {
+    return execFileSync(process.platform === "win32" ? "where" : "which", ["npx"], {
       stdio: "pipe", timeout: 5_000,
     }).toString().trim().split("\n")[0];
-  } catch { /* keep "not found" */ }
+  } catch {
+    return "not found";
+  }
+}
 
+/** True when both tools resolved. */
+export function toolchainOk(status: ToolchainStatus): boolean {
+  return status.esbuild !== null && status.javy !== null;
+}
+
+/** Per-tool status + environment, as report lines. Pure (no I/O — pass npxPath in). */
+export function formatToolchainReport(status: ToolchainStatus, npxPath: string): string[] {
   return [
-    "TypeScript → WASM toolchain unavailable:",
     `  esbuild: ${status.esbuild ? "ok (" + status.esbuild.join(" ") + ")" : "missing (tried: esbuild on PATH, npx --no-install esbuild)"}`,
     `  javy:    ${status.javy ? "ok (" + status.javy.join(" ") + ")" : "missing (tried: javy on PATH, npx --no-install javy-cli / javy)"}`,
     `  active npx: ${npxPath}`,
-    `  node running rotifer: ${process.execPath}`,
+    `  node: ${process.execPath}`,
+  ];
+}
+
+export function buildToolchainErrorMessage(status: ToolchainStatus): string {
+  return [
+    "TypeScript → WASM toolchain unavailable:",
+    ...formatToolchainReport(status, resolveActiveNpxPath()),
     "",
     "Install: npm i -g esbuild javy-cli   (javy-cli installs a binary named `javy` — both are detected)",
     "If already installed: make sure the Node prefix that owns `rotifer` is first in PATH;",

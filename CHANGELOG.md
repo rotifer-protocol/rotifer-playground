@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`rotifer doctor`** — checks the TS→WASM toolchain (esbuild / javy) offline and reports
+  per-tool status, the active `npx` path, and the Node prefix running rotifer; exits non-zero
+  when the toolchain is incomplete. Surfaces the preflight from #58 as a standalone command.
+
 ### Fixed
 
 - **Starter template traps in Native WASM** — `rotifer init` now scaffolds a synchronous

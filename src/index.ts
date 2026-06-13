@@ -8,6 +8,7 @@ import { scanCommand } from "./commands/scan.js";
 import { wrapCommand } from "./commands/wrap.js";
 import { testCommand } from "./commands/test.js";
 import { compileCommand } from "./commands/compile.js";
+import { doctorCommand } from "./commands/doctor.js";
 import { arenaSubmitCommand } from "./commands/arena-submit.js";
 import { arenaListCommand } from "./commands/arena-list.js";
 import { arenaWatchCommand } from "./commands/arena-watch.js";
@@ -71,6 +72,7 @@ program.addCommand(scanCommand);
 program.addCommand(wrapCommand);
 program.addCommand(testCommand);
 program.addCommand(compileCommand);
+program.addCommand(doctorCommand);
 
 program.addCommand(loginCommand);
 program.addCommand(logoutCommand);

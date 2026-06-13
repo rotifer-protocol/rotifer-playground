@@ -160,3 +160,32 @@ describe("buildToolchainErrorMessage (#58)", () => {
     expect(msg).toMatch(/javy:\s+missing/);
   });
 });
+
+// ─── R5: rotifer doctor report formatting ────────────────────────────────────
+import { formatToolchainReport, toolchainOk } from "../../src/utils/javy-compiler.js";
+
+describe("formatToolchainReport (R5 doctor)", () => {
+  it("reports both tools ok + npx path + node prefix", () => {
+    const lines = formatToolchainReport(
+      { esbuild: ["esbuild"], javy: ["javy"] },
+      "/usr/bin/npx",
+    );
+    const text = lines.join("\n");
+    expect(text).toMatch(/esbuild:\s+ok/);
+    expect(text).toMatch(/javy:\s+ok/);
+    expect(text).toMatch(/active npx:\s+\/usr\/bin\/npx/);
+    expect(text).toMatch(/node:/);
+  });
+
+  it("reports a missing tool as missing", () => {
+    const text = formatToolchainReport({ esbuild: null, javy: ["javy"] }, "x").join("\n");
+    expect(text).toMatch(/esbuild:\s+missing/);
+    expect(text).toMatch(/javy:\s+ok/);
+  });
+
+  it("toolchainOk is true only when both resolve", () => {
+    expect(toolchainOk({ esbuild: ["esbuild"], javy: ["javy"] })).toBe(true);
+    expect(toolchainOk({ esbuild: null, javy: ["javy"] })).toBe(false);
+    expect(toolchainOk({ esbuild: ["esbuild"], javy: null })).toBe(false);
+  });
+});

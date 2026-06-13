@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **WASM runtime errors surface the guest's stderr** — when a Native gene traps, the
+  sandbox now appends anything the guest wrote to fd 2 (e.g. the Javy/QuickJS error
+  message) to the failure, instead of returning only an opaque WASM backtrace (R4)
 - **Starter template traps in Native WASM** — `rotifer init` now scaffolds a synchronous
   `express()`; the previous `async express()` starter compiled fine but trapped in the
   Javy/QuickJS sandbox with an opaque backtrace (#57)

@@ -13,6 +13,7 @@ struct HostState {
     stdin: Vec<u8>,
     stdin_offset: usize,
     stdout: Arc<Mutex<Vec<u8>>>,
+    stderr: Arc<Mutex<Vec<u8>>>,
     limiter: StoreLimits,
 }
 
@@ -212,8 +213,17 @@ impl WasmtimeSandbox {
                                 .lock()
                                 .expect("stdout mutex poisoned")
                                 .extend_from_slice(&chunk);
+                        } else if fd == 2 {
+                            // Capture stderr so a trap's diagnostic (e.g. the
+                            // Javy/QuickJS error message) can be surfaced instead
+                            // of only an opaque WASM backtrace.
+                            caller
+                                .data()
+                                .stderr
+                                .lock()
+                                .expect("stderr mutex poisoned")
+                                .extend_from_slice(&chunk);
                         }
-                        // fd==2 (stderr) is silently discarded
                         total_written += chunk.len() as u32;
                     }
                     let data_mut = memory.data_mut(&mut caller);
@@ -595,12 +605,14 @@ impl Sandbox for WasmtimeSandbox {
             .map_err(|e| SandboxError::ExecutionFailed(e.to_string()))?;
 
         let stdout = Arc::new(Mutex::new(Vec::new()));
+        let stderr = Arc::new(Mutex::new(Vec::new()));
         let host_state = HostState {
             context_json: serde_json::to_vec(context).unwrap_or_default(),
             logical_timestamp: context.timestamp,
             stdin: input_bytes.clone(),
             stdin_offset: 0,
             stdout: stdout.clone(),
+            stderr: stderr.clone(),
             limiter: StoreLimits {
                 max_memory: self.constraints.max_memory_bytes as usize,
                 max_table_elements: 10_000,
@@ -664,6 +676,13 @@ impl Sandbox for WasmtimeSandbox {
         stop_flag.store(true, Ordering::Relaxed);
         let _ = epoch_thread.join();
 
+        // Surface any stderr the guest wrote before failing (Javy/QuickJS writes
+        // throw messages to fd 2). Without this the host returns only an opaque
+        // WASM backtrace. (R4)
+        let stderr_text = {
+            let buf = stderr.lock().expect("stderr mutex poisoned");
+            String::from_utf8_lossy(&buf).trim().to_string()
+        };
         let output = result.map_err(|e| {
             let msg = e.to_string();
             if msg.contains("epoch") || msg.contains("interrupt") {
@@ -671,6 +690,8 @@ impl Sandbox for WasmtimeSandbox {
                     "execution timed out after {}ms",
                     timeout_ms
                 ))
+            } else if !stderr_text.is_empty() {
+                SandboxError::ExecutionFailed(format!("{msg}\n  gene stderr: {stderr_text}"))
             } else {
                 e
             }
@@ -823,6 +844,93 @@ mod tests {
 
         // Data section: empty (we set up iovec in the code)
         module.finish()
+    }
+
+    /// Like build_wasi_echo_wasm, but writes stdin to fd 2 (stderr) then traps
+    /// (`unreachable`) — exercises stderr capture + surfacing on failure (R4).
+    fn build_wasi_stderr_trap_wasm() -> Vec<u8> {
+        use wasm_encoder::*;
+
+        let mut module = Module::new();
+
+        let mut types = TypeSection::new();
+        types.ty().function(vec![ValType::I32; 4], vec![ValType::I32]);
+        types.ty().function(vec![], vec![]);
+        module.section(&types);
+
+        let mut imports = ImportSection::new();
+        imports.import("wasi_snapshot_preview1", "fd_read", EntityType::Function(0));
+        imports.import("wasi_snapshot_preview1", "fd_write", EntityType::Function(0));
+        module.section(&imports);
+
+        let mut functions = FunctionSection::new();
+        functions.function(1);
+        module.section(&functions);
+
+        let mut memories = MemorySection::new();
+        memories.memory(MemoryType {
+            minimum: 1,
+            maximum: Some(2),
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        });
+        module.section(&memories);
+
+        let mut exports = ExportSection::new();
+        exports.export("memory", ExportKind::Memory, 0);
+        exports.export("_start", ExportKind::Func, 2);
+        module.section(&exports);
+
+        let mut code = CodeSection::new();
+        let mut f = Function::new(vec![]);
+        // iovec at 0: {buf_ptr: 64, buf_len: 4096}
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(64));
+        f.instruction(&Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(4096));
+        f.instruction(&Instruction::I32Store(MemArg { offset: 4, align: 2, memory_index: 0 }));
+        // fd_read(fd=0, iovs=0, count=1, nread=8)
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::I32Const(8));
+        f.instruction(&Instruction::Call(0));
+        f.instruction(&Instruction::Drop);
+        // iovec.buf_len = nread
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(8));
+        f.instruction(&Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }));
+        f.instruction(&Instruction::I32Store(MemArg { offset: 4, align: 2, memory_index: 0 }));
+        // fd_write(fd=2 = stderr, iovs=0, count=1, nwritten=12)
+        f.instruction(&Instruction::I32Const(2));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::I32Const(12));
+        f.instruction(&Instruction::Call(1));
+        f.instruction(&Instruction::Drop);
+        // then trap
+        f.instruction(&Instruction::Unreachable);
+        f.instruction(&Instruction::End);
+        code.function(&f);
+        module.section(&code);
+
+        module.finish()
+    }
+
+    #[test]
+    fn surfaces_stderr_on_trap() {
+        let sb = WasmtimeSandbox::with_defaults().unwrap();
+        let wasm = build_wasi_stderr_trap_wasm();
+        let result = sb.execute(&wasm, &test_context(), serde_json::json!("STDERR_MARKER_r4"));
+        match result {
+            Err(SandboxError::ExecutionFailed(msg)) => {
+                assert!(msg.contains("gene stderr"), "expected stderr surfaced, got: {msg}");
+                assert!(msg.contains("STDERR_MARKER_r4"), "expected marker in stderr, got: {msg}");
+            }
+            other => panic!("expected ExecutionFailed with stderr, got {other:?}"),
+        }
     }
 
     #[test]

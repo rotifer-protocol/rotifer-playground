@@ -1,69 +1,193 @@
-//! A.1 — libp2p Swarm node (v0.9 stage 1 placeholder).
+//! libp2p-backed P2P node: identity keypair + Swarm lifecycle.
 //!
-//! The real implementation will:
-//!   - construct a `libp2p::SwarmBuilder` with tokio runtime + Noise + Yamux
-//!   - generate / load an Ed25519 keypair persisted at `~/.rotifer/identity.pem`
-//!   - listen on the configured port (0 = OS-allocated)
-//!   - drive the swarm via a background tokio task
+//! Responsibilities:
+//!   - generate or load a persistent Ed25519 identity keypair
+//!     (`~/.rotifer/identity.pem`, file mode 0600), from which the node's
+//!     stable `PeerId` is derived;
+//!   - construct a `libp2p` Swarm (tokio transport + Noise + Yamux) driven
+//!     from a background task — wired in a follow-up change;
+//!   - listen on the configured port (0 = OS-allocated) and shut down cleanly.
 //!
-//! Stage 1 ships only the type signatures + test scaffolds (A.1.1–A.1.9).
-//! `Node::new` returns `Err(NetworkError::Transport(...))` so every test
-//! correctly fails until stage 2 wires libp2p in.
+//! This change implements the identity layer. The Swarm event loop
+//! (`start` / `stop` / `listen_addrs`) is still a stub that returns
+//! `NetworkError::Transport`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use libp2p::PeerId as Libp2pPeerId;
+use libp2p::identity::Keypair;
 
 use super::{NetworkConfig, NetworkError, PeerId};
 
-/// Real libp2p-backed P2P node — placeholder type for stage 1.
-#[derive(Debug)]
+/// PEM armor label for the persisted node identity.
+const IDENTITY_PEM_LABEL: &str = "ROTIFER IDENTITY";
+
+/// libp2p-backed P2P node.
 pub struct Node {
     pub config: NetworkConfig,
     pub keypair_path: PathBuf,
     pub listening: bool,
+    /// Persistent Ed25519 identity; consumed by the Swarm in a follow-up
+    /// change, never logged.
+    #[allow(dead_code)]
+    keypair: Keypair,
+    /// PeerId derived from `keypair` — stable across restarts.
+    peer_id: Libp2pPeerId,
+}
+
+impl std::fmt::Debug for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Deliberately omit `keypair` — never expose private key material.
+        f.debug_struct("Node")
+            .field("config", &self.config)
+            .field("keypair_path", &self.keypair_path)
+            .field("listening", &self.listening)
+            .field("peer_id", &self.peer_id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Node {
-    /// Build a Swarm with default tokio transport + Noise + Yamux.
+    /// Build a node using the default identity path (`~/.rotifer/identity.pem`).
+    ///
+    /// Loads an existing keypair or generates and persists a new one. The
+    /// Swarm is started separately via [`Node::start`].
     pub fn new(config: NetworkConfig) -> Result<Self, NetworkError> {
-        let _ = config;
-        Err(NetworkError::Transport(
-            "A.1.x — Node::new not yet implemented (libp2p Swarm — stage 2)".into(),
-        ))
+        Self::with_keypair_path(config, default_identity_path())
     }
 
-    /// Build with explicit keypair file location — used by A.1.4 persistence test.
+    /// Build a node with an explicit identity-file location.
+    ///
+    /// First run generates a fresh Ed25519 keypair and writes it (mode 0600);
+    /// later runs reuse it, so the derived `PeerId` is stable.
     pub fn with_keypair_path(config: NetworkConfig, path: PathBuf) -> Result<Self, NetworkError> {
-        let _ = (config, path);
-        Err(NetworkError::Transport(
-            "A.1.4 — Node::with_keypair_path not implemented (stage 2)".into(),
-        ))
+        let keypair = load_or_generate_keypair(&path)?;
+        let peer_id = keypair.public().to_peer_id();
+        Ok(Self {
+            config,
+            keypair_path: path,
+            listening: false,
+            keypair,
+            peer_id,
+        })
     }
 
+    /// Stable libp2p `PeerId` derived from the persistent keypair.
     pub fn local_peer_id(&self) -> PeerId {
-        PeerId(self.config.node_id.clone())
+        PeerId(self.peer_id.to_string())
     }
 
+    /// Active listen addresses (empty until the Swarm is started).
     pub fn listen_addrs(&self) -> Vec<String> {
         Vec::new()
     }
 
+    /// Start the Swarm event loop — not yet wired.
     pub fn start(&mut self) -> Result<(), NetworkError> {
-        Err(NetworkError::Transport(
-            "A.1.x — Node::start not implemented (stage 2)".into(),
-        ))
+        Err(NetworkError::Transport("swarm event loop not yet wired".into()))
     }
 
+    /// Stop the Swarm and release the port — not yet wired.
     pub fn stop(&mut self) -> Result<(), NetworkError> {
-        Err(NetworkError::Transport(
-            "A.1.3 — Node::stop not implemented (stage 2)".into(),
-        ))
+        Err(NetworkError::Transport("swarm event loop not yet wired".into()))
     }
 }
 
 impl Drop for Node {
     fn drop(&mut self) {
-        // Stage 2: ensure the swarm task is aborted + port released.
+        // Swarm task abort + port release land with the event-loop change.
     }
+}
+
+/// Default identity path: `$HOME/.rotifer/identity.pem`.
+fn default_identity_path() -> PathBuf {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    home.join(".rotifer").join("identity.pem")
+}
+
+/// Load an existing identity keypair from `path`, or generate + persist one.
+fn load_or_generate_keypair(path: &Path) -> Result<Keypair, NetworkError> {
+    if path.exists() {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| NetworkError::Transport(format!("read identity: {e}")))?;
+        let bytes = decode_identity_pem(&text)?;
+        Keypair::from_protobuf_encoding(&bytes)
+            .map_err(|e| NetworkError::Transport(format!("parse identity: {e}")))
+    } else {
+        let keypair = Keypair::generate_ed25519();
+        persist_keypair(path, &keypair)?;
+        Ok(keypair)
+    }
+}
+
+/// Serialize a keypair to PEM and write it with private-key permissions.
+fn persist_keypair(path: &Path, keypair: &Keypair) -> Result<(), NetworkError> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| NetworkError::Transport(format!("create identity dir: {e}")))?;
+        }
+    }
+    let bytes = keypair
+        .to_protobuf_encoding()
+        .map_err(|e| NetworkError::Transport(format!("encode identity: {e}")))?;
+    let pem = encode_identity_pem(&bytes);
+    write_private(path, pem.as_bytes())
+        .map_err(|e| NetworkError::Transport(format!("write identity: {e}")))?;
+    Ok(())
+}
+
+/// PEM-armor raw bytes with the identity label, wrapped at 64 base64 chars.
+fn encode_identity_pem(bytes: &[u8]) -> String {
+    let b64 = BASE64.encode(bytes);
+    let mut out = format!("-----BEGIN {IDENTITY_PEM_LABEL}-----\n");
+    for line in b64.as_bytes().chunks(64) {
+        // base64 output is ASCII, so each chunk is valid UTF-8.
+        out.push_str(std::str::from_utf8(line).expect("base64 is ascii"));
+        out.push('\n');
+    }
+    out.push_str(&format!("-----END {IDENTITY_PEM_LABEL}-----\n"));
+    out
+}
+
+/// Strip PEM armor and base64-decode the identity body.
+fn decode_identity_pem(text: &str) -> Result<Vec<u8>, NetworkError> {
+    let body: String = text
+        .lines()
+        .filter(|l| !l.starts_with("-----"))
+        .flat_map(|l| l.chars())
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    BASE64
+        .decode(body.as_bytes())
+        .map_err(|e| NetworkError::Transport(format!("decode identity: {e}")))
+}
+
+/// Write `data` to `path`, owner read/write only (0600), created atomically.
+#[cfg(unix)]
+fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(data)?;
+    f.sync_all()?;
+    // Force exact 0600 regardless of the process umask.
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, data)
 }
 
 #[cfg(test)]
@@ -134,7 +258,6 @@ mod tests {
     // A.1.4 — Keypair persistence at ~/.rotifer/identity.pem (file mode 0600)
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_4_keypair_persistence_first_run_generates() {
         let tmp = std::env::temp_dir().join("rotifer-test-identity.pem");
         let _ = std::fs::remove_file(&tmp);
@@ -154,7 +277,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_4_keypair_persistence_second_run_reuses() {
         let tmp = std::env::temp_dir().join("rotifer-test-identity-reuse.pem");
         let _ = std::fs::remove_file(&tmp);
@@ -172,7 +294,6 @@ mod tests {
     // A.1.5 — PeerId is deterministic from the keypair
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "stage 1 TDD baseline — stage 2 unignores"]
     fn A_1_5_peer_id_deterministic_from_keypair() {
         let path = std::env::temp_dir().join("rotifer-test-determinism.pem");
         let _ = std::fs::remove_file(&path);

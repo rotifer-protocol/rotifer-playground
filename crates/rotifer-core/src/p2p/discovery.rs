@@ -125,7 +125,7 @@ mod tests {
     // A.2.1 — mDNS publish + discover (LAN simulation)
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "A.2.1 integration — requires two co-process nodes; stage 2 unignores"]
+    #[ignore = "mDNS needs real multicast (loopback has none); real two-node discovery via dial+kad is in node::tests::two_nodes_discover_via_kademlia"]
     fn A_2_1_mdns_publish_and_discover() {
         let mut d1 = Discovery::new(true, false);
         let mut d2 = Discovery::new(true, false);
@@ -139,7 +139,7 @@ mod tests {
     // A.2.2 — Kademlia DHT join + routing-table fill
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "A.2.2 integration — needs bootstrap node; stage 2 unignores"]
+    #[ignore = "superseded: real multi-node kad join lives in node::tests::two_nodes_discover_via_kademlia; this single-Discovery scaffold awaits the Discovery<->Node merge"]
     fn A_2_2_kad_join_populates_routing_table() {
         let mut d = Discovery::new(false, true);
         d.bootstrap().expect("A.2.2 — bootstrap");
@@ -226,7 +226,7 @@ mod tests {
     // A.2.6 — Network partition recovery — routing table rebuilt ≤10s
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "A.2.6 resilience — needs partition simulation; stage 2 unignores"]
+    #[ignore = "deferred: needs a network-partition harness (disconnect/reconnect simulation)"]
     fn A_2_6_partition_recovery() {
         let mut d = Discovery::new(false, true);
         d.bootstrap().expect("A.2.6 — initial bootstrap");

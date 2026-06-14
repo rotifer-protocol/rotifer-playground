@@ -88,7 +88,7 @@ mod tests {
     // A.3.2 — Publish announcement reaches 3-node mesh within 5s
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "A.3.2 integration — needs 3-node mesh; stage 2 unignores"]
+    #[ignore = "two-node gossipsub broadcast proven in node::tests::two_nodes_gossip_broadcast; 3-node mesh + Gossip<->Node merge remain"]
     fn A_3_2_publish_reaches_3node_mesh_within_5s() {
         // Stage 2: spin up 3 in-process Gossip nodes, subscribe to TOPIC,
         // publish from one, assert the other two receive within 5s.

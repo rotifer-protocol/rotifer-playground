@@ -389,14 +389,51 @@ describe("validateLlmNativePhenotype", () => {
             {
               apiType: "rest",
               semanticTag: "cve-database",
-              degradationBehavior: "PartialRetry",
+              degradationBehavior: "FALLBACK",
             },
           ],
         }),
         "test.json",
       );
       expect(display.rustStyleError).not.toHaveBeenCalled();
+      expect(display.warn).not.toHaveBeenCalled();
       expect(exitSpy).not.toHaveBeenCalled();
+    });
+
+    it("accepts all four spec degradationBehavior values without warning", () => {
+      for (const db of ["FAIL", "FALLBACK", "CACHE", "SKIP"]) {
+        vi.clearAllMocks();
+        validateLlmNativePhenotype(
+          basePhenotype({
+            fidelity: "Hybrid",
+            externalDependencies: [
+              { apiType: "rest", semanticTag: "svc", degradationBehavior: db },
+            ],
+          }),
+          "test.json",
+        );
+        expect(display.rustStyleError).not.toHaveBeenCalled();
+        expect(display.warn).not.toHaveBeenCalled();
+      }
+    });
+
+    it("accepts legacy degradationBehavior values with a deprecation warning (W0114)", () => {
+      for (const db of ["FailFast", "SilentDegrade", "Retry", "PartialRetry", "AtomicRollback"]) {
+        vi.clearAllMocks();
+        validateLlmNativePhenotype(
+          basePhenotype({
+            fidelity: "Hybrid",
+            externalDependencies: [
+              { apiType: "rest", semanticTag: "svc", degradationBehavior: db },
+            ],
+          }),
+          "test.json",
+        );
+        // Legacy value stays valid (no error, no exit) but is flagged deprecated.
+        expect(display.rustStyleError).not.toHaveBeenCalled();
+        expect(exitSpy).not.toHaveBeenCalled();
+        expect(display.warn).toHaveBeenCalledWith(expect.stringContaining("W0114"));
+      }
     });
 
     it("errors when externalDependencies is not an array", () => {

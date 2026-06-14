@@ -9,13 +9,15 @@
 //!   - bootstrap-connectivity floor (eclipse resistance, §8.5);
 //!   - anonymous-peer Sybil throttling (§8.4), fail-closed.
 //!
-//! Deferred to a follow-up (need real libp2p keys / Cloud): Ed25519 message-
-//! envelope signature verification + real PeerId derivation (tested against
-//! real nodes), and Cloud-issued proof-of-registration verification.
+//! Also here: Ed25519 message-signature verification + real libp2p PeerId
+//! derivation — the node-identity-forgery / message-tampering defence (§8.3).
+//! Still deferred to Cloud: proof-of-registration (JWT) verification.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::LazyLock;
 use std::time::Instant;
+
+use libp2p::identity::PublicKey;
 
 use super::{NetworkError, PeerId};
 
@@ -50,6 +52,28 @@ pub fn derive_peer_id_from_pubkey(pubkey: &[u8]) -> PeerId {
     use sha2::{Digest, Sha256};
     let hash = Sha256::digest(pubkey);
     PeerId(format!("rt_{}", &hex::encode(hash)[..16]))
+}
+
+/// Derive the real libp2p PeerId from a protobuf-encoded public key — the
+/// identity binding behind the node-forgery defence (§8.3): a PeerId is a hash
+/// of the public key, so a peer cannot present another's PeerId without its key.
+pub fn real_peer_id_from_pubkey(pubkey: &[u8]) -> Result<PeerId, NetworkError> {
+    let key = PublicKey::try_decode_protobuf(pubkey)
+        .map_err(|e| NetworkError::Transport(format!("invalid public key: {e}")))?;
+    Ok(PeerId(key.to_peer_id().to_string()))
+}
+
+/// Verify a signature over `msg` by the holder of `pubkey` (the node-forgery /
+/// message-tampering defence, §8.3): a message altered in flight, or signed by
+/// a different key, fails to verify.
+pub fn verify_message_signature(pubkey: &[u8], msg: &[u8], sig: &[u8]) -> Result<(), NetworkError> {
+    let key = PublicKey::try_decode_protobuf(pubkey)
+        .map_err(|e| NetworkError::Transport(format!("invalid public key: {e}")))?;
+    if key.verify(msg, sig) {
+        Ok(())
+    } else {
+        Err(NetworkError::Transport("signature verification failed".into()))
+    }
 }
 
 #[derive(Debug, Default)]
@@ -163,6 +187,7 @@ impl Security {
 #[allow(non_snake_case)]
 mod tests {
     use super::*;
+    use libp2p::identity::Keypair;
 
     // -----------------------------------------------------------------
     // A.5.1 — PeerId derivation determinism
@@ -276,5 +301,57 @@ mod tests {
         assert!(sec.is_eclipse_safe(), "two bootstraps → meets the floor");
         sec.mark_bootstrap_unreachable(&PeerId("boot-1".into()));
         assert!(!sec.is_eclipse_safe(), "back below floor → eclipse-unsafe again");
+    }
+
+    // -----------------------------------------------------------------
+    // A.5.6 — Message-signature verification + PeerId binding (§8.3)
+    // -----------------------------------------------------------------
+    #[test]
+    fn A_5_6_valid_signature_verifies() {
+        let kp = Keypair::generate_ed25519();
+        let pubkey = kp.public().encode_protobuf();
+        let msg = b"gene-announcement-payload";
+        let sig = kp.sign(msg).expect("sign");
+        assert!(verify_message_signature(&pubkey, msg, &sig).is_ok());
+    }
+
+    #[test]
+    fn A_5_6_tampered_message_rejected() {
+        let kp = Keypair::generate_ed25519();
+        let pubkey = kp.public().encode_protobuf();
+        let sig = kp.sign(b"original-payload").expect("sign");
+        assert!(
+            verify_message_signature(&pubkey, b"tampered-payload", &sig).is_err(),
+            "a message altered after signing must fail verification"
+        );
+    }
+
+    #[test]
+    fn A_5_6_signature_from_another_key_rejected() {
+        let signer = Keypair::generate_ed25519();
+        let attacker = Keypair::generate_ed25519();
+        let msg = b"payload";
+        let sig = signer.sign(msg).expect("sign");
+        assert!(
+            verify_message_signature(&attacker.public().encode_protobuf(), msg, &sig).is_err(),
+            "a signature does not verify against a different key"
+        );
+    }
+
+    #[test]
+    fn A_5_6_peer_id_binds_to_its_key() {
+        let kp = Keypair::generate_ed25519();
+        let pubkey = kp.public().encode_protobuf();
+        let derived = real_peer_id_from_pubkey(&pubkey).expect("derive");
+        assert_eq!(derived, PeerId(kp.public().to_peer_id().to_string()));
+        assert_eq!(derived, real_peer_id_from_pubkey(&pubkey).expect("derive again"));
+        let other = Keypair::generate_ed25519().public().encode_protobuf();
+        assert_ne!(derived, real_peer_id_from_pubkey(&other).expect("derive other"));
+    }
+
+    #[test]
+    fn A_5_6_garbage_public_key_errors() {
+        assert!(real_peer_id_from_pubkey(b"not-a-real-key").is_err());
+        assert!(verify_message_signature(b"not-a-real-key", b"m", b"s").is_err());
     }
 }

@@ -469,8 +469,6 @@ fn build_swarm(keypair: Keypair) -> Result<Swarm<NodeBehaviour>, NetworkError> {
         )
         .map_err(|e| NetworkError::Transport(format!("tcp transport: {e}")))?
         .with_quic()
-        .with_dns()
-        .map_err(|e| NetworkError::Transport(format!("dns transport: {e}")))?
         .with_behaviour(|key| {
             let peer_id = key.public().to_peer_id();
             let mut kademlia = kad::Behaviour::new(peer_id, MemoryStore::new(peer_id));

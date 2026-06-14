@@ -844,6 +844,22 @@ mod tests {
         );
     }
 
+    // =================================================================
+    // Multi-node integration tests — real libp2p over loopback.
+    // Run with:  cargo test -p rotifer-core --lib -- --ignored
+    // Kept #[ignore]d so network-timing flakiness stays out of CI.
+    //
+    // Deferred multi-node / security scenarios (no harness yet) tracked for
+    // follow-up — these were the ignored placeholders in the removed
+    // discovery/gossip modules:
+    //   - mDNS auto-discovery (needs real multicast; loopback carries none)
+    //   - network-partition recovery (needs a disconnect/reconnect harness)
+    //   - gossip peer-scoring / graylisting repeat forgers
+    //   - gossip flood rate-limiting; search request/response pairing
+    //   - adversarial suite: Sybil / Eclipse / flood / forged announcement /
+    //     MITM / node spoofing
+    // =================================================================
+
     // -----------------------------------------------------------------
     // Two-node Kademlia discovery over loopback (integration)
     // -----------------------------------------------------------------

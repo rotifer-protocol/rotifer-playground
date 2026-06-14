@@ -6,6 +6,7 @@ dist/
 target/
 *.node
 index.d.ts
+crates/rotifer-napi/index.js
 
 # IDE
 .vscode/

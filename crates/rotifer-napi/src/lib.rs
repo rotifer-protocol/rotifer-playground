@@ -15,6 +15,114 @@ use rotifer_core::types::gene::Gene;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+// P2P node bridge (libp2p) — exposes the real Node to the CLI (§3.1 phase 1).
+// Kept at the crate root, not a submodule: the cdylib linker strips an
+// unreferenced submodule's napi registration ctor, so the class must live here.
+use rotifer_core::p2p::messages::encode_announcement;
+use rotifer_core::p2p::node::Node as CoreNode;
+use rotifer_core::p2p::{GeneAnnouncement, NetworkConfig};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Canonical GossipSub topic for gene announcements (RFC §6.2).
+const ANNOUNCEMENTS_TOPIC: &str = "/rotifer/announcements";
+
+/// A live libp2p P2P node driven from the TS CLI, so `rotifer network` can run
+/// a real node instead of the v0.5 stub. The Node owns its own tokio runtime
+/// and keeps running after `start`, so these wrappers are plain sync calls.
+#[napi]
+pub struct P2pNode {
+    inner: CoreNode,
+}
+
+#[napi]
+impl P2pNode {
+    /// Build a node listening on `listen_port`, dialing `bootstrap_peers`
+    /// (multiaddr strings). Uses the persistent identity at
+    /// `~/.rotifer/identity.pem`, so the `PeerId` is stable across runs.
+    #[napi(constructor)]
+    pub fn new(listen_port: u32, bootstrap_peers: Vec<String>) -> Result<Self> {
+        let config = NetworkConfig {
+            node_id: uuid::Uuid::new_v4().to_string(),
+            listen_port: listen_port as u16,
+            bootstrap_peers,
+            enabled: true,
+        };
+        let inner = CoreNode::new(config)
+            .map_err(|e| Error::from_reason(format!("create p2p node: {e}")))?;
+        Ok(Self { inner })
+    }
+
+    /// Start the swarm. Blocks until the first listen address is ready (or the
+    /// bind fails). Afterwards the node keeps running on its own runtime.
+    #[napi]
+    pub fn start(&mut self) -> Result<()> {
+        self.inner
+            .start()
+            .map_err(|e| Error::from_reason(format!("start p2p node: {e}")))
+    }
+
+    /// The node's stable libp2p `PeerId`.
+    #[napi]
+    pub fn peer_id(&self) -> String {
+        self.inner.local_peer_id().0
+    }
+
+    /// Active listen addresses (multiaddr strings); empty until started.
+    #[napi]
+    pub fn listen_addrs(&self) -> Vec<String> {
+        self.inner.listen_addrs()
+    }
+
+    /// Peers discovered via Kademlia so far (`PeerId` strings).
+    #[napi]
+    pub fn discovered_peers(&self) -> Vec<String> {
+        self.inner.discovered_peers()
+    }
+
+    /// Announce a gene: build a `GeneAnnouncement` and publish it to the
+    /// canonical announcements topic. Requires the node to be started.
+    #[napi]
+    pub fn announce_gene(
+        &self,
+        gene_id: String,
+        name: String,
+        domain: String,
+        version: String,
+        fidelity: String,
+    ) -> Result<()> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let announcement = GeneAnnouncement {
+            gene_id,
+            name,
+            domain,
+            version,
+            fidelity,
+            publisher: self.inner.local_peer_id(),
+            reputation_score: 0.0,
+            timestamp,
+        };
+        let bytes = encode_announcement(&announcement)
+            .map_err(|e| Error::from_reason(format!("encode announcement: {e}")))?;
+        self.inner
+            .subscribe(ANNOUNCEMENTS_TOPIC)
+            .map_err(|e| Error::from_reason(format!("subscribe: {e}")))?;
+        self.inner
+            .publish(ANNOUNCEMENTS_TOPIC, &bytes)
+            .map_err(|e| Error::from_reason(format!("publish announcement: {e}")))
+    }
+
+    /// Stop the swarm and release the listen port.
+    #[napi]
+    pub fn stop(&mut self) -> Result<()> {
+        self.inner
+            .stop()
+            .map_err(|e| Error::from_reason(format!("stop p2p node: {e}")))
+    }
+}
+
 #[napi(object)]
 pub struct CandidateFunctionView {
     pub name: String,

@@ -65,6 +65,8 @@ export interface NativeBinding {
 
 let _binding: NativeBinding | null = null;
 let _hasLoadAttempted = false;
+let _rawModule: Record<string, unknown> | null = null;
+let _hasModuleLoadAttempted = false;
 
 const PLATFORM_PACKAGE_MAP: Record<string, string> = {
   "darwin-arm64": "@rotifer/playground-darwin-arm64",
@@ -89,17 +91,16 @@ function initBinding(mod: Record<string, unknown>): NativeBinding | null {
  * Strategy: platform npm package first, then local .node file fallback.
  * Returns null if the addon is not available (fallback to pure-TS path).
  */
-export function tryLoadBinding(): NativeBinding | null {
-  if (_hasLoadAttempted) return _binding;
-  _hasLoadAttempted = true;
+function loadRawModule(): Record<string, unknown> | null {
+  if (_hasModuleLoadAttempted) return _rawModule;
+  _hasModuleLoadAttempted = true;
 
   const platformKey = `${process.platform}-${process.arch}`;
   const pkgName = PLATFORM_PACKAGE_MAP[platformKey];
   if (pkgName) {
     try {
-      const mod = require(pkgName);
-      _binding = initBinding(mod);
-      if (_binding) return _binding;
+      _rawModule = require(pkgName) as Record<string, unknown>;
+      return _rawModule;
     } catch {
       // platform package not installed — fall through to local search
     }
@@ -110,13 +111,11 @@ export function tryLoadBinding(): NativeBinding | null {
     join(__dirname, "..", "..", `index.${process.platform}-${process.arch}.node`),
     join(__dirname, "..", "..", `rotifer-napi.${process.platform}-${process.arch}.node`),
   ];
-
   for (const candidate of localCandidates) {
     if (existsSync(candidate)) {
       try {
-        const mod = require(candidate);
-        _binding = initBinding(mod);
-        if (_binding) return _binding;
+        _rawModule = require(candidate) as Record<string, unknown>;
+        return _rawModule;
       } catch {
         // addon exists but failed to load — continue
       }
@@ -124,6 +123,52 @@ export function tryLoadBinding(): NativeBinding | null {
   }
 
   return null;
+}
+
+export function tryLoadBinding(): NativeBinding | null {
+  if (_hasLoadAttempted) return _binding;
+  _hasLoadAttempted = true;
+  const mod = loadRawModule();
+  if (mod) _binding = initBinding(mod);
+  return _binding;
+}
+
+/**
+ * Subset of the native `P2pNode` class surfaced to the CLI. Method names are
+ * camelCase (napi converts the Rust snake_case automatically).
+ */
+export interface P2pNodeHandle {
+  start(): void;
+  peerId(): string;
+  listenAddrs(): string[];
+  discoveredPeers(): string[];
+  announceGene(
+    geneId: string,
+    name: string,
+    domain: string,
+    version: string,
+    fidelity: string
+  ): void;
+  stop(): void;
+}
+
+/**
+ * Construct a native libp2p P2P node. Returns null when the native addon is
+ * unavailable (e.g. a pure-TS environment without the compiled `.node`), so
+ * callers can degrade gracefully.
+ */
+export function loadP2pNode(
+  listenPort: number,
+  bootstrapPeers: string[]
+): P2pNodeHandle | null {
+  const mod = loadRawModule();
+  // napi renders the Rust `P2pNode` as `P2PNode` (it uppercases the "p2p"
+  // acronym); accept either spelling so both the raw addon and any JS wrapper work.
+  const Ctor = (mod?.P2PNode ?? mod?.P2pNode) as
+    | (new (port: number, peers: string[]) => P2pNodeHandle)
+    | undefined;
+  if (typeof Ctor !== "function") return null;
+  return new Ctor(listenPort, bootstrapPeers);
 }
 
 export function isNativeAvailable(): boolean {

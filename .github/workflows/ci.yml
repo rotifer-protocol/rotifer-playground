@@ -175,6 +175,27 @@ jobs:
       - name: Cargo clippy (all crates)
         run: cargo clippy --workspace -- -D warnings
 
+  p2p-integration:
+    name: P2P Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+
+      - name: Two-node libp2p integration tests (serial, real loopback nodes)
+        # The src/p2p/ two-node tests (kad discovery / gossipsub broadcast / DHT
+        # put-get + the connectivity spike) are
+        # #[cfg_attr(not(feature = "p2p-integration"), ignore)] — ignored by the
+        # default `cargo test`. Enable the feature to run them, single-threaded:
+        # they spin up real libp2p nodes on loopback and share fixed identity
+        # files, so parallel execution would contend. The deferred spec-ID
+        # scaffolds (A_1_6 mDNS / A_4_3 / A_4_4 / A_6_6) stay unconditionally
+        # #[ignore]d and never run here.
+        run: cargo test -p rotifer-core --features p2p-integration --lib -- --test-threads=1
+
   security-check:
     name: Security Check
     runs-on: ubuntu-latest

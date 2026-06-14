@@ -41,7 +41,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "spike: explicit two-node loopback connect + kad discovery — run with --ignored"]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "spike: explicit two-node loopback connect + kad discovery — enable the p2p-integration feature or run with --ignored")]
     async fn spike_two_nodes_connect_and_discover() {
         let mut a = build_node();
         let mut b = build_node();

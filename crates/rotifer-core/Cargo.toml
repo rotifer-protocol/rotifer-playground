@@ -45,6 +45,13 @@ libp2p = { workspace = true, features = [
     "macros",
 ] }
 
+[features]
+# Opt-in marker for the multi-node P2P integration tests in src/p2p/. Those tests
+# are `#[cfg_attr(not(feature = "p2p-integration"), ignore)]` — ignored by default
+# (so `cargo test` stays fast + deterministic) and run in the dedicated CI job via
+# `cargo test --features p2p-integration -- --test-threads=1`. Empty: no build effect.
+p2p-integration = []
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3"

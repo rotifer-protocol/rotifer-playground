@@ -873,8 +873,10 @@ mod tests {
 
     // =================================================================
     // Multi-node integration tests — real libp2p over loopback.
-    // Run with:  cargo test -p rotifer-core --lib -- --ignored
-    // Kept #[ignore]d so network-timing flakiness stays out of CI.
+    // `#[ignore]`d by default (kept out of the fast default `cargo test`); run
+    // locally with `--ignored`, or in CI via the `p2p-integration` feature:
+    // `cargo test --features p2p-integration -- --test-threads=1` (serial, to
+    // avoid the shared fixed-port / identity-file contention between them).
     //
     // Deferred multi-node / security scenarios (no harness yet) tracked for
     // follow-up — these were the ignored placeholders in the removed
@@ -891,7 +893,7 @@ mod tests {
     // Two-node Kademlia discovery over loopback (integration)
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "two-node integration: real kad discovery over loopback — run with --ignored"]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "two-node integration: real kad discovery over loopback — enable the p2p-integration feature or run with --ignored")]
     fn two_nodes_discover_via_kademlia() {
         // Distinct identity files so the two nodes get distinct PeerIds
         // (Node::new would share the default identity path).
@@ -940,7 +942,7 @@ mod tests {
     // Two-node GossipSub broadcast over loopback (integration)
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "two-node integration: real gossipsub broadcast over loopback — run with --ignored"]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "two-node integration: real gossipsub broadcast over loopback — enable the p2p-integration feature or run with --ignored")]
     fn two_nodes_gossip_broadcast() {
         const TOPIC: &str = "/rotifer/announcements";
         let payload = b"gene-announcement-xyz";
@@ -995,7 +997,7 @@ mod tests {
     // Two-node Kademlia DHT put/get over loopback (integration)
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "two-node integration: real Kademlia DHT put/get over loopback — run with --ignored"]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "two-node integration: real Kademlia DHT put/get over loopback — enable the p2p-integration feature or run with --ignored")]
     fn two_nodes_dht_put_get() {
         let key = b"gene/abc";
         let value = b"announcement-bytes-123";

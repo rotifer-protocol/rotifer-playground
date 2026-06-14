@@ -27,11 +27,12 @@ function run(args: string, opts: { cwd?: string } = {}): {
   }
 }
 
-// `network start` / `announce` drive the real libp2p node through the native
-// napi addon. In CI the installed platform package predates that addon (it is
-// rebuilt + republished at release time), so these commands degrade gracefully
-// to an "unavailable" notice — which is what these E2E checks assert. The real
-// node path is covered by the Rust two-node integration tests + manual runs.
+// These checks exercise the degraded paths, which is what a fresh environment
+// hits: no daemon is running, and in CI the installed platform package predates
+// the native P2P addon (rebuilt + republished at release). So `start` reports
+// "unavailable" and the daemon-backed commands report "not running" — cleanly,
+// no hang, no crash. The real daemon path is covered by the Rust two-node
+// integration tests + manual end-to-end runs.
 describe("rotifer network commands", () => {
   beforeAll(() => {
     mkdirSync(TEST_DIR, { recursive: true });
@@ -43,73 +44,59 @@ describe("rotifer network commands", () => {
     }
   });
 
-  it("network --help lists all subcommands", () => {
+  it("network --help lists the public subcommands and hides __daemon", () => {
     const result = run("network --help");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("status");
-    expect(result.stdout).toContain("start");
-    expect(result.stdout).toContain("stop");
-    expect(result.stdout).toContain("peers");
-    expect(result.stdout).toContain("search");
-    expect(result.stdout).toContain("announce");
+    for (const sub of ["status", "start", "stop", "peers", "search", "announce"]) {
+      expect(result.stdout).toContain(sub);
+    }
+    expect(result.stdout).not.toContain("__daemon");
   });
 
-  it("network status shows node info with inactive state", () => {
+  it("network status reports not-running when no daemon is up", () => {
     const result = run("network status");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("Node ID");
-    expect(result.stdout).toContain("Inactive");
+    expect(result.stdout).toContain("Not running");
     expect(result.stdout).toContain("Listen Port");
     expect(result.stdout).toContain("Bootstrap Peers");
     expect(result.stdout).toContain("rotifer network start");
   });
 
-  it("network status generates a stable node ID across calls", () => {
-    const r1 = run("network status");
-    const r2 = run("network status");
-    const extractId = (out: string) => {
-      const match = out.match(/Node ID[:\s]+([0-9a-f-]+)/i);
-      return match?.[1]?.trim();
-    };
-    const id1 = extractId(r1.stdout);
-    const id2 = extractId(r2.stdout);
-    expect(id1).toBeDefined();
-    expect(id1).toBe(id2);
+  it("network status persists a stable node id in its config", () => {
+    run("network status");
+    const configPath = join(TEST_DIR, ".rotifer", "network.json");
+    const id1 = JSON.parse(readFileSync(configPath, "utf-8")).node_id;
+    run("network status");
+    const id2 = JSON.parse(readFileSync(configPath, "utf-8")).node_id;
+    expect(id1).toBeTruthy();
+    expect(id2).toBe(id1);
   });
 
   it("network start degrades gracefully without the native addon", () => {
-    // The CI-installed platform package predates the P2P addon, so start
-    // reports it is unavailable and returns cleanly (no hang, no crash).
     const result = run("network start");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("Starting P2P Node");
+    expect(result.stdout).toContain("Starting P2P Daemon");
     expect(result.stdout.toLowerCase()).toContain("unavailable");
   });
 
-  it("network stop sets enabled to false", () => {
+  it("network stop reports not-running when no daemon is up", () => {
     const result = run("network stop");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("P2P node stopped");
-
-    const configPath = join(TEST_DIR, ".rotifer", "network.json");
-    const config = JSON.parse(readFileSync(configPath, "utf-8"));
-    expect(config.enabled).toBe(false);
+    expect(result.stdout.toLowerCase()).toContain("not running");
   });
 
-  it("network peers warns when node is inactive", () => {
-    run("network stop");
+  it("network peers reports not-running when no daemon is up", () => {
     const result = run("network peers");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("not active");
+    expect(result.stdout.toLowerCase()).toContain("not running");
     expect(result.stdout).toContain("rotifer network start");
   });
 
-  it("network search shows fallback message when node is inactive", () => {
-    run("network stop");
+  it("network search falls back to Cloud search when no daemon is up", () => {
     const result = run("network search test-query");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("not active");
-    expect(result.stdout).toContain("P2P search is unavailable");
+    expect(result.stdout.toLowerCase()).toContain("not running");
+    expect(result.stdout).toContain("not yet available");
     expect(result.stdout).toContain("rotifer search");
   });
 
@@ -119,9 +106,7 @@ describe("rotifer network commands", () => {
     expect(result.stdout).toContain("not found");
   });
 
-  it("network announce degrades gracefully without the native addon", () => {
-    // A real local gene exists, but the CI platform package lacks the addon,
-    // so announce reports unavailable rather than crashing.
+  it("network announce reports not-running when no daemon is up", () => {
     const geneDir = join(TEST_DIR, "genes", "e2e-net-gene");
     mkdirSync(geneDir, { recursive: true });
     writeFileSync(
@@ -130,6 +115,6 @@ describe("rotifer network commands", () => {
     );
     const result = run("network announce e2e-net-gene");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.toLowerCase()).toContain("unavailable");
+    expect(result.stdout.toLowerCase()).toContain("not running");
   });
 });

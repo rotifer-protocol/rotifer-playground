@@ -4,6 +4,7 @@ import {
   DEGRADATION_MODES,
   EXECUTION_MODELS,
   GUARD_POSITIONS,
+  LEGACY_DEGRADATION_BEHAVIORS,
   SYNTHESIS_METHODS,
   TEMPLATE_FORMATS,
 } from "../types/phenotype.js";
@@ -213,7 +214,21 @@ function collectDiagnostics(phenotype: Record<string, unknown>): ValidationDiagn
           });
         }
         const db = dep.degradationBehavior as string | undefined;
-        if (db === undefined || !(VALID_DEGRADATION_BEHAVIORS as readonly string[]).includes(db)) {
+        const isDbValid =
+          db !== undefined && (VALID_DEGRADATION_BEHAVIORS as readonly string[]).includes(db);
+        const isDbLegacy = db !== undefined && db in LEGACY_DEGRADATION_BEHAVIORS;
+        if (isDbLegacy) {
+          // Pre-§3.3 collapsed literal — still valid through the v0.9.1 grace
+          // window, but warn and point at the spec replacement (removed v0.9.2).
+          diags.push({
+            level: "warning",
+            code: "W0114",
+            message:
+              `externalDependencies[${i}].degradationBehavior '${db}' is a deprecated ` +
+              `legacy value; use '${LEGACY_DEGRADATION_BEHAVIORS[db as string]}' instead ` +
+              `(spec §4.2). Legacy values are removed in v0.9.2.`,
+          });
+        } else if (!isDbValid) {
           diags.push({
             level: "error",
             code: "E0114",

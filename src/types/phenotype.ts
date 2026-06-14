@@ -97,30 +97,54 @@ export interface ExternalDependency {
     expectedAvailability?: number;
   };
   /**
-   * How the gene behaves when this dependency is unreachable.
-   *
-   * This enum tracks the Rust IR compiler's PascalCase 5-variant
-   * (`crates/rotifer-core/src/types/gene.rs`::FailureSemantics). The
-   * protocol spec declares an UPPERCASE 4-variant set; this drift
-   * (spec / TS / Rust IR) is tracked for a future spec alignment review.
-   * TS follows the Rust IR because it is the downstream `compile` ground
-   * truth; the spec stays unmodified pending that review.
+   * How the gene behaves when this dependency is unreachable — the
+   * external-dependency axis (spec §4.2 `DegradationBehavior`), one of three
+   * orthogonal degradation axes (ADR-220 E2, ADR-297): external-dependency
+   * behavior ⊥ degradation mode (`DegradationSpec.mode`) ⊥ eventual failure
+   * semantics. Mirrors the Rust IR `ExternalDependencyBehavior`. The legacy
+   * PascalCase literals still validate with a deprecation warning through the
+   * v0.9.1 grace window (see `LEGACY_DEGRADATION_BEHAVIORS`; removed v0.9.2).
    */
-  degradationBehavior:
-    | "FailFast"
-    | "SilentDegrade"
-    | "Retry"
-    | "PartialRetry"
-    | "AtomicRollback";
+  degradationBehavior: ExternalDependencyBehavior;
 }
 
-export const DEGRADATION_BEHAVIORS: readonly ExternalDependency["degradationBehavior"][] = [
-  "FailFast",
-  "SilentDegrade",
-  "Retry",
-  "PartialRetry",
-  "AtomicRollback",
+/** Spec §4.2 `DegradationBehavior` — external-dependency unreachable behavior. */
+export type ExternalDependencyBehavior = "FAIL" | "FALLBACK" | "CACHE" | "SKIP";
+
+export const DEGRADATION_BEHAVIORS: readonly ExternalDependencyBehavior[] = [
+  "FAIL",
+  "FALLBACK",
+  "CACHE",
+  "SKIP",
 ] as const;
+
+/**
+ * Legacy `degradationBehavior` literals (the pre-§3.3 collapsed 5-variant set)
+ * mapped to their spec replacement. Accepted with a deprecation warning through
+ * the v0.9.1 grace window; removed in v0.9.2 (ADR-297 D3 phase 4). The two
+ * transaction-axis values (PartialRetry / AtomicRollback) were mis-merged into
+ * this dependency axis and map to the closest dependency behavior.
+ */
+export const LEGACY_DEGRADATION_BEHAVIORS: Readonly<Record<string, ExternalDependencyBehavior>> =
+  Object.freeze({
+    FailFast: "FAIL",
+    SilentDegrade: "FALLBACK",
+    Retry: "CACHE",
+    PartialRetry: "CACHE",
+    AtomicRollback: "FAIL",
+  });
+
+/**
+ * Spec §45 `FailureSemantics` — the transaction (eventual-failure) axis,
+ * orthogonal to `degradationBehavior`. Mirrors the Rust IR
+ * `EventualFailureSemantics`; enforced on the IR side (no TS phenotype field
+ * consumes it yet) and declared here for cross-language parity.
+ */
+export type EventualFailureSemantics =
+  | "ATOMIC_ROLLBACK"
+  | "PARTIAL_RETRY"
+  | "SILENT_DEGRADE"
+  | "FAIL_FAST";
 
 /**
  * Dry-run protocol declaration (ADR-220 T1, "Tesla mind simulation" pattern).

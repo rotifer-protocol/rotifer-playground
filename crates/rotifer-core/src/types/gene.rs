@@ -148,7 +148,7 @@ pub struct SemanticRequirements {
     pub time_model: Option<TimeModel>,
     pub concurrency_model: Option<ConcurrencyModel>,
     pub persistence_guarantee: Option<PersistenceGuarantee>,
-    pub failure_semantics: Option<FailureSemantics>,
+    pub failure_semantics: Option<EventualFailureSemantics>,
     pub cost_model: Option<CostModel>,
 }
 
@@ -182,13 +182,45 @@ pub enum PersistenceGuarantee {
     BestEffort,
 }
 
-/// Error-handling strategy baked into a gene's contract.
+/// How a gene behaves when an external dependency is unreachable
+/// (spec §4.2 `DegradationBehavior`, the external-dependency axis).
+///
+/// One of three orthogonal degradation axes (ADR-220 E2, ADR-297): external
+/// dependency behavior ⊥ degradation mode (`DegradationSpec.mode`) ⊥ eventual
+/// failure semantics ([`EventualFailureSemantics`]). Serializes to the spec's
+/// SCREAMING_SNAKE_CASE literals.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum FailureSemantics {
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ExternalDependencyBehavior {
+    /// Fail the gene when the dependency is unreachable.
+    Fail,
+    /// Fall back to a degraded path / alternative source.
+    Fallback,
+    /// Return a previously cached result.
+    Cache,
+    /// Skip this dependency and continue.
+    Skip,
+}
+
+/// Transaction failure semantics for a gene's own execution
+/// (spec §45 `FailureSemantics`, the eventual-failure axis).
+///
+/// Split out of the former 5-variant `FailureSemantics`, which conflated this
+/// transaction axis with the external-dependency axis ([`ExternalDependencyBehavior`])
+/// — ADR-297 Option B. Serializes to the spec's SCREAMING_SNAKE_CASE literals;
+/// the legacy PascalCase literals (and the dropped `Retry`, which folds into
+/// `PartialRetry`) still deserialize via aliases through the v0.9.1 grace window
+/// (hard cut in v0.9.2 — ADR-297 D3 phase 4).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum EventualFailureSemantics {
+    #[serde(alias = "AtomicRollback")]
     AtomicRollback,
+    #[serde(alias = "PartialRetry", alias = "Retry")]
     PartialRetry,
-    Retry,
+    #[serde(alias = "SilentDegrade")]
     SilentDegrade,
+    #[serde(alias = "FailFast")]
     FailFast,
 }
 
@@ -264,4 +296,60 @@ pub enum GeneLifecycleState {
     Deprecated,
     Archived,
     Tombstoned,
+}
+
+#[cfg(test)]
+mod degradation_enum_tests {
+    //! §3.3 F7 (ADR-297): the former 5-variant `FailureSemantics` split into two
+    //! orthogonal enums. These lock the spec-aligned wire format and the legacy
+    //! alias bridge that keeps v0.7+ phenotypes loading through the grace window.
+    use super::*;
+
+    fn de<T: serde::de::DeserializeOwned>(s: &str) -> T {
+        serde_json::from_str(s).expect("deserialize")
+    }
+    fn ser<T: Serialize>(v: &T) -> String {
+        serde_json::to_string(v).expect("serialize")
+    }
+
+    #[test]
+    fn external_dependency_behavior_uses_spec_uppercase() {
+        assert_eq!(ser(&ExternalDependencyBehavior::Fail), "\"FAIL\"");
+        assert_eq!(ser(&ExternalDependencyBehavior::Fallback), "\"FALLBACK\"");
+        assert_eq!(ser(&ExternalDependencyBehavior::Cache), "\"CACHE\"");
+        assert_eq!(ser(&ExternalDependencyBehavior::Skip), "\"SKIP\"");
+        assert_eq!(de::<ExternalDependencyBehavior>("\"CACHE\""), ExternalDependencyBehavior::Cache);
+        assert_eq!(de::<ExternalDependencyBehavior>("\"SKIP\""), ExternalDependencyBehavior::Skip);
+    }
+
+    #[test]
+    fn eventual_failure_semantics_uses_spec_uppercase() {
+        assert_eq!(ser(&EventualFailureSemantics::FailFast), "\"FAIL_FAST\"");
+        assert_eq!(ser(&EventualFailureSemantics::AtomicRollback), "\"ATOMIC_ROLLBACK\"");
+        assert_eq!(ser(&EventualFailureSemantics::PartialRetry), "\"PARTIAL_RETRY\"");
+        assert_eq!(ser(&EventualFailureSemantics::SilentDegrade), "\"SILENT_DEGRADE\"");
+    }
+
+    #[test]
+    fn eventual_failure_semantics_accepts_legacy_pascalcase() {
+        // v0.7+ phenotypes wrote PascalCase; they must keep loading (grace window).
+        assert_eq!(de::<EventualFailureSemantics>("\"FailFast\""), EventualFailureSemantics::FailFast);
+        assert_eq!(de::<EventualFailureSemantics>("\"AtomicRollback\""), EventualFailureSemantics::AtomicRollback);
+        assert_eq!(de::<EventualFailureSemantics>("\"SilentDegrade\""), EventualFailureSemantics::SilentDegrade);
+        assert_eq!(de::<EventualFailureSemantics>("\"PartialRetry\""), EventualFailureSemantics::PartialRetry);
+    }
+
+    #[test]
+    fn dropped_retry_folds_into_partial_retry() {
+        // `Retry` was removed in the un-collapse; the legacy literal aliases to
+        // the closest transaction semantics so old `failureSemantics:"Retry"` loads.
+        assert_eq!(de::<EventualFailureSemantics>("\"Retry\""), EventualFailureSemantics::PartialRetry);
+    }
+
+    #[test]
+    fn semantic_requirements_round_trips_legacy_failure_semantics() {
+        // Missing Option fields default to None; the legacy value still loads.
+        let sr: SemanticRequirements = de(r#"{"failureSemantics":"FailFast"}"#);
+        assert_eq!(sr.failure_semantics, Some(EventualFailureSemantics::FailFast));
+    }
 }

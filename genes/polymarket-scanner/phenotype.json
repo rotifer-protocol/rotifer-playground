@@ -116,7 +116,7 @@
         "expectedLatency": 2000,
         "expectedAvailability": 0.995
       },
-      "degradationBehavior": "SilentDegrade"
+      "degradationBehavior": "FALLBACK"
     }
   ],
   "simulationSpec": {
@@ -148,7 +148,7 @@
   "semanticRequirements": {
     "timeModel": "Async",
     "concurrencyModel": "Stateless",
-    "failureSemantics": "FailFast"
+    "failureSemantics": "FAIL_FAST"
   },
   "tags": [
     "polymarket",

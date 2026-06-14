@@ -75,9 +75,19 @@ struct NodeBehaviour {
 /// shared between the synchronous API and the event loop.
 type DiscoveredPeers = Arc<Mutex<HashSet<String>>>;
 
-/// GossipSub messages received by the node as `(topic, data)`, shared between
-/// the synchronous API and the event loop.
-type ReceivedMessages = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+/// A GossipSub message received by the node, carrying its authenticated
+/// publisher. With `MessageAuthenticity::Signed`, `source` is bound to the
+/// signer's key and cannot be forged (the §8.3 node-identity-forgery defence).
+#[derive(Debug, Clone)]
+pub struct ReceivedMessage {
+    pub topic: String,
+    pub data: Vec<u8>,
+    pub source: Option<String>,
+}
+
+/// GossipSub messages received by the node, shared between the synchronous API
+/// and the event loop.
+type ReceivedMessages = Arc<Mutex<Vec<ReceivedMessage>>>;
 
 /// Shared state handles the event loop updates and the synchronous API reads.
 struct NodeShared {
@@ -199,8 +209,8 @@ impl Node {
         })
     }
 
-    /// GossipSub messages received so far, as `(topic, data)` pairs.
-    pub fn received_messages(&self) -> Vec<(String, Vec<u8>)> {
+    /// GossipSub messages received so far, each with its authenticated publisher.
+    pub fn received_messages(&self) -> Vec<ReceivedMessage> {
         self.received.lock().map(|m| m.clone()).unwrap_or_default()
     }
 
@@ -618,7 +628,11 @@ async fn run_event_loop(
                     gossipsub::Event::Message { message, .. },
                 )) => {
                     if let Ok(mut msgs) = received.lock() {
-                        msgs.push((message.topic.to_string(), message.data));
+                        msgs.push(ReceivedMessage {
+                            topic: message.topic.to_string(),
+                            data: message.data,
+                            source: message.source.map(|p| p.to_string()),
+                        });
                     }
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
@@ -942,8 +956,8 @@ mod tests {
     // Two-node GossipSub broadcast over loopback (integration)
     // -----------------------------------------------------------------
     #[test]
-    #[cfg_attr(not(feature = "p2p-integration"), ignore = "two-node integration: real gossipsub broadcast over loopback — enable the p2p-integration feature or run with --ignored")]
-    fn two_nodes_gossip_broadcast() {
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "two-node integration: gossipsub publisher authentication over loopback — enable the p2p-integration feature or run with --ignored")]
+    fn two_nodes_gossip_authenticates_publisher() {
         const TOPIC: &str = "/rotifer/announcements";
         let payload = b"gene-announcement-xyz";
 
@@ -961,6 +975,7 @@ mod tests {
             .into_iter()
             .next()
             .expect("A must have a listen address");
+        let a_peer = a.local_peer_id().0;
 
         let mut cfg_b = cfg(0);
         cfg_b.bootstrap_peers = vec![a_addr];
@@ -974,20 +989,29 @@ mod tests {
         // Publish from A repeatedly until B receives — the mesh needs a few
         // heartbeats to form after the nodes connect + subscribe.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        let mut received = false;
+        let mut authenticated = false;
         while std::time::Instant::now() < deadline {
             let _ = a.publish(TOPIC, payload);
-            if b
+            if let Some(msg) = b
                 .received_messages()
-                .iter()
-                .any(|(t, d)| t == TOPIC && d.as_slice() == payload)
+                .into_iter()
+                .find(|m| m.topic == TOPIC && m.data.as_slice() == payload)
             {
-                received = true;
+                // §8.3 node-identity-forgery defence in the real stack: GossipSub
+                // `Signed` binds the message to A's key, so B authenticates the
+                // publisher — the source is A's real PeerId, which no relay or
+                // impostor can forge without A's private key.
+                assert_eq!(
+                    msg.source.as_deref(),
+                    Some(a_peer.as_str()),
+                    "received message's authenticated source must be A's real PeerId"
+                );
+                authenticated = true;
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
-        assert!(received, "B must receive A's broadcast within 20s");
+        assert!(authenticated, "B must receive + authenticate A's broadcast within 20s");
 
         let _ = std::fs::remove_file(&a_id);
         let _ = std::fs::remove_file(&b_id);

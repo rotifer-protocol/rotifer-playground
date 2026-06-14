@@ -143,18 +143,33 @@ export function generateCodeChallenge(verifier: string): string {
   return createHash("sha256").update(verifier).digest("base64url");
 }
 
+/** Loopback interface the callback server binds to (IPv4, avoids localhost→::1). */
 export const OAUTH_CALLBACK_HOST = "127.0.0.1";
 
+/**
+ * Fixed loopback port for the OAuth callback. Must exactly match a Supabase Auth
+ * "Redirect URLs" allow-list entry (`http://localhost:9876/callback`); Supabase
+ * does not match a port wildcard, so a random port falls back to the Site URL
+ * (the website) and the local listener never receives the token.
+ */
+export const OAUTH_CALLBACK_PORT = 9876;
+
 export function buildOAuthCallbackUrl(port: number, path: string = "/callback"): string {
-  return `http://${OAUTH_CALLBACK_HOST}:${port}${path}`;
+  // Host is `localhost` to match the Supabase redirect allow-list; the server
+  // binds the IPv4 loopback (OAUTH_CALLBACK_HOST), which localhost resolves to.
+  return `http://localhost:${port}${path}`;
 }
 
 /**
- * Start a local OAuth callback server on a random port (127.0.0.1:0).
- * Returns the bound port immediately so the caller can construct the auth URL,
- * plus a promise that resolves when the callback arrives.
+ * Start the local OAuth callback server. Defaults to the fixed, allow-listed
+ * port 9876 so the OAuth `redirect_to` matches Supabase's allow-list; pass `0`
+ * (e.g. in tests) for a random ephemeral port to avoid cross-test port
+ * contention. Returns the bound port plus a promise that resolves when the
+ * callback arrives.
  */
-export async function startOAuthCallbackServer(): Promise<{
+export async function startOAuthCallbackServer(
+  port: number = OAUTH_CALLBACK_PORT,
+): Promise<{
   port: number;
   waitForCallback: Promise<string>;
 }> {
@@ -215,7 +230,7 @@ if (window.location.hash) {
       }
     });
 
-    server.listen(0, OAUTH_CALLBACK_HOST, () => {
+    server.listen(port, OAUTH_CALLBACK_HOST, () => {
       const addr = server.address() as { port: number };
       resolve({ port: addr.port, waitForCallback });
     });

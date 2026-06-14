@@ -94,6 +94,7 @@ struct NodeShared {
     listen_addrs: Arc<Mutex<Vec<String>>>,
     discovered: DiscoveredPeers,
     received: ReceivedMessages,
+    rate_limited: Arc<Mutex<u64>>,
 }
 
 /// Fixed listen ports currently bound by live nodes in this process. libp2p's
@@ -118,6 +119,8 @@ pub struct Node {
     discovered: DiscoveredPeers,
     /// GossipSub messages received so far, appended by the event loop.
     received: ReceivedMessages,
+    /// Count of inbound messages dropped by the per-peer rate limiter (§8.6).
+    rate_limited: Arc<Mutex<u64>>,
     /// Dedicated runtime hosting the Swarm event loop (`None` until `start`).
     runtime: Option<tokio::runtime::Runtime>,
     /// Command channel into the event loop (`None` until `start`).
@@ -165,6 +168,7 @@ impl Node {
             listen_addrs: Arc::new(Mutex::new(Vec::new())),
             discovered: Arc::new(Mutex::new(HashSet::new())),
             received: Arc::new(Mutex::new(Vec::new())),
+            rate_limited: Arc::new(Mutex::new(0)),
             runtime: None,
             cmd_tx: None,
             task: None,
@@ -212,6 +216,11 @@ impl Node {
     /// GossipSub messages received so far, each with its authenticated publisher.
     pub fn received_messages(&self) -> Vec<ReceivedMessage> {
         self.received.lock().map(|m| m.clone()).unwrap_or_default()
+    }
+
+    /// Number of inbound messages dropped by the per-peer rate limiter (§8.6).
+    pub fn rate_limited_count(&self) -> u64 {
+        self.rate_limited.lock().map(|n| *n).unwrap_or(0)
     }
 
     /// Store a record in the Kademlia DHT, replicated to the closest peers.
@@ -298,6 +307,7 @@ impl Node {
             listen_addrs: Arc::clone(&self.listen_addrs),
             discovered: Arc::clone(&self.discovered),
             received: Arc::clone(&self.received),
+            rate_limited: Arc::clone(&self.rate_limited),
         };
         let (ready_tx, ready_rx) = oneshot::channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -541,7 +551,10 @@ async fn run_event_loop(
         listen_addrs,
         discovered,
         received,
+        rate_limited,
     } = shared;
+    // Per-peer flood defence (§8.6); lives in the single-threaded event loop.
+    let mut security = super::security::Security::new();
     let mut swarm = match build_swarm(keypair) {
         Ok(s) => s,
         Err(e) => {
@@ -625,14 +638,25 @@ async fn run_event_loop(
                     }
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(
-                    gossipsub::Event::Message { message, .. },
+                    gossipsub::Event::Message {
+                        propagation_source,
+                        message,
+                        ..
+                    },
                 )) => {
-                    if let Ok(mut msgs) = received.lock() {
-                        msgs.push(ReceivedMessage {
-                            topic: message.topic.to_string(),
-                            data: message.data,
-                            source: message.source.map(|p| p.to_string()),
-                        });
+                    // Flood defence (§8.6): rate-limit per sending peer. Over the
+                    // ceiling, drop the message and count it instead of enqueuing.
+                    let sender = PeerId(propagation_source.to_string());
+                    if security.record_message(&sender).is_ok() {
+                        if let Ok(mut msgs) = received.lock() {
+                            msgs.push(ReceivedMessage {
+                                topic: message.topic.to_string(),
+                                data: message.data,
+                                source: message.source.map(|p| p.to_string()),
+                            });
+                        }
+                    } else if let Ok(mut n) = rate_limited.lock() {
+                        *n += 1;
                     }
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
@@ -1012,6 +1036,10 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
         assert!(authenticated, "B must receive + authenticate A's broadcast within 20s");
+        // Flood defence is wired into the receive path, but legitimate low-volume
+        // traffic (a handful of messages over the window) stays well under the
+        // per-peer ceiling, so nothing is dropped.
+        assert_eq!(b.rate_limited_count(), 0, "normal traffic must not be rate-limited");
 
         let _ = std::fs::remove_file(&a_id);
         let _ = std::fs::remove_file(&b_id);

@@ -5,6 +5,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { ensurePrivateDir, tightenPrivateFile } from "../utils/private-fs.js";
+import { loadP2pNode } from "../utils/binding.js";
 
 const ROTIFER_HOME = join(
   process.env.HOME || process.env.USERPROFILE || "/tmp",
@@ -74,31 +75,68 @@ export const networkCommand = new Command("network")
   )
   .addCommand(
     new Command("start")
-      .description("Start the P2P node")
+      .description("Start the P2P node (runs in the foreground until Ctrl-C)")
       .option("-p, --port <port>", "listen port", "9878")
       .action(async (options: { port: string }) => {
         display.header("Starting P2P Node");
 
         const config = loadNetworkConfig();
-        config.listen_port = parseInt(options.port, 10);
+        const port = parseInt(options.port, 10);
+        config.listen_port = port;
+
+        const node = loadP2pNode(port, config.bootstrap_peers);
+        if (!node) {
+          display.warn("Native P2P node is unavailable in this build.");
+          display.hint("This CLI was built without the compiled libp2p addon.");
+          return;
+        }
+
+        try {
+          node.start();
+        } catch (err) {
+          display.error("Failed to start the P2P node", (err as Error).message);
+          process.exitCode = 1;
+          return;
+        }
+
         config.enabled = true;
         saveNetworkConfig(config);
 
         console.log();
-        display.kv("Node ID", config.node_id);
-        display.kv("Listen", `/ip4/0.0.0.0/tcp/${config.listen_port}`);
-        display.kv("Protocol", "rotifer/gene-discovery/1.0.0");
-        console.log();
-
-        display.info("Configured bootstrap peers:");
-        for (const peer of config.bootstrap_peers) {
-          display.info(`  → ${peer}`);
+        display.kv("PeerId", node.peerId());
+        for (const addr of node.listenAddrs()) {
+          display.kv("Listening", addr);
         }
+        display.kv("Bootstrap peers", String(config.bootstrap_peers.length));
         console.log();
+        display.success("P2P node running. Press Ctrl-C to stop.");
 
-        display.success("P2P node initialized");
-        display.info("Gene metadata discovery is available; binary transfer uses Cloud CDN.");
-        display.hint("Network config saved to ~/.rotifer/network.json");
+        // Keep the process alive while the node runs on its own runtime;
+        // report newly discovered peers and shut down cleanly on a signal.
+        await new Promise<void>((resolve) => {
+          let knownPeers = 0;
+          const timer = setInterval(() => {
+            const count = node.discoveredPeers().length;
+            if (count !== knownPeers) {
+              knownPeers = count;
+              display.info(`Discovered ${count} peer(s)`);
+            }
+          }, 3000);
+          const shutdown = () => {
+            clearInterval(timer);
+            try {
+              node.stop();
+            } catch {
+              /* best effort */
+            }
+            config.enabled = false;
+            saveNetworkConfig(config);
+            display.success("P2P node stopped");
+            resolve();
+          };
+          process.once("SIGINT", shutdown);
+          process.once("SIGTERM", shutdown);
+        });
       })
   )
   .addCommand(
@@ -167,22 +205,61 @@ export const networkCommand = new Command("network")
   )
   .addCommand(
     new Command("announce")
-      .description("Announce a gene to the P2P network")
+      .description("Announce a local gene to the P2P network (one-shot)")
       .argument("<gene-name>", "gene name to announce")
       .action(async (geneName: string) => {
         display.header("Gene Announcement");
 
         const config = loadNetworkConfig();
 
-        if (!config.enabled) {
-          display.warn("P2P node is not active. Run 'rotifer network start' first.");
+        const phenotypePath = join(process.cwd(), "genes", geneName, "phenotype.json");
+        if (!existsSync(phenotypePath)) {
+          display.error(`Gene '${geneName}' not found`, `expected ${phenotypePath}`);
+          process.exitCode = 1;
+          return;
+        }
+        let pheno: { name?: string; domain?: string; version?: string; fidelity?: string };
+        try {
+          pheno = JSON.parse(readFileSync(phenotypePath, "utf-8"));
+        } catch (err) {
+          display.error("Failed to read phenotype.json", (err as Error).message);
+          process.exitCode = 1;
           return;
         }
 
-        display.info(`Preparing announcement for gene '${geneName}'...`);
-        console.log();
+        // Ephemeral listen port (0) so a one-shot announce never clashes with a
+        // `network start` node already bound to the configured port.
+        const node = loadP2pNode(0, config.bootstrap_peers);
+        if (!node) {
+          display.warn("Native P2P node is unavailable in this build.");
+          display.hint("This CLI was built without the compiled libp2p addon.");
+          return;
+        }
 
-        display.info("P2P gene announcement is not yet available.");
-        display.hint("Use 'rotifer publish' to share via Cloud Registry.");
+        try {
+          node.start();
+          node.announceGene(
+            geneName,
+            pheno.name ?? geneName,
+            pheno.domain ?? "",
+            pheno.version ?? "0.0.0",
+            pheno.fidelity ?? "Unknown"
+          );
+          console.log();
+          display.kv("PeerId", node.peerId());
+          display.kv("Topic", "/rotifer/announcements");
+          // Give GossipSub a moment to propagate before tearing the node down.
+          await new Promise((r) => setTimeout(r, 2000));
+          display.success(`Announced '${geneName}' to the network`);
+        } catch (err) {
+          display.error("Announcement failed", (err as Error).message);
+          process.exitCode = 1;
+        } finally {
+          try {
+            node.stop();
+          } catch {
+            /* best effort */
+          }
+        }
       })
   );

@@ -13,7 +13,7 @@
 //! call hands work to the event loop over a channel and, where it needs a
 //! result (e.g. the first listen address), blocks on the node's runtime.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -36,11 +36,26 @@ const IDENTITY_PEM_LABEL: &str = "ROTIFER IDENTITY";
 /// How long `start` waits for the first listen address before giving up.
 const LISTEN_READY_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long a DHT put/get blocks for its query to resolve.
+const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Commands sent from the synchronous `Node` API to the Swarm event loop.
 enum Command {
     Shutdown,
     Subscribe(String),
-    Publish { topic: String, data: Vec<u8> },
+    Publish {
+        topic: String,
+        data: Vec<u8>,
+    },
+    PutRecord {
+        key: Vec<u8>,
+        value: Vec<u8>,
+        resp: oneshot::Sender<Result<(), NetworkError>>,
+    },
+    GetRecord {
+        key: Vec<u8>,
+        resp: oneshot::Sender<Option<Vec<u8>>>,
+    },
 }
 
 /// Composite network behaviour driven by the node's Swarm. Kademlia provides
@@ -176,6 +191,32 @@ impl Node {
         self.received.lock().map(|m| m.clone()).unwrap_or_default()
     }
 
+    /// Store a record in the Kademlia DHT, replicated to the closest peers.
+    /// Blocks until the write quorum is reached (or times out).
+    pub fn put_record(&self, key: &[u8], value: &[u8]) -> Result<(), NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::PutRecord {
+            key: key.to_vec(),
+            value: value.to_vec(),
+            resp: tx,
+        })?;
+        match self.block_on_query(rx) {
+            Ok(inner) => inner,
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Look up a record in the Kademlia DHT, returning its value if found.
+    /// Blocks until the query resolves (or times out).
+    pub fn get_record(&self, key: &[u8]) -> Result<Option<Vec<u8>>, NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::GetRecord {
+            key: key.to_vec(),
+            resp: tx,
+        })?;
+        self.block_on_query(rx)
+    }
+
     /// Hand a command to the running event loop.
     fn send_command(&self, command: Command) -> Result<(), NetworkError> {
         match &self.cmd_tx {
@@ -183,6 +224,16 @@ impl Node {
                 .send(command)
                 .map_err(|_| NetworkError::Transport("event loop is not running".into())),
             None => Err(NetworkError::NotConnected),
+        }
+    }
+
+    /// Block on a query-response channel using the node's runtime.
+    fn block_on_query<T>(&self, rx: oneshot::Receiver<T>) -> Result<T, NetworkError> {
+        let runtime = self.runtime.as_ref().ok_or(NetworkError::NotConnected)?;
+        match runtime.block_on(async { tokio::time::timeout(QUERY_TIMEOUT, rx).await }) {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(_)) => Err(NetworkError::Transport("event loop dropped the response".into())),
+            Err(_) => Err(NetworkError::Timeout),
         }
     }
 
@@ -485,6 +536,10 @@ async fn run_event_loop(
     }
 
     let mut ready_tx = Some(ready_tx);
+    // Correlate in-flight DHT queries with the caller waiting on the result.
+    let mut pending_put: HashMap<kad::QueryId, oneshot::Sender<Result<(), NetworkError>>> =
+        HashMap::new();
+    let mut pending_get: HashMap<kad::QueryId, oneshot::Sender<Option<Vec<u8>>>> = HashMap::new();
     loop {
         tokio::select! {
             event = swarm.select_next_some() => match event {
@@ -539,6 +594,29 @@ async fn run_event_loop(
                         msgs.push((message.topic.to_string(), message.data));
                     }
                 }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
+                    kad::Event::OutboundQueryProgressed { id, result, .. },
+                )) => match result {
+                    kad::QueryResult::PutRecord(outcome) => {
+                        if let Some(tx) = pending_put.remove(&id) {
+                            let _ = tx.send(outcome.map(|_| ()).map_err(|e| {
+                                NetworkError::Transport(format!("put record: {e:?}"))
+                            }));
+                        }
+                    }
+                    kad::QueryResult::GetRecord(outcome) => {
+                        if let Some(tx) = pending_get.remove(&id) {
+                            let value = match outcome {
+                                Ok(kad::GetRecordOk::FoundRecord(found)) => {
+                                    Some(found.record.value)
+                                }
+                                _ => None,
+                            };
+                            let _ = tx.send(value);
+                        }
+                    }
+                    _ => {}
+                },
                 _ => {}
             },
             cmd = cmd_rx.recv() => match cmd {
@@ -551,6 +629,30 @@ async fn run_event_loop(
                     let topic = gossipsub::IdentTopic::new(topic);
                     // Ignore InsufficientPeers — callers retry until the mesh forms.
                     let _ = swarm.behaviour_mut().gossipsub.publish(topic, data);
+                }
+                Some(Command::PutRecord { key, value, resp }) => {
+                    let record = kad::Record::new(key, value);
+                    match swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .put_record(record, kad::Quorum::One)
+                    {
+                        Ok(query_id) => {
+                            pending_put.insert(query_id, resp);
+                        }
+                        Err(e) => {
+                            let _ = resp.send(Err(NetworkError::Transport(format!(
+                                "put record: {e:?}"
+                            ))));
+                        }
+                    }
+                }
+                Some(Command::GetRecord { key, resp }) => {
+                    let query_id = swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .get_record(kad::RecordKey::new(&key));
+                    pending_get.insert(query_id, resp);
                 }
             }
         }
@@ -841,6 +943,67 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
         assert!(received, "B must receive A's broadcast within 20s");
+
+        let _ = std::fs::remove_file(&a_id);
+        let _ = std::fs::remove_file(&b_id);
+    }
+
+    // -----------------------------------------------------------------
+    // Two-node Kademlia DHT put/get over loopback (integration)
+    // -----------------------------------------------------------------
+    #[test]
+    #[ignore = "two-node integration: real Kademlia DHT put/get over loopback — run with --ignored"]
+    fn two_nodes_dht_put_get() {
+        let key = b"gene/abc";
+        let value = b"announcement-bytes-123";
+
+        let a_id = std::env::temp_dir().join("rotifer-dht-a.pem");
+        let b_id = std::env::temp_dir().join("rotifer-dht-b.pem");
+        let _ = std::fs::remove_file(&a_id);
+        let _ = std::fs::remove_file(&b_id);
+
+        let mut cfg_a = cfg(0);
+        cfg_a.bootstrap_peers = vec![];
+        let mut a = Node::with_keypair_path(cfg_a, a_id.clone()).expect("A build");
+        a.start().expect("A start");
+        let a_addr = a
+            .listen_addrs()
+            .into_iter()
+            .next()
+            .expect("A must have a listen address");
+
+        let mut cfg_b = cfg(0);
+        cfg_b.bootstrap_peers = vec![a_addr];
+        let mut b = Node::with_keypair_path(cfg_b, b_id.clone()).expect("B build");
+        b.start().expect("B start");
+        let b_peer = b.local_peer_id().0;
+
+        // Wait until A has B in its routing table, so put_record can replicate.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !a.discovered_peers().iter().any(|p| p == &b_peer) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "A did not discover B within 10s"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        // A stores a record; B must be able to read it back from the DHT.
+        a.put_record(key, value).expect("A put_record");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut got = None;
+        while std::time::Instant::now() < deadline {
+            if let Ok(Some(v)) = b.get_record(key) {
+                got = Some(v);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert_eq!(
+            got.as_deref(),
+            Some(&value[..]),
+            "B must read A's record from the DHT"
+        );
 
         let _ = std::fs::remove_file(&a_id);
         let _ = std::fs::remove_file(&b_id);

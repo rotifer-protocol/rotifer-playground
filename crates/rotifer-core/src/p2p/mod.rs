@@ -1,25 +1,24 @@
-//! P2P gene network foundation (v0.5 stub + v0.9 module skeleton).
+//! P2P gene network foundation.
 //!
-//! Provides the architectural scaffolding for decentralized gene discovery.
-//! In v0.5, this module defined protocols, message types, and a `StubNetwork`.
-//! v0.9 adds the real libp2p-backed building blocks split across submodules
-//! (`node`, `discovery`, `gossip`, `messages`, `security`, `cloud_sync`).
+//! v0.5 defined the protocol identifiers, message types, and a `StubNetwork`.
+//! v0.9 adds the real libp2p networking in [`node`]: a Swarm with Kademlia
+//! (peer discovery + a distributed record store) and GossipSub (announcement
+//! broadcast). Earlier single-node `discovery`/`gossip` placeholders were
+//! folded into [`node`] once the real multi-node implementation landed.
 //!
-//! Stage 1 only wires the **module skeletons + test scaffolds**; libp2p is
-//! introduced to `Cargo.toml` during stage 2 (deliberately delayed so the
-//! existing v0.5 stub tests stay green and other crates keep building).
+//! Supporting submodules: `messages` (wire format), `security` (peer
+//! validation + rate limiting), `cloud_sync` (Cloud<->P2P consistency).
 
 use serde::{Deserialize, Serialize};
 
-// v0.9 submodules — populated with placeholder implementations + test
-// skeletons in stage 1. Each submodule's bodies return
-// `NetworkError::Transport(...)` so the new tests stay red until stage 2.
 pub mod cloud_sync;
-pub mod discovery;
-pub mod gossip;
 pub mod messages;
 pub mod node;
 pub mod security;
+
+// Exploratory two-node connectivity spike (test-only).
+#[cfg(test)]
+mod spike;
 
 /// Protocol identifier for gene discovery.
 pub const GENE_DISCOVERY_PROTOCOL: &str = "/rotifer/gene-discovery/1.0.0";

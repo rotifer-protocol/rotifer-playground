@@ -24,6 +24,15 @@ pub fn decode_announcement(bytes: &[u8]) -> Result<GeneAnnouncement, NetworkErro
 /// Maximum acceptable clock skew on incoming announcements (anti-replay).
 pub const MAX_TIMESTAMP_SKEW_SECS: u64 = 300; // 5 minutes
 
+/// Whether `timestamp_secs` falls within the accepted clock-skew window around
+/// `now_secs` — the anti-replay check the gossip layer applies to incoming
+/// announcements, rejecting both stale and far-future timestamps.
+pub fn is_timestamp_fresh(timestamp_secs: u64, now_secs: u64) -> bool {
+    let lower = now_secs.saturating_sub(MAX_TIMESTAMP_SKEW_SECS);
+    let upper = now_secs.saturating_add(MAX_TIMESTAMP_SKEW_SECS);
+    (lower..=upper).contains(&timestamp_secs)
+}
+
 /// sha256 of the canonical `.proto` schema (frozen parity — A.4.3).
 ///
 /// Stage 1 leaves this as `None`; stage 2 will pin to the hash of
@@ -175,5 +184,26 @@ mod tests {
         // reject stale messages. Stage 1 only verifies the timestamp survives
         // round-trip so future logic can reject it.
         assert!(decoded.timestamp < now() - MAX_TIMESTAMP_SKEW_SECS);
+    }
+
+    // -----------------------------------------------------------------
+    // Anti-replay freshness window (gossip layer will gate on this)
+    // -----------------------------------------------------------------
+    #[test]
+    fn timestamp_freshness_window() {
+        let now = 10_000;
+        assert!(is_timestamp_fresh(now, now), "exactly now is fresh");
+        assert!(
+            is_timestamp_fresh(now - MAX_TIMESTAMP_SKEW_SECS, now),
+            "the edge of the past window is fresh"
+        );
+        assert!(
+            !is_timestamp_fresh(now - MAX_TIMESTAMP_SKEW_SECS - 1, now),
+            "just beyond the past window is stale"
+        );
+        assert!(
+            !is_timestamp_fresh(now + MAX_TIMESTAMP_SKEW_SECS + 1, now),
+            "future clock-skew beyond the window is rejected"
+        );
     }
 }

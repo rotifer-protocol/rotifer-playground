@@ -26,6 +26,24 @@ hex.workspace = true
 rmp-serde.workspace = true
 wasm-encoder.workspace = true
 wasmparser.workspace = true
+tokio.workspace = true
+base64.workspace = true
+# NOTE: `dns` + `mdns` features intentionally omitted — both pull
+# hickory-proto, which has open advisories (RUSTSEC-2026-0118 has no fix).
+# Neither is used by the implemented kad/gossipsub paths; re-add with a
+# vetted resolver when DNS bootstrap / mDNS discovery is actually wired.
+libp2p = { workspace = true, features = [
+    "tcp",
+    "quic",
+    "noise",
+    "yamux",
+    "gossipsub",
+    "kad",
+    "identify",
+    "tokio",
+    "ed25519",
+    "macros",
+] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

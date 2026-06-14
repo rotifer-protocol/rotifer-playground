@@ -15,7 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -82,6 +82,12 @@ struct NodeShared {
     received: ReceivedMessages,
 }
 
+/// Fixed listen ports currently bound by live nodes in this process. libp2p's
+/// TCP transport hardcodes SO_REUSEPORT, so the OS will not reject a duplicate
+/// bind to the same port; tracking them here lets a conflicting `start` fail
+/// deterministically (probing with a throwaway socket instead is flaky on Linux).
+static BOUND_PORTS: LazyLock<Mutex<HashSet<u16>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
 /// libp2p-backed P2P node.
 pub struct Node {
     pub config: NetworkConfig,
@@ -104,6 +110,8 @@ pub struct Node {
     cmd_tx: Option<mpsc::UnboundedSender<Command>>,
     /// Handle to the spawned event-loop task (`None` until `start`).
     task: Option<tokio::task::JoinHandle<()>>,
+    /// Fixed port reserved in `BOUND_PORTS` (released on shutdown).
+    bound_port: Option<u16>,
 }
 
 impl std::fmt::Debug for Node {
@@ -146,6 +154,7 @@ impl Node {
             runtime: None,
             cmd_tx: None,
             task: None,
+            bound_port: None,
         })
     }
 
@@ -248,14 +257,18 @@ impl Node {
             return Ok(());
         }
 
-        // Pre-flight a busy-port check. libp2p's TCP transport sets
-        // SO_REUSEPORT, which would otherwise let a second node silently share
-        // a fixed port; a plain bind (without SO_REUSEPORT) fails fast instead.
-        // Skipped for port 0, where the OS allocates a free port.
+        // Reserve a fixed port in-process so a second node on the same port
+        // fails deterministically — libp2p hardcodes SO_REUSEPORT, so the OS
+        // won't reject the duplicate bind itself. Port 0 = OS-allocated, skip.
         if self.config.listen_port != 0 {
-            std::net::TcpListener::bind(("127.0.0.1", self.config.listen_port))
-                .map_err(|e| NetworkError::Transport(format!("listen: {e}")))?;
-            // Probe dropped here — the port is free for the Swarm to bind.
+            let mut bound = BOUND_PORTS.lock().expect("bound-ports mutex");
+            if !bound.insert(self.config.listen_port) {
+                return Err(NetworkError::Transport(format!(
+                    "listen: port {} already in use",
+                    self.config.listen_port
+                )));
+            }
+            self.bound_port = Some(self.config.listen_port);
         }
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -331,12 +344,17 @@ impl Node {
         if let Ok(mut msgs) = self.received.lock() {
             msgs.clear();
         }
+        if let Some(port) = self.bound_port.take()
+            && let Ok(mut bound) = BOUND_PORTS.lock()
+        {
+            bound.remove(&port);
+        }
     }
 }
 
 impl Drop for Node {
     fn drop(&mut self) {
-        if self.runtime.is_some() {
+        if self.runtime.is_some() || self.bound_port.is_some() {
             self.shutdown();
         }
     }

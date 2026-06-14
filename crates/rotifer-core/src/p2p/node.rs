@@ -21,6 +21,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use libp2p::futures::StreamExt;
+use libp2p::gossipsub;
 use libp2p::identity::Keypair;
 use libp2p::kad::{self, store::MemoryStore};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
@@ -38,19 +39,33 @@ const LISTEN_READY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Commands sent from the synchronous `Node` API to the Swarm event loop.
 enum Command {
     Shutdown,
+    Subscribe(String),
+    Publish { topic: String, data: Vec<u8> },
 }
 
 /// Composite network behaviour driven by the node's Swarm. Kademlia provides
-/// peer discovery + a distributed record store; gossip/identify land here in
-/// follow-up changes.
+/// peer discovery + a distributed record store; GossipSub provides
+/// publish/subscribe message broadcast. Identify lands here in a follow-up.
 #[derive(NetworkBehaviour)]
 struct NodeBehaviour {
     kademlia: kad::Behaviour<MemoryStore>,
+    gossipsub: gossipsub::Behaviour,
 }
 
 /// Peers the node has discovered (present in the Kademlia routing table),
 /// shared between the synchronous API and the event loop.
 type DiscoveredPeers = Arc<Mutex<HashSet<String>>>;
+
+/// GossipSub messages received by the node as `(topic, data)`, shared between
+/// the synchronous API and the event loop.
+type ReceivedMessages = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+
+/// Shared state handles the event loop updates and the synchronous API reads.
+struct NodeShared {
+    listen_addrs: Arc<Mutex<Vec<String>>>,
+    discovered: DiscoveredPeers,
+    received: ReceivedMessages,
+}
 
 /// libp2p-backed P2P node.
 pub struct Node {
@@ -66,6 +81,8 @@ pub struct Node {
     listen_addrs: Arc<Mutex<Vec<String>>>,
     /// Peers discovered via Kademlia, updated by the event loop.
     discovered: DiscoveredPeers,
+    /// GossipSub messages received so far, appended by the event loop.
+    received: ReceivedMessages,
     /// Dedicated runtime hosting the Swarm event loop (`None` until `start`).
     runtime: Option<tokio::runtime::Runtime>,
     /// Command channel into the event loop (`None` until `start`).
@@ -110,6 +127,7 @@ impl Node {
             peer_id,
             listen_addrs: Arc::new(Mutex::new(Vec::new())),
             discovered: Arc::new(Mutex::new(HashSet::new())),
+            received: Arc::new(Mutex::new(Vec::new())),
             runtime: None,
             cmd_tx: None,
             task: None,
@@ -136,6 +154,36 @@ impl Node {
             .lock()
             .map(|peers| peers.iter().cloned().collect())
             .unwrap_or_default()
+    }
+
+    /// Subscribe to a GossipSub topic. Requires the node to be started.
+    pub fn subscribe(&self, topic: &str) -> Result<(), NetworkError> {
+        self.send_command(Command::Subscribe(topic.to_string()))
+    }
+
+    /// Publish `data` to a GossipSub topic. Fire-and-forget: delivery needs a
+    /// formed mesh, so callers broadcasting to fresh peers should retry until a
+    /// subscriber receives it.
+    pub fn publish(&self, topic: &str, data: &[u8]) -> Result<(), NetworkError> {
+        self.send_command(Command::Publish {
+            topic: topic.to_string(),
+            data: data.to_vec(),
+        })
+    }
+
+    /// GossipSub messages received so far, as `(topic, data)` pairs.
+    pub fn received_messages(&self) -> Vec<(String, Vec<u8>)> {
+        self.received.lock().map(|m| m.clone()).unwrap_or_default()
+    }
+
+    /// Hand a command to the running event loop.
+    fn send_command(&self, command: Command) -> Result<(), NetworkError> {
+        match &self.cmd_tx {
+            Some(tx) => tx
+                .send(command)
+                .map_err(|_| NetworkError::Transport("event loop is not running".into())),
+            None => Err(NetworkError::NotConnected),
+        }
     }
 
     /// Start the Swarm: bind the listener and drive events from a background
@@ -168,19 +216,16 @@ impl Node {
         let keypair = self.keypair.clone();
         let port = self.config.listen_port;
         let bootstrap = self.config.bootstrap_peers.clone();
-        let listen_addrs = Arc::clone(&self.listen_addrs);
-        let discovered = Arc::clone(&self.discovered);
+        let shared = NodeShared {
+            listen_addrs: Arc::clone(&self.listen_addrs),
+            discovered: Arc::clone(&self.discovered),
+            received: Arc::clone(&self.received),
+        };
         let (ready_tx, ready_rx) = oneshot::channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
 
         let task = runtime.spawn(run_event_loop(
-            keypair,
-            port,
-            bootstrap,
-            listen_addrs,
-            discovered,
-            ready_tx,
-            cmd_rx,
+            keypair, port, bootstrap, shared, ready_tx, cmd_rx,
         ));
 
         // Block until the listener comes up (or fails) before returning.
@@ -231,6 +276,9 @@ impl Node {
         }
         if let Ok(mut peers) = self.discovered.lock() {
             peers.clear();
+        }
+        if let Ok(mut msgs) = self.received.lock() {
+            msgs.clear();
         }
     }
 }
@@ -376,7 +424,12 @@ fn build_swarm(keypair: Keypair) -> Result<Swarm<NodeBehaviour>, NetworkError> {
             let peer_id = key.public().to_peer_id();
             let mut kademlia = kad::Behaviour::new(peer_id, MemoryStore::new(peer_id));
             kademlia.set_mode(Some(kad::Mode::Server));
-            NodeBehaviour { kademlia }
+            let gossipsub = gossipsub::Behaviour::new(
+                gossipsub::MessageAuthenticity::Signed(key.clone()),
+                gossipsub::Config::default(),
+            )
+            .expect("default gossipsub config is valid");
+            NodeBehaviour { kademlia, gossipsub }
         })
         .expect("behaviour construction is infallible")
         .build();
@@ -392,11 +445,15 @@ async fn run_event_loop(
     keypair: Keypair,
     port: u16,
     bootstrap: Vec<String>,
-    listen_addrs: Arc<Mutex<Vec<String>>>,
-    discovered: DiscoveredPeers,
+    shared: NodeShared,
     ready_tx: oneshot::Sender<Result<(), NetworkError>>,
     mut cmd_rx: mpsc::UnboundedReceiver<Command>,
 ) {
+    let NodeShared {
+        listen_addrs,
+        discovered,
+        received,
+    } = shared;
     let mut swarm = match build_swarm(keypair) {
         Ok(s) => s,
         Err(e) => {
@@ -475,10 +532,26 @@ async fn run_event_loop(
                         peers.insert(peer.to_string());
                     }
                 }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(
+                    gossipsub::Event::Message { message, .. },
+                )) => {
+                    if let Ok(mut msgs) = received.lock() {
+                        msgs.push((message.topic.to_string(), message.data));
+                    }
+                }
                 _ => {}
             },
             cmd = cmd_rx.recv() => match cmd {
                 Some(Command::Shutdown) | None => break,
+                Some(Command::Subscribe(topic)) => {
+                    let topic = gossipsub::IdentTopic::new(topic);
+                    let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic);
+                }
+                Some(Command::Publish { topic, data }) => {
+                    let topic = gossipsub::IdentTopic::new(topic);
+                    // Ignore InsufficientPeers — callers retry until the mesh forms.
+                    let _ = swarm.behaviour_mut().gossipsub.publish(topic, data);
+                }
             }
         }
     }
@@ -713,6 +786,61 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
+
+        let _ = std::fs::remove_file(&a_id);
+        let _ = std::fs::remove_file(&b_id);
+    }
+
+    // -----------------------------------------------------------------
+    // Two-node GossipSub broadcast over loopback (integration)
+    // -----------------------------------------------------------------
+    #[test]
+    #[ignore = "two-node integration: real gossipsub broadcast over loopback — run with --ignored"]
+    fn two_nodes_gossip_broadcast() {
+        const TOPIC: &str = "/rotifer/announcements";
+        let payload = b"gene-announcement-xyz";
+
+        let a_id = std::env::temp_dir().join("rotifer-gossip-a.pem");
+        let b_id = std::env::temp_dir().join("rotifer-gossip-b.pem");
+        let _ = std::fs::remove_file(&a_id);
+        let _ = std::fs::remove_file(&b_id);
+
+        let mut cfg_a = cfg(0);
+        cfg_a.bootstrap_peers = vec![];
+        let mut a = Node::with_keypair_path(cfg_a, a_id.clone()).expect("A build");
+        a.start().expect("A start");
+        let a_addr = a
+            .listen_addrs()
+            .into_iter()
+            .next()
+            .expect("A must have a listen address");
+
+        let mut cfg_b = cfg(0);
+        cfg_b.bootstrap_peers = vec![a_addr];
+        let mut b = Node::with_keypair_path(cfg_b, b_id.clone()).expect("B build");
+        b.start().expect("B start");
+
+        // Both nodes subscribe so a GossipSub mesh forms for the topic.
+        a.subscribe(TOPIC).expect("A subscribe");
+        b.subscribe(TOPIC).expect("B subscribe");
+
+        // Publish from A repeatedly until B receives — the mesh needs a few
+        // heartbeats to form after the nodes connect + subscribe.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let mut received = false;
+        while std::time::Instant::now() < deadline {
+            let _ = a.publish(TOPIC, payload);
+            if b
+                .received_messages()
+                .iter()
+                .any(|(t, d)| t == TOPIC && d.as_slice() == payload)
+            {
+                received = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        assert!(received, "B must receive A's broadcast within 20s");
 
         let _ = std::fs::remove_file(&a_id);
         let _ = std::fs::remove_file(&b_id);

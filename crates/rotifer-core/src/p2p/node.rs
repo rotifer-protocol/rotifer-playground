@@ -692,10 +692,11 @@ mod tests {
     use super::*;
 
     fn cfg(port: u16) -> NetworkConfig {
-        let mut c = NetworkConfig::default();
-        c.listen_port = port;
-        c.enabled = true;
-        c
+        NetworkConfig {
+            listen_port: port,
+            enabled: true,
+            ..Default::default()
+        }
     }
 
     // -----------------------------------------------------------------

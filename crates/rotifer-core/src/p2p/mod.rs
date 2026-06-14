@@ -202,8 +202,10 @@ mod tests {
 
     #[test]
     fn stub_announce_succeeds_when_connected() {
-        let mut config = NetworkConfig::default();
-        config.enabled = true;
+        let config = NetworkConfig {
+            enabled: true,
+            ..Default::default()
+        };
         let net = StubNetwork::new(config);
         let ann = GeneAnnouncement {
             gene_id: "test".into(),
@@ -220,8 +222,10 @@ mod tests {
 
     #[test]
     fn stub_discover_returns_empty() {
-        let mut config = NetworkConfig::default();
-        config.enabled = true;
+        let config = NetworkConfig {
+            enabled: true,
+            ..Default::default()
+        };
         let net = StubNetwork::new(config);
         let query = DiscoveryQuery {
             query: "search".into(),

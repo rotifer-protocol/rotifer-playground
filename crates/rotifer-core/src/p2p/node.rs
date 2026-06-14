@@ -34,7 +34,10 @@ use super::{NetworkConfig, NetworkError, PeerId};
 const IDENTITY_PEM_LABEL: &str = "ROTIFER IDENTITY";
 
 /// How long `start` waits for the first listen address before giving up.
-const LISTEN_READY_TIMEOUT: Duration = Duration::from_secs(5);
+/// Generous on purpose: the listen event normally fires in well under a second,
+/// but a loaded CI runner (the whole test suite in parallel) can starve the
+/// Swarm's runtime worker for several seconds — a tight bound flaked there.
+const LISTEN_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long a DHT put/get blocks for its query to resolve.
 const QUERY_TIMEOUT: Duration = Duration::from_secs(10);

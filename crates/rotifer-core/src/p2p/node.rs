@@ -15,6 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
@@ -378,16 +379,13 @@ fn load_or_generate_keypair(path: &Path) -> Result<Keypair, NetworkError> {
     if let Some(keypair) = try_read_keypair(path)? {
         return Ok(keypair);
     }
+    // Generate + persist atomically. Concurrent generators each write their own
+    // keypair and the rename makes the last one win; crucially, every reader
+    // sees either no file or a complete one — never a half-written identity.
     let keypair = Keypair::generate_ed25519();
-    let written = persist_new_keypair(path, &keypair)
+    persist_keypair(path, &keypair)
         .map_err(|e| NetworkError::Transport(format!("write identity: {e}")))?;
-    if written {
-        Ok(keypair)
-    } else {
-        // Another node won the create race — adopt its persisted identity.
-        try_read_keypair(path)?
-            .ok_or_else(|| NetworkError::Transport("identity missing after create race".into()))
-    }
+    Ok(keypair)
 }
 
 /// Read and decode the identity at `path`, or `None` if it does not exist.
@@ -404,9 +402,10 @@ fn try_read_keypair(path: &Path) -> Result<Option<Keypair>, NetworkError> {
     }
 }
 
-/// Serialize a keypair to PEM and create the file atomically (mode 0600).
-/// Returns `Ok(false)` if the file already exists (lost a create race).
-fn persist_new_keypair(path: &Path, keypair: &Keypair) -> std::io::Result<bool> {
+/// Serialize a keypair to PEM and write it atomically (mode 0600): a temp
+/// sibling is written then renamed onto `path`, so a concurrent reader never
+/// observes a partially-written file.
+fn persist_keypair(path: &Path, keypair: &Keypair) -> std::io::Result<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -416,11 +415,7 @@ fn persist_new_keypair(path: &Path, keypair: &Keypair) -> std::io::Result<bool> 
         .to_protobuf_encoding()
         .map_err(std::io::Error::other)?;
     let pem = encode_identity_pem(&bytes);
-    match write_new_private(path, pem.as_bytes()) {
-        Ok(()) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
-        Err(e) => Err(e),
-    }
+    write_atomic_private(path, pem.as_bytes())
 }
 
 /// PEM-armor raw bytes with the identity label, wrapped at 64 base64 chars.
@@ -449,32 +444,45 @@ fn decode_identity_pem(text: &str) -> Result<Vec<u8>, NetworkError> {
         .map_err(|e| NetworkError::Transport(format!("decode identity: {e}")))
 }
 
-/// Write `data` to a freshly created `path`, owner read/write only (0600).
-/// Fails with `AlreadyExists` if the file is already there (atomic create).
+/// A unique temp path beside `path` (per-process, per-call) for atomic writes.
+fn tmp_sibling(path: &Path) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut name = path
+        .file_name()
+        .map(|s| s.to_os_string())
+        .unwrap_or_default();
+    name.push(format!(".tmp.{}.{n}", std::process::id()));
+    path.with_file_name(name)
+}
+
+/// Atomically write `data` to `path`, owner read/write only (0600): write a
+/// temp sibling, fsync, set mode, then rename. A reader sees the old file or
+/// the complete new one — never a partial write.
 #[cfg(unix)]
-fn write_new_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+fn write_atomic_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)?;
-    f.write_all(data)?;
-    f.sync_all()?;
-    // Force exact 0600 regardless of the process umask.
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    Ok(())
+    let tmp = tmp_sibling(path);
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        f.write_all(data)?;
+        f.sync_all()?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+    }
+    std::fs::rename(&tmp, path)
 }
 
 #[cfg(not(unix))]
-fn write_new_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    f.write_all(data)
+fn write_atomic_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let tmp = tmp_sibling(path);
+    std::fs::write(&tmp, data)?;
+    std::fs::rename(&tmp, path)
 }
 
 /// Build a libp2p Swarm with TCP + QUIC transports (Noise + Yamux) over the

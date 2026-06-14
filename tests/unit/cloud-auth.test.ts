@@ -111,14 +111,14 @@ describe("cloud auth module", () => {
     expect(mod.isLoggedIn()).toBe(true);
   });
 
-  it("buildOAuthCallbackUrl uses 127.0.0.1 instead of localhost", async () => {
+  it("buildOAuthCallbackUrl uses localhost to match the Supabase redirect allow-list", async () => {
     const mod = await import("../../src/cloud/auth.js");
-    expect(mod.buildOAuthCallbackUrl(9876)).toBe("http://127.0.0.1:9876/callback");
+    expect(mod.buildOAuthCallbackUrl(9876)).toBe("http://localhost:9876/callback");
   });
 
   it("startOAuthCallbackServer accepts callbacks on 127.0.0.1", async () => {
     const mod = await import("../../src/cloud/auth.js");
-    const { port, waitForCallback } = await mod.startOAuthCallbackServer();
+    const { port, waitForCallback } = await mod.startOAuthCallbackServer(0);
 
     const res = await fetch(`http://127.0.0.1:${port}/callback?code=test-code`);
     expect(res.status).toBe(200);
@@ -127,7 +127,7 @@ describe("cloud auth module", () => {
 
   it("startOAuthCallbackServer parses implicit token callback on 127.0.0.1", async () => {
     const mod = await import("../../src/cloud/auth.js");
-    const { port, waitForCallback } = await mod.startOAuthCallbackServer();
+    const { port, waitForCallback } = await mod.startOAuthCallbackServer(0);
 
     const res = await fetch(
       `http://127.0.0.1:${port}/callback/token?access_token=tok&refresh_token=ref`

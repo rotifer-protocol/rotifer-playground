@@ -86,6 +86,40 @@ describe("network peers", () => {
   });
 });
 
+describe("network received", () => {
+  it("lists the gene announcements the daemon received", async () => {
+    vi.mocked(controlRequest).mockResolvedValue(
+      ctrlOk({
+        announcements: [
+          {
+            geneId: "g1",
+            name: "polymarket-scanner",
+            domain: "finance",
+            version: "0.3.0",
+            fidelity: "Native",
+            publisher: "rt_pub",
+            source: "12D3KooWabc",
+          },
+        ],
+      })
+    );
+    await networkCommand.parseAsync(["received"], { from: "user" });
+    expect(kvArgs()).toContain("polymarket-scanner@0.3.0");
+  });
+
+  it("warns when the daemon is not running", async () => {
+    vi.mocked(controlRequest).mockResolvedValue(null);
+    await networkCommand.parseAsync(["received"], { from: "user" });
+    expect(display.warn).toHaveBeenCalledWith(expect.stringContaining("not running"));
+  });
+
+  it("warns when no announcements received yet", async () => {
+    vi.mocked(controlRequest).mockResolvedValue(ctrlOk({ announcements: [] }));
+    await networkCommand.parseAsync(["received"], { from: "user" });
+    expect(display.warn).toHaveBeenCalledWith(expect.stringContaining("No announcements"));
+  });
+});
+
 describe("network announce", () => {
   it("relays the gene's phenotype fields to the daemon", async () => {
     vi.mocked(controlRequest).mockResolvedValue(ctrlOk({ ok: true }));

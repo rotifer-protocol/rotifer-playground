@@ -47,7 +47,7 @@ describe("rotifer network commands", () => {
   it("network --help lists the public subcommands and hides __daemon", () => {
     const result = run("network --help");
     expect(result.exitCode).toBe(0);
-    for (const sub of ["status", "start", "stop", "peers", "search", "announce"]) {
+    for (const sub of ["status", "start", "stop", "peers", "received", "search", "announce"]) {
       expect(result.stdout).toContain(sub);
     }
     expect(result.stdout).not.toContain("__daemon");
@@ -87,6 +87,13 @@ describe("rotifer network commands", () => {
 
   it("network peers reports not-running when no daemon is up", () => {
     const result = run("network peers");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toLowerCase()).toContain("not running");
+    expect(result.stdout).toContain("rotifer network start");
+  });
+
+  it("network received reports not-running when no daemon is up", () => {
+    const result = run("network received");
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toLowerCase()).toContain("not running");
     expect(result.stdout).toContain("rotifer network start");

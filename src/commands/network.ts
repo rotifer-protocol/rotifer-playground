@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { ensurePrivateDir, tightenPrivateFile } from "../utils/private-fs.js";
-import { loadP2pNode } from "../utils/binding.js";
+import { loadP2pNode, type ReceivedAnnouncement } from "../utils/binding.js";
 import {
   controlRequest,
   isDaemonRunning,
@@ -215,6 +215,31 @@ export const networkCommand = new Command("network")
         }
         console.log();
         display.hint(`${peers.length} peer(s) discovered`);
+      })
+  )
+  .addCommand(
+    new Command("received")
+      .description("Show gene announcements this node has received from peers")
+      .action(async () => {
+        const result = await controlRequest("GET", "/received");
+        if (!result) {
+          display.warn("P2P daemon is not running. Run 'rotifer network start' first.");
+          return;
+        }
+        const anns =
+          (result.body as { announcements?: ReceivedAnnouncement[] }).announcements ?? [];
+        display.header("Received Gene Announcements", { separator: false });
+        if (anns.length === 0) {
+          display.warn("No announcements received yet.");
+          display.hint("A peer must announce a gene while this node is connected + subscribed.");
+          return;
+        }
+        for (const a of anns) {
+          const from = (a.source ?? a.publisher).slice(0, 16);
+          display.kv(`${a.name}@${a.version}`, `${a.domain} · ${a.fidelity} · from ${from}…`);
+        }
+        console.log();
+        display.hint(`${anns.length} announcement(s) received`);
       })
   )
   .addCommand(

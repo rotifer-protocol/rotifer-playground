@@ -172,6 +172,10 @@ export async function runDaemon(
       send(200, { peers: node.discoveredPeers() });
       return;
     }
+    if (req.method === "GET" && url.pathname === "/received") {
+      send(200, { announcements: node.receivedAnnouncements() });
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/announce") {
       let data = "";
       req.on("data", (chunk) => (data += chunk));

@@ -18,13 +18,26 @@ use std::sync::Mutex;
 // P2P node bridge (libp2p) — exposes the real Node to the CLI (§3.1 phase 1).
 // Kept at the crate root, not a submodule: the cdylib linker strips an
 // unreferenced submodule's napi registration ctor, so the class must live here.
-use rotifer_core::p2p::messages::encode_announcement;
+use rotifer_core::p2p::messages::{decode_announcement, encode_announcement};
 use rotifer_core::p2p::node::Node as CoreNode;
 use rotifer_core::p2p::{GeneAnnouncement, NetworkConfig};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Canonical GossipSub topic for gene announcements (RFC §6.2).
 const ANNOUNCEMENTS_TOPIC: &str = "/rotifer/announcements";
+
+/// A gene announcement received from a peer, surfaced to the CLI. `source` is
+/// the GossipSub-authenticated publisher PeerId (cannot be forged, §8.3).
+#[napi(object)]
+pub struct ReceivedGeneAnnouncement {
+    pub gene_id: String,
+    pub name: String,
+    pub domain: String,
+    pub version: String,
+    pub fidelity: String,
+    pub publisher: String,
+    pub source: Option<String>,
+}
 
 /// A live libp2p P2P node driven from the TS CLI, so `rotifer network` can run
 /// a real node instead of the v0.5 stub. The Node owns its own tokio runtime
@@ -40,9 +53,14 @@ impl P2pNode {
     /// (multiaddr strings). Uses the persistent identity at
     /// `~/.rotifer/identity.pem`, so the `PeerId` is stable across runs.
     #[napi(constructor)]
-    pub fn new(listen_port: u32, bootstrap_peers: Vec<String>) -> Result<Self> {
+    pub fn new(
+        listen_host: String,
+        listen_port: u32,
+        bootstrap_peers: Vec<String>,
+    ) -> Result<Self> {
         let config = NetworkConfig {
             node_id: uuid::Uuid::new_v4().to_string(),
+            listen_host,
             listen_port: listen_port as u16,
             bootstrap_peers,
             enabled: true,
@@ -58,7 +76,12 @@ impl P2pNode {
     pub fn start(&mut self) -> Result<()> {
         self.inner
             .start()
-            .map_err(|e| Error::from_reason(format!("start p2p node: {e}")))
+            .map_err(|e| Error::from_reason(format!("start p2p node: {e}")))?;
+        // Subscribe to the announcements topic on start so the node receives
+        // gene announcements from peers — not only after it announces its own.
+        self.inner
+            .subscribe(ANNOUNCEMENTS_TOPIC)
+            .map_err(|e| Error::from_reason(format!("subscribe announcements: {e}")))
     }
 
     /// The node's stable libp2p `PeerId`.
@@ -77,6 +100,28 @@ impl P2pNode {
     #[napi]
     pub fn discovered_peers(&self) -> Vec<String> {
         self.inner.discovered_peers()
+    }
+
+    /// Gene announcements received from peers on the announcements topic,
+    /// decoded for display. Skips any message that fails to decode.
+    #[napi]
+    pub fn received_announcements(&self) -> Vec<ReceivedGeneAnnouncement> {
+        self.inner
+            .received_messages()
+            .into_iter()
+            .filter(|m| m.topic == ANNOUNCEMENTS_TOPIC)
+            .filter_map(|m| {
+                decode_announcement(&m.data).ok().map(|a| ReceivedGeneAnnouncement {
+                    gene_id: a.gene_id,
+                    name: a.name,
+                    domain: a.domain,
+                    version: a.version,
+                    fidelity: a.fidelity,
+                    publisher: a.publisher.0,
+                    source: m.source,
+                })
+            })
+            .collect()
     }
 
     /// Announce a gene: build a `GeneAnnouncement` and publish it to the

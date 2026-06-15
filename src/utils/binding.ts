@@ -133,6 +133,17 @@ export function tryLoadBinding(): NativeBinding | null {
   return _binding;
 }
 
+/** A gene announcement received from a peer (mirrors the Rust napi struct). */
+export interface ReceivedAnnouncement {
+  geneId: string;
+  name: string;
+  domain: string;
+  version: string;
+  fidelity: string;
+  publisher: string;
+  source?: string;
+}
+
 /**
  * Subset of the native `P2pNode` class surfaced to the CLI. Method names are
  * camelCase (napi converts the Rust snake_case automatically).
@@ -142,6 +153,7 @@ export interface P2pNodeHandle {
   peerId(): string;
   listenAddrs(): string[];
   discoveredPeers(): string[];
+  receivedAnnouncements(): ReceivedAnnouncement[];
   announceGene(
     geneId: string,
     name: string,
@@ -158,6 +170,7 @@ export interface P2pNodeHandle {
  * callers can degrade gracefully.
  */
 export function loadP2pNode(
+  listenHost: string,
   listenPort: number,
   bootstrapPeers: string[]
 ): P2pNodeHandle | null {
@@ -165,10 +178,10 @@ export function loadP2pNode(
   // napi renders the Rust `P2pNode` as `P2PNode` (it uppercases the "p2p"
   // acronym); accept either spelling so both the raw addon and any JS wrapper work.
   const Ctor = (mod?.P2PNode ?? mod?.P2pNode) as
-    | (new (port: number, peers: string[]) => P2pNodeHandle)
+    | (new (host: string, port: number, peers: string[]) => P2pNodeHandle)
     | undefined;
   if (typeof Ctor !== "function") return null;
-  return new Ctor(listenPort, bootstrapPeers);
+  return new Ctor(listenHost, listenPort, bootstrapPeers);
 }
 
 export function isNativeAvailable(): boolean {

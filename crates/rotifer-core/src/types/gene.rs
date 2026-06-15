@@ -90,11 +90,18 @@ pub enum Fidelity {
 }
 
 /// Whether a gene's source code is publicly auditable.
+///
+/// Spec §4.2 `GeneTransparency` serialises UPPERCASE (`OPEN` / `OPAQUE`). The
+/// PascalCase aliases accept pre-§3.3 phenotypes during the v0.9.1 grace window
+/// (removed v0.9.2) — zero-breakage, like the F7 enums.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum GeneTransparency {
     /// Source available for audit.
+    #[serde(alias = "Open")]
     Open,
     /// Source not disclosed.
+    #[serde(alias = "Opaque")]
     Opaque,
     /// Fallback for forward compatibility.
     #[serde(other)]
@@ -351,5 +358,18 @@ mod degradation_enum_tests {
         // Missing Option fields default to None; the legacy value still loads.
         let sr: SemanticRequirements = de(r#"{"failureSemantics":"FailFast"}"#);
         assert_eq!(sr.failure_semantics, Some(EventualFailureSemantics::FailFast));
+    }
+
+    #[test]
+    fn gene_transparency_uses_spec_uppercase_and_accepts_legacy() {
+        // F8: spec §4.2 serialises UPPERCASE; PascalCase aliases keep old
+        // phenotypes loading through the grace window (removed v0.9.2).
+        assert_eq!(ser(&GeneTransparency::Open), "\"OPEN\"");
+        assert_eq!(ser(&GeneTransparency::Opaque), "\"OPAQUE\"");
+        assert_eq!(de::<GeneTransparency>("\"OPEN\""), GeneTransparency::Open);
+        assert_eq!(de::<GeneTransparency>("\"Open\""), GeneTransparency::Open);
+        assert_eq!(de::<GeneTransparency>("\"Opaque\""), GeneTransparency::Opaque);
+        // An unknown future value folds into Unknown (forward compat).
+        assert_eq!(de::<GeneTransparency>("\"TRANSLUCENT\""), GeneTransparency::Unknown);
     }
 }

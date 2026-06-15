@@ -521,6 +521,44 @@ describe("validateLlmNativePhenotype", () => {
     });
   });
 
+  describe("transparency validation (v0.9.1 §3.3 F8, spec §4.2)", () => {
+    it("accepts spec OPEN/OPAQUE (no transparency diagnostic)", () => {
+      for (const tr of ["OPEN", "OPAQUE"]) {
+        vi.clearAllMocks();
+        validateLlmNativePhenotype(basePhenotype({ transparency: tr }), "test.json");
+        expect(display.rustStyleError).not.toHaveBeenCalledWith(
+          expect.objectContaining({ code: "E0140" }),
+        );
+        expect(display.warn).not.toHaveBeenCalledWith(expect.stringContaining("W0140"));
+      }
+    });
+
+    it("accepts legacy PascalCase with a deprecation warning (W0140)", () => {
+      for (const tr of ["Open", "Opaque"]) {
+        vi.clearAllMocks();
+        validateLlmNativePhenotype(basePhenotype({ transparency: tr }), "test.json");
+        expect(display.rustStyleError).not.toHaveBeenCalled();
+        expect(exitSpy).not.toHaveBeenCalled();
+        expect(display.warn).toHaveBeenCalledWith(expect.stringContaining("W0140"));
+      }
+    });
+
+    it("errors on an unknown transparency value (E0140)", () => {
+      validateLlmNativePhenotype(basePhenotype({ transparency: "translucent" }), "test.json");
+      expect(display.rustStyleError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E0140" }),
+      );
+      expect(exitSpy).toHaveBeenCalled();
+    });
+
+    it("accepts a phenotype without transparency (optional field)", () => {
+      validateLlmNativePhenotype(basePhenotype({}), "test.json");
+      expect(display.rustStyleError).not.toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E0140" }),
+      );
+    });
+  });
+
   describe("simulationSpec validation (v0.9 §3.11, ADR-220 T1)", () => {
     it("accepts a valid simulationSpec", () => {
       validateLlmNativePhenotype(

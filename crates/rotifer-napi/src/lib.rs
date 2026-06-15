@@ -40,9 +40,14 @@ impl P2pNode {
     /// (multiaddr strings). Uses the persistent identity at
     /// `~/.rotifer/identity.pem`, so the `PeerId` is stable across runs.
     #[napi(constructor)]
-    pub fn new(listen_port: u32, bootstrap_peers: Vec<String>) -> Result<Self> {
+    pub fn new(
+        listen_host: String,
+        listen_port: u32,
+        bootstrap_peers: Vec<String>,
+    ) -> Result<Self> {
         let config = NetworkConfig {
             node_id: uuid::Uuid::new_v4().to_string(),
+            listen_host,
             listen_port: listen_port as u16,
             bootstrap_peers,
             enabled: true,

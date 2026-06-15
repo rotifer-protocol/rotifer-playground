@@ -50,10 +50,10 @@ function saveNetworkConfig(config: NetworkConfig): void {
 }
 
 /** Spawn the daemon as a detached background process, logging to ~/.rotifer/daemon.log. */
-function spawnDaemon(port: number, bootstrapPeers: string[]): void {
+function spawnDaemon(host: string, port: number, bootstrapPeers: string[]): void {
   ensurePrivateDir(ROTIFER_HOME);
   const logFd = openSync(join(ROTIFER_HOME, "daemon.log"), "a");
-  const args = [process.argv[1], "network", "__daemon", "--port", String(port)];
+  const args = [process.argv[1], "network", "__daemon", "--host", host, "--port", String(port)];
   for (const peer of bootstrapPeers) {
     args.push("--bootstrap", peer);
   }
@@ -109,7 +109,13 @@ export const networkCommand = new Command("network")
     new Command("start")
       .description("Start the P2P node as a background daemon")
       .option("-p, --port <port>", "listen port", "9878")
-      .action(async (options: { port: string }) => {
+      .option(
+        "-H, --host <addr>",
+        "listen interface: 127.0.0.1 (loopback) or 0.0.0.0 (reachable from other machines)",
+        "127.0.0.1",
+      )
+      .option("-b, --bootstrap <addr...>", "bootstrap peer multiaddr(s); overrides config")
+      .action(async (options: { port: string; host: string; bootstrap?: string[] }) => {
         display.header("Starting P2P Daemon");
 
         if (await isDaemonRunning()) {
@@ -120,7 +126,7 @@ export const networkCommand = new Command("network")
 
         // Fail fast with a clear message if the native addon is absent, rather
         // than spawning a daemon that immediately dies.
-        if (!loadP2pNode(0, [])) {
+        if (!loadP2pNode("127.0.0.1", 0, [])) {
           display.warn("Native P2P node is unavailable in this build.");
           display.hint("This CLI was built without the compiled libp2p addon.");
           return;
@@ -129,8 +135,13 @@ export const networkCommand = new Command("network")
         const config = loadNetworkConfig();
         const port = parseInt(options.port, 10);
         config.listen_port = port;
+        const host = options.host;
+        const bootstrap =
+          options.bootstrap && options.bootstrap.length > 0
+            ? options.bootstrap
+            : config.bootstrap_peers;
 
-        spawnDaemon(port, config.bootstrap_peers);
+        spawnDaemon(host, port, bootstrap);
         const isReady = await waitForDaemon(15_000);
         if (!isReady) {
           display.error(
@@ -146,10 +157,14 @@ export const networkCommand = new Command("network")
         const state = readDaemonState();
         console.log();
         display.kv("PeerId", state?.peerId ?? "?");
+        display.kv("Listen host", host);
         display.kv("PID", String(state?.pid ?? "?"));
-        display.kv("Bootstrap peers", String(config.bootstrap_peers.length));
+        display.kv("Bootstrap peers", String(bootstrap.length));
         console.log();
         display.success("P2P daemon running in the background.");
+        if (host !== "127.0.0.1") {
+          display.hint("'rotifer network status' shows the reachable multiaddr — give it to other nodes as --bootstrap");
+        }
         display.hint("rotifer network peers / announce / status / stop");
       })
   )
@@ -157,10 +172,11 @@ export const networkCommand = new Command("network")
   .addCommand(
     new Command("__daemon")
       .description("(internal) run the P2P daemon")
+      .option("-H, --host <addr>", "listen interface", "127.0.0.1")
       .option("-p, --port <port>", "listen port", "9878")
       .option("--bootstrap <addr...>", "bootstrap multiaddr(s)")
-      .action(async (options: { port: string; bootstrap?: string[] }) => {
-        await runDaemon(parseInt(options.port, 10), options.bootstrap ?? []);
+      .action(async (options: { host: string; port: string; bootstrap?: string[] }) => {
+        await runDaemon(options.host, parseInt(options.port, 10), options.bootstrap ?? []);
       }),
     { hidden: true }
   )

@@ -158,6 +158,7 @@ export interface P2pNodeHandle {
  * callers can degrade gracefully.
  */
 export function loadP2pNode(
+  listenHost: string,
   listenPort: number,
   bootstrapPeers: string[]
 ): P2pNodeHandle | null {
@@ -165,10 +166,10 @@ export function loadP2pNode(
   // napi renders the Rust `P2pNode` as `P2PNode` (it uppercases the "p2p"
   // acronym); accept either spelling so both the raw addon and any JS wrapper work.
   const Ctor = (mod?.P2PNode ?? mod?.P2pNode) as
-    | (new (port: number, peers: string[]) => P2pNodeHandle)
+    | (new (host: string, port: number, peers: string[]) => P2pNodeHandle)
     | undefined;
   if (typeof Ctor !== "function") return null;
-  return new Ctor(listenPort, bootstrapPeers);
+  return new Ctor(listenHost, listenPort, bootstrapPeers);
 }
 
 export function isNativeAvailable(): boolean {

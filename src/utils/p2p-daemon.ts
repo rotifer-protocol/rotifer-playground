@@ -131,8 +131,12 @@ export async function isDaemonRunning(): Promise<boolean> {
  * server, record the state file, and stay alive until stopped. Called from the
  * hidden `network __daemon` subcommand in a detached process.
  */
-export async function runDaemon(listenPort: number, bootstrapPeers: string[]): Promise<void> {
-  const maybeNode = loadP2pNode(listenPort, bootstrapPeers);
+export async function runDaemon(
+  listenHost: string,
+  listenPort: number,
+  bootstrapPeers: string[],
+): Promise<void> {
+  const maybeNode = loadP2pNode(listenHost, listenPort, bootstrapPeers);
   if (!maybeNode) {
     process.stderr.write("native P2P node unavailable; daemon cannot start\n");
     process.exit(1);

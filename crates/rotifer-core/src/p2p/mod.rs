@@ -72,6 +72,10 @@ pub struct DiscoveryResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkConfig {
     pub node_id: String,
+    /// Listen interface for the libp2p TCP/QUIC transport. Defaults to
+    /// `127.0.0.1` (loopback only); set to `0.0.0.0` to accept connections from
+    /// other hosts on the network (LAN / internet — needed for multi-machine).
+    pub listen_host: String,
     pub listen_port: u16,
     pub bootstrap_peers: Vec<String>,
     pub enabled: bool,
@@ -81,6 +85,7 @@ impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
             node_id: uuid::Uuid::new_v4().to_string(),
+            listen_host: "127.0.0.1".to_string(),
             listen_port: 9878,
             bootstrap_peers: vec![
                 "/dns4/bootstrap.rotifer.dev/tcp/9878".to_string(),
@@ -278,6 +283,7 @@ mod tests {
     fn network_config_serde() {
         let config = NetworkConfig {
             node_id: "node-1".into(),
+            listen_host: "0.0.0.0".into(),
             listen_port: 4001,
             bootstrap_peers: vec!["/ip4/127.0.0.1/tcp/4001".into()],
             enabled: true,
@@ -285,8 +291,16 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let decoded: NetworkConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.node_id, "node-1");
+        assert_eq!(decoded.listen_host, "0.0.0.0");
         assert_eq!(decoded.listen_port, 4001);
         assert!(decoded.enabled);
+    }
+
+    #[test]
+    fn network_config_default_listen_host_is_loopback() {
+        // Default stays loopback-only so same-machine tests + the integration
+        // suite keep binding 127.0.0.1; 0.0.0.0 (LAN/internet) is opt-in.
+        assert_eq!(NetworkConfig::default().listen_host, "127.0.0.1");
     }
 
     #[test]

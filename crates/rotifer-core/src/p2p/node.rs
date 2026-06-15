@@ -301,6 +301,7 @@ impl Node {
             .map_err(|e| NetworkError::Transport(format!("runtime: {e}")))?;
 
         let keypair = self.keypair.clone();
+        let host = self.config.listen_host.clone();
         let port = self.config.listen_port;
         let bootstrap = self.config.bootstrap_peers.clone();
         let shared = NodeShared {
@@ -313,7 +314,7 @@ impl Node {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
 
         let task = runtime.spawn(run_event_loop(
-            keypair, port, bootstrap, shared, ready_tx, cmd_rx,
+            keypair, host, port, bootstrap, shared, ready_tx, cmd_rx,
         ));
 
         // Block until the listener comes up (or fails) before returning.
@@ -541,6 +542,7 @@ fn build_swarm(keypair: Keypair) -> Result<Swarm<NodeBehaviour>, NetworkError> {
 /// `Err` if the listener fails to bind.
 async fn run_event_loop(
     keypair: Keypair,
+    host: String,
     port: u16,
     bootstrap: Vec<String>,
     shared: NodeShared,
@@ -563,9 +565,9 @@ async fn run_event_loop(
         }
     };
 
-    // Bind to loopback only; the listen address never reports the 0.0.0.0
-    // wildcard. Port 0 lets the OS allocate.
-    let listen_on: Multiaddr = match format!("/ip4/127.0.0.1/tcp/{port}").parse() {
+    // Bind to the configured interface (default 127.0.0.1 loopback; set 0.0.0.0
+    // to accept connections from other hosts). Port 0 lets the OS allocate.
+    let listen_on: Multiaddr = match format!("/ip4/{host}/tcp/{port}").parse() {
         Ok(addr) => addr,
         Err(e) => {
             let _ = ready_tx.send(Err(NetworkError::Transport(format!("listen addr: {e}"))));

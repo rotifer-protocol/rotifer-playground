@@ -53,6 +53,22 @@ export const SYNTHESIS_METHODS: readonly SynthesisMethod[] = [
 
 export type Fidelity = "Wrapped" | "Hybrid" | "Native" | "Unknown";
 
+/**
+ * Gene source-code transparency (spec §4.2 `GeneTransparency`, §10.4). Mirrors
+ * the Rust IR `GeneTransparency`. Spec serialises UPPERCASE; legacy PascalCase
+ * literals are accepted with a deprecation warning until v0.9.2 (see
+ * `LEGACY_GENE_TRANSPARENCIES`).
+ */
+export type GeneTransparency = "OPEN" | "OPAQUE";
+
+export const GENE_TRANSPARENCIES: readonly GeneTransparency[] = ["OPEN", "OPAQUE"] as const;
+
+/** Pre-§3.3 PascalCase transparency literals → spec UPPERCASE. Removed v0.9.2. */
+export const LEGACY_GENE_TRANSPARENCIES: Readonly<Record<string, GeneTransparency>> = Object.freeze({
+  Open: "OPEN",
+  Opaque: "OPAQUE",
+});
+
 // ─── Hybrid Fidelity (Spec §4.2 v2.11 + §3.11 v0.9 plan + ADR-220) ───────────
 
 /**
@@ -227,6 +243,8 @@ export interface Phenotype {
   domain?: string;
   version?: string;
   fidelity?: Fidelity;
+  /** Source-code transparency (spec §4.2). Optional; legacy genes lack it. */
+  transparency?: GeneTransparency;
   description?: string;
   synthesisMethod?: SynthesisMethod;
 

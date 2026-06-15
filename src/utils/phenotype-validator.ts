@@ -3,8 +3,10 @@ import {
   DEGRADATION_BEHAVIORS,
   DEGRADATION_MODES,
   EXECUTION_MODELS,
+  GENE_TRANSPARENCIES,
   GUARD_POSITIONS,
   LEGACY_DEGRADATION_BEHAVIORS,
+  LEGACY_GENE_TRANSPARENCIES,
   SYNTHESIS_METHODS,
   TEMPLATE_FORMATS,
 } from "../types/phenotype.js";
@@ -24,6 +26,8 @@ const VALID_EXECUTION_MODELS = EXECUTION_MODELS;
 // declaration, dry-run protocol, and graceful degradation contracts.
 const VALID_DEGRADATION_BEHAVIORS = DEGRADATION_BEHAVIORS;
 const VALID_DEGRADATION_MODES = DEGRADATION_MODES;
+// v0.9.1 §3.3 F8: transparency enum (spec §4.2 GeneTransparency).
+const VALID_GENE_TRANSPARENCIES = GENE_TRANSPARENCIES;
 
 interface ValidationDiagnostic {
   level: "error" | "warning" | "info";
@@ -160,6 +164,26 @@ function collectDiagnostics(phenotype: Record<string, unknown>): ValidationDiagn
       level: "warning",
       code: "W0101",
       message: `systemPrompt is set but executionModel is '${em}', not 'CHAT' — systemPrompt is ignored outside chat surfaces`,
+    });
+  }
+
+  // v0.9.1 §3.3 F8: transparency enum validation (spec §4.2 GeneTransparency).
+  // Optional field (legacy genes lack it) — only flagged when present.
+  const tr = phenotype.transparency as string | undefined;
+  if (tr !== undefined && tr in LEGACY_GENE_TRANSPARENCIES) {
+    diags.push({
+      level: "warning",
+      code: "W0140",
+      message:
+        `transparency '${tr}' is a deprecated legacy literal; use ` +
+        `'${LEGACY_GENE_TRANSPARENCIES[tr]}' instead (spec §4.2 GeneTransparency). ` +
+        `Legacy values are removed in v0.9.2.`,
+    });
+  } else if (tr !== undefined && !(VALID_GENE_TRANSPARENCIES as readonly string[]).includes(tr)) {
+    diags.push({
+      level: "error",
+      code: "E0140",
+      message: `transparency must be one of: ${VALID_GENE_TRANSPARENCIES.join(", ")} (got '${tr}')`,
     });
   }
 

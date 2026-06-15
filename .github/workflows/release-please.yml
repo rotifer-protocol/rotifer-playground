@@ -1,0 +1,30 @@
+name: release-please
+
+# git tag is the single source of truth for the version. release-please opens a
+# Release PR (bumps root package.json, Cargo.toml workspace version, and the 4
+# npm platform packages, and generates CHANGELOG). Merging the PR tags v*, which
+# triggers the existing release.yml publish pipeline.
+#
+# Two TODOs before enabling on main:
+#   1. SHA-pin googleapis/release-please-action (this repo pins all actions to SHA).
+#   2. Create secret RELEASE_PLEASE_TOKEN (PAT, repo+workflow scope). Otherwise a
+#      tag pushed using GITHUB_TOKEN will NOT trigger release.yml (GitHub's
+#      recursion guard), so the publish jobs won't run automatically.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4 # TODO: SHA-pin before merge
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

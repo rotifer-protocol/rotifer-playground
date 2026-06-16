@@ -19,6 +19,10 @@ jobs:
 
       - name: Check DCO Sign-off
         run: |
+          if [[ "${{ github.head_ref }}" == release-please--* ]]; then
+            echo "release-please automated PR — DCO exempt (maintainer-authored version bump)."
+            exit 0
+          fi
           BASE="${{ github.event.pull_request.base.sha }}"
           HEAD="${{ github.event.pull_request.head.sha }}"
 

@@ -23,6 +23,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use libp2p::futures::StreamExt;
 use libp2p::gossipsub;
+use libp2p::identify;
 use libp2p::identity::Keypair;
 use libp2p::kad::{self, store::MemoryStore};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
@@ -62,13 +63,20 @@ enum Command {
     },
 }
 
+/// libp2p Identify protocol version advertised by Rotifer nodes. Peers compare
+/// this to spot protocol-incompatible nodes; autonat/dcutr (Milestone B) build
+/// on the observed-address info Identify provides. ADR-304.
+const IDENTIFY_PROTOCOL_VERSION: &str = "/rotifer/0.9.1";
+
 /// Composite network behaviour driven by the node's Swarm. Kademlia provides
 /// peer discovery + a distributed record store; GossipSub provides
-/// publish/subscribe message broadcast. Identify lands here in a follow-up.
+/// publish/subscribe message broadcast; Identify exchanges peer metadata
+/// (protocols, listen + observed addrs) on connect.
 #[derive(NetworkBehaviour)]
 struct NodeBehaviour {
     kademlia: kad::Behaviour<MemoryStore>,
     gossipsub: gossipsub::Behaviour,
+    identify: identify::Behaviour,
 }
 
 /// Peers the node has discovered (present in the Kademlia routing table),
@@ -93,6 +101,8 @@ type ReceivedMessages = Arc<Mutex<Vec<ReceivedMessage>>>;
 struct NodeShared {
     listen_addrs: Arc<Mutex<Vec<String>>>,
     discovered: DiscoveredPeers,
+    /// Peers we have completed an Identify exchange with (ADR-304).
+    identified: DiscoveredPeers,
     received: ReceivedMessages,
     rate_limited: Arc<Mutex<u64>>,
 }
@@ -117,6 +127,8 @@ pub struct Node {
     listen_addrs: Arc<Mutex<Vec<String>>>,
     /// Peers discovered via Kademlia, updated by the event loop.
     discovered: DiscoveredPeers,
+    /// Peers we have completed an Identify exchange with (ADR-304).
+    identified: DiscoveredPeers,
     /// GossipSub messages received so far, appended by the event loop.
     received: ReceivedMessages,
     /// Count of inbound messages dropped by the per-peer rate limiter (§8.6).
@@ -167,6 +179,7 @@ impl Node {
             peer_id,
             listen_addrs: Arc::new(Mutex::new(Vec::new())),
             discovered: Arc::new(Mutex::new(HashSet::new())),
+            identified: Arc::new(Mutex::new(HashSet::new())),
             received: Arc::new(Mutex::new(Vec::new())),
             rate_limited: Arc::new(Mutex::new(0)),
             runtime: None,
@@ -193,6 +206,15 @@ impl Node {
     /// and its routing table populates).
     pub fn discovered_peers(&self) -> Vec<String> {
         self.discovered
+            .lock()
+            .map(|peers| peers.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Peers this node has completed an Identify exchange with (ADR-304). Empty
+    /// until the Swarm is started and at least one peer connects + identifies.
+    pub fn identified_peers(&self) -> Vec<String> {
+        self.identified
             .lock()
             .map(|peers| peers.iter().cloned().collect())
             .unwrap_or_default()
@@ -307,6 +329,7 @@ impl Node {
         let shared = NodeShared {
             listen_addrs: Arc::clone(&self.listen_addrs),
             discovered: Arc::clone(&self.discovered),
+            identified: Arc::clone(&self.identified),
             received: Arc::clone(&self.received),
             rate_limited: Arc::clone(&self.rate_limited),
         };
@@ -364,6 +387,9 @@ impl Node {
             addrs.clear();
         }
         if let Ok(mut peers) = self.discovered.lock() {
+            peers.clear();
+        }
+        if let Ok(mut peers) = self.identified.lock() {
             peers.clear();
         }
         if let Ok(mut msgs) = self.received.lock() {
@@ -508,7 +534,7 @@ fn write_atomic_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
 
 /// Build a libp2p Swarm with TCP + QUIC transports (Noise + Yamux) over the
 /// tokio runtime, carrying the node's composite behaviour (Kademlia in server
-/// mode). Gossip/identify protocols are added in follow-up changes.
+/// mode, plus GossipSub and Identify). autonat/dcutr land in Milestone B (ADR-304).
 fn build_swarm(keypair: Keypair) -> Result<Swarm<NodeBehaviour>, NetworkError> {
     let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
@@ -528,7 +554,15 @@ fn build_swarm(keypair: Keypair) -> Result<Swarm<NodeBehaviour>, NetworkError> {
                 gossipsub::Config::default(),
             )
             .expect("default gossipsub config is valid");
-            NodeBehaviour { kademlia, gossipsub }
+            let identify = identify::Behaviour::new(identify::Config::new(
+                IDENTIFY_PROTOCOL_VERSION.to_string(),
+                key.public(),
+            ));
+            NodeBehaviour {
+                kademlia,
+                gossipsub,
+                identify,
+            }
         })
         .expect("behaviour construction is infallible")
         .build();
@@ -552,6 +586,7 @@ async fn run_event_loop(
     let NodeShared {
         listen_addrs,
         discovered,
+        identified,
         received,
         rate_limited,
     } = shared;
@@ -659,6 +694,18 @@ async fn run_event_loop(
                         }
                     } else if let Ok(mut n) = rate_limited.lock() {
                         *n += 1;
+                    }
+                }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Identify(
+                    identify::Event::Received { peer_id, info, .. },
+                )) => {
+                    if let Ok(mut ids) = identified.lock() {
+                        ids.insert(peer_id.to_string());
+                    }
+                    // Feed the peer's advertised listen addresses into Kademlia
+                    // to improve routing — standard Identify usage (ADR-304).
+                    for addr in info.listen_addrs {
+                        swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                     }
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
@@ -912,6 +959,20 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------
+    // A.1.10 — Identify protocol version is Rotifer-namespaced (ADR-304)
+    // -----------------------------------------------------------------
+    #[test]
+    fn a_1_10_identify_protocol_version_namespaced() {
+        // Peers compare this string to detect protocol-incompatible nodes; it
+        // must stay Rotifer-namespaced so a stray libp2p node isn't mistaken for
+        // a Rotifer peer.
+        assert!(
+            IDENTIFY_PROTOCOL_VERSION.starts_with("/rotifer/"),
+            "identify protocol version must be /rotifer/-namespaced, got {IDENTIFY_PROTOCOL_VERSION}"
+        );
+    }
+
     // =================================================================
     // Multi-node integration tests — real libp2p over loopback.
     // `#[ignore]`d by default (kept out of the fast default `cargo test`); run
@@ -971,6 +1032,59 @@ mod tests {
             assert!(
                 std::time::Instant::now() < deadline,
                 "B did not discover A via Kademlia within 10s"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        let _ = std::fs::remove_file(&a_id);
+        let _ = std::fs::remove_file(&b_id);
+    }
+
+    // -----------------------------------------------------------------
+    // Two-node Identify exchange over loopback (integration, ADR-304)
+    // -----------------------------------------------------------------
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "two-node integration: Identify metadata exchange over loopback — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn two_nodes_exchange_identify() {
+        let a_id = std::env::temp_dir().join("rotifer-id-a.pem");
+        let b_id = std::env::temp_dir().join("rotifer-id-b.pem");
+        let _ = std::fs::remove_file(&a_id);
+        let _ = std::fs::remove_file(&b_id);
+
+        // Node A: listener, no bootstrap.
+        let mut cfg_a = cfg(0);
+        cfg_a.bootstrap_peers = vec![];
+        let mut a = Node::with_keypair_path(cfg_a, a_id.clone()).expect("A build");
+        a.start().expect("A start");
+        let a_addr = a
+            .listen_addrs()
+            .into_iter()
+            .next()
+            .expect("A must have a listen address");
+        let a_peer = a.local_peer_id().0;
+
+        // Node B: dials A; Identify runs both directions once connected.
+        let mut cfg_b = cfg(0);
+        cfg_b.bootstrap_peers = vec![a_addr];
+        let mut b = Node::with_keypair_path(cfg_b, b_id.clone()).expect("B build");
+        b.start().expect("B start");
+        let b_peer = b.local_peer_id().0;
+        assert_ne!(a_peer, b_peer, "nodes must have distinct PeerIds");
+
+        // Poll until both sides record an Identify exchange (async).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let a_has_b = a.identified_peers().iter().any(|p| p == &b_peer);
+            let b_has_a = b.identified_peers().iter().any(|p| p == &a_peer);
+            if a_has_b && b_has_a {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Identify did not complete within 10s (a_has_b={a_has_b}, b_has_a={b_has_a})"
             );
             std::thread::sleep(std::time::Duration::from_millis(50));
         }

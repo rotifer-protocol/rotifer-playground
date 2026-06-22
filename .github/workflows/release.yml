@@ -178,8 +178,15 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies (sync lock to the platform packages published above)
+        run: |
+          # release-please bumps the platform optionalDependencies but cannot
+          # regenerate package-lock.json (the resolved/integrity fields need the
+          # published package). publish-native just published them, so sync the lock
+          # first — otherwise the strict `npm ci` rejects it ("lock's X@old does not
+          # satisfy X@new"). The sync-lock job below re-points main's committed lock.
+          npm install --package-lock-only
+          npm ci
 
       - name: Build
         run: npm run build
@@ -237,3 +244,55 @@ jobs:
             ```
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') }}
+
+  sync-lock:
+    # After a release, main's package-lock.json still pins the platform packages at
+    # the PREVIOUS version: release-please bumps package.json's optionalDependencies
+    # but cannot regenerate the lock (the resolved/integrity fields need the
+    # published package). Now that the new platform packages are published (above),
+    # regenerate the lock and open a PR so `npm ci` on main + every later PR stays
+    # green. Direct push to main is gated by the DCO required check and auto-merge is
+    # disabled, so this goes through a PR for a maintainer to merge.
+    name: Sync package-lock to released versions
+    runs-on: ubuntu-latest
+    needs: [publish]
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: main
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Resolve release version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Sync package-lock to the now-published platform packages
+        run: npm install --package-lock-only
+
+      - name: Open a sync PR if the lock changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "package-lock.json already in sync with the released versions — nothing to do."
+            exit 0
+          fi
+          VERSION="${{ steps.version.outputs.version }}"
+          BRANCH="chore/sync-lock-v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add package-lock.json
+          git commit -s -m "chore(release): sync package-lock.json to v${VERSION}"
+          git push --force origin "$BRANCH"
+          gh pr create \
+            --base main --head "$BRANCH" \
+            --title "chore(release): sync package-lock.json to v${VERSION}" \
+            --body "release-please bumped the platform optionalDependencies to v${VERSION} but cannot regenerate package-lock.json (the resolved/integrity fields need the published package). The platform packages are now published, so this re-points the lock to match. Merge to keep npm ci green on main and every subsequent PR." \
+            || echo "A sync-lock PR for v${VERSION} already exists; the branch was updated."

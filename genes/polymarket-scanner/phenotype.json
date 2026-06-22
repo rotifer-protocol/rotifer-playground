@@ -1,7 +1,7 @@
 {
   "author": "rotifer-team",
   "domain": "market.scanner",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "fidelity": "Hybrid",
   "description": "Scans Polymarket prediction markets via Gamma API. Fetches active markets with real-time prices, spreads, bid/ask, volume, and liquidity. Filters by minimum volume/liquidity thresholds and returns structured market snapshots for downstream analysis.",
   "inputSchema": {
@@ -134,7 +134,7 @@
     },
     "minimumDependencies": []
   },
-  "transparency": "Open",
+  "transparency": "OPEN",
   "network": {
     "allowedDomains": [
       "gamma-api.polymarket.com",

@@ -10,7 +10,7 @@ description = "napi-rs bridge — exposes Rust Core to the TS CLI via Playground
 crate-type = ["cdylib"]
 
 [dependencies]
-rotifer-core = { version = "0.8.6", path = "../rotifer-core" }
+rotifer-core = { version = "0.8.6", path = "../rotifer-core" } # x-release-please-version
 napi = { version = "3", features = ["serde-json"] }
 napi-derive = "3"
 serde.workspace = true

@@ -11,7 +11,13 @@
         { "type": "json", "path": "npm/darwin-arm64/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "npm/darwin-x64/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "npm/linux-x64-gnu/package.json", "jsonpath": "$.version" },
-        { "type": "json", "path": "npm/win32-x64-msvc/package.json", "jsonpath": "$.version" }
+        { "type": "json", "path": "npm/win32-x64-msvc/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "crates/rotifer-napi/package.json", "jsonpath": "$.version" },
+        { "type": "generic", "path": "crates/rotifer-napi/Cargo.toml" },
+        { "type": "json", "path": "package.json", "jsonpath": "$.optionalDependencies['@rotifer/playground-darwin-arm64']" },
+        { "type": "json", "path": "package.json", "jsonpath": "$.optionalDependencies['@rotifer/playground-darwin-x64']" },
+        { "type": "json", "path": "package.json", "jsonpath": "$.optionalDependencies['@rotifer/playground-linux-x64-gnu']" },
+        { "type": "json", "path": "package.json", "jsonpath": "$.optionalDependencies['@rotifer/playground-win32-x64-msvc']" }
       ]
     }
   }

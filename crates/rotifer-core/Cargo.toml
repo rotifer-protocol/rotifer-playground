@@ -40,6 +40,7 @@ libp2p = { workspace = true, features = [
     "gossipsub",
     "kad",
     "identify",
+    "memory-connection-limits",
     "tokio",
     "ed25519",
     "macros",

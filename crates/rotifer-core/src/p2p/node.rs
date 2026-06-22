@@ -22,7 +22,10 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use libp2p::futures::StreamExt;
+use libp2p::connection_limits;
 use libp2p::gossipsub;
+use libp2p::identify;
+use libp2p::memory_connection_limits;
 use libp2p::identity::Keypair;
 use libp2p::kad::{self, store::MemoryStore};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
@@ -62,13 +65,38 @@ enum Command {
     },
 }
 
+/// libp2p Identify protocol version advertised by Rotifer nodes. Peers compare
+/// this to spot protocol-incompatible nodes; autonat/dcutr (Milestone B) build
+/// on the observed-address info Identify provides. ADR-304.
+const IDENTIFY_PROTOCOL_VERSION: &str = "/rotifer/0.9.1";
+
 /// Composite network behaviour driven by the node's Swarm. Kademlia provides
 /// peer discovery + a distributed record store; GossipSub provides
-/// publish/subscribe message broadcast. Identify lands here in a follow-up.
+/// publish/subscribe message broadcast; Identify exchanges peer metadata
+/// (protocols, listen + observed addrs) on connect.
+/// Conservative connection-limit defaults (ADR-304 D2). They cap how many
+/// connections the Swarm holds so a node can't be connected into OOM; the
+/// per-peer + total ceilings pair with the message-layer rate limit (§8.6).
+/// Real values get tuned against the public-network load test (Milestone C).
+const MAX_ESTABLISHED: u32 = 512;
+const MAX_ESTABLISHED_PER_PEER: u32 = 4;
+const MAX_PENDING_INCOMING: u32 = 32;
+const MAX_PENDING_OUTGOING: u32 = 32;
+const MAX_ESTABLISHED_INCOMING: u32 = 256;
+const MAX_ESTABLISHED_OUTGOING: u32 = 256;
+/// Deny new connections once process memory exceeds this fraction of system RAM.
+const MAX_MEMORY_PERCENTAGE: f64 = 0.9;
+
 #[derive(NetworkBehaviour)]
 struct NodeBehaviour {
     kademlia: kad::Behaviour<MemoryStore>,
     gossipsub: gossipsub::Behaviour,
+    identify: identify::Behaviour,
+    /// Caps total / per-peer / pending connections so a node can't be connected
+    /// into resource exhaustion — the scale-up guardrail (ADR-304 D2).
+    connection_limits: connection_limits::Behaviour,
+    /// Denies new connections under memory pressure (process RSS vs system RAM).
+    memory_connection_limits: memory_connection_limits::Behaviour,
 }
 
 /// Peers the node has discovered (present in the Kademlia routing table),
@@ -93,8 +121,12 @@ type ReceivedMessages = Arc<Mutex<Vec<ReceivedMessage>>>;
 struct NodeShared {
     listen_addrs: Arc<Mutex<Vec<String>>>,
     discovered: DiscoveredPeers,
+    /// Peers we have completed an Identify exchange with (ADR-304).
+    identified: DiscoveredPeers,
     received: ReceivedMessages,
     rate_limited: Arc<Mutex<u64>>,
+    /// Count of inbound connections denied by the connection limits (ADR-304).
+    rejected: Arc<Mutex<u64>>,
 }
 
 /// Fixed listen ports currently bound by live nodes in this process. libp2p's
@@ -117,10 +149,17 @@ pub struct Node {
     listen_addrs: Arc<Mutex<Vec<String>>>,
     /// Peers discovered via Kademlia, updated by the event loop.
     discovered: DiscoveredPeers,
+    /// Peers we have completed an Identify exchange with (ADR-304).
+    identified: DiscoveredPeers,
     /// GossipSub messages received so far, appended by the event loop.
     received: ReceivedMessages,
     /// Count of inbound messages dropped by the per-peer rate limiter (§8.6).
     rate_limited: Arc<Mutex<u64>>,
+    /// Count of inbound connections denied by the connection limits (ADR-304).
+    rejected: Arc<Mutex<u64>>,
+    /// Override for `max_established_incoming` (tests / future config). `None`
+    /// uses the conservative `MAX_ESTABLISHED_INCOMING` default (ADR-304).
+    max_established_incoming: Option<u32>,
     /// Dedicated runtime hosting the Swarm event loop (`None` until `start`).
     runtime: Option<tokio::runtime::Runtime>,
     /// Command channel into the event loop (`None` until `start`).
@@ -167,8 +206,11 @@ impl Node {
             peer_id,
             listen_addrs: Arc::new(Mutex::new(Vec::new())),
             discovered: Arc::new(Mutex::new(HashSet::new())),
+            identified: Arc::new(Mutex::new(HashSet::new())),
             received: Arc::new(Mutex::new(Vec::new())),
             rate_limited: Arc::new(Mutex::new(0)),
+            rejected: Arc::new(Mutex::new(0)),
+            max_established_incoming: None,
             runtime: None,
             cmd_tx: None,
             task: None,
@@ -196,6 +238,29 @@ impl Node {
             .lock()
             .map(|peers| peers.iter().cloned().collect())
             .unwrap_or_default()
+    }
+
+    /// Peers this node has completed an Identify exchange with (ADR-304). Empty
+    /// until the Swarm is started and at least one peer connects + identifies.
+    pub fn identified_peers(&self) -> Vec<String> {
+        self.identified
+            .lock()
+            .map(|peers| peers.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Override the max number of established **inbound** connections (ADR-304).
+    /// `None`/unset keeps the conservative default. Mainly for tests + future
+    /// config; must be called before [`Node::start`].
+    pub fn with_max_established_incoming(mut self, max: u32) -> Self {
+        self.max_established_incoming = Some(max);
+        self
+    }
+
+    /// Count of inbound connections denied so far by the connection limits
+    /// (ADR-304). Non-zero means the node shed load under its connection cap.
+    pub fn rejected_connections(&self) -> u64 {
+        self.rejected.lock().map(|n| *n).unwrap_or(0)
     }
 
     /// Subscribe to a GossipSub topic. Requires the node to be started.
@@ -304,17 +369,21 @@ impl Node {
         let host = self.config.listen_host.clone();
         let port = self.config.listen_port;
         let bootstrap = self.config.bootstrap_peers.clone();
+        let max_established_incoming = self.max_established_incoming;
         let shared = NodeShared {
             listen_addrs: Arc::clone(&self.listen_addrs),
             discovered: Arc::clone(&self.discovered),
+            identified: Arc::clone(&self.identified),
             received: Arc::clone(&self.received),
             rate_limited: Arc::clone(&self.rate_limited),
+            rejected: Arc::clone(&self.rejected),
         };
         let (ready_tx, ready_rx) = oneshot::channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
 
         let task = runtime.spawn(run_event_loop(
-            keypair, host, port, bootstrap, shared, ready_tx, cmd_rx,
+            keypair, host, port, bootstrap, max_established_incoming, shared, ready_tx,
+            cmd_rx,
         ));
 
         // Block until the listener comes up (or fails) before returning.
@@ -364,6 +433,9 @@ impl Node {
             addrs.clear();
         }
         if let Ok(mut peers) = self.discovered.lock() {
+            peers.clear();
+        }
+        if let Ok(mut peers) = self.identified.lock() {
             peers.clear();
         }
         if let Ok(mut msgs) = self.received.lock() {
@@ -508,8 +580,11 @@ fn write_atomic_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
 
 /// Build a libp2p Swarm with TCP + QUIC transports (Noise + Yamux) over the
 /// tokio runtime, carrying the node's composite behaviour (Kademlia in server
-/// mode). Gossip/identify protocols are added in follow-up changes.
-fn build_swarm(keypair: Keypair) -> Result<Swarm<NodeBehaviour>, NetworkError> {
+/// mode, plus GossipSub and Identify). autonat/dcutr land in Milestone B (ADR-304).
+fn build_swarm(
+    keypair: Keypair,
+    max_established_incoming: Option<u32>,
+) -> Result<Swarm<NodeBehaviour>, NetworkError> {
     let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
         .with_tcp(
@@ -528,7 +603,29 @@ fn build_swarm(keypair: Keypair) -> Result<Swarm<NodeBehaviour>, NetworkError> {
                 gossipsub::Config::default(),
             )
             .expect("default gossipsub config is valid");
-            NodeBehaviour { kademlia, gossipsub }
+            let identify = identify::Behaviour::new(identify::Config::new(
+                IDENTIFY_PROTOCOL_VERSION.to_string(),
+                key.public(),
+            ));
+            let limits = connection_limits::ConnectionLimits::default()
+                .with_max_established(Some(MAX_ESTABLISHED))
+                .with_max_established_per_peer(Some(MAX_ESTABLISHED_PER_PEER))
+                .with_max_pending_incoming(Some(MAX_PENDING_INCOMING))
+                .with_max_pending_outgoing(Some(MAX_PENDING_OUTGOING))
+                .with_max_established_incoming(Some(
+                    max_established_incoming.unwrap_or(MAX_ESTABLISHED_INCOMING),
+                ))
+                .with_max_established_outgoing(Some(MAX_ESTABLISHED_OUTGOING));
+            let connection_limits = connection_limits::Behaviour::new(limits);
+            let memory_connection_limits =
+                memory_connection_limits::Behaviour::with_max_percentage(MAX_MEMORY_PERCENTAGE);
+            NodeBehaviour {
+                kademlia,
+                gossipsub,
+                identify,
+                connection_limits,
+                memory_connection_limits,
+            }
         })
         .expect("behaviour construction is infallible")
         .build();
@@ -540,11 +637,16 @@ fn build_swarm(keypair: Keypair) -> Result<Swarm<NodeBehaviour>, NetworkError> {
 ///
 /// Signals `ready_tx` exactly once: `Ok(())` on the first listen address, or
 /// `Err` if the listener fails to bind.
+// The Swarm driver legitimately needs identity, listen config, the inbound
+// limit, shared state, and both channels; grouping them would only obscure the
+// wiring of this single internal entry point.
+#[allow(clippy::too_many_arguments)]
 async fn run_event_loop(
     keypair: Keypair,
     host: String,
     port: u16,
     bootstrap: Vec<String>,
+    max_established_incoming: Option<u32>,
     shared: NodeShared,
     ready_tx: oneshot::Sender<Result<(), NetworkError>>,
     mut cmd_rx: mpsc::UnboundedReceiver<Command>,
@@ -552,12 +654,14 @@ async fn run_event_loop(
     let NodeShared {
         listen_addrs,
         discovered,
+        identified,
         received,
         rate_limited,
+        rejected,
     } = shared;
     // Per-peer flood defence (§8.6); lives in the single-threaded event loop.
     let mut security = super::security::Security::new();
-    let mut swarm = match build_swarm(keypair) {
+    let mut swarm = match build_swarm(keypair, max_established_incoming) {
         Ok(s) => s,
         Err(e) => {
             let _ = ready_tx.send(Err(e));
@@ -632,6 +736,17 @@ async fn run_event_loop(
                     let addr = endpoint.get_remote_address().clone();
                     swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                 }
+                SwarmEvent::IncomingConnectionError { .. } => {
+                    // A pending inbound connection failed — most commonly denied
+                    // by the connection limits (ADR-304 D2). Count + log so load
+                    // shedding is observable instead of silent.
+                    if let Ok(mut n) = rejected.lock() {
+                        *n += 1;
+                    }
+                    tracing::debug!(
+                        "inbound connection rejected (connection limit reached or transport error)"
+                    );
+                }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
                     kad::Event::RoutingUpdated { peer, .. },
                 )) => {
@@ -659,6 +774,18 @@ async fn run_event_loop(
                         }
                     } else if let Ok(mut n) = rate_limited.lock() {
                         *n += 1;
+                    }
+                }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Identify(
+                    identify::Event::Received { peer_id, info, .. },
+                )) => {
+                    if let Ok(mut ids) = identified.lock() {
+                        ids.insert(peer_id.to_string());
+                    }
+                    // Feed the peer's advertised listen addresses into Kademlia
+                    // to improve routing — standard Identify usage (ADR-304).
+                    for addr in info.listen_addrs {
+                        swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                     }
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
@@ -912,6 +1039,33 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------
+    // A.1.10 — Identify protocol version is Rotifer-namespaced (ADR-304)
+    // -----------------------------------------------------------------
+    #[test]
+    fn a_1_10_identify_protocol_version_namespaced() {
+        // Peers compare this string to detect protocol-incompatible nodes; it
+        // must stay Rotifer-namespaced so a stray libp2p node isn't mistaken for
+        // a Rotifer peer.
+        assert!(
+            IDENTIFY_PROTOCOL_VERSION.starts_with("/rotifer/"),
+            "identify protocol version must be /rotifer/-namespaced, got {IDENTIFY_PROTOCOL_VERSION}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // A.1.11 — Connection-limit defaults are internally consistent (ADR-304)
+    // -----------------------------------------------------------------
+    #[test]
+    fn a_1_11_connection_limits_are_conservative() {
+        // A per-peer / inbound / outbound cap above the total would defeat the
+        // OOM guard; memory percentage must be a valid fraction.
+        assert!(MAX_ESTABLISHED_PER_PEER <= MAX_ESTABLISHED);
+        assert!(MAX_ESTABLISHED_INCOMING <= MAX_ESTABLISHED);
+        assert!(MAX_ESTABLISHED_OUTGOING <= MAX_ESTABLISHED);
+        assert!((0.0..=1.0).contains(&MAX_MEMORY_PERCENTAGE));
+    }
+
     // =================================================================
     // Multi-node integration tests — real libp2p over loopback.
     // `#[ignore]`d by default (kept out of the fast default `cargo test`); run
@@ -977,6 +1131,116 @@ mod tests {
 
         let _ = std::fs::remove_file(&a_id);
         let _ = std::fs::remove_file(&b_id);
+    }
+
+    // -----------------------------------------------------------------
+    // Two-node Identify exchange over loopback (integration, ADR-304)
+    // -----------------------------------------------------------------
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "two-node integration: Identify metadata exchange over loopback — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn two_nodes_exchange_identify() {
+        let a_id = std::env::temp_dir().join("rotifer-id-a.pem");
+        let b_id = std::env::temp_dir().join("rotifer-id-b.pem");
+        let _ = std::fs::remove_file(&a_id);
+        let _ = std::fs::remove_file(&b_id);
+
+        // Node A: listener, no bootstrap.
+        let mut cfg_a = cfg(0);
+        cfg_a.bootstrap_peers = vec![];
+        let mut a = Node::with_keypair_path(cfg_a, a_id.clone()).expect("A build");
+        a.start().expect("A start");
+        let a_addr = a
+            .listen_addrs()
+            .into_iter()
+            .next()
+            .expect("A must have a listen address");
+        let a_peer = a.local_peer_id().0;
+
+        // Node B: dials A; Identify runs both directions once connected.
+        let mut cfg_b = cfg(0);
+        cfg_b.bootstrap_peers = vec![a_addr];
+        let mut b = Node::with_keypair_path(cfg_b, b_id.clone()).expect("B build");
+        b.start().expect("B start");
+        let b_peer = b.local_peer_id().0;
+        assert_ne!(a_peer, b_peer, "nodes must have distinct PeerIds");
+
+        // Poll until both sides record an Identify exchange (async).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let a_has_b = a.identified_peers().iter().any(|p| p == &b_peer);
+            let b_has_a = b.identified_peers().iter().any(|p| p == &a_peer);
+            if a_has_b && b_has_a {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Identify did not complete within 10s (a_has_b={a_has_b}, b_has_a={b_has_a})"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        let _ = std::fs::remove_file(&a_id);
+        let _ = std::fs::remove_file(&b_id);
+    }
+
+    // -----------------------------------------------------------------
+    // Connection limit denies inbound over loopback (integration, ADR-304)
+    // -----------------------------------------------------------------
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "two-node integration: connection-limit inbound rejection over loopback — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn connection_limit_rejects_inbound() {
+        let l_id = std::env::temp_dir().join("rotifer-cl-l.pem");
+        let a_id = std::env::temp_dir().join("rotifer-cl-a.pem");
+        let _ = std::fs::remove_file(&l_id);
+        let _ = std::fs::remove_file(&a_id);
+
+        // Node L: listener that accepts ZERO inbound connections.
+        let mut cfg_l = cfg(0);
+        cfg_l.bootstrap_peers = vec![];
+        let mut l = Node::with_keypair_path(cfg_l, l_id.clone())
+            .expect("L build")
+            .with_max_established_incoming(0);
+        l.start().expect("L start");
+        let l_addr = l
+            .listen_addrs()
+            .into_iter()
+            .next()
+            .expect("L must have a listen address");
+        let l_peer = l.local_peer_id().0;
+
+        // Node A dials L; L must deny the inbound connection under its 0 cap.
+        let mut cfg_a = cfg(0);
+        cfg_a.bootstrap_peers = vec![l_addr];
+        let mut a = Node::with_keypair_path(cfg_a, a_id.clone()).expect("A build");
+        a.start().expect("A start");
+
+        // Poll until L records a rejection (async).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if l.rejected_connections() > 0 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "L did not reject the inbound connection within 10s"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        // A must never complete an Identify with a node that denied it.
+        assert!(
+            !a.identified_peers().iter().any(|p| p == &l_peer),
+            "A should not identify a node that denied its connection"
+        );
+
+        let _ = std::fs::remove_file(&l_id);
+        let _ = std::fs::remove_file(&a_id);
     }
 
     // -----------------------------------------------------------------

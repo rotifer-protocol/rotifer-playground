@@ -8,6 +8,12 @@ discovery (manual bootstrap) + announcement propagation.
 You need at least two machines; three makes the gossip fan-out obvious. The
 walkthrough assumes macOS, but the only OS-specific note is the firewall prompt.
 
+There are two ways to run this:
+
+- **Path A — published npm package (recommended).** What a normal
+  `npm install -g` user gets; no Rust toolchain or source checkout.
+- **Path B — from-source build.** Only if you're rebuilding the native addon.
+
 ## What you'll see
 
 ```
@@ -23,8 +29,87 @@ Mac A  ──announce──▶  GossipSub  ──▶  Mac B  ·  Mac C
 ## Prerequisites
 
 - All machines on the **same Wi-Fi / LAN**.
-- A working **Rust** toolchain (`cargo`) and **Node.js >= 20** on each machine.
-- A clone of this repository on each machine, on the same branch/commit.
+- **Node.js >= 20** on each machine.
+
+Path B additionally needs a **Rust** toolchain (`cargo`) and a clone of this
+repository on each machine (same branch/commit).
+
+## Path A — published npm package (v0.9.0+)
+
+The path a normal user follows: install the CLI from npm — no Rust toolchain,
+no source checkout. Do this on **each** machine.
+
+### A1. Install the CLI (every machine)
+
+```bash
+npm install -g @rotifer/playground@latest   # v0.9.0 or newer
+rotifer --version                            # should print 0.9.0+
+```
+
+If `rotifer` is "command not found" right after install, npm's global bin
+directory isn't on your PATH — run `export PATH="$(npm prefix -g)/bin:$PATH"`
+for that shell, then retry.
+
+### A2. Start the seed (machine A)
+
+Bind all interfaces so the others can reach it, then read its reachable address:
+
+```bash
+rotifer network start --host 0.0.0.0 --port 9878
+rotifer network status
+```
+
+`status` lists every interface it bound. Copy the **LAN** line — the
+`192.168.x.x` / `10.x.x.x` one, not `127.0.0.1`:
+
+```
+Listening: /ip4/127.0.0.1/tcp/9878
+Listening: /ip4/192.168.0.103/tcp/9878   ← give this to the others
+```
+
+On the first `--host 0.0.0.0` start, macOS asks *"Do you want the application
+'node' to accept incoming network connections?"* — click **Allow**.
+
+### A3. Join from the others (machine B, C, …)
+
+Paste A's LAN address into `--bootstrap` (a plain `/ip4/.../tcp/9878` — no
+PeerId needed), then confirm the link:
+
+```bash
+rotifer network start --host 0.0.0.0 --port 9878 --bootstrap /ip4/192.168.0.103/tcp/9878
+rotifer network peers     # lists A's PeerId within a second or two
+```
+
+### A4. Announce on A, receive on B
+
+`announce` needs a directory holding `genes/<name>/phenotype.json`. `rotifer
+init` scaffolds one (the example gene `hello-world`):
+
+```bash
+# on machine A
+rotifer init demo-net && cd demo-net
+rotifer network announce hello-world
+```
+
+```bash
+# on machine B
+rotifer network received
+```
+
+The received gene is tagged with A's PeerId as the source — and that PeerId
+matches what A printed at start, which is the proof it crossed the network:
+
+```
+Received Gene Announcements
+  hello-world@0.1.0: general · Wrapped · from 12D3KooW…
+```
+
+Stop any node with `rotifer network stop`.
+
+## Path B — from-source build
+
+You only need this if you're changing the Rust addon. The steps below (§1–§4)
+build the addon locally so it shadows the published package.
 
 ## 1. Build on each machine
 
@@ -115,9 +200,15 @@ Received Gene Announcements
   first `--host 0.0.0.0` start, macOS may pop *"Do you want the application
   'node' to accept incoming network connections?"* — click **Allow** (or allow
   `node` in System Settings → Network → Firewall).
-- **`network start` says "unavailable".** The native addon isn't loading. Re-run
-  the build steps in §1, including the `cp` and `rm -rf` lines.
-- **Stop a node.** `node dist/index.js network stop`.
+- **`network start` says "unavailable".** The native addon isn't loading. On
+  Path A, reinstall `@rotifer/playground` (your platform may lack a prebuilt
+  addon). On Path B, re-run the §1 build steps, including the `cp` and `rm -rf`
+  lines.
+- **`rotifer: command not found` after `npm install -g` (Path A).** npm's global
+  bin isn't on your PATH — run `export PATH="$(npm prefix -g)/bin:$PATH"` for
+  that shell, then retry.
+- **Stop a node.** `rotifer network stop` (Path A) or
+  `node dist/index.js network stop` (Path B).
 
 ## Single-machine variant
 
@@ -135,9 +226,10 @@ HOME=/tmp/node-b node dist/index.js network received
 
 ## Notes
 
-- This is a **from-source developer build**, not an `npm install -g` release.
-  Public-release users will get `--host` / `network received` only after a
-  versioned release republishes the platform packages.
+- **Path A vs Path B.** Since **v0.9.0** the published platform packages bundle
+  the P2P addon, so `npm install -g` users get `--host` / `network received` out
+  of the box (Path A). Path B (from-source) is only for developing the addon
+  itself, where a fresh local build must shadow the published package.
 - LAN reachability here relies on manual `--bootstrap`. Automatic discovery
   (mDNS) and reaching nodes across the public internet (NAT traversal, relays)
   are later milestones — see the productionization roadmap.

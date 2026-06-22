@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.8.6...v0.9.0) (2026-06-22)
+
+
+### Features
+
+* **cli:** add `rotifer doctor` toolchain health command (R5) ([049df01](https://github.com/rotifer-protocol/rotifer-playground/commit/049df012365e990cacd7bde1b909ca73485fc771))
+* **migrations:** Sprint C Phase 4 — content_hash server-side validation ([b14740e](https://github.com/rotifer-protocol/rotifer-playground/commit/b14740e7c5c68dbae2297ec251d251ad063b8c11))
+* **migrations:** Sprint C Phase 5 — protocol consistency v09 baseline ([6d40b06](https://github.com/rotifer-protocol/rotifer-playground/commit/6d40b0686fd31ed69de1e8545f318937670e5a24))
+* **migrations:** Sprint C Phase 6a — downloads RLS hardening ([901263a](https://github.com/rotifer-protocol/rotifer-playground/commit/901263a9d737cb66db5900f241f237b50d4fc655))
+* **network:** run a real libp2p node from the CLI (phase 1) ([#80](https://github.com/rotifer-protocol/rotifer-playground/issues/80)) ([1fe6f29](https://github.com/rotifer-protocol/rotifer-playground/commit/1fe6f29035f7be13c96ab5b1b416d72d7636483d))
+* **network:** run the P2P node as a background daemon with a local control channel (phase 2) ([#81](https://github.com/rotifer-protocol/rotifer-playground/issues/81)) ([710a4b4](https://github.com/rotifer-protocol/rotifer-playground/commit/710a4b4cc85c510ba28aa385e90ccd372832ba94))
+* **p2p:** implement application-layer security primitives (flood/replay/eclipse/sybil) ([#82](https://github.com/rotifer-protocol/rotifer-playground/issues/82)) ([a0f8a7e](https://github.com/rotifer-protocol/rotifer-playground/commit/a0f8a7e5641cabd011b76ff9f58604b32df1b0ac))
+* **p2p:** LAN demo plumbing — configurable listen host (--host) + announcement propagation (`network received`) ([#87](https://github.com/rotifer-protocol/rotifer-playground/issues/87)) ([d94f540](https://github.com/rotifer-protocol/rotifer-playground/commit/d94f54015c1d660ba5f404cc99f03f13d4fd7842))
+* **p2p:** real libp2p networking — identity, swarm, Kademlia DHT, GossipSub ([#74](https://github.com/rotifer-protocol/rotifer-playground/issues/74)) ([59573f3](https://github.com/rotifer-protocol/rotifer-playground/commit/59573f38d13e47d854109b4bfaab626b03b9e9ca))
+* **p2p:** verify message signatures + authenticate gossip publishers (§3.2 iteration 2) ([#83](https://github.com/rotifer-protocol/rotifer-playground/issues/83)) ([44a5c66](https://github.com/rotifer-protocol/rotifer-playground/commit/44a5c662905b502d73f5a99b3c6d27a7240e0851))
+* **p2p:** wire the per-peer rate limiter into the live gossip receive path (§3.2 iteration 3) ([#84](https://github.com/rotifer-protocol/rotifer-playground/issues/84)) ([027e322](https://github.com/rotifer-protocol/rotifer-playground/commit/027e3227e0188c489314feeb1fd9154a516b5d09))
+* **phenotype:** add Hybrid Fidelity types — externalDependencies / simulationSpec / degradationSpec + FIDELITY_DISCOUNT (v0.9 §3.11) ([9403f5b](https://github.com/rotifer-protocol/rotifer-playground/commit/9403f5b1a8b6820f006fb6283bcf431530197171))
+* **phenotype:** align gene transparency field to spec §4.2 (F8, §3.3) ([#86](https://github.com/rotifer-protocol/rotifer-playground/issues/86)) ([c725c2f](https://github.com/rotifer-protocol/rotifer-playground/commit/c725c2f95eee5efc5d2f596755d6039d2f0a0a08))
+* **phenotype:** validator + shared types + publish/agent-list updates ([22f2ca8](https://github.com/rotifer-protocol/rotifer-playground/commit/22f2ca8a33ef1f385ea5f4917fc2a42b5bb36623))
+* **publish:** auto V(g) badge upload + --skip-vg flag (Phase 1) ([4c47cce](https://github.com/rotifer-protocol/rotifer-playground/commit/4c47ccebc49f1c342c9b915b2cd4ded8c494b29e))
+* **supabase:** close v0.9 stage-2 B-R6 — pgTAP all-green + TS E2E live + CI blocking ([242e413](https://github.com/rotifer-protocol/rotifer-playground/commit/242e4138a5b862ce2f282896f9c7d6f88577bd50))
+* **supabase:** impl compute_path_diversity (v0.9 stage 2 B-R5, Ramanujan R1) ([c93950f](https://github.com/rotifer-protocol/rotifer-playground/commit/c93950f5f43661aa51867a3a3e640a2ba390eca1))
+* **supabase:** impl get_display_fitness + get_display_weight (v0.9 stage 2 B-R3+R4) ([5e4b0e1](https://github.com/rotifer-protocol/rotifer-playground/commit/5e4b0e125b79e7e5dc4fca01be5ec41a695e84dc))
+* **supabase:** impl reset_season() RPC + activate pg_cron (v0.9 stage 2) ([2616878](https://github.com/rotifer-protocol/rotifer-playground/commit/261687814c02f370beb792a39551169f79d0ae7a))
+* **v0.8.8 §3.4 §3.7:** default-publish config + V(g) gate coverage ([c7983de](https://github.com/rotifer-protocol/rotifer-playground/commit/c7983de4a0f2f0ce973344d5eb6130f1e81dd4bd))
+
+
+### Bug Fixes
+
+* align degradationBehavior + failureSemantics with Rust IR PascalCase 5 enum ([099540c](https://github.com/rotifer-protocol/rotifer-playground/commit/099540c49969f86894297a00c1e6bfa42c7d0a94))
+* **auth:** bind the CLI login callback to the allow-listed localhost:9876 ([#77](https://github.com/rotifer-protocol/rotifer-playground/issues/77)) ([b6179b4](https://github.com/rotifer-protocol/rotifer-playground/commit/b6179b4d046ff96a204fdb42e2225a7844027d1d))
+* **cli/versions:** accept @owner/name single-arg form for ref-syntax parity ([95298b8](https://github.com/rotifer-protocol/rotifer-playground/commit/95298b86819d3a6d7d6fb073d8cdf2161c3c6b6d))
+* **cli:** parse @owner/name in gene refs + route reputation + refresh whoami ([460225e](https://github.com/rotifer-protocol/rotifer-playground/commit/460225ec40ca6b4691e3f891adfd74c9a210bf00))
+* **cloud/badge:** align uploadSafetyBadge URL with worker /safety route ([848c571](https://github.com/rotifer-protocol/rotifer-playground/commit/848c5714394b4a49f091cac00fe7e61c204b2bba))
+* **compile:** async-express guard at compile time + offline toolchain preflight ([#57](https://github.com/rotifer-protocol/rotifer-playground/issues/57), [#58](https://github.com/rotifer-protocol/rotifer-playground/issues/58)) ([c690a9a](https://github.com/rotifer-protocol/rotifer-playground/commit/c690a9a7643024b5eff736f91042c63f4cc9ca02))
+* **db:** make search_path pin migration replay-safe ([bc1828e](https://github.com/rotifer-protocol/rotifer-playground/commit/bc1828e25880f74d2fa6bdf729f4fd6daf8f74de))
+* **db:** unfreeze reputation cron silent failure ([b0c7fc3](https://github.com/rotifer-protocol/rotifer-playground/commit/b0c7fc3b94519deea2125ed9a5ad2aabd03a60d9))
+* **deps:** align @napi-rs/cli constraint to ^3.7.0 to match lockfile ([#54](https://github.com/rotifer-protocol/rotifer-playground/issues/54)) ([dada9f7](https://github.com/rotifer-protocol/rotifer-playground/commit/dada9f73aac97d914404862c377d4812026f71b7)), closes [#52](https://github.com/rotifer-protocol/rotifer-playground/issues/52)
+* **deps:** upgrade wasmtime 42.0.2 -&gt; 43.0.2 (RUSTSEC-2026-0114) ([20bb434](https://github.com/rotifer-protocol/rotifer-playground/commit/20bb4343821ef760a3754a7e010f83bdd818adb2))
+* **genes:** polymarket-scanner transparency "Open" → "OPEN" (v0.3.1, F8) ([#105](https://github.com/rotifer-protocol/rotifer-playground/issues/105)) ([894db2d](https://github.com/rotifer-protocol/rotifer-playground/commit/894db2d29112e25719197c4618494a76c5bc00bf))
+* **hello:** block incompatible fallback genome for web3 template ([6e24098](https://github.com/rotifer-protocol/rotifer-playground/commit/6e24098267fed0e8d9d7c887e7f63bc21effc300))
+* **phenotype:** widen readonly enum arrays for .includes() type compat ([a762070](https://github.com/rotifer-protocol/rotifer-playground/commit/a762070487ecf45780877fe841e2bc2be7058b62))
+* **release:** cover the 3 stale version surfaces in release-please ([#108](https://github.com/rotifer-protocol/rotifer-playground/issues/108)) ([5a5d75b](https://github.com/rotifer-protocol/rotifer-playground/commit/5a5d75b4788c2e772db04c1ad255821e85424062))
+* **sandbox:** surface guest stderr on WASM trap (R4) ([95a529b](https://github.com/rotifer-protocol/rotifer-playground/commit/95a529bba601021285ff83455cb848502ea72a56))
+* **supabase:** unblock publish — qualify digest() + degrade hash mismatch to warning ([98d1fd5](https://github.com/rotifer-protocol/rotifer-playground/commit/98d1fd5c4a2796139e5664663345ad1927702fe9))
+* **vscode:** use vortex logo for plugin icons ([e95731e](https://github.com/rotifer-protocol/rotifer-playground/commit/e95731ea1a763463001399993614b58b5fb249c1))
+* **wrap:** route validation errors through structured formatter, no stack-trace leak ([#55](https://github.com/rotifer-protocol/rotifer-playground/issues/55)) ([e705323](https://github.com/rotifer-protocol/rotifer-playground/commit/e70532362c5d1a4591a429ef75cb1e1afed1ec0c)), closes [#51](https://github.com/rotifer-protocol/rotifer-playground/issues/51)
+
 ## [Unreleased]
 
 ### Added

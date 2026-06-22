@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { execSync } from "node:child_process";
 import { mkdirSync, existsSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -27,12 +27,12 @@ function run(args: string, opts: { cwd?: string } = {}): {
   }
 }
 
-// These checks exercise the degraded paths, which is what a fresh environment
-// hits: no daemon is running, and in CI the installed platform package predates
-// the native P2P addon (rebuilt + republished at release). So `start` reports
-// "unavailable" and the daemon-backed commands report "not running" — cleanly,
-// no hang, no crash. The real daemon path is covered by the Rust two-node
-// integration tests + manual end-to-end runs.
+// Most checks exercise the no-daemon paths a fresh environment hits (commands
+// report "not running" cleanly). `network start` is addon-aware: with the native
+// addon present (the published platform package, v0.9.0+) it brings up a real
+// libp2p daemon; without it (a pure-TS build) it degrades gracefully. The afterEach
+// hook stops any daemon a test started so the no-daemon assertions stay valid. The
+// deep daemon/P2P path is covered by the Rust two-node integration tests.
 describe("rotifer network commands", () => {
   beforeAll(() => {
     mkdirSync(TEST_DIR, { recursive: true });
@@ -42,6 +42,13 @@ describe("rotifer network commands", () => {
     if (existsSync(TEST_DIR)) {
       rmSync(TEST_DIR, { recursive: true, force: true });
     }
+  });
+
+  afterEach(() => {
+    // `network start` (with the native addon present) launches a detached daemon
+    // keyed by HOME=TEST_DIR; stop it so the next test sees a clean "no daemon"
+    // state — the "not running" assertions below depend on it.
+    run("network stop");
   });
 
   it("network --help lists the public subcommands and hides __daemon", () => {
@@ -72,21 +79,25 @@ describe("rotifer network commands", () => {
     expect(id2).toBe(id1);
   });
 
-  // SKIPPED (v0.9.0 release): these two assumed the native addon is UNAVAILABLE in
-  // CI — true pre-release, when the installed platform package predated the P2P
-  // addon (see the file-header note). Since v0.9.0 the platform package ships the
-  // addon, so `network start` actually starts a daemon (no "unavailable"), and the
-  // started daemon then makes `stop` report "stopped" rather than "not running".
-  // Needs an addon-aware rewrite (assert the daemon starts + clean it up). The real
-  // daemon path is covered by the Rust two-node integration tests + manual e2e runs.
-  it.skip("network start degrades gracefully without the native addon", () => {
-    const result = run("network start");
+  it("network start brings up a daemon (addon present) or degrades gracefully (no addon)", () => {
+    // Custom port so this doesn't collide with the default 9878 a parallel test
+    // file (or a leaked daemon) might hold. afterEach stops whatever started.
+    const result = run("network start --port 19878");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Starting P2P Daemon");
-    expect(result.stdout.toLowerCase()).toContain("unavailable");
+    const out = result.stdout.toLowerCase();
+    if (out.includes("unavailable")) {
+      // No native addon (a pure-TS build): warns + exits 0 cleanly, no daemon.
+      expect(out).toContain("unavailable");
+    } else {
+      // Native addon present (published platform package, v0.9.0+): a real libp2p
+      // daemon comes up in the background.
+      expect(result.stdout).toContain("PeerId");
+      expect(out).toContain("running in the background");
+    }
   });
 
-  it.skip("network stop reports not-running when no daemon is up", () => {
+  it("network stop reports not-running when no daemon is up", () => {
     const result = run("network stop");
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toLowerCase()).toContain("not running");

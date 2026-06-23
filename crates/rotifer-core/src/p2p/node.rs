@@ -1059,10 +1059,12 @@ mod tests {
     #[test]
     fn a_1_11_connection_limits_are_conservative() {
         // A per-peer / inbound / outbound cap above the total would defeat the
-        // OOM guard; memory percentage must be a valid fraction.
-        assert!(MAX_ESTABLISHED_PER_PEER <= MAX_ESTABLISHED);
-        assert!(MAX_ESTABLISHED_INCOMING <= MAX_ESTABLISHED);
-        assert!(MAX_ESTABLISHED_OUTGOING <= MAX_ESTABLISHED);
+        // OOM guard; memory percentage must be a valid fraction. The cap
+        // invariants are over `const`s, so enforce them at compile time — a bad
+        // default fails the build rather than only this test.
+        const { assert!(MAX_ESTABLISHED_PER_PEER <= MAX_ESTABLISHED) };
+        const { assert!(MAX_ESTABLISHED_INCOMING <= MAX_ESTABLISHED) };
+        const { assert!(MAX_ESTABLISHED_OUTGOING <= MAX_ESTABLISHED) };
         assert!((0.0..=1.0).contains(&MAX_MEMORY_PERCENTAGE));
     }
 

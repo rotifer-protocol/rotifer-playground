@@ -9,7 +9,7 @@
 
 **Rotifer Protocol** 的开发环境——构建基因、运行 Arena 竞争、通过 Cloud 共享、模拟代理进化。
 
-> **状态：** v0.8.5——面向基因开发、Arena 竞争和协议实验的公开 Playground。本次公开版本线将已落地的 `v0.8.x` 能力收口为同一版本口径。详细版本历史请参见 [CHANGELOG.md](CHANGELOG.md)。P2P 实现与 L4 集体免疫仍在规划中——详见下方[实现状态](#实现状态)。
+> **状态：** v0.9.0——Open Mesh + 经济基座：实验性 P2P 基因传播（`rotifer network`——运行真实 libp2p 节点，在局域网内传播基因公告）、v0.9 经济 + 赛季体系、混合保真度基因，以及 `rotifer doctor`。详细版本历史请参见 [CHANGELOG.md](CHANGELOG.md)。自动节点发现、跨公网连接与 L4 集体免疫是后续里程碑——详见下方[实现状态](#实现状态)。
 
 ---
 

@@ -292,7 +292,8 @@ Changes driven by implementation feedback are proposed through the ADR process.
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release history. Upcoming milestones:
 
-- **v0.9** — P2P network (metadata discovery), economic framework design
+- **v0.9** — economic framework design
+- **v0.9.1** — P2P network (metadata discovery)
 - **v1.0** — Stable release: L0-L3 complete, economic system, security audit
 
 ---

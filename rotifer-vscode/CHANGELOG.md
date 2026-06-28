@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.0 — 2026-06-28
+
+Version aligned with the `v0.9.0` Rotifer release line, bringing the IDE extension's distribution metadata and bundled skills/rules in step with the current CLI and MCP surface.
+
 ## 0.8.5 — 2026-04-08
 
 Public release-line consolidation for the current `v0.8.5` Rotifer surface across CLI, MCP, website docs, and IDE distribution metadata.

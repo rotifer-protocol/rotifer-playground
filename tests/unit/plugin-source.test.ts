@@ -98,7 +98,7 @@ describe("plugin source sync pipeline", () => {
     ).toBe("0.8.5");
     expect(vscodeCursor?.kind).toBe("json");
     expect(vscodeCursor && "data" in vscodeCursor ? vscodeCursor.data.version : undefined).toBe(
-      "0.8.6",
+      "0.9.0",
     );
     expect(codebuddySkill?.kind).toBe("text");
     expect(codebuddySkill && "content" in codebuddySkill ? codebuddySkill.content : "").toContain(
@@ -121,7 +121,7 @@ describe("plugin source sync pipeline", () => {
       throw new Error("missing synced rotifer-vscode/package.json output");
     }
 
-    expect(syncedPackage.data.version).toBe("0.8.6");
+    expect(syncedPackage.data.version).toBe("0.9.0");
     expect("activationEvents" in syncedPackage.data).toBe(false);
     expect(syncedPackage.data.main).toBe(originalPackage.main);
     expect(syncedPackage.data.contributes.viewsContainers).toEqual(

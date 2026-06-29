@@ -208,7 +208,7 @@ Deno.serve(async (req: Request) => {
 
     const langPrefix = locale === "zh" ? "src/content/docs/zh/" : "src/content/docs/docs/";
     const MAX_CONTEXT_DOCS = 6;
-    const MAX_PAPER_DOCS = 2;
+    const MAX_NONDOC_DOCS = 3;
 
     function normalizePath(source: string): string {
       return source
@@ -240,12 +240,12 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Rank by similarity (same-language boost) and cap papers so the canonical
-    // docs always have room in the context window — see rank.ts.
+    // Rank by similarity (same-language boost) and cap non-doc sources (papers,
+    // blogs, README, catalog) so the canonical docs always have room — see rank.ts.
     const sorted = selectContextDocs(filteredDocs, {
       isUserLang,
       maxContextDocs: MAX_CONTEXT_DOCS,
-      maxPaperDocs: MAX_PAPER_DOCS,
+      maxNonDocDocs: MAX_NONDOC_DOCS,
     });
 
     const context = sorted

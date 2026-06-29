@@ -7,7 +7,9 @@ interface CacheEntry {
   expiresAt: number;
 }
 
-const CACHE_VERSION = "v9";
+// Bumped v9 → v10 when paper-source retrieval was capped (see chat/index.ts
+// MAX_PAPER_DOCS): old cached answers were generated from the pre-cap ranking.
+const CACHE_VERSION = "v10";
 const CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 const MAX_MEM_SIZE = 50;
 

@@ -5,6 +5,7 @@ import { getCachedResponse, setCachedResponse } from "./cache.ts";
 import { checkDailyLimit, recordCost } from "./cost-monitor.ts";
 import { recordAnalytics, recordSecurityEvent } from "./analytics.ts";
 import { filterContent } from "./content-filter.ts";
+import { selectContextDocs } from "./rank.ts";
 
 const RAG_URL = Deno.env.get("RAG_SUPABASE_URL")!;
 const RAG_ANON_KEY = Deno.env.get("RAG_SUPABASE_ANON_KEY")!;
@@ -207,6 +208,7 @@ Deno.serve(async (req: Request) => {
 
     const langPrefix = locale === "zh" ? "src/content/docs/zh/" : "src/content/docs/docs/";
     const MAX_CONTEXT_DOCS = 6;
+    const MAX_PAPER_DOCS = 2;
 
     function normalizePath(source: string): string {
       return source
@@ -238,13 +240,13 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    const sorted = filteredDocs
-      .sort((a, b) => {
-        const aBoost = isUserLang(a.source) ? 0.05 : 0;
-        const bBoost = isUserLang(b.source) ? 0.05 : 0;
-        return (b.similarity + bBoost) - (a.similarity + aBoost);
-      })
-      .slice(0, MAX_CONTEXT_DOCS);
+    // Rank by similarity (same-language boost) and cap papers so the canonical
+    // docs always have room in the context window — see rank.ts.
+    const sorted = selectContextDocs(filteredDocs, {
+      isUserLang,
+      maxContextDocs: MAX_CONTEXT_DOCS,
+      maxPaperDocs: MAX_PAPER_DOCS,
+    });
 
     const context = sorted
       .map((d, i) => `[Document ${i + 1}]\n${d.content}`)

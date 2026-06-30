@@ -7,11 +7,10 @@ interface CacheEntry {
   expiresAt: number;
 }
 
-// Bumped v9 → v10 (paper-source cap) → v11 (generalised to a non-doc cap +
-// blogs now indexed from the cloud CMS): old cached answers were generated from
-// a different retrieval ranking and must be regenerated. See chat/index.ts
-// MAX_NONDOC_DOCS / rank.ts selectContextDocs.
-const CACHE_VERSION = "v11";
+// Bumped v9 → v10 (paper-source cap) → v11 (non-doc cap + CMS blogs) → v12
+// (post CMS-blog reindex + index-docs now clears response_cache on rebuild).
+// Any bump invalidates DB + edge memCache entries for the prior version.
+const CACHE_VERSION = "v12";
 const CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 const MAX_MEM_SIZE = 50;
 

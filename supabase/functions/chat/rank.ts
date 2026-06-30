@@ -1,5 +1,5 @@
 // Retrieval ranking + context-window selection for the chat RAG pipeline.
-// Extracted as a pure module so the paper-capping behaviour can be unit-tested
+// Extracted as a pure module so the context-capping behaviour can be unit-tested
 // (see rank.test.ts) independently of the Deno.serve request handler.
 
 export type RankDoc = {
@@ -9,9 +9,13 @@ export type RankDoc = {
   metadata?: { title?: string };
 };
 
-/** Papers are indexed from the build-time `.papers-cache/` directory. */
-export function isPaperSource(source: string): boolean {
-  return source.startsWith(".papers-cache/");
+/**
+ * Authoritative documentation lives under src/content/docs/. Everything else
+ * indexed into the KB — research papers (.papers-cache/), blog posts (blog/,
+ * zh/blog/), README, and the synthetic content-catalog — is supplementary.
+ */
+export function isDocSource(source: string): boolean {
+  return source.startsWith("src/content/docs/");
 }
 
 export interface SelectOpts {
@@ -19,18 +23,18 @@ export interface SelectOpts {
   isUserLang: (source: string) => boolean;
   /** Size of the context window handed to the LLM. */
   maxContextDocs: number;
-  /** Max number of paper chunks allowed in the context window. */
-  maxPaperDocs: number;
+  /** Max number of non-doc (paper/blog/README/catalog) chunks in the window. */
+  maxNonDocDocs: number;
 }
 
 /**
  * Rank docs by similarity (with a small same-language boost) and pick the
- * context window, capping papers at `maxPaperDocs`.
+ * context window, capping non-doc sources at `maxNonDocDocs`.
  *
- * Papers are deep but semantically dense, so on core-doc questions they can
- * crowd the canonical docs out of the window. Capping them guarantees the
- * authoritative docs always have room while papers still contribute up to
- * `maxPaperDocs` chunks for depth.
+ * Supplementary sources (papers, blogs) are numerous and often semantically
+ * dense, so on core-doc questions they can crowd the authoritative docs out of
+ * the window. Docs are never skipped; non-docs are capped, so the canonical
+ * docs always have room while papers/blogs still contribute for depth/recency.
  */
 export function selectContextDocs(docs: RankDoc[], opts: SelectOpts): RankDoc[] {
   const ranked = [...docs].sort((a, b) => {
@@ -40,12 +44,12 @@ export function selectContextDocs(docs: RankDoc[], opts: SelectOpts): RankDoc[] 
   });
 
   const selected: RankDoc[] = [];
-  let paperCount = 0;
+  let nonDocCount = 0;
   for (const d of ranked) {
     if (selected.length >= opts.maxContextDocs) break;
-    if (isPaperSource(d.source)) {
-      if (paperCount >= opts.maxPaperDocs) continue;
-      paperCount++;
+    if (!isDocSource(d.source)) {
+      if (nonDocCount >= opts.maxNonDocDocs) continue;
+      nonDocCount++;
     }
     selected.push(d);
   }

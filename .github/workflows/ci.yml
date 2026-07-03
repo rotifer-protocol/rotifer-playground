@@ -266,7 +266,10 @@ jobs:
           QUALITY_SUPABASE_KEY: ${{ secrets.QUALITY_SUPABASE_SERVICE_KEY }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          NPM_AUDIT=$(npm audit --json --registry https://registry.npmjs.org/ 2>/dev/null || echo '{}')
+          # `npm audit` exits non-zero when vulnerabilities exist; `|| echo '{}'`
+          # would append '{}' to the real JSON and break JSON.parse (all counts → 0).
+          NPM_AUDIT=$(npm audit --json --registry https://registry.npmjs.org/ 2>/dev/null || true)
+          [ -z "$NPM_AUDIT" ] && NPM_AUDIT='{}'
           CRITICAL=$(echo "$NPM_AUDIT" | node -p "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).metadata?.vulnerabilities?.critical||0}catch{0}")
           HIGH=$(echo "$NPM_AUDIT" | node -p "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).metadata?.vulnerabilities?.high||0}catch{0}")
           MODERATE=$(echo "$NPM_AUDIT" | node -p "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).metadata?.vulnerabilities?.moderate||0}catch{0}")
@@ -275,14 +278,22 @@ jobs:
 
           GRADE="PASS"
           if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then GRADE="FAIL"; fi
+          # Extract per-advisory detail so the dashboard can show which
+          # vulnerabilities exist, not just the counts. Emits a JSON array
+          # (already properly escaped by JSON.stringify) injected verbatim.
+          FINDINGS=$(echo "$NPM_AUDIT" | node -e 'let a; try { a = JSON.parse(require("fs").readFileSync("/dev/stdin","utf8")); } catch { process.stdout.write("[]"); process.exit(0); } const out=[]; const rank={critical:0,high:1,moderate:2,low:3}; for (const [name,v] of Object.entries(a.vulnerabilities||{})) { const advs=(v.via||[]).filter((x)=>typeof x==="object"); if (advs.length===0){ out.push({package:name,severity:v.severity,title:"Depends on a vulnerable dependency",url:"",range:v.range||""}); } else { for (const ad of advs){ out.push({package:name,severity:ad.severity||v.severity,title:ad.title||"",url:ad.url||"",range:v.range||""}); } } } out.sort((p,q)=>(rank[p.severity]??9)-(rank[q.severity]??9)); process.stdout.write(JSON.stringify(out.slice(0,50)));')
+          [ -z "$FINDINGS" ] && FINDINGS='[]'
 
-          curl -s -X POST "${QUALITY_SUPABASE_URL}/rest/v1/security_scan_results" \
+          if curl --fail-with-body -sS -X POST "${QUALITY_SUPABASE_URL}/rest/v1/security_scan_results" \
             -H "apikey: ${QUALITY_SUPABASE_KEY}" \
             -H "Authorization: Bearer ${QUALITY_SUPABASE_KEY}" \
             -H "Content-Type: application/json" \
             -H "Prefer: return=minimal" \
-            -d "{\"version\":\"v${VERSION}\",\"component\":\"cli\",\"scan_type\":\"npm_audit\",\"grade\":\"${GRADE}\",\"severity_counts\":{\"critical\":${CRITICAL},\"high\":${HIGH},\"moderate\":${MODERATE},\"low\":${LOW}},\"source\":\"ci\",\"ci_run_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
-            && echo "✅ Security scan reported" || echo "⚠️ Report failed (non-blocking)"
+            -d "{\"version\":\"v${VERSION}\",\"component\":\"cli\",\"scan_type\":\"npm_audit\",\"grade\":\"${GRADE}\",\"severity_counts\":{\"critical\":${CRITICAL},\"high\":${HIGH},\"moderate\":${MODERATE},\"low\":${LOW}},\"findings\":${FINDINGS},\"source\":\"ci\",\"ci_run_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}"; then
+            echo "✅ Security scan reported"
+          else
+            echo "::warning::Security scan report upload failed"
+          fi
 
           curl -s -X POST "${QUALITY_SUPABASE_URL}/rest/v1/dependency_audit_logs" \
             -H "apikey: ${QUALITY_SUPABASE_KEY}" \

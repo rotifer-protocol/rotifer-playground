@@ -18,6 +18,43 @@ export function isDocSource(source: string): boolean {
   return source.startsWith("src/content/docs/");
 }
 
+/**
+ * The synthetic content-catalog is a single tiny index card holding the blog /
+ * paper inventory. It is the ONLY chunk that can answer "how many posts are
+ * there?", so it must never lose its slot to the hundreds of blog/paper chunks
+ * it competes with — it is exempt from the non-doc cap.
+ */
+const CAP_EXEMPT = new Set(["content-catalog"]);
+
+/**
+ * Collapse each bilingual twin onto one key so the alt-language copy can be
+ * deduped: docs (src/content/docs/zh/x ↔ docs/x), blogs (zh/blog/x ↔ blog/x)
+ * and papers (x.zh.md ↔ x.md). Without this the same post occupies two of the
+ * few context slots, once per language.
+ */
+export function normalizePath(source: string): string {
+  return source
+    .replace(/^src\/content\/docs\/zh\//, "")
+    .replace(/^src\/content\/docs\//, "")
+    .replace(/^zh\/blog\//, "blog/")
+    .replace(/\.zh\.md$/, ".md");
+}
+
+/**
+ * Is this source written in the reader's language? Docs, blogs and papers each
+ * encode language differently (path prefix / route prefix / filename suffix).
+ */
+export function isUserLangFor(locale: "en" | "zh", source: string): boolean {
+  const zh = locale === "zh";
+  if (source.startsWith("blog/") || source.startsWith("zh/blog/")) {
+    return zh ? source.startsWith("zh/blog/") : source.startsWith("blog/");
+  }
+  if (source.startsWith(".papers-cache/")) {
+    return zh ? source.endsWith(".zh.md") : !source.endsWith(".zh.md");
+  }
+  return source.startsWith(zh ? "src/content/docs/zh/" : "src/content/docs/docs/");
+}
+
 export interface SelectOpts {
   /** True when a source is in the user's language (gets a small ranking boost). */
   isUserLang: (source: string) => boolean;
@@ -47,7 +84,7 @@ export function selectContextDocs(docs: RankDoc[], opts: SelectOpts): RankDoc[] 
   let nonDocCount = 0;
   for (const d of ranked) {
     if (selected.length >= opts.maxContextDocs) break;
-    if (!isDocSource(d.source)) {
+    if (!isDocSource(d.source) && !CAP_EXEMPT.has(d.source)) {
       if (nonDocCount >= opts.maxNonDocDocs) continue;
       nonDocCount++;
     }

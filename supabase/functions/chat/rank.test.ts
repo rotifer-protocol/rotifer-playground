@@ -1,5 +1,45 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { isDocSource, selectContextDocs, type RankDoc } from "./rank.ts";
+import {
+  isDocSource,
+  selectContextDocs,
+  normalizePath,
+  isUserLangFor,
+  type RankDoc,
+} from "./rank.ts";
+
+Deno.test("normalizePath collapses bilingual twins onto one key", () => {
+  // docs
+  assertEquals(
+    normalizePath("src/content/docs/zh/docs/intro.md"),
+    normalizePath("src/content/docs/docs/intro.md"),
+  );
+  // blogs (cloud CMS routes)
+  assertEquals(normalizePath("zh/blog/open-mesh"), normalizePath("blog/open-mesh"));
+  // papers (filename suffix)
+  assertEquals(
+    normalizePath(".papers-cache/rotifer-philosophy-whitepaper.zh.md"),
+    normalizePath(".papers-cache/rotifer-philosophy-whitepaper.md"),
+  );
+});
+
+Deno.test("isUserLangFor recognises each source family's language encoding", () => {
+  // blogs
+  assertEquals(isUserLangFor("en", "blog/open-mesh"), true);
+  assertEquals(isUserLangFor("en", "zh/blog/open-mesh"), false);
+  assertEquals(isUserLangFor("zh", "zh/blog/open-mesh"), true);
+  assertEquals(isUserLangFor("zh", "blog/open-mesh"), false);
+  // papers
+  assertEquals(isUserLangFor("en", ".papers-cache/rotifer-ir-specification.md"), true);
+  assertEquals(isUserLangFor("en", ".papers-cache/rotifer-ir-specification.zh.md"), false);
+  assertEquals(isUserLangFor("zh", ".papers-cache/rotifer-ir-specification.zh.md"), true);
+  // docs
+  assertEquals(isUserLangFor("zh", "src/content/docs/zh/docs/intro.md"), true);
+  assertEquals(isUserLangFor("en", "src/content/docs/docs/intro.md"), true);
+  assertEquals(isUserLangFor("en", "src/content/docs/zh/docs/intro.md"), false);
+  // synthetic catalog belongs to no language
+  assertEquals(isUserLangFor("en", "content-catalog"), false);
+  assertEquals(isUserLangFor("zh", "content-catalog"), false);
+});
 
 const enLang = (s: string) => s.startsWith("src/content/docs/docs/");
 
@@ -74,6 +114,27 @@ Deno.test("non-docs still surface (up to the cap) for non-doc questions", () => 
   // All 3 non-docs fit under the cap; nothing dropped.
   assertEquals(picked.length, 4);
   assertEquals(picked[0].source, "blog/open-mesh");
+});
+
+Deno.test("content-catalog is exempt from the cap — inventory answers survive", () => {
+  // Hundreds of blog chunks compete for the 3 non-doc slots; without the
+  // exemption the catalog (the only chunk holding the counts) gets dropped and
+  // "how many blog posts?" becomes unanswerable again.
+  const docs: RankDoc[] = [
+    doc("blog/a", 0.70),
+    doc("blog/b", 0.69),
+    doc(".papers-cache/rotifer-ir-specification.md", 0.68),
+    doc("content-catalog", 0.55),
+    doc("src/content/docs/docs/concepts/overview.md", 0.40),
+  ];
+  const picked = selectContextDocs(docs, {
+    isUserLang: enLang,
+    maxContextDocs: 6,
+    maxNonDocDocs: 3,
+  });
+  assertEquals(picked.map((d) => d.source).includes("content-catalog"), true);
+  // The 3 capped non-docs still fit, and the catalog rides along on top.
+  assertEquals(picked.length, 5);
 });
 
 Deno.test("same-language docs get the ranking boost", () => {

@@ -5,7 +5,7 @@ import { getCachedResponse, setCachedResponse } from "./cache.ts";
 import { checkDailyLimit, recordCost } from "./cost-monitor.ts";
 import { recordAnalytics, recordSecurityEvent } from "./analytics.ts";
 import { filterContent } from "./content-filter.ts";
-import { selectContextDocs } from "./rank.ts";
+import { selectContextDocs, isUserLangFor, normalizePath } from "./rank.ts";
 
 const RAG_URL = Deno.env.get("RAG_SUPABASE_URL")!;
 const RAG_ANON_KEY = Deno.env.get("RAG_SUPABASE_ANON_KEY")!;
@@ -206,19 +206,12 @@ Deno.serve(async (req: Request) => {
 
     if (ragError) throw new Error(`RAG query failed: ${ragError.message}`);
 
-    const langPrefix = locale === "zh" ? "src/content/docs/zh/" : "src/content/docs/docs/";
     const MAX_CONTEXT_DOCS = 6;
     const MAX_NONDOC_DOCS = 3;
 
-    function normalizePath(source: string): string {
-      return source
-        .replace(/^src\/content\/docs\/zh\//, "")
-        .replace(/^src\/content\/docs\//, "");
-    }
-
-    function isUserLang(source: string): boolean {
-      return source.startsWith(langPrefix);
-    }
+    // Language handling lives in rank.ts so it is unit-tested — docs, blogs and
+    // papers each encode language differently. See rank.test.ts.
+    const isUserLang = (source: string) => isUserLangFor(locale, source);
 
     type Doc = { content: string; source: string; similarity: number; metadata?: { title?: string } };
     const allDocs = (docs || []) as Doc[];

@@ -1,0 +1,9 @@
+name: Regression Guard
+description: PR diff gate — block net test loss and new skips/ignores
+
+runs:
+  using: composite
+  steps:
+    - name: Run regression guard
+      shell: bash
+      run: bash "${{ github.action_path }}/regression-guard.sh"

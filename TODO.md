@@ -30,6 +30,16 @@ opportunistically.
 
 <!-- Move completed entries here with the commit that resolved them. -->
 
+- [x] **Document why the four p2p tests are ignored** — the premise was partly stale: all
+  four (`A_1_6` / `A_4_3` / `A_4_4` / `A_6_6`) already carried `#[ignore = "..."]` reason
+  strings since #74, so nothing needed attaching. The real gap was the `docs/` note, now
+  added as `docs/p2p-testing.md` and linked from CONTRIBUTING. It separates the six
+  `p2p-integration` feature-gated two-node tests (runnable — `cargo test -p rotifer-core
+  --features p2p-integration --lib -- --test-threads=1`) from these four unconditionally
+  ignored stage-1 scaffolds, which **cannot** be run: three end in `unimplemented!()` and
+  `A_4_3` panics while `FROZEN_PROTO_SCHEMA_SHA256` is `None`. Verified by running
+  `--ignored` (6 pass, those 4 fail by design). No test behaviour changed.
+
 - [x] **Unit-test `types::Agent`** — added a `#[cfg(test)]` module covering `Agent::new`,
   `Agent::activate` and `Agent::terminate`: initial state, id uniqueness, the
   `Created → Active` transition, idempotent activation, termination from any state, the

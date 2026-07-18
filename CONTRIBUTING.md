@@ -73,6 +73,9 @@ PRs must pass:
 - All unit and E2E tests (`vitest run`)
 - Rust compilation (`cargo check`) — if Rust files changed
 
+The Rust `p2p` module has extra test tiers that are `#[ignore]`d by default —
+see [docs/p2p-testing.md](docs/p2p-testing.md) for which ones you can run and how.
+
 ## Architecture Decisions
 
 Major decisions are documented as ADRs (Architecture Decision Records) in the specification repository. Key ADRs for Playground development:

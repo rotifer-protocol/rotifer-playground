@@ -53,3 +53,77 @@ impl Agent {
         self.state = AgentState::Terminated;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_agent_starts_in_created_state() {
+        let agent = Agent::new("scout".to_string());
+        assert_eq!(agent.state, AgentState::Created);
+        assert_eq!(agent.name, "scout");
+        assert!(agent.genome.is_empty());
+        assert_eq!(agent.reputation, 0.0);
+        assert!(agent.created_at > 0);
+    }
+
+    #[test]
+    fn new_agents_get_distinct_ids() {
+        let first = Agent::new("scout".to_string());
+        let second = Agent::new("scout".to_string());
+        assert_ne!(first.id, second.id);
+    }
+
+    #[test]
+    fn activate_moves_created_to_active() {
+        let mut agent = Agent::new("scout".to_string());
+        agent.activate();
+        assert_eq!(agent.state, AgentState::Active);
+    }
+
+    #[test]
+    fn activate_is_idempotent() {
+        let mut agent = Agent::new("scout".to_string());
+        agent.activate();
+        agent.activate();
+        assert_eq!(agent.state, AgentState::Active);
+    }
+
+    #[test]
+    fn terminate_is_reachable_from_any_state() {
+        let mut created = Agent::new("scout".to_string());
+        created.terminate();
+        assert_eq!(created.state, AgentState::Terminated);
+
+        let mut active = Agent::new("scout".to_string());
+        active.activate();
+        active.terminate();
+        assert_eq!(active.state, AgentState::Terminated);
+    }
+
+    #[test]
+    fn terminated_agent_cannot_be_revived() {
+        let mut agent = Agent::new("scout".to_string());
+        agent.terminate();
+        agent.activate();
+        assert_eq!(agent.state, AgentState::Terminated);
+    }
+
+    #[test]
+    fn unknown_state_variant_deserializes_without_error() {
+        let state: AgentState = serde_json::from_str("\"Dormant\"").unwrap();
+        assert_eq!(state, AgentState::Unknown);
+    }
+
+    #[test]
+    fn agent_serde_roundtrip() {
+        let mut agent = Agent::new("scout".to_string());
+        agent.activate();
+        let json = serde_json::to_string(&agent).unwrap();
+        let restored: Agent = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.id, agent.id);
+        assert_eq!(restored.state, AgentState::Active);
+        assert_eq!(restored.created_at, agent.created_at);
+    }
+}

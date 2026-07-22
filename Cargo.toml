@@ -22,7 +22,7 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 hex = "0.4"
 rmp-serde = "1"
-wasm-encoder = "0.251"
+wasm-encoder = "0.254"
 wasmparser = "0.251"
 libp2p = { version = "0.56", default-features = false }
 base64 = "0.22"

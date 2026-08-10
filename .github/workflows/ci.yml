@@ -219,15 +219,15 @@ jobs:
         run: |
           # cargo-audit 0.22+ is required to parse current RustSec CVSS 4.0 advisories.
           cargo install cargo-audit@0.22.1 --quiet
-          # RUSTSEC-2026-0114: wasmtime 42.0.2 panic on oversized table alloc.
-          # Medium severity (5.9) — DoS via panic, NOT RCE; sandbox isolation contains impact.
-          # Tracked for upgrade to wasmtime 43.0.2+ in a dedicated PR.
           # RUSTSEC-2026-0118 / -0119: hickory-proto DoS, reachable only via libp2p's
           # optional dns/mdns features, which we do NOT enable — the DNS code is never
           # compiled into the binary (it only lingers in Cargo.lock as a disabled
           # optional dependency). -0118 has no fixed release. Tracked: move to libp2p
           # component crates to drop it from the lockfile entirely.
-          cargo audit --ignore RUSTSEC-2026-0114 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119
+          # NOTE: the wasmtime ignore (RUSTSEC-2026-0114) is gone — wasmtime is now on
+          # 47.0.3, which fixes both -0114 and -0222. Do not re-add an ignore for the
+          # WASM sandbox: upgrade instead, since it is the Gene isolation boundary.
+          cargo audit --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119
 
       - name: npm dependency audit
         run: npm audit --audit-level=high

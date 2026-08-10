@@ -8,6 +8,17 @@ discovery (manual bootstrap) + announcement propagation.
 You need at least two machines; three makes the gossip fan-out obvious. The
 walkthrough assumes macOS, but the only OS-specific note is the firewall prompt.
 
+> **There is no public Rotifer network yet — you bootstrap your own.**
+> Nodes ship with no default bootstrap peer, so `network start` on its own
+> listens without joining anything. That is deliberate: official bootstrap
+> infrastructure is not deployed, and shipping a placeholder address would only
+> fail silently. Point nodes at each other explicitly with `--bootstrap`, as this
+> guide does. Use `/ip4/` addresses — `/dns4/` needs a DNS-resolving transport
+> that this build intentionally omits.
+>
+> P2P is also **off by default** (`enabled: false`): the CLI never joins a
+> network unless you ask it to.
+
 There are two ways to run this:
 
 - **Path A — published npm package (recommended).** What a normal

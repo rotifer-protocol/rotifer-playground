@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 pub mod cloud_sync;
 pub mod messages;
 pub mod node;
+pub mod peerstore;
 pub mod security;
 
 // Exploratory two-node connectivity spike (test-only).

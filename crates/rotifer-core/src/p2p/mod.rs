@@ -87,9 +87,19 @@ impl Default for NetworkConfig {
             node_id: uuid::Uuid::new_v4().to_string(),
             listen_host: "127.0.0.1".to_string(),
             listen_port: 9878,
-            bootstrap_peers: vec![
-                "/dns4/bootstrap.rotifer.dev/tcp/9878".to_string(),
-            ],
+            // No default bootstrap peer. The previous default,
+            // `/dns4/bootstrap.rotifer.dev/tcp/9878`, was a placeholder that
+            // could never work: the host does not resolve (NXDOMAIN), and
+            // `/dns4/` needs a DNS-resolving transport, which this build
+            // deliberately omits (libp2p's `dns` feature pulls hickory-proto and
+            // its open advisories). Dial failures are best-effort and silent, so
+            // it looked like bootstrapping while nothing connected.
+            //
+            // Official bootstrap infrastructure is not deployed yet. Until it
+            // is, pass peers explicitly (`rotifer network start -b <multiaddr>`)
+            // and prefer `/ip4/` addresses; adding a `/dns4/` default again also
+            // means re-enabling DNS in the transport.
+            bootstrap_peers: Vec::new(),
             enabled: false,
         }
     }
@@ -180,7 +190,10 @@ mod tests {
         let config = NetworkConfig::default();
         assert_eq!(config.listen_port, 9878);
         assert!(!config.enabled);
-        assert!(!config.bootstrap_peers.is_empty());
+        // Ships with no bootstrap peer: official infrastructure is not deployed,
+        // and a `/dns4/` placeholder would silently fail to dial (no DNS
+        // transport in this build). Peers are supplied explicitly instead.
+        assert!(config.bootstrap_peers.is_empty());
     }
 
     #[test]
@@ -245,7 +258,15 @@ mod tests {
 
     #[test]
     fn stub_peers_returns_bootstrap() {
-        let config = NetworkConfig::default();
+        // Configure peers explicitly — the default is now empty, so relying on
+        // it would assert 0 == 0 and stop testing the mapping at all.
+        let config = NetworkConfig {
+            bootstrap_peers: vec![
+                "/ip4/127.0.0.1/tcp/4001".into(),
+                "/ip4/127.0.0.1/tcp/4002".into(),
+            ],
+            ..NetworkConfig::default()
+        };
         let bootstrap_count = config.bootstrap_peers.len();
         let net = StubNetwork::new(config);
         assert_eq!(net.peers().len(), bootstrap_count);

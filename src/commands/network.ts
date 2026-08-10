@@ -38,7 +38,12 @@ function loadNetworkConfig(): NetworkConfig {
   return {
     node_id: randomUUID(),
     listen_port: 9878,
-    bootstrap_peers: ["/dns4/bootstrap.rotifer.dev/tcp/9878"],
+    // No default bootstrap peer — see the note in crates/rotifer-core/src/p2p/mod.rs.
+    // The old `/dns4/bootstrap.rotifer.dev/tcp/9878` default did not resolve
+    // (NXDOMAIN) and `/dns4/` needs a DNS transport this build omits on purpose,
+    // so it silently connected to nothing. Official bootstrap infra is not
+    // deployed yet; pass peers explicitly with `-b/--bootstrap` until it is.
+    bootstrap_peers: [],
     enabled: false,
   };
 }

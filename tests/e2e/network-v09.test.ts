@@ -90,10 +90,16 @@ describe.skip("A.7 — rotifer network (v0.9 real libp2p backend)", () => {
   // A.7.2 — `network peers` lists ≥1 peer once active
   // ---------------------------------------------------------------
   it("A.7.2 — `network peers` shows ≥1 peer including a bootstrap entry", () => {
-    run("network start");
+    // Bootstrap peers are supplied explicitly: there is no default any more.
+    // The old `/dns4/bootstrap.rotifer.dev` default never resolved (NXDOMAIN)
+    // and `/dns4/` needs a DNS transport this build omits, so asserting on it
+    // tested a placeholder. Use an `/ip4/` address, which is what a real
+    // deployment will use, and which also covers the `-b` flag.
+    const bootstrap = "/ip4/127.0.0.1/tcp/9878";
+    run(`network start -b ${bootstrap}`);
     const result = run("network peers");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("bootstrap.rotifer.dev");
+    expect(result.stdout).toContain(bootstrap);
     expect(result.stdout).toMatch(/\d+ peer/i);
     // ADR-190 display system: peers must be rendered as a table.
     expect(result.stdout).toMatch(/PeerId.+Address|Address.+PeerId/);

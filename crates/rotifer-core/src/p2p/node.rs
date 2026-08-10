@@ -32,6 +32,7 @@ use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
 use libp2p::{Multiaddr, PeerId as Libp2pPeerId, Swarm};
 use tokio::sync::{mpsc, oneshot};
 
+use super::peerstore;
 use super::{NetworkConfig, NetworkError, PeerId};
 
 /// PEM armor label for the persisted node identity.
@@ -45,6 +46,10 @@ const LISTEN_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long a DHT put/get blocks for its query to resolve.
 const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How often remembered peers are flushed to disk while running. A clean stop
+/// also persists them; this only bounds the loss when a daemon is killed.
+const PEER_FLUSH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Commands sent from the synchronous `Node` API to the Swarm event loop.
 enum Command {
@@ -123,6 +128,8 @@ struct NodeShared {
     discovered: DiscoveredPeers,
     /// Peers we have completed an Identify exchange with (ADR-304).
     identified: DiscoveredPeers,
+    /// Dialable addresses of peers met this session, persisted on shutdown.
+    met_peers: Arc<Mutex<Vec<String>>>,
     received: ReceivedMessages,
     rate_limited: Arc<Mutex<u64>>,
     /// Count of inbound connections denied by the connection limits (ADR-304).
@@ -139,6 +146,8 @@ static BOUND_PORTS: LazyLock<Mutex<HashSet<u16>>> = LazyLock::new(|| Mutex::new(
 pub struct Node {
     pub config: NetworkConfig,
     pub keypair_path: PathBuf,
+    /// Where remembered peers are cached across restarts (see `peerstore`).
+    pub peerstore_path: PathBuf,
     pub listening: bool,
     /// Persistent Ed25519 identity, cloned into the Swarm on `start`; never
     /// logged.
@@ -151,6 +160,9 @@ pub struct Node {
     discovered: DiscoveredPeers,
     /// Peers we have completed an Identify exchange with (ADR-304).
     identified: DiscoveredPeers,
+    /// Dialable addresses of peers met this session. Written back to
+    /// `peerstore_path` on shutdown so the next start needs no bootstrap.
+    met_peers: Arc<Mutex<Vec<String>>>,
     /// GossipSub messages received so far, appended by the event loop.
     received: ReceivedMessages,
     /// Count of inbound messages dropped by the per-peer rate limiter (§8.6).
@@ -191,6 +203,18 @@ impl Node {
         Self::with_keypair_path(config, default_identity_path())
     }
 
+    /// Build a node with explicit identity and peer-store locations. Tests use
+    /// this to keep per-node state isolated.
+    pub fn with_paths(
+        config: NetworkConfig,
+        keypair_path: PathBuf,
+        peerstore_path: PathBuf,
+    ) -> Result<Self, NetworkError> {
+        let mut node = Self::with_keypair_path(config, keypair_path)?;
+        node.peerstore_path = peerstore_path;
+        Ok(node)
+    }
+
     /// Build a node with an explicit identity-file location.
     ///
     /// First run generates a fresh Ed25519 keypair and writes it (mode 0600);
@@ -198,15 +222,24 @@ impl Node {
     pub fn with_keypair_path(config: NetworkConfig, path: PathBuf) -> Result<Self, NetworkError> {
         let keypair = load_or_generate_keypair(&path)?;
         let peer_id = keypair.public().to_peer_id();
+        // Keep the peer store beside the identity: callers that relocate the
+        // identity (tests, isolated daemons) get an isolated peer store too,
+        // without having to remember a second path.
+        let peerstore_path = match path.parent() {
+            Some(dir) if !dir.as_os_str().is_empty() => dir.join("peers.json"),
+            _ => peerstore::default_peerstore_path(),
+        };
         Ok(Self {
             config,
             keypair_path: path,
+            peerstore_path,
             listening: false,
             keypair,
             peer_id,
             listen_addrs: Arc::new(Mutex::new(Vec::new())),
             discovered: Arc::new(Mutex::new(HashSet::new())),
             identified: Arc::new(Mutex::new(HashSet::new())),
+            met_peers: Arc::new(Mutex::new(Vec::new())),
             received: Arc::new(Mutex::new(Vec::new())),
             rate_limited: Arc::new(Mutex::new(0)),
             rejected: Arc::new(Mutex::new(0)),
@@ -374,6 +407,7 @@ impl Node {
             listen_addrs: Arc::clone(&self.listen_addrs),
             discovered: Arc::clone(&self.discovered),
             identified: Arc::clone(&self.identified),
+            met_peers: Arc::clone(&self.met_peers),
             received: Arc::clone(&self.received),
             rate_limited: Arc::clone(&self.rate_limited),
             rejected: Arc::clone(&self.rejected),
@@ -381,9 +415,10 @@ impl Node {
         let (ready_tx, ready_rx) = oneshot::channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
 
+        let peerstore_path = self.peerstore_path.clone();
         let task = runtime.spawn(run_event_loop(
-            keypair, host, port, bootstrap, max_established_incoming, shared, ready_tx,
-            cmd_rx,
+            keypair, host, port, bootstrap, peerstore_path, max_established_incoming, shared,
+            ready_tx, cmd_rx,
         ));
 
         // Block until the listener comes up (or fails) before returning.
@@ -419,6 +454,15 @@ impl Node {
 
     /// Tear down the runtime + event loop. Safe to call when not started.
     fn shutdown(&mut self) {
+        // Persist remembered peers from this thread, before tearing the runtime
+        // down. Doing it inside the event loop would be unreliable: shutting the
+        // runtime down cancels that task at its next await point, so work queued
+        // behind the shutdown command may never run.
+        if let Ok(met) = self.met_peers.lock()
+            && let Err(e) = persist_peers(&self.peerstore_path, &met)
+        {
+            tracing::debug!("could not persist peer store: {e}");
+        }
         if let Some(tx) = self.cmd_tx.take() {
             let _ = tx.send(Command::Shutdown);
         }
@@ -646,6 +690,7 @@ async fn run_event_loop(
     host: String,
     port: u16,
     bootstrap: Vec<String>,
+    peerstore_path: PathBuf,
     max_established_incoming: Option<u32>,
     shared: NodeShared,
     ready_tx: oneshot::Sender<Result<(), NetworkError>>,
@@ -655,6 +700,7 @@ async fn run_event_loop(
         listen_addrs,
         discovered,
         identified,
+        met_peers,
         received,
         rate_limited,
         rejected,
@@ -683,13 +729,37 @@ async fn run_event_loop(
         return;
     }
 
-    // Best-effort: malformed or unreachable bootstrap entries are skipped
+    // Dial configured bootstrap peers plus everyone we met in earlier sessions.
+    // Remembered peers are what makes bootstrap infrastructure non-critical: a
+    // node that has been online before can re-enter the network on its own, so a
+    // bootstrap node being down (or absent entirely, which is the case today)
+    // only affects a node's very first run.
+    //
+    // Best-effort throughout: malformed or unreachable entries are skipped
     // without failing startup.
-    for addr in &bootstrap {
+    let remembered = peerstore::load(&peerstore_path);
+    if !remembered.is_empty() {
+        tracing::debug!("dialling {} remembered peer(s)", remembered.len());
+    }
+    for addr in bootstrap.iter().chain(remembered.iter()) {
         if let Ok(ma) = addr.parse::<Multiaddr>() {
             let _ = swarm.dial(ma);
         }
     }
+
+    // Dialable addresses of peers met this session, in encounter order, written
+    // back to the store on shutdown. Identify is the source: it reports the
+    // peer's advertised *listen* addresses, which are reachable again later —
+    // unlike a connection's remote address, which for inbound connections is an
+    // ephemeral source port that cannot be dialled back.
+    if let Ok(mut met) = met_peers.lock() {
+        *met = remembered.clone();
+    }
+
+    // Periodic peer-store flush; the first tick fires immediately, so consume it
+    // up front rather than writing an empty store on startup.
+    let mut peer_flush = tokio::time::interval(PEER_FLUSH_INTERVAL);
+    peer_flush.tick().await;
 
     let mut ready_tx = Some(ready_tx);
     // Correlate in-flight DHT queries with the caller waiting on the result.
@@ -698,6 +768,16 @@ async fn run_event_loop(
     let mut pending_get: HashMap<kad::QueryId, oneshot::Sender<Option<Vec<u8>>>> = HashMap::new();
     loop {
         tokio::select! {
+            _ = peer_flush.tick() => {
+                // A clean shutdown persists peers too, but daemons are often
+                // killed rather than stopped; flushing periodically bounds how
+                // much of the peer cache a hard kill can cost.
+                if let Ok(met) = met_peers.lock()
+                    && let Err(e) = persist_peers(&peerstore_path, &met)
+                {
+                    tracing::debug!("periodic peer-store flush failed: {e}");
+                }
+            }
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { address, .. } => {
                     if let Ok(mut addrs) = listen_addrs.lock() {
@@ -734,6 +814,15 @@ async fn run_event_loop(
                     // enters the routing table — this drives discovery of
                     // dialed (e.g. bootstrap) peers.
                     let addr = endpoint.get_remote_address().clone();
+                    // Remember only addresses we dialled ourselves: those are
+                    // reachable again by definition. An inbound connection's
+                    // remote address is the peer's ephemeral source port, which
+                    // is useless to dial back.
+                    if endpoint.is_dialer()
+                        && let Ok(mut met) = met_peers.lock()
+                    {
+                        remember(&mut met, &addr, &peer_id);
+                    }
                     swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                 }
                 SwarmEvent::IncomingConnectionError { .. } => {
@@ -783,8 +872,13 @@ async fn run_event_loop(
                         ids.insert(peer_id.to_string());
                     }
                     // Feed the peer's advertised listen addresses into Kademlia
-                    // to improve routing — standard Identify usage (ADR-304).
+                    // to improve routing — standard Identify usage (ADR-304) —
+                    // and remember them so a restart can re-dial this peer
+                    // without any bootstrap node.
                     for addr in info.listen_addrs {
+                        if let Ok(mut met) = met_peers.lock() {
+                            remember(&mut met, &addr, &peer_id);
+                        }
                         swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                     }
                 }
@@ -851,6 +945,35 @@ async fn run_event_loop(
             }
         }
     }
+
+}
+
+/// Record a peer address in dialable form (`<transport>/p2p/<peer-id>`, the same
+/// syntax as `--bootstrap`), skipping duplicates. Addresses that already carry a
+/// `/p2p/` component are kept as-is so the suffix is never doubled.
+fn remember(met: &mut Vec<String>, addr: &Multiaddr, peer_id: &Libp2pPeerId) {
+    let text = addr.to_string();
+    let dialable = if text.contains("/p2p/") {
+        text
+    } else {
+        format!("{text}/p2p/{peer_id}")
+    };
+    if !met.contains(&dialable) {
+        met.push(dialable);
+    }
+}
+
+/// Write remembered peers to disk (atomic, same durability as the identity file).
+fn persist_peers(path: &Path, addrs: &[String]) -> std::io::Result<()> {
+    if addrs.is_empty() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    write_atomic_private(path, peerstore::encode(addrs).as_bytes())
 }
 
 #[cfg(test)]
@@ -1133,6 +1256,88 @@ mod tests {
 
         let _ = std::fs::remove_file(&a_id);
         let _ = std::fs::remove_file(&b_id);
+    }
+
+    // -----------------------------------------------------------------
+    // Remembered peers survive a restart and remove the bootstrap dependency
+    // -----------------------------------------------------------------
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "two-node integration: peer-store reconnect over loopback — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn remembered_peers_let_a_restart_reconnect_without_bootstrap() {
+        // The point of the peer store: B meets A once *using* bootstrap, then
+        // restarts with an empty bootstrap list and still finds A. Without
+        // persistence this is impossible — which is precisely what makes a
+        // bootstrap node a single point of failure.
+        let dir = std::env::temp_dir().join("rotifer-peerstore-reconnect");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let a_id = dir.join("a-identity.pem");
+        let b_id = dir.join("b-identity.pem");
+        let b_store = dir.join("b-peers.json");
+
+        // Node A listens on a fixed port so it is at the same address after
+        // B restarts (an OS-allocated port would change and defeat the test).
+        let a_port = 39871;
+        let mut cfg_a = cfg(a_port);
+        cfg_a.bootstrap_peers = vec![];
+        let mut a = Node::with_paths(cfg_a, a_id.clone(), dir.join("a-peers.json"))
+            .expect("A build");
+        a.start().expect("A start");
+        let a_peer = a.local_peer_id().0;
+        let a_addr = a
+            .listen_addrs()
+            .into_iter()
+            .next()
+            .expect("A must have a listen address");
+
+        // First run: B learns about A through bootstrap.
+        let mut cfg_b = cfg(0);
+        cfg_b.bootstrap_peers = vec![a_addr];
+        let mut b = Node::with_paths(cfg_b, b_id.clone(), b_store.clone()).expect("B build");
+        b.start().expect("B start");
+        await_peer(&b, &a_peer, "B did not identify A on the first run");
+        let _ = b.stop();
+
+        // The store must now name A, so the knowledge outlived the process.
+        let remembered = peerstore::load(&b_store);
+        assert!(
+            remembered.iter().any(|addr| addr.contains(&a_peer)),
+            "peer store should remember A after a clean shutdown; got {remembered:?}"
+        );
+
+        // Second run: no bootstrap at all. Reconnection can only come from the
+        // store.
+        let mut cfg_b2 = cfg(0);
+        cfg_b2.bootstrap_peers = vec![];
+        let mut b2 = Node::with_paths(cfg_b2, b_id.clone(), b_store.clone()).expect("B restart");
+        b2.start().expect("B restart start");
+        await_peer(
+            &b2,
+            &a_peer,
+            "B failed to reconnect to A from the peer store with no bootstrap peers",
+        );
+
+        let _ = b2.stop();
+        let _ = a.stop();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Poll until `node` has completed an Identify exchange with `peer`, or fail
+    /// with `msg`. Identify (not Kademlia discovery) is the right signal here:
+    /// it means the connection is fully established, which is when addresses
+    /// become worth remembering.
+    fn await_peer(node: &Node, peer: &str, msg: &str) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            if node.identified_peers().iter().any(|p| p == peer) {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "{msg}");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 
     // -----------------------------------------------------------------

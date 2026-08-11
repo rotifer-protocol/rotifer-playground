@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.10.0...v0.10.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* **deps:** sync package-lock to the 0.10.0 platform packages ([#157](https://github.com/rotifer-protocol/rotifer-playground/issues/157)) ([78fa0cb](https://github.com/rotifer-protocol/rotifer-playground/commit/78fa0cb8a36819a28f95eea66f670ebf6153f878))
+* **release:** make the package-lock sync PR actually open, and fail loudly if it cannot ([#159](https://github.com/rotifer-protocol/rotifer-playground/issues/159)) ([e297ef8](https://github.com/rotifer-protocol/rotifer-playground/commit/e297ef8014552fbcdea75822f9d1cb8ad393f764))
+
 ## [0.10.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.9.0...v0.10.0) (2026-08-10)
 
 

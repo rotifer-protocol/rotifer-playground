@@ -277,7 +277,12 @@ jobs:
 
       - name: Open a sync PR if the lock changed
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Must be the PAT, not GITHUB_TOKEN: this org disables "Allow GitHub
+          # Actions to create and approve pull requests", so GITHUB_TOKEN gets
+          # "GitHub Actions is not permitted to create or approve pull requests"
+          # and no PR appears. release-please uses the same PAT to open its
+          # release PRs, which is the proof it carries the needed scope.
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           if git diff --quiet -- package-lock.json; then
             echo "package-lock.json already in sync with the released versions — nothing to do."
@@ -291,8 +296,21 @@ jobs:
           git add package-lock.json
           git commit -s -m "chore(release): sync package-lock.json to v${VERSION}"
           git push --force origin "$BRANCH"
-          gh pr create \
+
+          # Only an "already exists" failure is benign. Everything else — a
+          # permissions refusal above all — must fail the job. A blanket
+          # `|| echo "already exists"` previously swallowed the refusal and
+          # reported success, so the lock drifted unnoticed through two
+          # releases (v0.9.0 and v0.10.0) and broke `npm ci` on main both times.
+          if ! ERR=$(gh pr create \
             --base main --head "$BRANCH" \
             --title "chore(release): sync package-lock.json to v${VERSION}" \
-            --body "release-please bumped the platform optionalDependencies to v${VERSION} but cannot regenerate package-lock.json (the resolved/integrity fields need the published package). The platform packages are now published, so this re-points the lock to match. Merge to keep npm ci green on main and every subsequent PR." \
-            || echo "A sync-lock PR for v${VERSION} already exists; the branch was updated."
+            --body "release-please bumped the platform optionalDependencies to v${VERSION} but cannot regenerate package-lock.json (the resolved/integrity fields need the published package). The platform packages are now published, so this re-points the lock to match. Merge to keep npm ci green on main and every subsequent PR." 2>&1); then
+            if printf '%s' "$ERR" | grep -qi "already exists"; then
+              echo "A sync-lock PR for v${VERSION} already exists; the branch was updated."
+            else
+              echo "::error::Could not open the package-lock sync PR: ${ERR}"
+              echo "Branch ${BRANCH} is pushed — open the PR manually to unblock npm ci on main."
+              exit 1
+            fi
+          fi

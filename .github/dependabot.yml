@@ -1,21 +1,37 @@
+# Security updates only — version updates are deliberately off.
+#
+# Why: weekly version bumps produced far more noise than signal for a
+# single-maintainer project. Across the three repos, 131 Dependabot PRs were
+# closed unmerged against 30 merged — under a 20% merge rate — and the backlog
+# read as an unmaintained project. Worse, the noise did not even buy safety:
+# the high-severity advisories fixed on 2026-08-11 (postcss, nanoid) sat in
+# transitive dependencies, which version updates never proposed a PR for.
+#
+# `open-pull-requests-limit: 0` disables version-update PRs for an ecosystem
+# while leaving Dependabot SECURITY updates enabled — those are a separate,
+# repo-level mechanism and still open PRs when a real advisory lands.
+# See https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/configure-version-updates
+#
+# Do NOT add `target-branch` here: it silently opts the ecosystem out of
+# security updates, which is the one thing this file is meant to preserve.
+#
+# Transitive coverage comes from `npm audit --audit-level=high` and
+# `cargo audit` in CI, which walk the whole tree rather than direct deps only.
 version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
     labels:
       - "dependencies"
-    ignore:
-      - dependency-name: "@types/*"
-        update-types: ["version-update:semver-patch"]
 
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     labels:
       - "dependencies"
       - "rust"
@@ -24,5 +40,6 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+    open-pull-requests-limit: 0
     labels:
       - "ci"

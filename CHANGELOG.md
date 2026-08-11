@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.9.0...v0.10.0) (2026-08-10)
+
+
+### Features
+
+* **ci:** upload npm audit advisory detail to findings column ([#131](https://github.com/rotifer-protocol/rotifer-playground/issues/131)) ([367f89b](https://github.com/rotifer-protocol/rotifer-playground/commit/367f89b271d70d470783757664f89b8025ce0ea2))
+* **p2p:** Identify + connection/memory limits (Milestone B foundations) ([#114](https://github.com/rotifer-protocol/rotifer-playground/issues/114)) ([20258cd](https://github.com/rotifer-protocol/rotifer-playground/commit/20258cdb41dbcb52bd5269fd5ec962c9c9e2b411))
+* **p2p:** remember peers across restarts so bootstrap stops being critical ([#155](https://github.com/rotifer-protocol/rotifer-playground/issues/155)) ([b413f0f](https://github.com/rotifer-protocol/rotifer-playground/commit/b413f0f23d49969649488279e8d71f3816a330aa))
+
+
+### Bug Fixes
+
+* **chat:** cap paper chunks in RAG context so canonical docs keep their slots ([#123](https://github.com/rotifer-protocol/rotifer-playground/issues/123)) ([88dff20](https://github.com/rotifer-protocol/rotifer-playground/commit/88dff20f9148f7d6cddd4875042ae5ae6493a615))
+* **chat:** dedupe bilingual twins so they stop burning the non-doc cap ([#146](https://github.com/rotifer-protocol/rotifer-playground/issues/146)) ([d434a7b](https://github.com/rotifer-protocol/rotifer-playground/commit/d434a7b3b9fd1f7b3d48eb0481dd77f153e82b55))
+* **chat:** generalise context cap from papers to all non-doc sources ([#124](https://github.com/rotifer-protocol/rotifer-playground/issues/124)) ([7439467](https://github.com/rotifer-protocol/rotifer-playground/commit/7439467ab15e09e169f7fe9a0b176670f63805bc))
+* **deps:** bump crossbeam-epoch to 0.9.20 for RUSTSEC-2026-0204 ([#147](https://github.com/rotifer-protocol/rotifer-playground/issues/147)) ([ba0ee3f](https://github.com/rotifer-protocol/rotifer-playground/commit/ba0ee3f862259851db9a9308515379e278edd4e0))
+* **deps:** bump quinn-proto to 0.11.15 (RUSTSEC-2026-0185) ([#116](https://github.com/rotifer-protocol/rotifer-playground/issues/116)) ([a0b8d7b](https://github.com/rotifer-protocol/rotifer-playground/commit/a0b8d7bbed90a6ef8b966c8b1cda3a855ef0c6f4))
+* **p2p:** drop the unresolvable /dns4/ bootstrap default ([#153](https://github.com/rotifer-protocol/rotifer-playground/issues/153)) ([3fd42a6](https://github.com/rotifer-protocol/rotifer-playground/commit/3fd42a69a44c2f4d7b22a4f9cda8907bc6be43ea))
+
 ## [0.9.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.8.6...v0.9.0) (2026-06-22)
 
 

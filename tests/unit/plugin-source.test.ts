@@ -24,6 +24,18 @@ import {
 const repoRoot = join(__dirname, "../..");
 const tempRoots: string[] = [];
 
+/**
+ * Family versions come from the fixture's own plugin-source/families.json.
+ * Hard-coding them means every legitimate version bump breaks these tests —
+ * which is exactly what happened at vscode 0.9.1.
+ */
+function familyVersion(root: string, family: "root" | "vscode"): string {
+  const families = JSON.parse(
+    readFileSync(join(root, "plugin-source/families.json"), "utf8"),
+  );
+  return families[family].version;
+}
+
 function createFixture() {
   const root = mkdtempSync(join(tmpdir(), "rotifer-plugin-source-"));
   tempRoots.push(root);
@@ -98,7 +110,7 @@ describe("plugin source sync pipeline", () => {
     ).toBe("0.8.5");
     expect(vscodeCursor?.kind).toBe("json");
     expect(vscodeCursor && "data" in vscodeCursor ? vscodeCursor.data.version : undefined).toBe(
-      "0.9.0",
+      familyVersion(root, "vscode"),
     );
     expect(codebuddySkill?.kind).toBe("text");
     expect(codebuddySkill && "content" in codebuddySkill ? codebuddySkill.content : "").toContain(
@@ -121,7 +133,7 @@ describe("plugin source sync pipeline", () => {
       throw new Error("missing synced rotifer-vscode/package.json output");
     }
 
-    expect(syncedPackage.data.version).toBe("0.9.0");
+    expect(syncedPackage.data.version).toBe(familyVersion(root, "vscode"));
     expect("activationEvents" in syncedPackage.data).toBe(false);
     expect(syncedPackage.data.main).toBe(originalPackage.main);
     expect(syncedPackage.data.contributes.viewsContainers).toEqual(

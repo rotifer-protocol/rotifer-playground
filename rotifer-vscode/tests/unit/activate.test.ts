@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import pkg from "../../package.json";
 
 vi.mock("vscode", () => import("../__mocks__/vscode"));
 
@@ -86,6 +87,8 @@ describe("activate", () => {
       "rotifer.runAgent",
       "rotifer.showLeaderboard",
       "rotifer.myReputation",
+      "rotifer.vgScan",
+      "rotifer.doctor",
     ];
 
     for (const cmd of expectedCommands) {
@@ -99,11 +102,21 @@ describe("activate", () => {
     expect(ctx.subscriptions.length).toBeGreaterThan(0);
   });
 
-  it("registers exactly 26 commands (matching package.json contributes)", () => {
+  it("registers exactly the commands package.json contributes", () => {
     const ctx = makeContext();
     activate(ctx);
-    const commandCount = vi.mocked(vscode.commands.registerCommand).mock.calls.length;
-    expect(commandCount).toBe(26);
+    // Derive the expectation from the manifest instead of hard-coding a count:
+    // the point of this test is that code and manifest agree, and a literal
+    // here just fails every time a command is legitimately added.
+    const declared: string[] = pkg.contributes.commands.map(
+      (c: { command: string }) => c.command,
+    );
+    const registered = vi
+      .mocked(vscode.commands.registerCommand)
+      .mock.calls.map((call) => call[0] as string);
+
+    expect(registered.length).toBe(declared.length);
+    expect([...registered].sort()).toEqual([...declared].sort());
   });
 });
 

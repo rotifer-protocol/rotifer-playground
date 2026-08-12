@@ -178,6 +178,14 @@
       {
         "command": "rotifer.myReputation",
         "title": "Rotifer: My Reputation"
+      },
+      {
+        "command": "rotifer.vgScan",
+        "title": "Rotifer: V(g) Safety Scan"
+      },
+      {
+        "command": "rotifer.doctor",
+        "title": "Rotifer: Check Toolchain (doctor)"
       }
     ],
     "menus": {

@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as path from "node:path";
 import { GeneTreeProvider, GeneTreeItem } from "./gene-tree";
 import { LocalGeneTreeProvider, LocalGeneItem } from "./local-tree";
 import { ArenaTreeProvider, ArenaItem } from "./arena-tree";
@@ -230,6 +231,22 @@ export function activate(context: vscode.ExtensionContext) {
       const name = await vscode.window.showInputBox({ prompt: "Gene name to wrap" });
       if (!name || !validateGeneNameForTerminal(name)) return;
       runCliInTerminal(["wrap", name], "wrap");
+    }),
+    // V(g) safety scan. Defaults to the folder of the active file so scanning a
+    // Gene you are editing takes no input; falls back to the workspace root.
+    vscode.commands.registerCommand("rotifer.vgScan", async (item?: LocalGeneItem) => {
+      const args = ["vg"];
+      const target = item?.gene?.path
+        || (vscode.window.activeTextEditor
+          ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)
+          : undefined);
+      if (target) args.push(target);
+      runCliInTerminal(args, "vg scan");
+    }),
+    // Toolchain health check. Surfaced in the IDE because a failed compile is
+    // most often a missing esbuild/javy rather than a problem with the Gene.
+    vscode.commands.registerCommand("rotifer.doctor", () => {
+      runCliInTerminal(["doctor"], "doctor");
     }),
     vscode.commands.registerCommand("rotifer.scanGenes", () => {
       runCliInTerminal(["scan"], "scan");

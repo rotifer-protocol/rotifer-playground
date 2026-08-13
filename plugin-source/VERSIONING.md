@@ -31,6 +31,12 @@ Applies to:
 
 The main npm package version in `package.json` is not automatically tied to either family.
 
+This is enforced, not just intended: `release-please-config.json` sets
+`exclude-paths: ["rotifer-vscode"]`, so a commit whose files all live under
+`rotifer-vscode/` never drives a version bump or a CHANGELOG entry for the npm
+package. A commit that touches both the extension and shared code still counts,
+which is the behaviour you want — that change does reach npm consumers.
+
 ## Bump Flow
 
 Use one command per family:

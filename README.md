@@ -9,7 +9,7 @@
 
 Development environment for the **Rotifer Protocol** — **WASM-Native, Polyglot by Design**: build genes in TypeScript / Rust / AssemblyScript / Go / C, compete in Arenas, share via Cloud, and simulate agent evolution.
 
-> **Status:** v0.9.0 — Open Mesh + Economy Foundation: experimental P2P gene propagation (`rotifer network` — run a real libp2p node and propagate gene announcements across a LAN), the v0.9 economy + season system, Hybrid Fidelity genes, and `rotifer doctor`. See [CHANGELOG.md](CHANGELOG.md) for full release history. Automatic peer discovery, internet-wide reach, and L4 Collective Immunity are later milestones — see [Implementation Status](#implementation-status) below.
+> **Status:** v0.10.1 — P2P Reliability on top of v0.9's Open Mesh + Economy Foundation: experimental P2P gene propagation (`rotifer network`) now remembers peers across restarts, and the silent bootstrap failure is gone — nodes ship with no default bootstrap peer, so you pass one explicitly (`rotifer network start -b <multiaddr>`) and there is no public network to join yet. P2P stays off by default (`enabled: false`). Also the v0.9 economy + season system, Hybrid Fidelity genes, and `rotifer doctor`. See [CHANGELOG.md](CHANGELOG.md) for full release history. Automatic peer discovery, internet-wide reach, and L4 Collective Immunity are later milestones — see [Implementation Status](#implementation-status) below.
 
 ---
 

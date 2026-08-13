@@ -59,5 +59,9 @@ supabase/.branches/
 package/
 *.tgz
 
-# ADR-106 L4a: prevent internal/ cross-contamination
+# Prevent cross-contamination from the workspace-level internal/ directory
 internal/
+
+# Report written by the scheduled nightly build-and-test run; regenerated each
+# night, so it should never be committed.
+NIGHTLY_REPORT.md

@@ -80,33 +80,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **vscode:** use vortex logo for plugin icons ([e95731e](https://github.com/rotifer-protocol/rotifer-playground/commit/e95731ea1a763463001399993614b58b5fb249c1))
 * **wrap:** route validation errors through structured formatter, no stack-trace leak ([#55](https://github.com/rotifer-protocol/rotifer-playground/issues/55)) ([e705323](https://github.com/rotifer-protocol/rotifer-playground/commit/e70532362c5d1a4591a429ef75cb1e1afed1ec0c)), closes [#51](https://github.com/rotifer-protocol/rotifer-playground/issues/51)
 
-## [Unreleased]
-
-### Added
-
-- **`rotifer doctor`** — checks the TS→WASM toolchain (esbuild / javy) offline and reports
-  per-tool status, the active `npx` path, and the Node prefix running rotifer; exits non-zero
-  when the toolchain is incomplete. Surfaces the preflight from #58 as a standalone command.
-
-### Fixed
-
-- **WASM runtime errors surface the guest's stderr** — when a Native gene traps, the
-  sandbox now appends anything the guest wrote to fd 2 (e.g. the Javy/QuickJS error
-  message) to the failure, instead of returning only an opaque WASM backtrace (R4)
-- **Starter template traps in Native WASM** — `rotifer init` now scaffolds a synchronous
-  `express()`; the previous `async express()` starter compiled fine but trapped in the
-  Javy/QuickJS sandbox with an opaque backtrace (#57)
-- **Async `express()` now rejected at compile time** — `rotifer compile` statically detects
-  `async function express` / Promise-returning signatures and fails with `E0025` and an
-  actionable message, instead of deferring to a runtime trap whose error text was swallowed
-  by the WASM host (#57)
-- **Toolchain failures get a diagnosis instead of `spawnSync npx ETIMEDOUT`** — the TS→WASM
-  pipeline preflights esbuild/javy offline (`npx --no-install`, falling back to the `javy`
-  binary that `javy-cli@3` actually installs) and reports per-tool status, the active `npx`
-  path, and exact install commands; npx no longer hits the npm registry implicitly (#58)
-- **Stale WASM warning on `rotifer run`** — when `index.ts` is newer than `gene.ir.wasm`,
-  run now warns that it is executing stale WASM and suggests recompiling (#58)
-
 ## [0.8.6] - 2026-04-16
 
 ### Fixed

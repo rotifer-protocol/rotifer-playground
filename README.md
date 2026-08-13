@@ -269,7 +269,7 @@ bash demo.sh
 | **L4** | Collective Immunity | **0%** | — | Threat broadcasting, emergency rollback, cross-node consensus |
 | **Algebra** | Composition | **~90%** | All 5 operators in Rust; CLI supports Seq/Par/Cond/Try | DataFlowGraph |
 
-**Key limitation:** L4 depends on L3's P2P network, which is planned. Full L4 is targeted for v0.9+.
+**Key limitation:** L4 depends on a mature L3 P2P layer. P2P is runnable today but experimental and off by default, and still lacks automatic peer discovery and internet-wide reach. Full L4 is targeted for v1.x.
 
 ---
 

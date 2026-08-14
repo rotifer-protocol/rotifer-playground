@@ -7,6 +7,31 @@ use crate::l0::L0Gate;
 use crate::types::gene::Phenotype;
 use crate::types::{Context, ExecutionMetadata, GeneResult};
 
+/// Source-level shapes of an async `express()`, mirroring the compile-time
+/// guard (E0025) in the CLI's Javy compiler.
+const ASYNC_EXPRESS_MARKERS: [&str; 2] = ["async function express", "express = async"];
+
+/// Detect an async/Promise-returning `express()` embedded in a compiled artifact.
+///
+/// Javy/QuickJS has no event loop, so an async `express()` hands back a Promise
+/// instead of a result. The shim serialises that Promise to `{}` and exits 0, so
+/// the gene silently produces empty output and still looks like a success — the
+/// worst possible failure mode. The CLI rejects this shape at compile time, but
+/// artifacts published before that guard existed still carry it, so the runtime
+/// has to refuse them too.
+///
+/// Javy keeps the JS source text in the artifact, so a substring scan is enough.
+/// It only ever fires positively: an artifact without the marker is left alone.
+fn find_async_express(wasm_bytes: &[u8]) -> Option<&'static str> {
+    ASYNC_EXPRESS_MARKERS.into_iter().find(|marker| {
+        let needle = marker.as_bytes();
+        wasm_bytes.len() >= needle.len()
+            && wasm_bytes
+                .windows(needle.len())
+                .any(|window| window == needle)
+    })
+}
+
 struct HostState {
     context_json: Vec<u8>,
     logical_timestamp: u64,
@@ -598,6 +623,15 @@ impl Sandbox for WasmtimeSandbox {
     ) -> Result<GeneResult, SandboxError> {
         let start = std::time::Instant::now();
 
+        if let Some(marker) = find_async_express(wasm_bytes) {
+            return Err(SandboxError::InvalidWasm(format!(
+                "gene artifact declares `{marker}` — Javy/QuickJS has no event loop, so express() \
+                 returns a Promise that serialises to `{{}}`: the gene would silently produce empty \
+                 output and still exit 0. Recompile with a synchronous express(), or run it under \
+                 Node (--no-sandbox) / publish it as a Hybrid gene for async I/O."
+            )));
+        }
+
         let module = Module::new(&self.engine, wasm_bytes)
             .map_err(|e| SandboxError::CompilationFailed(e.to_string()))?;
 
@@ -1096,6 +1130,83 @@ mod tests {
             GeneResult::Success { data, .. } => {
                 assert_eq!(data, input);
             }
+            GeneResult::Error { message, .. } => panic!("expected success: {message}"),
+        }
+    }
+
+    /// Append a custom section carrying JS source text, mimicking how Javy
+    /// embeds the gene source in a compiled artifact.
+    fn with_embedded_source(wasm: &[u8], source: &str) -> Vec<u8> {
+        use wasm_encoder::*;
+
+        let mut module = Module::new();
+        module.section(&CustomSection {
+            name: std::borrow::Cow::Borrowed("rotifer_test_src"),
+            data: std::borrow::Cow::Borrowed(source.as_bytes()),
+        });
+        let mut out = module.finish();
+        // Splice the custom section in after the 8-byte magic + version header.
+        let mut spliced = wasm[..8].to_vec();
+        spliced.extend_from_slice(&out.split_off(8));
+        spliced.extend_from_slice(&wasm[8..]);
+        spliced
+    }
+
+    #[test]
+    fn execute_rejects_async_express_artifact() {
+        let sb = WasmtimeSandbox::with_defaults().unwrap();
+        let wasm = with_embedded_source(
+            &build_wasi_echo_wasm(),
+            "var __gene = (() => { async function express(input) { return {ok:true}; } })();",
+        );
+
+        let result = sb.execute(&wasm, &test_context(), serde_json::json!({"a": 1}));
+
+        let err = result.expect_err("async express artifact must not execute silently");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("async"),
+            "error should name the async defect, got: {msg}"
+        );
+        assert!(
+            msg.contains("express"),
+            "error should name express(), got: {msg}"
+        );
+    }
+
+    #[test]
+    fn execute_rejects_async_express_arrow_form() {
+        let sb = WasmtimeSandbox::with_defaults().unwrap();
+        let wasm = with_embedded_source(
+            &build_wasi_echo_wasm(),
+            "var express = async (input) => ({ ok: true });",
+        );
+
+        let result = sb.execute(&wasm, &test_context(), serde_json::json!({"a": 1}));
+
+        assert!(
+            result.is_err(),
+            "arrow-form async express must also be rejected"
+        );
+    }
+
+    #[test]
+    fn execute_allows_sync_express_artifact() {
+        let sb = WasmtimeSandbox::with_defaults().unwrap();
+        let input = serde_json::json!({"a": 1});
+        let wasm = with_embedded_source(
+            &build_wasi_echo_wasm(),
+            "var __gene = (() => { function express(input) { return {ok:true}; } })();",
+        );
+
+        let result = sb.execute(&wasm, &test_context(), input.clone());
+
+        assert!(
+            result.is_ok(),
+            "synchronous express must still run: {result:?}"
+        );
+        match result.unwrap() {
+            GeneResult::Success { data, .. } => assert_eq!(data, input),
             GeneResult::Error { message, .. } => panic!("expected success: {message}"),
         }
     }

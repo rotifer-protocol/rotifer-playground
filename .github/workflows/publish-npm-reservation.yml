@@ -36,10 +36,13 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
+      # No registry-url: it makes setup-node write an .npmrc pinning
+      # _authToken=${NODE_AUTH_TOKEN}, and with no such token in scope npm sends
+      # an empty credential instead of exchanging the OIDC id-token for a
+      # registry token. release.yml omits it for the same reason.
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "24"
-          registry-url: "https://registry.npmjs.org"
 
       - name: Resolve the reservation directory
         id: dir

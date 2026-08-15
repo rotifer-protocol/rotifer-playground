@@ -1,6 +1,6 @@
 {
   "name": "rotifer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Pointer package — the Rotifer Protocol CLI is published as @rotifer/playground. Reserved by the Rotifer Protocol project so the name cannot be used to impersonate the toolchain.",
   "keywords": [
     "rotifer",

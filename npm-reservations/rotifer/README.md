@@ -26,6 +26,18 @@ of a Rotifer tool. Update it, or call `@rotifer/playground` directly.
 - Docs: <https://rotifer.dev>
 - Source: <https://github.com/rotifer-protocol/rotifer-playground>
 
+## Verifying this package
+
+From 1.0.1 on, releases are published from CI with provenance, so you do not
+have to take the claim above on trust:
+
+```sh
+npm view rotifer dist.attestations
+```
+
+The attestation ties the published tarball to the workflow and commit that
+built it, in `rotifer-protocol/rotifer-playground`.
+
 ## License
 
 Apache-2.0

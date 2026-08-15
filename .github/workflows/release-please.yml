@@ -20,9 +20,56 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      pr_branch: ${{ steps.release.outputs.pr && fromJson(steps.release.outputs.pr).headBranchName || '' }}
     steps:
       - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
+        id: release
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # release-please bumps dependency versions via `extra-files`, which are raw
+  # text edits: package.json ends up asking for the new platform packages while
+  # package-lock.json still pins the old ones, and `npm ci` then refuses to
+  # install. Cargo.lock drifts the same way against the workspace version. Both
+  # have reached main before (v0.10.1 was itself the hand-fix; v0.10.2 brought
+  # the break straight back), so regenerate them on the release branch instead of
+  # repairing them afterwards.
+  #
+  # Pushing to the release branch triggers nothing: this workflow only runs on
+  # push to main.
+  sync-lockfiles:
+    needs: release-please
+    if: needs.release-please.outputs.pr_branch != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ needs.release-please.outputs.pr_branch }}
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Regenerate lockfiles from the bumped manifests
+        run: |
+          npm install --package-lock-only --ignore-scripts
+          cargo metadata --format-version 1 > /dev/null
+
+      - name: Commit the lockfiles if they moved
+        run: |
+          if git diff --quiet -- package-lock.json Cargo.lock; then
+            echo "锁文件已与 manifest 一致，无需提交"
+            exit 0
+          fi
+          git --no-pager diff --stat -- package-lock.json Cargo.lock
+          git config user.name "rotifer-release-bot"
+          git config user.email "dev@rotifer.dev"
+          git add package-lock.json Cargo.lock
+          # -s keeps the release PR passing the DCO gate.
+          git commit -s -m "chore: sync lockfiles with the bumped manifests"
+          git push

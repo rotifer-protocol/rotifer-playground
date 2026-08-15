@@ -15,6 +15,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # release-please bumps dependency versions through `extra-files`, which are raw
+  # text edits that never reach the lockfiles. The result is a tree where
+  # package.json asks for 0.10.2 while package-lock.json still pins 0.10.1, and
+  # `npm ci` refuses to install — a break that has now shipped to main twice
+  # (v0.10.1 fixed it by hand, v0.10.2 reintroduced it). release-please.yml now
+  # regenerates the lockfiles on the release branch; this job is the backstop
+  # that keeps the drift from reaching main by any other route.
+  lockfile-sync:
+    name: Lockfile Sync Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Regenerate lockfiles from the manifests
+        run: |
+          npm install --package-lock-only --ignore-scripts
+          cargo metadata --format-version 1 > /dev/null
+
+      - name: Lockfiles must already match the manifests
+        run: |
+          if ! git diff --quiet -- package-lock.json Cargo.lock; then
+            echo "::error::锁文件与 manifest 不一致。本地跑 'npm install --package-lock-only --ignore-scripts' 和 'cargo metadata' 后提交结果。"
+            git --no-pager diff --stat -- package-lock.json Cargo.lock
+            git --no-pager diff -- package-lock.json Cargo.lock
+            exit 1
+          fi
+          echo "✓ package-lock.json 与 Cargo.lock 均与 manifest 一致"
+
   lint:
     name: Lint & Type Check
     runs-on: ubuntu-latest

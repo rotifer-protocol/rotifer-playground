@@ -269,7 +269,22 @@ describe("command handlers (integration with mocks)", () => {
     const handler = testCall![1];
     await handler({ gene: { name: "my-gene" } });
     const terminal = vi.mocked(vscode.window.createTerminal).mock.results.at(-1)?.value;
-    expect(terminal.sendText).toHaveBeenCalledWith("npx rotifer 'test' 'my-gene'");
+    expect(terminal.sendText).toHaveBeenCalledWith("npx -y @rotifer/playground 'test' 'my-gene'");
+  });
+
+  it("never invokes the unclaimed bare 'rotifer' npm package name", async () => {
+    const ctx = makeContext();
+    activate(ctx);
+
+    const scanCall = vi.mocked(vscode.commands.registerCommand).mock.calls.find(
+      ([name]) => name === "rotifer.scanGenes",
+    );
+    scanCall![1]();
+    const terminal = vi.mocked(vscode.window.createTerminal).mock.results.at(-1)?.value;
+    const sent = vi.mocked(terminal.sendText).mock.calls.at(-1)?.[0] as string;
+
+    expect(sent).not.toMatch(/^npx\s+(-y\s+)?rotifer\b/);
+    expect(sent).toContain("@rotifer/playground");
   });
 
   it("scanGenes opens terminal with scan command", async () => {
@@ -282,7 +297,7 @@ describe("command handlers (integration with mocks)", () => {
     const handler = scanCall![1];
     handler();
     const terminal = vi.mocked(vscode.window.createTerminal).mock.results.at(-1)?.value;
-    expect(terminal.sendText).toHaveBeenCalledWith("npx rotifer 'scan'");
+    expect(terminal.sendText).toHaveBeenCalledWith("npx -y @rotifer/playground 'scan'");
   });
 
   it("initProject validates project name format", async () => {

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Security — the CLI is now invoked by its scoped package name.** Every terminal command the extension runs (`test`, `scan`, `init`, …) shelled out to `npx rotifer`. The bare `rotifer` name is unclaimed on npm, so anyone publishing under it would have their code fetched and executed in the user's own terminal and workspace. The extension now runs `npx -y @rotifer/playground`, whose single bin is `rotifer`.
+
 ## 0.9.0 — 2026-06-28
 
 Version aligned with the `v0.9.0` Rotifer release line, bringing the IDE extension's distribution metadata and bundled skills/rules in step with the current CLI and MCP surface.

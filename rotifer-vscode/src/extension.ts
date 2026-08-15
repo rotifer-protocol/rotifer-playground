@@ -345,7 +345,10 @@ function runCliInTerminal(args: string[], label: string): void {
   const cwd = folders?.[0]?.uri.fsPath;
   const terminal = vscode.window.createTerminal({ name: `Rotifer: ${label}`, cwd });
   terminal.show();
-  terminal.sendText(`npx rotifer ${args.map(shellEscape).join(" ")}`);
+  // The bare "rotifer" name is unclaimed on npm; `npx rotifer` would fetch and
+  // run whatever package squats it. Always pin the scoped package, whose single
+  // bin is `rotifer`, and pass -y so npx cannot stall on an install prompt.
+  terminal.sendText(`npx -y @rotifer/playground ${args.map(shellEscape).join(" ")}`);
 }
 
 export { webviews };

@@ -1,0 +1,29 @@
+{
+  "name": "rotifer",
+  "version": "1.0.0",
+  "description": "Pointer package — the Rotifer Protocol CLI is published as @rotifer/playground. Reserved by the Rotifer Protocol project so the name cannot be used to impersonate the toolchain.",
+  "keywords": [
+    "rotifer",
+    "rotifer-protocol"
+  ],
+  "homepage": "https://rotifer.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rotifer-protocol/rotifer-playground.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rotifer-protocol/rotifer-playground/issues"
+  },
+  "author": "Rotifer Protocol Contributors",
+  "license": "Apache-2.0",
+  "bin": {
+    "rotifer": "bin/rotifer.js"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

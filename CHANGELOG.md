@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.10.1...v0.10.2) (2026-08-14)
+
+
+### Bug Fixes
+
+* **release:** stop VS Code-only changes from bumping the npm package ([#166](https://github.com/rotifer-protocol/rotifer-playground/issues/166)) ([ae256d6](https://github.com/rotifer-protocol/rotifer-playground/commit/ae256d6eb939de50d28704d17cfdc5945702eb27))
+* **sandbox:** reject artifacts with an async express() at runtime ([#169](https://github.com/rotifer-protocol/rotifer-playground/issues/169)) ([338322f](https://github.com/rotifer-protocol/rotifer-playground/commit/338322fcc296fe190c4301f5adf09344ed46b5a7))
+
 ## [0.10.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.10.0...v0.10.1) (2026-08-11)
 
 

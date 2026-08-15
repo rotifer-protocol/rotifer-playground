@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.2 — 2026-08-15
 
 - **Security — the CLI is now invoked by its scoped package name.** Every terminal command the extension runs (`test`, `scan`, `init`, …) shelled out to `npx rotifer`. The bare `rotifer` name is unclaimed on npm, so anyone publishing under it would have their code fetched and executed in the user's own terminal and workspace. The extension now runs `npx -y @rotifer/playground`, whose single bin is `rotifer`.
 

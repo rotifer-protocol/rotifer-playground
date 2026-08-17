@@ -10,6 +10,7 @@ import { tryLoadBinding } from "../utils/binding.js";
 import { arenaSubmit as cloudArenaSubmit } from "../cloud/client.js";
 import { requireAuth } from "../cloud/auth.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
+import { compileOutputValidator, isRunSuccessful } from "../utils/arena-success.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { scan } from "../scanner/index.js";
 import type { Severity } from "../scanner/types.js";
@@ -140,6 +141,15 @@ export const arenaSubmitCommand = new Command("submit")
       const runs = 3;
       const results: { success: boolean; latencyMs: number; resourceCost: number }[] = [];
 
+      // S_r counts a run as successful only when the sandbox succeeded AND the
+      // output honours the Gene's own outputSchema (spec §47.5 T1 "legal
+      // output"). Sandbox success alone let empty `{}` outputs score S_r = 1.
+      const validateOutput = compileOutputValidator(phenotype);
+      if (!validateOutput) {
+        display.warn("phenotype.outputSchema is empty or unusable — S_r falls back to sandbox success alone");
+      }
+      let contractFailures = 0;
+
       for (let i = 0; i < runs; i++) {
         const testInput = generateTestInput(phenotype.inputSchema, i);
         try {
@@ -149,8 +159,13 @@ export const arenaSubmitCommand = new Command("submit")
             JSON.stringify(phenotypeForExec),
             DEFAULT_SANDBOX_CONSTRAINTS_JSON
           );
+          const isSuccessfulRun = isRunSuccessful(
+            { sandboxSuccess: execResult.success, output: execResult.output },
+            validateOutput,
+          );
+          if (execResult.success && !isSuccessfulRun) contractFailures++;
           results.push({
-            success: execResult.success,
+            success: isSuccessfulRun,
             latencyMs: execResult.durationMs,
             resourceCost: execResult.fuelConsumed,
           });
@@ -161,6 +176,12 @@ export const arenaSubmitCommand = new Command("submit")
 
       const total = results.length;
       const successes = results.filter((r) => r.success).length;
+      if (contractFailures > 0) {
+        display.warn(
+          `${contractFailures}/${total} run(s) returned output that violates outputSchema — counted as failures for S_r`
+        );
+        display.hint("An empty or partial result is not a successful run. Check that express() returns the declared fields synchronously.");
+      }
       const successRate = successes / total;
       const avgLatency = results.reduce((s, r) => s + r.latencyMs, 0) / total;
       const latencyScore = 1.0 / (1.0 + avgLatency / 1000.0);

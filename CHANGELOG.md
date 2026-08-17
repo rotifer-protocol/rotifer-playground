@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.11.0...v0.12.0) (2026-08-17)
+
+
+### Features
+
+* **cli:** record Cloud-installed Gene executions as invocations ([#181](https://github.com/rotifer-protocol/rotifer-playground/issues/181)) ([e0bfffb](https://github.com/rotifer-protocol/rotifer-playground/commit/e0bfffb4b47eb275489f9c6edde0b37959e76d97))
+
+
+### Bug Fixes
+
+* **arena:** a run only counts as successful when its output honours outputSchema ([#182](https://github.com/rotifer-protocol/rotifer-playground/issues/182)) ([acd74e8](https://github.com/rotifer-protocol/rotifer-playground/commit/acd74e83dcf9ea1d637896b5b0479707e34106db))
+* **deps:** restore the four 0.11.0 optional-dependency entries in package-lock ([#185](https://github.com/rotifer-protocol/rotifer-playground/issues/185)) ([8da273c](https://github.com/rotifer-protocol/rotifer-playground/commit/8da273c8d6d04d240caa72b4b3a95249d2c445b4))
+
 ## [0.11.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.10.2...v0.11.0) (2026-08-17)
 
 

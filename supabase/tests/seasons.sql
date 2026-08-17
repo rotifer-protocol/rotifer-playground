@@ -9,11 +9,11 @@
 --   B.3 — get_display_fitness() (8 tests)
 --   B.4 — get_display_weight() (6 tests)
 --   B.5 — compute_path_diversity() (5 tests)
---   B.6 — refresh_contribution_metrics() §33.4 (6 tests)
+--   B.6 — refresh_contribution_metrics() §33.4 (6 tests, fixture-backed)
 --   B.7 — RLS policy (5 tests)
 --   B.8 — pg_cron automation (3 tests)
 --
--- Total: 57 assertions (B.1=11, B.2=9, B.3=9, B.4=7, B.5=6, B.6=7, B.7=5, B.8=3).
+-- Total: 60 assertions (B.1=11, B.2=9, B.3=9, B.4=7, B.5=6, B.6=10, B.7=5, B.8=3).
 -- Stage 2 expectation: PASS once v0.9 RPC bodies + RLS hardening land.
 --
 -- Run inside supabase test container:
@@ -24,7 +24,7 @@
 
 BEGIN;
 
-SELECT plan(57);
+SELECT plan(60);
 
 -- ============================================================
 -- B.1 Schema migration
@@ -215,30 +215,144 @@ SELECT skip(1, 'B.5.5: empty dependencies set → no NaN — requires fixture');
 -- ============================================================
 -- B.6 refresh_contribution_metrics() §33.4
 -- ============================================================
+--
+-- These rules gate Arena ranking eligibility, and until 2026-08-17 not one of
+-- them had ever run against data: B.6.1/2/3/5 were `skip(... stage 2)` for want
+-- of a fixture. That is how the invocation pipeline stayed broken for months
+-- while this suite reported green — the function was only ever asked whether it
+-- existed. ADR-319 stage 1 item 1.7. The fixture below is the same shape as
+-- supabase/tests/arena_total_calls_trigger.sql (auth.users -> profile trigger
+-- -> gene), rolled back with the rest of the file. Publishing these fixture
+-- Genes emits five `content_hash mismatch (non-blocking, see ADR-292)`
+-- WARNINGs — expected: client and server canonicalize phenotype differently,
+-- and migration 20260528021934 downgraded that arm to a warning. If ADR-292
+-- ever restores the hard failure, this fixture needs real hashes.
+--
+-- Spec rule numbering (§33.4) — the inline comments in migration
+-- 20260527020821 use a different numbering, so read the spec, not the code:
+--   Rule 1 Self-Invocation Exclusion
+--   Rule 2 Minimum Unique Callers Threshold
+--   Rule 3 Call-Loop Detection (mutual invocation between two authors)
+--   Rule 4 Time-Window Deduplication
 
 SELECT has_function('public', 'refresh_contribution_metrics', 'B.6.0: refresh_contribution_metrics() exists');
 
--- B.6.1 — Rule 1 Self-invocation excluded
-SELECT skip(1, 'B.6.1: requires gene_invocation_log fixture with self+other — stage 2');
+-- ------------------------------------------------------------
+-- Fixture. Timestamps are anchored on date_trunc('day', ...) so that "same
+-- calendar day" is deterministic regardless of when CI runs.
+--   G1 author's own call + 2 external callers   -> Rule 1
+--   G2 one caller only, on three separate days  -> Rule 2
+--   G3 one caller x3 in a day (+4min, +2h) plus a second caller, and again the
+--      next day                                 -> Rule 4
+--   GP/GQ two authors invoking each other       -> Rule 3
+-- ------------------------------------------------------------
+INSERT INTO auth.users (id, email, raw_user_meta_data) VALUES
+  ('b0000000-0000-4000-8000-000000000001', 'b6-author-a@example.com', '{"user_name":"b6_author_a"}'::jsonb),
+  ('b0000000-0000-4000-8000-000000000002', 'b6-author-p@example.com', '{"user_name":"b6_author_p"}'::jsonb),
+  ('b0000000-0000-4000-8000-000000000003', 'b6-author-q@example.com', '{"user_name":"b6_author_q"}'::jsonb);
 
--- B.6.2 — Rule 2 Unique callers de-dup
-SELECT skip(1, 'B.6.2: requires duplicate-caller fixture — stage 2');
+INSERT INTO genes (id, owner_id, name, domain, version, fidelity, phenotype, published, content_hash) VALUES
+  ('a1111111-1111-4111-8111-111111111111','b0000000-0000-4000-8000-000000000001','b6_gene_one','test.b6','0.1.0','Wrapped','{"domain":"test.b6","inputSchema":{},"outputSchema":{},"version":"0.1.0"}'::jsonb,true,repeat('1',64)),
+  ('a2222222-2222-4222-8222-222222222222','b0000000-0000-4000-8000-000000000001','b6_gene_two','test.b6','0.1.0','Wrapped','{"domain":"test.b6","inputSchema":{},"outputSchema":{},"version":"0.1.0"}'::jsonb,true,repeat('2',64)),
+  ('a3333333-3333-4333-8333-333333333333','b0000000-0000-4000-8000-000000000001','b6_gene_three','test.b6','0.1.0','Wrapped','{"domain":"test.b6","inputSchema":{},"outputSchema":{},"version":"0.1.0"}'::jsonb,true,repeat('3',64)),
+  ('a4444444-4444-4444-8444-444444444444','b0000000-0000-4000-8000-000000000002','b6_gene_p','test.b6','0.1.0','Wrapped','{"domain":"test.b6","inputSchema":{},"outputSchema":{},"version":"0.1.0"}'::jsonb,true,repeat('4',64)),
+  ('a5555555-5555-4555-8555-555555555555','b0000000-0000-4000-8000-000000000003','b6_gene_q','test.b6','0.1.0','Wrapped','{"domain":"test.b6","inputSchema":{},"outputSchema":{},"version":"0.1.0"}'::jsonb,true,repeat('5',64));
 
--- B.6.3 — Rule 4 1h time window dedup
-SELECT skip(1, 'B.6.3: requires intra-hour fixture — stage 2');
+INSERT INTO gene_invocation_log (gene_id, caller_agent_id, invoked_at) VALUES
+  ('a1111111-1111-4111-8111-111111111111','b0000000-0000-4000-8000-000000000001', date_trunc('day', now() - interval '3 days') + interval '9 hours'),
+  ('a1111111-1111-4111-8111-111111111111','b6-caller-x',                          date_trunc('day', now() - interval '3 days') + interval '9 hours'),
+  ('a1111111-1111-4111-8111-111111111111','b6-caller-y',                          date_trunc('day', now() - interval '3 days') + interval '9 hours'),
+  ('a2222222-2222-4222-8222-222222222222','b6-caller-x',                          date_trunc('day', now() - interval '3 days') + interval '9 hours'),
+  ('a2222222-2222-4222-8222-222222222222','b6-caller-x',                          date_trunc('day', now() - interval '2 days') + interval '9 hours'),
+  ('a2222222-2222-4222-8222-222222222222','b6-caller-x',                          date_trunc('day', now() - interval '1 days') + interval '9 hours'),
+  ('a3333333-3333-4333-8333-333333333333','b6-caller-x',                          date_trunc('day', now() - interval '3 days') + interval '9 hours'),
+  ('a3333333-3333-4333-8333-333333333333','b6-caller-x',                          date_trunc('day', now() - interval '3 days') + interval '9 hours 4 minutes'),
+  ('a3333333-3333-4333-8333-333333333333','b6-caller-x',                          date_trunc('day', now() - interval '3 days') + interval '11 hours'),
+  ('a3333333-3333-4333-8333-333333333333','b6-caller-y',                          date_trunc('day', now() - interval '3 days') + interval '9 hours'),
+  ('a3333333-3333-4333-8333-333333333333','b6-caller-x',                          date_trunc('day', now() - interval '2 days') + interval '9 hours'),
+  ('a4444444-4444-4444-8444-444444444444','b0000000-0000-4000-8000-000000000003', date_trunc('day', now() - interval '3 days') + interval '9 hours'),
+  ('a4444444-4444-4444-8444-444444444444','b6-caller-x',                          date_trunc('day', now() - interval '3 days') + interval '9 hours'),
+  ('a5555555-5555-4555-8555-555555555555','b0000000-0000-4000-8000-000000000002', date_trunc('day', now() - interval '3 days') + interval '9 hours'),
+  ('a5555555-5555-4555-8555-555555555555','b6-caller-x',                          date_trunc('day', now() - interval '3 days') + interval '9 hours');
+
+-- PERFORM inside DO so the refresh emits no result set into the TAP stream.
+DO $refresh$ BEGIN PERFORM refresh_contribution_metrics(); END $refresh$;
+
+-- B.6.1 — Rule 1: the author's own invocation of their own Gene is excluded.
+--   G1 has 3 raw invocations, one of them by the author. Both counters must
+--   see 2. (is_self_invocation is a generated column fed by the BEFORE INSERT
+--   trigger that copies genes.owner_id — B.6.1 covers that wiring too.)
+SELECT is(
+  (SELECT unique_callers FROM gene_contribution_metrics WHERE gene_id = 'a1111111-1111-4111-8111-111111111111'),
+  2,
+  'B.6.1a: Rule 1 — the author''s own call is not a unique caller');
+SELECT is(
+  (SELECT total_invocations FROM gene_contribution_metrics WHERE gene_id = 'a1111111-1111-4111-8111-111111111111'),
+  2,
+  'B.6.1b: Rule 1 — nor does it inflate total_invocations');
+
+-- B.6.2 — Rule 2: below MIN_UNIQUE_CALLERS the Gene is not counted at all.
+--   G2 has 3 valid invocations but only 1 distinct caller, so the HAVING clause
+--   drops it and the LEFT JOIN writes zeros. Note what this means for §9.7.1:
+--   the aggregate row loses the real numbers, so third-party recomputation has
+--   to go back to the raw log — which stays public and complete (B.6.2b).
+SELECT is(
+  (SELECT total_invocations FROM gene_contribution_metrics WHERE gene_id = 'a2222222-2222-4222-8222-222222222222'),
+  0,
+  'B.6.2a: Rule 2 — a single-caller Gene is zeroed, not ranked ("Under Evaluation")');
+SELECT is(
+  (SELECT count(*) FROM gene_invocation_log WHERE gene_id = 'a2222222-2222-4222-8222-222222222222'),
+  3::bigint,
+  'B.6.2b: Rule 2 — the raw log still holds all 3 rows (§9.7.1 recomputability)');
+
+-- B.6.3 — Rule 4: repeated calls by the same caller collapse.
+--   G3 raw: caller-x at 09:00 / 09:04 / 11:00 on day-3, caller-y at 09:00 on
+--   day-3, caller-x again on day-2 = 5 rows. Counted: 3.
+--   The binding is STRICTER than the spec's recommended 1h DEDUP_WINDOW — the
+--   11:00 call is two hours later and still drops, because migration
+--   20260527020821 keeps only the first call per caller-gene per calendar day.
+--   (Its 5-minute LAG filter is subsumed by that day cap and can only bite
+--   across a midnight boundary.)
+SELECT is(
+  (SELECT total_invocations FROM gene_contribution_metrics WHERE gene_id = 'a3333333-3333-4333-8333-333333333333'),
+  3,
+  'B.6.3a: Rule 4 — 5 raw invocations collapse to 3 (one per caller per day)');
+SELECT is(
+  (SELECT unique_callers FROM gene_contribution_metrics WHERE gene_id = 'a3333333-3333-4333-8333-333333333333'),
+  2,
+  'B.6.3b: Rule 4 — dedup does not lose a distinct caller');
 
 -- B.6.4 — MIN_UNIQUE_CALLERS = 2 (decision D-02 initial)
+--   Spec §33.4 Rule 2 recommends 5; the binding starts at 2 and the gap is
+--   tracked as "Under Evaluation" (ADR-319 D3).
 SELECT is(
   (SELECT (config->>'min_unique_callers')::INTEGER FROM seasons WHERE status='active' LIMIT 1),
   2,
   'B.6.4: min_unique_callers initial value = 2'
 );
 
--- B.6.5 — UPSERT correctness on second refresh
-SELECT skip(1, 'B.6.5: requires double-refresh fixture — stage 2');
+-- B.6.5 — UPSERT: a second refresh updates the existing row in place.
+--   A new caller arrives for G1 on a later day; re-running must move 2 -> 3
+--   rather than leaving the previous aggregate standing.
+INSERT INTO gene_invocation_log (gene_id, caller_agent_id, invoked_at) VALUES
+  ('a1111111-1111-4111-8111-111111111111','b6-caller-z', date_trunc('day', now() - interval '2 days') + interval '9 hours');
+DO $refresh2$ BEGIN PERFORM refresh_contribution_metrics(); END $refresh2$;
+SELECT is(
+  (SELECT total_invocations FROM gene_contribution_metrics WHERE gene_id = 'a1111111-1111-4111-8111-111111111111'),
+  3,
+  'B.6.5: second refresh updates the row in place (2 -> 3), no stale aggregate');
 
--- B.6.6 — Rule 3 Call-Loop Detection deferred (application layer)
-SELECT skip(1, 'B.6.6: documented as deferred to application layer');
+-- B.6.6 — Rule 3 Call-Loop Detection is NOT implemented.
+--   ⚠️ This assertion pins the CURRENT behaviour, which the spec forbids:
+--   author P and author Q invoke each other's Genes, and both invocations are
+--   still counted. §33.4 Rule 3 says mutual invocations MUST NOT count toward
+--   each other's uniqueCallers within LOOP_DETECTION_WINDOW (default 30 days).
+--   The `daily_rank` filter labelled "Rule 3" in migration 20260527020821 is an
+--   extra dedup, not loop detection. When Rule 3 lands this must flip to 1.
+SELECT is(
+  (SELECT unique_callers FROM gene_contribution_metrics WHERE gene_id = 'a4444444-4444-4444-8444-444444444444'),
+  2,
+  'B.6.6: Rule 3 gap — a mutual author invocation is still counted (must become 1 when Rule 3 lands)');
 
 -- ============================================================
 -- B.7 RLS policies

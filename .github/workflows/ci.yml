@@ -358,7 +358,8 @@ jobs:
         run: |
           # B-R6 sprint (2026-05-17) closed every known v0.9 stage-2 failure:
           #   - plan() count corrected to 57 (B.1=11, B.2=9, B.3=9,
-          #     B.4=7, B.5=6, B.6=7, B.7=5, B.8=3)
+          #     B.4=7, B.5=6, B.6=7, B.7=5, B.8=3); now 60, B.6=10 since
+          #     ADR-319 item 1.7 gave §33.4 a real fixture
           #   - B.2.1 uses SAVEPOINT to mark every season ended,
           #     exercise the no-active-season branch, then ROLLBACK so
           #     B.2.2 happy path still sees an active season

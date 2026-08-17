@@ -166,7 +166,7 @@ export const agentRunCommand = new Command("run")
               durationMs: stepElapsed, inputPreview,
               outputPreview: JSON.stringify(result.output).slice(0, 200),
             });
-            logGeneExecution({
+            logGeneExecution({ geneDir,
               geneName, success: true, durationMs: stepElapsed,
               inputSize: inputPreview.length,
               outputSize: JSON.stringify(result.output).length,
@@ -178,7 +178,7 @@ export const agentRunCommand = new Command("run")
               durationMs: stepElapsed, inputPreview, outputPreview: "",
               error: result.errorMessage || "sandbox execution failed",
             });
-            logGeneExecution({
+            logGeneExecution({ geneDir,
               geneName, success: false, durationMs: stepElapsed,
               inputSize: inputPreview.length, outputSize: 0,
               error: result.errorMessage || "sandbox execution failed",
@@ -198,7 +198,7 @@ export const agentRunCommand = new Command("run")
             durationMs: stepElapsed, inputPreview, outputPreview: "",
             error: err.message,
           });
-          logGeneExecution({
+          logGeneExecution({ geneDir,
             geneName, success: false, durationMs: stepElapsed,
             inputSize: inputPreview.length, outputSize: 0,
             error: err.message,
@@ -281,7 +281,7 @@ export const agentRunCommand = new Command("run")
             durationMs: stepElapsed, inputPreview,
             outputPreview: JSON.stringify(result).slice(0, 200),
           });
-          logGeneExecution({
+          logGeneExecution({ geneDir,
             geneName, success: true, durationMs: stepElapsed,
             inputSize: inputPreview.length,
             outputSize: JSON.stringify(result).length,
@@ -295,7 +295,7 @@ export const agentRunCommand = new Command("run")
             durationMs: stepElapsed, inputPreview, outputPreview: "",
             error: err.message,
           });
-          logGeneExecution({
+          logGeneExecution({ geneDir,
             geneName, success: false, durationMs: stepElapsed,
             inputSize: inputPreview.length, outputSize: 0,
             error: err.message,
@@ -488,7 +488,7 @@ async function buildGeneExecutor(
           DEFAULT_SANDBOX_CONSTRAINTS_JSON,
         );
         const elapsed = performance.now() - start;
-        logGeneExecution({
+        logGeneExecution({ geneDir,
           geneName, success: result.success, durationMs: elapsed,
           inputSize: JSON.stringify(input).length,
           outputSize: result.output ? JSON.stringify(result.output).length : 0,
@@ -504,7 +504,7 @@ async function buildGeneExecutor(
         };
       } catch (err: any) {
         const elapsed = performance.now() - start;
-        logGeneExecution({
+        logGeneExecution({ geneDir,
           geneName, success: false, durationMs: elapsed,
           inputSize: JSON.stringify(input).length, outputSize: 0,
           error: err.message,
@@ -554,7 +554,7 @@ async function buildGeneExecutor(
         result = await mod.express(input);
       }
       const elapsed = performance.now() - start;
-      logGeneExecution({
+      logGeneExecution({ geneDir,
         geneName, success: true, durationMs: elapsed,
         inputSize: JSON.stringify(input).length,
         outputSize: JSON.stringify(result).length,
@@ -567,7 +567,7 @@ async function buildGeneExecutor(
       };
     } catch (err: any) {
       const elapsed = performance.now() - start;
-      logGeneExecution({
+      logGeneExecution({ geneDir,
         geneName, success: false, durationMs: elapsed,
         inputSize: JSON.stringify(input).length, outputSize: 0,
         error: err.message,

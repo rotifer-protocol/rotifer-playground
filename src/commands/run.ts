@@ -5,6 +5,7 @@ import * as display from "../utils/display.js";
 import { getProjectRoot, loadConfig } from "../utils/config.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
+import { recordGeneInvocation } from "../cloud/invocation.js";
 
 export const runCommand = new Command("run")
   .description("Execute a single gene directly")
@@ -97,6 +98,10 @@ export const runCommand = new Command("run")
               DEFAULT_SANDBOX_CONSTRAINTS_JSON,
             );
             console.log();
+            // A Cloud-installed Gene that ran is an invocation the protocol's
+            // anti-manipulation metrics count on; report it (signed in + telemetry
+            // on only — see cloud/invocation.ts). Success or not: it was called.
+            recordGeneInvocation(geneDir);
             if (execResult.success) {
               display.success("Output:");
               console.log(JSON.stringify(execResult.output, null, 2));
@@ -123,6 +128,7 @@ export const runCommand = new Command("run")
         }
         display.info("Running via Node.js...");
         try {
+          recordGeneInvocation(geneDir);
           const mod = await import(sourcePath);
           const fn = mod.express || mod.default || mod.main;
           if (typeof fn !== "function") {

@@ -2,12 +2,20 @@ import { appendFileSync, existsSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { ensurePrivateDir, tightenPrivateFile } from "./private-fs.js";
+import { recordGeneInvocation } from "../cloud/invocation.js";
 
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB rotation
 const LOG_DIR = join(homedir(), ".rotifer", "run-logs");
 
 interface GeneExecutionMeta {
   geneName: string;
+  /**
+   * Directory of the Gene that ran. When given, the execution is also reported
+   * to Rotifer Cloud as an invocation — only for Cloud-installed Genes, only
+   * when signed in, never when ROTIFER_TELEMETRY is off (see cloud/invocation).
+   * The local log line above is written regardless and stays local.
+   */
+  geneDir?: string;
   success: boolean;
   durationMs: number;
   inputSize: number;
@@ -45,6 +53,14 @@ export function logGeneExecution(meta: GeneExecutionMeta): void {
     tightenPrivateFile(logFile);
   } catch {
     // Zero-disruption: never throw from logging
+  }
+
+  if (meta.geneDir) {
+    try {
+      recordGeneInvocation(meta.geneDir);
+    } catch {
+      // Same rule: reporting must never affect a run.
+    }
   }
 }
 

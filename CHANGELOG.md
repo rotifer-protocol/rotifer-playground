@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.10.2...v0.11.0) (2026-08-17)
+
+
+### Features
+
+* **cli:** rotifer rollback and rotifer uninstall ([#179](https://github.com/rotifer-protocol/rotifer-playground/issues/179)) ([e2accb9](https://github.com/rotifer-protocol/rotifer-playground/commit/e2accb9177fda91d5e96ac6f0ebc1d2404b75bef))
+* **npm:** reserve the unscoped 'rotifer' name ([#176](https://github.com/rotifer-protocol/rotifer-playground/issues/176)) ([dc9ecbf](https://github.com/rotifer-protocol/rotifer-playground/commit/dc9ecbfed0320359a0e806bcab161bd6ab379fe7))
+
+
+### Bug Fixes
+
+* **ci:** drop registry-url so the reservation publish can use OIDC ([#177](https://github.com/rotifer-protocol/rotifer-playground/issues/177)) ([c05e1a5](https://github.com/rotifer-protocol/rotifer-playground/commit/c05e1a597eddc24a4241e7c65253e1a13d3510f7))
+* **ci:** keep the lockfiles in step with release-please bumps ([#173](https://github.com/rotifer-protocol/rotifer-playground/issues/173)) ([33a7e42](https://github.com/rotifer-protocol/rotifer-playground/commit/33a7e4259ca70d0ab09a3739ed99da58c5331e30))
+* **supabase:** cast before comparing uuid to text in the arena total_calls trigger ([#180](https://github.com/rotifer-protocol/rotifer-playground/issues/180)) ([22e5941](https://github.com/rotifer-protocol/rotifer-playground/commit/22e594115b5080a06313ca50f3e3e031507e6128))
+
 ## [0.10.2](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.10.1...v0.10.2) (2026-08-14)
 
 

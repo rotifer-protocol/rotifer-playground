@@ -96,26 +96,73 @@ describe("plugin source sync pipeline", () => {
     const codebuddySkill = outputs.find(
       (entry) => entry.pathFromRoot === "plugins/rotifer/skills/evolve/SKILL.md",
     );
+    const openclawPlugin = outputs.find(
+      (entry) => entry.pathFromRoot === "plugins/rotifer/openclaw.plugin.json",
+    );
+    const claudePlugin = outputs.find(
+      (entry) => entry.pathFromRoot === "plugins/rotifer/.claude-plugin/plugin.json",
+    );
+    const openclawPackage = outputs.find(
+      (entry) => entry.pathFromRoot === "plugins/rotifer/package.json",
+    );
+
+    // Read the version rather than hardcoding it. These assertions used to
+    // name 0.8.5 literally, so `npm run bump:plugin-family -- root <v>` — the
+    // one sanctioned way to change it — turned the suite red for doing its job.
+    const rootVersion = familyVersion(root, "root");
 
     expect(rootCursorMarketplace?.kind).toBe("json");
     expect(rootCursorPlugin?.kind).toBe("json");
     expect(rootCursorPlugin && "data" in rootCursorPlugin ? rootCursorPlugin.data.version : undefined).toBe(
-      "0.8.5",
+      rootVersion,
     );
     expect(rootCodeBuddyPlugin?.kind).toBe("json");
     expect(
       rootCodeBuddyPlugin && "data" in rootCodeBuddyPlugin
         ? rootCodeBuddyPlugin.data.version
         : undefined,
-    ).toBe("0.8.5");
+    ).toBe(rootVersion);
     expect(vscodeCursor?.kind).toBe("json");
     expect(vscodeCursor && "data" in vscodeCursor ? vscodeCursor.data.version : undefined).toBe(
       familyVersion(root, "vscode"),
     );
     expect(codebuddySkill?.kind).toBe("text");
     expect(codebuddySkill && "content" in codebuddySkill ? codebuddySkill.content : "").toContain(
-      "version: 0.8.5",
+      `version: ${rootVersion}`,
     );
+
+    // The same folder is published to a third marketplace. All three hosts
+    // carry one version, which is the point of generating them together.
+    for (const entry of [openclawPlugin, claudePlugin, openclawPackage]) {
+      expect(entry?.kind).toBe("json");
+      expect(entry && "data" in entry ? entry.data.version : undefined).toBe(rootVersion);
+    }
+  });
+
+  it("launches the MCP server pinned and with a declared tool set", () => {
+    const root = createFixture();
+    const outputs = buildOutputs(root);
+
+    // An unpinned, unrestricted launch line was shipping every tool the server
+    // has to Cursor and CodeBuddy users. Both halves are load-bearing: the pin
+    // means what you install is what was reviewed, and the tool set means the
+    // assistant cannot publish or sign in through this plugin.
+    for (const pathFromRoot of [
+      "plugins/rotifer/.cursor-plugin/plugin.json",
+      "plugins/rotifer/openclaw.plugin.json",
+    ]) {
+      const entry = outputs.find((candidate) => candidate.pathFromRoot === pathFromRoot);
+      expect(entry?.kind).toBe("json");
+      const args =
+        entry && "data" in entry
+          ? ((entry.data as Record<string, any>).mcpServers?.rotifer?.args as string[])
+          : undefined;
+
+      expect(args).toBeDefined();
+      expect(args?.some((arg) => /^@rotifer\/mcp-server@\d+\.\d+\.\d+$/.test(arg))).toBe(true);
+      expect(args).toContain("--tools=evolve");
+      expect(args?.some((arg) => arg.startsWith("--allow"))).toBe(false);
+    }
   });
 
   it("preserves hand-authored vscode package sections while syncing owned fields", () => {

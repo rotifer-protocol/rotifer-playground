@@ -248,6 +248,22 @@ export function buildOutputs(rootDir = REPO_ROOT) {
       "plugins/rotifer/.codebuddy-plugin/plugin.json",
       injectVersion(rootFamily.codebuddyPlugin, rootVersion),
     ),
+    // The same folder serves a third host. OpenClaw reads openclaw.plugin.json
+    // and ClawHub publishes the folder as a bundle; Claude Code reads the
+    // .claude-plugin marker. One plugin, one version, three marketplaces —
+    // rather than a second copy of the skills maintained beside this one.
+    outputJson(
+      "plugins/rotifer/openclaw.plugin.json",
+      injectVersion(rootFamily.openclawPlugin, rootVersion),
+    ),
+    outputJson(
+      "plugins/rotifer/.claude-plugin/plugin.json",
+      injectVersion(rootFamily.claudePlugin, rootVersion),
+    ),
+    outputJson(
+      "plugins/rotifer/package.json",
+      injectVersion(rootFamily.openclawPackage, rootVersion),
+    ),
     outputText("plugins/rotifer/skills/evolve/SKILL.md", rootEvolve),
     outputText("plugins/rotifer/skills/hello/SKILL.md", rootHello),
     outputText("plugins/rotifer/skills/assistant/SKILL.md", rootAssistant),

@@ -11,13 +11,13 @@
       {
         "name": "rotifer-protocol",
         "source": "plugins/rotifer",
-        "description": "Self-evolving AI Agent framework — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically"
+        "description": "Self-evolving AI Agent framework — scan capabilities, benchmark against live Arena rankings, and replace weaker Genes with stronger ones. Ranking is the automatic part; every replacement waits for your approval and can be rolled back."
       }
     ]
   },
   "cursorPlugin": {
     "name": "rotifer-protocol",
-    "description": "Self-evolving AI Agent framework — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically",
+    "description": "Self-evolving AI Agent framework — scan capabilities, benchmark against live Arena rankings, and replace weaker Genes with stronger ones. Ranking is the automatic part; every replacement waits for your approval and can be rolled back.",
     "author": {
       "name": "Rotifer Protocol",
       "url": "https://rotifer.dev"
@@ -46,7 +46,8 @@
         "command": "npx",
         "args": [
           "-y",
-          "@rotifer/mcp-server"
+          "@rotifer/mcp-server@0.15.1",
+          "--tools=evolve"
         ]
       }
     }
@@ -58,7 +59,7 @@
       {
         "name": "rotifer-self-evolving-agent",
         "source": "plugins/rotifer",
-        "description": "Self-evolving AI Agent — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically",
+        "description": "Self-evolving AI Agent — scan capabilities, benchmark against live Arena rankings, and replace weaker Genes with stronger ones. Ranking is automatic; every replacement waits for your approval and can be rolled back.",
         "author": "Rotifer Protocol",
         "homepage": "https://rotifer.dev",
         "repository": "https://github.com/rotifer-protocol/rotifer-playground",
@@ -77,7 +78,7 @@
   },
   "codebuddyPlugin": {
     "name": "rotifer-self-evolving-agent",
-    "description": "Self-evolving AI Agent — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically",
+    "description": "Self-evolving AI Agent — scan capabilities, benchmark against live Arena rankings, and replace weaker Genes with stronger ones. Ranking is automatic; every replacement waits for your approval and can be rolled back.",
     "author": {
       "name": "Rotifer Protocol",
       "url": "https://rotifer.dev"
@@ -94,5 +95,90 @@
       "mcp"
     ],
     "category": "Developer Tools"
+  },
+  "openclawPlugin": {
+    "name": "rotifer",
+    "description": "The Rotifer Protocol plugin for OpenClaw — three Skills plus the Rotifer MCP server. Create your first Agent from a template (hello), route yourself to the right capability (assistant), and rank an Agent's Genes against live Arena data to swap in stronger ones (evolve). Ranking is the automatic part; every replacement waits for your approval and can be rolled back.",
+    "extensions": [
+      "./index.js"
+    ],
+    "mcpServers": {
+      "rotifer": {
+        "transport": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@rotifer/mcp-server@0.15.1",
+          "--tools=evolve"
+        ]
+      }
+    },
+    "environment": {
+      "ROTIFER_TELEMETRY": {
+        "required": false,
+        "description": "Set to 0 (or false/off) to stop all usage reporting. When signed in, each MCP tool call is otherwise reported to Rotifer Cloud — tool name, Gene id, outcome, latency, user id. Installing a Gene also bumps that Gene's public install counter, which carries the Gene id and no identity and fires whether or not you are signed in; this flag stops that too."
+      }
+    },
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2"
+    },
+    "build": {
+      "openclawVersion": "2026.3.24-beta.2"
+    }
+  },
+  "claudePlugin": {
+    "name": "rotifer",
+    "description": "The Rotifer Protocol plugin for OpenClaw — three Skills plus the Rotifer MCP server. Create your first Agent from a template (hello), route yourself to the right capability (assistant), and rank an Agent's Genes against live Arena data to swap in stronger ones (evolve). Ranking is the automatic part; every replacement waits for your approval and can be rolled back.",
+    "author": {
+      "name": "Rotifer Protocol",
+      "url": "https://rotifer.dev"
+    },
+    "homepage": "https://rotifer.dev",
+    "repository": "https://github.com/rotifer-protocol/rotifer-playground",
+    "license": "Apache-2.0",
+    "keywords": [
+      "rotifer",
+      "gene",
+      "ai-agent",
+      "evolution",
+      "arena",
+      "mcp",
+      "wasm"
+    ]
+  },
+  "openclawPackage": {
+    "name": "rotifer",
+    "description": "The Rotifer Protocol plugin for OpenClaw — three Skills plus the Rotifer MCP server. Create your first Agent from a template (hello), route yourself to the right capability (assistant), and rank an Agent's Genes against live Arena data to swap in stronger ones (evolve). Ranking is the automatic part; every replacement waits for your approval and can be rolled back.",
+    "type": "module",
+    "main": "./index.js",
+    "license": "Apache-2.0",
+    "homepage": "https://rotifer.dev",
+    "openclaw": {
+      "extensions": [
+        "./index.js"
+      ],
+      "compat": {
+        "pluginApi": ">=2026.3.24-beta.2"
+      },
+      "build": {
+        "openclawVersion": "2026.3.24-beta.2"
+      },
+      "family": "bundle-plugin"
+    },
+    "keywords": [
+      "rotifer",
+      "rotifer-protocol",
+      "gene",
+      "arena",
+      "agent-evolution",
+      "self-evolving-agent",
+      "mcp",
+      "openclaw",
+      "clawhub"
+    ],
+    "author": {
+      "name": "Rotifer Protocol",
+      "url": "https://rotifer.dev"
+    }
   }
 }

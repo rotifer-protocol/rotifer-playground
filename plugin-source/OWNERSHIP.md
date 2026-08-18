@@ -7,9 +7,11 @@ This file defines which plugin-facing files are canonical sources and which file
 | Canonical file | Purpose |
 |---|---|
 | `plugin-source/families.json` | Family versions and release tags |
-| `plugin-source/families/root.json` | Root Cursor + CodeBuddy manifest metadata |
+| `plugin-source/families/root.json` | Root Cursor + CodeBuddy + OpenClaw/ClawHub manifest metadata |
 | `plugin-source/families/vscode.json` | VSCode-family manifest metadata and package sync fields |
 | `plugin-source/content/root/evolve/SKILL.md` | Root family `evolve` skill |
+| `plugin-source/content/root/hello/SKILL.md` | Root family `hello` skill |
+| `plugin-source/content/root/assistant/SKILL.md` | Root family `assistant` skill |
 | `plugin-source/content/shared/rotifer-gene-dev.mdc` | Shared gene development rule |
 | `plugin-source/content/root/rotifer.md` | Root family generic Rotifer skill |
 | `plugin-source/content/vscode/rotifer.md` | VSCode family Rotifer skill |
@@ -25,6 +27,9 @@ This file defines which plugin-facing files are canonical sources and which file
 | `.codebuddy-plugin/marketplace.json` | `plugin-source/families/root.json` + `plugin-source/families.json` |
 | `plugins/rotifer/.cursor-plugin/plugin.json` | `plugin-source/families/root.json` + `plugin-source/families.json` |
 | `plugins/rotifer/.codebuddy-plugin/plugin.json` | `plugin-source/families/root.json` + `plugin-source/families.json` |
+| `plugins/rotifer/openclaw.plugin.json` | `plugin-source/families/root.json` + `plugin-source/families.json` |
+| `plugins/rotifer/.claude-plugin/plugin.json` | `plugin-source/families/root.json` + `plugin-source/families.json` |
+| `plugins/rotifer/package.json` | `plugin-source/families/root.json` + `plugin-source/families.json` |
 | `plugins/rotifer/skills/evolve/SKILL.md` | `plugin-source/content/root/evolve/SKILL.md` |
 | `plugins/rotifer/rules/rotifer-gene-dev.mdc` | `plugin-source/content/shared/rotifer-gene-dev.mdc` |
 | `plugins/rotifer/skills/rotifer.md` | `plugin-source/content/root/rotifer.md` |
@@ -36,6 +41,25 @@ This file defines which plugin-facing files are canonical sources and which file
 | `rotifer-vscode/rules/rotifer-conventions.mdc` | `plugin-source/content/vscode/rotifer-conventions.mdc` |
 | `rotifer-vscode/icon.png` | `plugin-source/assets/brandmark.png` |
 | `rotifer-vscode/assets/logo.png` | `plugin-source/assets/brandmark.png` |
+
+## Hand-Authored Files Inside a Generated Folder
+
+`plugins/rotifer/` holds two files the sync step does not own and does not
+overwrite:
+
+- `README.md` — the plugin's marketplace page
+- `index.js` — the entry point the OpenClaw manifest's `extensions` field names
+
+Both are hand-authored on purpose. Everything else in that folder is generated;
+edit the source under `plugin-source/` and run `npm run sync:plugins`.
+
+## One Folder, Three Marketplaces
+
+`plugins/rotifer/` carries a marker directory per host — `.cursor-plugin/`,
+`.codebuddy-plugin/`, `.claude-plugin/` — plus `openclaw.plugin.json` and
+`package.json` for OpenClaw and ClawHub. They share one version and one set of
+skills, because a second copy of the same skills maintained beside the first is
+how the two drift apart without anyone noticing.
 
 ## Hand-Authored VSCode Fields
 

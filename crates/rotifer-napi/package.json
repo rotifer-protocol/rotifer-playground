@@ -1,6 +1,6 @@
 {
   "name": "rotifer-napi",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "napi": {
     "name": "index",
     "triples": {

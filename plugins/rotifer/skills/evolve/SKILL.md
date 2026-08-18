@@ -1,6 +1,6 @@
 ---
 name: rotifer-self-evolving-agent
-version: 0.9.1
+version: 0.9.2
 description: Rank an Agent's Rotifer Genes against the Arena and swap in stronger ones. Invoked explicitly via /evolve — scan local capabilities, compare Genes, inspect fitness scores, and replace weak ones with user approval. Not for capabilities outside Rotifer.
 author: rotifer-protocol
 ---
@@ -14,13 +14,17 @@ Your Agent gets stronger by competing, not by configuring. Scan capabilities, be
 This plugin declares the Rotifer MCP server for you:
 
 ```bash
-npx -y @rotifer/mcp-server@0.15.1 --tools=evolve
+npx -y @rotifer/mcp-server@0.16.1 --tools=evolve
 ```
 
-`--tools=evolve` is not decoration. The server can expose 31 tools, including
-`publish_gene`, `login` and `arena_submit`; this Skill needs ten, so ten is what
-it asks for. The rest are not listed and are refused if called. Nothing here can
-publish on your behalf or log you in.
+`--tools=evolve` is not decoration. Left undeclared, the server offers 31 tools
+and 7 resources, `publish_gene`, `login` and `arena_submit` among them. Declared,
+it offers **10 tools and 4 resources**. The rest are not listed and are refused
+if called, so nothing here can publish on your behalf or log you in.
+
+Resources travel with the tools they duplicate — `rotifer://developers/{name}`
+returns what `get_developer_profile` returns, so it goes when that tool goes. A
+restriction with an unlisted way around it is not a restriction.
 
 The launch line also omits `--allow`, so the sandbox escapes (`no_sandbox`,
 `trust_unsigned`) are refused.
@@ -89,7 +93,7 @@ No voting, no human preference — pure runtime performance metrics determine wh
 ### Runtime dependency
 The MCP server is fetched from npm on first use and cached. That is a standard
 pattern, but it means you are trusting remote code — review the source, or check
-`npm view @rotifer/mcp-server@0.15.1 dist.integrity`, before use.
+`npm view @rotifer/mcp-server@0.16.1 dist.integrity`, before use.
 
 - **Source**: [github.com/rotifer-protocol/rotifer-mcp-server](https://github.com/rotifer-protocol/rotifer-mcp-server)
 

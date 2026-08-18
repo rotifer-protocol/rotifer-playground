@@ -46,7 +46,7 @@
         "command": "npx",
         "args": [
           "-y",
-          "@rotifer/mcp-server@0.15.1",
+          "@rotifer/mcp-server@0.16.1",
           "--tools=evolve"
         ]
       }
@@ -144,7 +144,7 @@
           "command": "npx",
           "args": [
             "-y",
-            "@rotifer/mcp-server@0.15.1",
+            "@rotifer/mcp-server@0.16.1",
             "--tools=evolve"
           ]
         }

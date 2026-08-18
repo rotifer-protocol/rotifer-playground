@@ -139,6 +139,22 @@ describe("plugin source sync pipeline", () => {
     }
   });
 
+  it("carries its display name in the artifact, not in a publish flag", () => {
+    const root = createFixture();
+    const outputs = buildOutputs(root);
+    const manifest = outputs.find(
+      (entry) => entry.pathFromRoot === "plugins/rotifer/openclaw.plugin.json",
+    );
+    const data = manifest && "data" in manifest ? (manifest.data as Record<string, any>) : {};
+
+    // ClawHub routes on `id` and displays `name`. Passing --display-name works
+    // too, but it has to be remembered on every publish — two releases went out
+    // without it and reset the listing to the slug. Keeping the display name in
+    // the manifest means the artifact carries it.
+    expect(data.id).toBe("rotifer");
+    expect(data.name).toBe("Rotifer");
+  });
+
   it("launches the MCP server pinned and with a declared tool set", () => {
     const root = createFixture();
     const outputs = buildOutputs(root);

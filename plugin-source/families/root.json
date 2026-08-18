@@ -97,7 +97,8 @@
     "category": "Developer Tools"
   },
   "openclawPlugin": {
-    "name": "rotifer",
+    "id": "rotifer",
+    "name": "Rotifer",
     "description": "The Rotifer Protocol plugin for OpenClaw — three Skills plus the Rotifer MCP server. Create your first Agent from a template (hello), route yourself to the right capability (assistant), and rank an Agent's Genes against live Arena data to swap in stronger ones (evolve). Ranking is the automatic part; every replacement waits for your approval and can be rolled back."
   },
   "claudePlugin": {

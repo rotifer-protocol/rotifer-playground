@@ -98,33 +98,7 @@
   },
   "openclawPlugin": {
     "name": "rotifer",
-    "description": "The Rotifer Protocol plugin for OpenClaw — three Skills plus the Rotifer MCP server. Create your first Agent from a template (hello), route yourself to the right capability (assistant), and rank an Agent's Genes against live Arena data to swap in stronger ones (evolve). Ranking is the automatic part; every replacement waits for your approval and can be rolled back.",
-    "extensions": [
-      "./index.js"
-    ],
-    "mcpServers": {
-      "rotifer": {
-        "transport": "stdio",
-        "command": "npx",
-        "args": [
-          "-y",
-          "@rotifer/mcp-server@0.15.1",
-          "--tools=evolve"
-        ]
-      }
-    },
-    "environment": {
-      "ROTIFER_TELEMETRY": {
-        "required": false,
-        "description": "Set to 0 (or false/off) to stop all usage reporting. When signed in, each MCP tool call is otherwise reported to Rotifer Cloud — tool name, Gene id, outcome, latency, user id. Installing a Gene also bumps that Gene's public install counter, which carries the Gene id and no identity and fires whether or not you are signed in; this flag stops that too."
-      }
-    },
-    "compat": {
-      "pluginApi": ">=2026.3.24-beta.2"
-    },
-    "build": {
-      "openclawVersion": "2026.3.24-beta.2"
-    }
+    "description": "The Rotifer Protocol plugin for OpenClaw — three Skills plus the Rotifer MCP server. Create your first Agent from a template (hello), route yourself to the right capability (assistant), and rank an Agent's Genes against live Arena data to swap in stronger ones (evolve). Ranking is the automatic part; every replacement waits for your approval and can be rolled back."
   },
   "claudePlugin": {
     "name": "rotifer",
@@ -163,7 +137,24 @@
       "build": {
         "openclawVersion": "2026.3.24-beta.2"
       },
-      "family": "bundle-plugin"
+      "family": "bundle-plugin",
+      "mcpServers": {
+        "rotifer": {
+          "transport": "stdio",
+          "command": "npx",
+          "args": [
+            "-y",
+            "@rotifer/mcp-server@0.15.1",
+            "--tools=evolve"
+          ]
+        }
+      },
+      "environment": {
+        "ROTIFER_TELEMETRY": {
+          "required": false,
+          "description": "Set to 0 (or false/off) to stop all usage reporting. When signed in, each MCP tool call is otherwise reported to Rotifer Cloud — tool name, Gene id, outcome, latency, user id. Installing a Gene also bumps that Gene's public install counter, which carries the Gene id and no identity and fires whether or not you are signed in; this flag stops that too."
+        }
+      }
     },
     "keywords": [
       "rotifer",

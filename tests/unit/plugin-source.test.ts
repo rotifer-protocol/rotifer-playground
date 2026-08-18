@@ -147,21 +147,36 @@ describe("plugin source sync pipeline", () => {
     // has to Cursor and CodeBuddy users. Both halves are load-bearing: the pin
     // means what you install is what was reviewed, and the tool set means the
     // assistant cannot publish or sign in through this plugin.
-    for (const pathFromRoot of [
-      "plugins/rotifer/.cursor-plugin/plugin.json",
-      "plugins/rotifer/openclaw.plugin.json",
-    ]) {
+    //
+    // The two hosts read the declaration from different files. OpenClaw takes it
+    // from package.json#openclaw — Plugin Inspector rejects mcpServers as a
+    // top-level field of openclaw.plugin.json, so a declaration written there
+    // announces a server nothing registers.
+    const launchLines: Array<[string, (data: Record<string, any>) => unknown]> = [
+      ["plugins/rotifer/.cursor-plugin/plugin.json", (data) => data.mcpServers?.rotifer?.args],
+      ["plugins/rotifer/package.json", (data) => data.openclaw?.mcpServers?.rotifer?.args],
+    ];
+
+    for (const [pathFromRoot, read] of launchLines) {
       const entry = outputs.find((candidate) => candidate.pathFromRoot === pathFromRoot);
       expect(entry?.kind).toBe("json");
-      const args =
-        entry && "data" in entry
-          ? ((entry.data as Record<string, any>).mcpServers?.rotifer?.args as string[])
-          : undefined;
+      const args = entry && "data" in entry ? (read(entry.data as Record<string, any>) as string[]) : undefined;
 
       expect(args).toBeDefined();
       expect(args?.some((arg) => /^@rotifer\/mcp-server@\d+\.\d+\.\d+$/.test(arg))).toBe(true);
       expect(args).toContain("--tools=evolve");
       expect(args?.some((arg) => arg.startsWith("--allow"))).toBe(false);
+    }
+
+    // Putting any of these back at the top level of openclaw.plugin.json is how
+    // the declaration stops taking effect while still reading as if it does.
+    const manifest = outputs.find(
+      (entry) => entry.pathFromRoot === "plugins/rotifer/openclaw.plugin.json",
+    );
+    const manifestKeys =
+      manifest && "data" in manifest ? Object.keys(manifest.data as Record<string, unknown>) : [];
+    for (const unsupported of ["extensions", "compat", "build", "mcpServers", "environment"]) {
+      expect(manifestKeys).not.toContain(unsupported);
     }
   });
 

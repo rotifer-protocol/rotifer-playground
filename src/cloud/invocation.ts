@@ -25,9 +25,39 @@ import { loadCredentials } from "./auth.js";
  * was modelled on, a failed report is written to stderr when `ROTIFER_DEBUG` is
  * set rather than swallowed outright — a swallowed 400 is how the previous
  * pipeline stayed dead for months without anyone noticing.
+ *
+ * Fire-and-forget has one sharp edge, found the hard way on the first real
+ * end-to-end run: `process.exit()` terminates immediately and does not wait for
+ * a pending request, so every command that reports and then exits non-zero was
+ * killing its own report mid-flight — no row, and not even the ROTIFER_DEBUG
+ * line, because `.then` never ran. Callers that are about to exit must
+ * `await flushInvocationReports()` first. Callers that simply return need not:
+ * Node drains the pending request before the event loop empties.
  */
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Reports still in flight. Emptied as each settles; see flushInvocationReports. */
+const inFlight = new Set<Promise<void>>();
+
+/** Longest a caller will wait for reports to settle before exiting anyway. */
+export const FLUSH_TIMEOUT_MS = 2000;
+
+/**
+ * Wait for any in-flight invocation reports to settle. Call this before
+ * `process.exit()`; a run must never hang on telemetry, so it gives up after
+ * FLUSH_TIMEOUT_MS and resolves regardless.
+ */
+export async function flushInvocationReports(timeoutMs: number = FLUSH_TIMEOUT_MS): Promise<void> {
+  if (inFlight.size === 0) return;
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+    timer.unref?.();
+  });
+  await Promise.race([Promise.allSettled([...inFlight]).then(() => undefined), deadline]);
+  if (timer) clearTimeout(timer);
+}
 
 export function telemetryOptedOut(): boolean {
   const flag = (process.env.ROTIFER_TELEMETRY || "").trim().toLowerCase();
@@ -47,11 +77,20 @@ export function cloudGeneId(geneDir: string): string | null {
   }
 }
 
+export interface InvocationReport {
+  /** The Gene id reported, or null when nothing was sent. */
+  reported: string | null;
+  /** Why nothing was sent: telemetry-off | not-logged-in | no-cloud-identity. */
+  reason?: string;
+  /** Resolves when the POST settles; absent when nothing was sent. */
+  settled?: Promise<void>;
+}
+
 /**
  * Returns the id that was reported, or null when nothing was sent (and why,
  * for callers that want to say so). Never throws.
  */
-export function recordGeneInvocation(geneDir: string): { reported: string | null; reason?: string } {
+export function recordGeneInvocation(geneDir: string): InvocationReport {
   if (telemetryOptedOut()) return { reported: null, reason: "telemetry-off" };
 
   const creds = loadCredentials();
@@ -64,7 +103,7 @@ export function recordGeneInvocation(geneDir: string): { reported: string | null
   const config = loadCloudConfig();
   const url = `${config.endpoint.replace(/\/+$/, "")}/rest/v1/rpc/log_gene_invocation`;
 
-  fetch(url, {
+  const settled = fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -82,7 +121,11 @@ export function recordGeneInvocation(geneDir: string): { reported: string | null
       if (process.env.ROTIFER_DEBUG) {
         process.stderr.write(`[rotifer] log_gene_invocation error: ${(err as Error)?.message ?? err}\n`);
       }
+    })
+    .finally(() => {
+      inFlight.delete(settled);
     });
 
-  return { reported: geneId };
+  inFlight.add(settled);
+  return { reported: geneId, settled };
 }

@@ -61,7 +61,10 @@ describe("recordGeneInvocation", () => {
 
     const out = recordGeneInvocation(geneDir);
 
-    expect(out).toEqual({ reported: CLOUD_ID });
+    expect(out.reported).toBe(CLOUD_ID);
+    expect(out.reason).toBeUndefined();
+    // The in-flight promise is what callers await before process.exit.
+    expect(out.settled).toBeInstanceOf(Promise);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
     // Host comes from ~/.rotifer/cloud.json when present; the path is what matters here.
@@ -129,5 +132,89 @@ describe("recordGeneInvocation", () => {
 
     expect(() => recordGeneInvocation(geneDir)).not.toThrow();
     await new Promise((r) => setTimeout(r, 0)); // let the rejection settle
+  });
+});
+
+/**
+ * Regression for the first real end-to-end run (2026-08-18): the report is
+ * fire-and-forget, and every CLI path that reports and then exits non-zero
+ * called `process.exit(1)` immediately after — which terminates the process
+ * without waiting for the pending request. The POST never left, `.then` never
+ * ran, so not even the ROTIFER_DEBUG line appeared. `gene_invocation_log` stayed
+ * at zero rows while the CLI reported "success" on its own wiring.
+ *
+ * Callers that are about to exit must await flushInvocationReports() first.
+ * It has to settle, and it has to give up rather than hang a run forever.
+ */
+describe("flushInvocationReports", () => {
+  const savedEnv = { ...process.env };
+  const dirs: string[] = [];
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env.ROTIFER_CLOUD_ENDPOINT = "https://cloud.example.test";
+    process.env.ROTIFER_CLOUD_ANON_KEY = "anon-test-key";
+    delete process.env.ROTIFER_TELEMETRY;
+    loadCredentialsMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+    process.env = { ...savedEnv };
+  });
+
+  function signedInGeneDir(): string {
+    loadCredentialsMock.mockReturnValue({ access_token: "tok", user: { id: USER_ID } });
+    const geneDir = makeGeneDir({ cloud_id: CLOUD_ID, owner: "x", version: "0.1.0" });
+    dirs.push(join(geneDir, "..", ".."));
+    return geneDir;
+  }
+
+  it("resolves immediately when nothing is in flight", async () => {
+    const { flushInvocationReports } = await import("../../src/cloud/invocation.js");
+    await expect(flushInvocationReports(50)).resolves.toBeUndefined();
+  });
+
+  it("waits for an in-flight report to settle", async () => {
+    let release!: (r: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((res) => { release = res; })));
+    const { recordGeneInvocation, flushInvocationReports } = await import("../../src/cloud/invocation.js");
+
+    const report = recordGeneInvocation(signedInGeneDir());
+    expect(report.reported).toBe(CLOUD_ID);
+
+    let flushed = false;
+    const flushing = flushInvocationReports(5000).then(() => { flushed = true; });
+    await Promise.resolve();
+    expect(flushed).toBe(false); // still pending — this is the exit that used to kill it
+
+    release(new Response(null, { status: 204 }));
+    await flushing;
+    expect(flushed).toBe(true);
+  });
+
+  it("gives up after the timeout rather than hanging the run", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => { /* never settles */ })));
+    const { recordGeneInvocation, flushInvocationReports } = await import("../../src/cloud/invocation.js");
+    recordGeneInvocation(signedInGeneDir());
+    await expect(flushInvocationReports(30)).resolves.toBeUndefined();
+  });
+
+  it("stops tracking a report once it settles", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+    const { recordGeneInvocation, flushInvocationReports } = await import("../../src/cloud/invocation.js");
+    const report = recordGeneInvocation(signedInGeneDir());
+    await report.settled;
+    // Nothing left to wait for: a zero timeout still resolves.
+    await expect(flushInvocationReports(0)).resolves.toBeUndefined();
+  });
+
+  it("exposes no settled promise when a gate blocked the report", async () => {
+    process.env.ROTIFER_TELEMETRY = "0";
+    const { recordGeneInvocation } = await import("../../src/cloud/invocation.js");
+    const report = recordGeneInvocation(signedInGeneDir());
+    expect(report.reported).toBeNull();
+    expect(report.settled).toBeUndefined();
   });
 });

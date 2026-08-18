@@ -5,7 +5,7 @@ import * as display from "../utils/display.js";
 import { getProjectRoot, loadConfig } from "../utils/config.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
-import { recordGeneInvocation } from "../cloud/invocation.js";
+import { flushInvocationReports, recordGeneInvocation } from "../cloud/invocation.js";
 
 export const runCommand = new Command("run")
   .description("Execute a single gene directly")
@@ -107,6 +107,10 @@ export const runCommand = new Command("run")
               console.log(JSON.stringify(execResult.output, null, 2));
             } else {
               display.error("Execution failed: " + (execResult.errorMessage || "unknown"));
+              // The report above is fire-and-forget; process.exit would kill it
+              // in flight (that is exactly how the first real end-to-end run
+              // produced no row at all). Let it settle first.
+              await flushInvocationReports();
               process.exit(1);
               return;
             }
@@ -134,6 +138,7 @@ export const runCommand = new Command("run")
           if (typeof fn !== "function") {
             display.error("No exported express/default/main function found in index.ts");
             display.hint("Gene must export an 'express' function: export function express(input) { ... }");
+            await flushInvocationReports();
             process.exit(1);
             return;
           }
@@ -147,6 +152,7 @@ export const runCommand = new Command("run")
           if (options.verbose && err.stack) {
             console.error(err.stack);
           }
+          await flushInvocationReports();
           process.exit(1);
         }
       } else {

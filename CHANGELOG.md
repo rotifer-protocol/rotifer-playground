@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.13.1...v0.14.0) (2026-08-18)
+
+
+### Features
+
+* **plugin:** ship the same plugin to DeepSeek Harness as a declarative bundle ([#200](https://github.com/rotifer-protocol/rotifer-playground/issues/200)) ([14ca37a](https://github.com/rotifer-protocol/rotifer-playground/commit/14ca37a5efcc7a50fefecf00d30bb6832d34dcb6))
+
 ## [0.13.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.13.0...v0.13.1) (2026-08-18)
 
 

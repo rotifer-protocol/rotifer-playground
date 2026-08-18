@@ -53,17 +53,21 @@ naming, structure, fidelity declaration, and phenotype schema. It activates on
 **MCP server** — [`@rotifer/mcp-server`](https://www.npmjs.com/package/@rotifer/mcp-server),
 launched on demand via `npx`, nothing to install ahead of time.
 
-The server can expose 31 tools covering the whole lifecycle, including compiling,
-publishing, Arena submission and login. **This plugin launches it with
-`--tools=evolve`, which exposes ten** — enough to search, compare, install and roll
-back Genes and to create and run Agents, and nothing more. The other 21 are not
-listed and are refused if called, so nothing here can publish on your behalf or sign
-you in. The launch line also omits `--allow`, so the sandbox escape hatches stay off.
+Left undeclared, the server offers 31 tools and 7 resources covering the whole
+lifecycle, including compiling, publishing, Arena submission and login. **This
+plugin launches it with `--tools=evolve`, which offers 10 tools and 4 resources**
+— enough to search, compare, install and roll back Genes and to create and run
+Agents, and nothing more. The rest are not listed and are refused if called, so
+nothing here can publish on your behalf or sign you in. The launch line also omits
+`--allow`, so the sandbox escape hatches stay off.
+
+Resources are narrowed alongside the tools they duplicate, because a restriction
+with an unlisted way around it is not a restriction.
 
 The version is pinned rather than floating, so what you install is what you reviewed:
 
 ```bash
-npx -y @rotifer/mcp-server@0.15.1 --tools=evolve
+npx -y @rotifer/mcp-server@0.16.1 --tools=evolve
 ```
 
 You can run that yourself and ask it to list its tools.

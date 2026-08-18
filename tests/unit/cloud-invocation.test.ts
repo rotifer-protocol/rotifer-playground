@@ -38,6 +38,11 @@ describe("recordGeneInvocation", () => {
     process.env.ROTIFER_CLOUD_ENDPOINT = "https://cloud.example.test";
     process.env.ROTIFER_CLOUD_ANON_KEY = "anon-test-key";
     delete process.env.ROTIFER_TELEMETRY;
+    // The reporter refuses to report under a test runner (see runningUnderTest).
+    // These tests exercise the production path, so drop the markers it looks for.
+    delete process.env.VITEST;
+    delete process.env.JEST_WORKER_ID;
+    delete process.env.NODE_ENV;
     fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
     loadCredentialsMock.mockReset();
@@ -155,6 +160,11 @@ describe("flushInvocationReports", () => {
     process.env.ROTIFER_CLOUD_ENDPOINT = "https://cloud.example.test";
     process.env.ROTIFER_CLOUD_ANON_KEY = "anon-test-key";
     delete process.env.ROTIFER_TELEMETRY;
+    // The reporter refuses to report under a test runner (see runningUnderTest).
+    // These tests exercise the production path, so drop the markers it looks for.
+    delete process.env.VITEST;
+    delete process.env.JEST_WORKER_ID;
+    delete process.env.NODE_ENV;
     loadCredentialsMock.mockReset();
   });
 
@@ -216,5 +226,76 @@ describe("flushInvocationReports", () => {
     const report = recordGeneInvocation(signedInGeneDir());
     expect(report.reported).toBeNull();
     expect(report.settled).toBeUndefined();
+  });
+});
+
+/**
+ * Regression for 2026-08-18: `tests/e2e/dogfooding-pipeline.test.ts` spawns the
+ * real CLI against the repo's own Cloud-installed Genes. One `npm test` by a
+ * signed-in developer wrote four rows into production `gene_invocation_log` —
+ * source-linker twice, grammar-checker twice, two seconds apart.
+ *
+ * They were real executions but not real usage, and §33.4 exists to count
+ * callers who actually reached for a Gene. A metrics pipeline that manufactures
+ * its own traffic is broken in the opposite direction from the bug this module
+ * was written to fix, and just as quietly.
+ */
+describe("runningUnderTest", () => {
+  const savedEnv = { ...process.env };
+  const dirs: string[] = [];
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env.ROTIFER_CLOUD_ENDPOINT = "https://cloud.example.test";
+    process.env.ROTIFER_CLOUD_ANON_KEY = "anon-test-key";
+    delete process.env.ROTIFER_TELEMETRY;
+    delete process.env.VITEST;
+    delete process.env.JEST_WORKER_ID;
+    delete process.env.NODE_ENV;
+    loadCredentialsMock.mockReset();
+    loadCredentialsMock.mockReturnValue({ access_token: "tok", user: { id: USER_ID } });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+    process.env = { ...savedEnv };
+  });
+
+  function geneDir(): string {
+    const dir = makeGeneDir({ cloud_id: CLOUD_ID, owner: "x", version: "0.1.0" });
+    dirs.push(join(dir, "..", ".."));
+    return dir;
+  }
+
+  it.each([
+    ["VITEST", "true"],
+    ["JEST_WORKER_ID", "1"],
+    ["NODE_ENV", "test"],
+  ])("reports nothing when %s is set — a test run is not usage", async (key, value) => {
+    process.env[key] = value;
+    const { recordGeneInvocation } = await import("../../src/cloud/invocation.js");
+    const report = recordGeneInvocation(geneDir());
+    expect(report.reported).toBeNull();
+    expect(report.reason).toBe("test-run");
+    expect(report.settled).toBeUndefined();
+  });
+
+  it("still reports outside a test runner", async () => {
+    const { recordGeneInvocation } = await import("../../src/cloud/invocation.js");
+    expect(recordGeneInvocation(geneDir()).reported).toBe(CLOUD_ID);
+  });
+
+  it("does not suppress on CI alone — a Gene called from a pipeline is still a caller", async () => {
+    process.env.CI = "true";
+    const { recordGeneInvocation } = await import("../../src/cloud/invocation.js");
+    expect(recordGeneInvocation(geneDir()).reported).toBe(CLOUD_ID);
+  });
+
+  it("NODE_ENV=production is not a test run", async () => {
+    process.env.NODE_ENV = "production";
+    const { recordGeneInvocation } = await import("../../src/cloud/invocation.js");
+    expect(recordGeneInvocation(geneDir()).reported).toBe(CLOUD_ID);
   });
 });

@@ -6,8 +6,18 @@ import { join } from "node:path";
 const ROOT = process.cwd();
 const CLI = "node dist/index.js";
 
+// These Genes are Cloud-installed (they carry .cloud-manifest.json), so a run
+// here is a real invocation as far as the reporter is concerned. On 2026-08-18
+// one `npm test` by a signed-in developer put four rows into production. The
+// reporter now refuses to report under a test runner on its own, but say it at
+// the call site too: this suite must never contribute traffic to §33.4 metrics.
 function cli(args: string): string {
-  return execSync(`${CLI} ${args}`, { cwd: ROOT, encoding: "utf-8", timeout: 15_000 });
+  return execSync(`${CLI} ${args}`, {
+    cwd: ROOT,
+    encoding: "utf-8",
+    timeout: 15_000,
+    env: { ...process.env, ROTIFER_TELEMETRY: "0" },
+  });
 }
 
 const PIPELINE = ["doc-retrieval", "answer-synthesizer", "source-linker", "grammar-checker"];

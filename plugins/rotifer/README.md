@@ -55,11 +55,16 @@ no runtime code of its own:
   own `skills/` directory. It sets `includeDefaultRoots: false`, so it contributes
   only the four Rotifer skills and never rescans your project or user skill roots.
   It cannot shadow a skill you wrote.
-- `mcp-rotifer` — the `dsh-mcp-client` bridge on the pinned, narrowed launch line
+- `rotifer-mcp` — the `dsh-mcp-client` bridge on the pinned, narrowed launch line
   below. Its 10 tool schemas are paid on every request while mounted (6,736 bytes
   of JSON, measured on dsh `0.1.0-rc.7`). Drop this row from your profile's own
   `cordis.patch.yml` and the four skills still work; they cost only their catalog
   rows.
+
+**Where to find it once installed.** Settings → Plugins lists rows by id, so look
+for `rotifer-skills` and `rotifer-mcp` — there is no single entry named "Rotifer".
+A bundle that mounts the host's own plugins contributes configured rows, not a
+package of its own name. Searching `rotifer` in that list returns both.
 
 DSH is in developer preview and says it will make breaking changes. This bundle is
 declarative on purpose: it mounts DSH's own plugins rather than shipping a Cordis

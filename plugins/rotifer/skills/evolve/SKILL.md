@@ -1,6 +1,6 @@
 ---
 name: rotifer-self-evolving-agent
-version: 0.9.4
+version: 0.9.5
 description: Rank an Agent's Rotifer Genes against the Arena and swap in stronger ones. Invoked explicitly via /evolve — scan local capabilities, compare Genes, inspect fitness scores, and replace weak ones with user approval. Not for capabilities outside Rotifer.
 author: rotifer-protocol
 ---

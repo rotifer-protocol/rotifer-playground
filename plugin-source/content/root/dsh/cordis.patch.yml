@@ -7,7 +7,12 @@
 #
 # Two rows, and both mount plugins DSH already ships. This bundle carries no
 # runtime code of its own, so a Cordis API change has nothing here to break.
-# Override or disable either row by id from your own profile's cordis.patch.yml.
+#
+# They appear in Settings -> Plugins as `rotifer-skills` and `rotifer-mcp`, not
+# as one entry named Rotifer: what a bundle contributes is rows, and these two
+# rows are configured instances of DSH's own skill provider and MCP bridge.
+# Both lead with the brand so one search for `rotifer` finds the whole set.
+# Override or disable either by that id from your own profile's cordis.patch.yml.
 
 - insert:
     # The four Rotifer skills, from this package's own skills/ directory.
@@ -43,7 +48,7 @@
     # data needs no login, and login is not in this tool set. Usage reporting
     # and the install counter are set out in the evolve skill's
     # "Security & Transparency" section; ROTIFER_TELEMETRY=0 stops both.
-    - id: mcp-rotifer
+    - id: rotifer-mcp
       name: '@deepseek-ai/dsh-mcp-client'
       config:
         serverName: rotifer

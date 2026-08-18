@@ -252,6 +252,17 @@ describe("plugin source sync pipeline", () => {
     // nothing of ours. A row naming our own package would quietly make that
     // claim false — and the claim is what the ADR rests on.
     expect(rows).not.toMatch(/name:\s*'?rotifer'?\s*$/m);
+
+    // Settings -> Plugins lists rows by id, so the ids are the only brand the
+    // user sees there — a bundle that mounts DSH's own plugins contributes no
+    // entry of its own name. `mcp-rotifer` shipped first and sorted away from
+    // `rotifer-skills`, which is how someone with the plugin installed and
+    // working still failed to find it in the list.
+    const ids = [...rows.matchAll(/^\s*-\s*id:\s*(\S+)/gm)].map((match) => match[1]);
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) {
+      expect(id, `row id "${id}" does not lead with the brand`).toMatch(/^rotifer-/);
+    }
   });
 
   it("ships skills dsh can actually discover", () => {

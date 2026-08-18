@@ -488,7 +488,10 @@ export async function arenaSubmit(
 ): Promise<CloudArenaEntry> {
   const gene = await getGene(geneId);
 
-  const body = {
+  // Provenance travels with the numbers. `evaluator` is deliberately not sent:
+  // the server stamps it from the authenticated principal, because a
+  // self-reported "who measured this" is worth nothing (ADR-319 D2).
+  const body: Record<string, unknown> = {
     gene_id: geneId,
     domain: gene.domain,
     fitness_value: fitness.value,
@@ -497,6 +500,8 @@ export async function arenaSubmit(
     latency_score: fitness.latency_score,
     resource_efficiency: fitness.resource_efficiency,
   };
+  if (fitness.evaluation_method) body.evaluation_method = fitness.evaluation_method;
+  if (fitness.evaluation_n !== undefined) body.evaluation_n = fitness.evaluation_n;
 
   const res = await fetch(apiUrl("/arena_entries"), {
     method: "POST",

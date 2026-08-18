@@ -125,6 +125,11 @@ export const arenaSubmitCommand = new Command("submit")
     const hasIrWasm = existsSync(irWasmPath);
     const binding = tryLoadBinding();
 
+    // How many sandbox runs back a measured submission. Declared out here
+    // because the ledger needs it too (ADR-318 D5 evaluation_n), not only the
+    // loop that consumes it.
+    const SANDBOX_RUNS = 3;
+
     let fitness: {
       value: number;
       safetyScore: number;
@@ -138,7 +143,6 @@ export const arenaSubmitCommand = new Command("submit")
       const irWasm = readFileSync(irWasmPath) as Buffer;
       const { irHash: _strip, ...phenotypeForExec } = phenotype;
 
-      const runs = 3;
       const results: { success: boolean; latencyMs: number; resourceCost: number }[] = [];
 
       // S_r counts a run as successful only when the sandbox succeeded AND the
@@ -150,7 +154,7 @@ export const arenaSubmitCommand = new Command("submit")
       }
       let contractFailures = 0;
 
-      for (let i = 0; i < runs; i++) {
+      for (let i = 0; i < SANDBOX_RUNS; i++) {
         const testInput = generateTestInput(phenotype.inputSchema, i);
         try {
           const execResult = binding.executeGene(
@@ -234,6 +238,13 @@ export const arenaSubmitCommand = new Command("submit")
       }
     }
 
+    // Which path produced these numbers. The local cache has always recorded
+    // this; the cloud submit dropped it, so every score arrived at the Arena
+    // indistinguishable from every other one (ADR-319 D2/D3). One variable now,
+    // read by both, so the cache and the ledger cannot disagree.
+    const evaluationMethod: "sandbox" | "estimated" =
+      (isNative && hasIrWasm && binding) ? "sandbox" : "estimated";
+
     try {
       writeFileSync(
         join(geneDir, ".arena-cache.json"),
@@ -244,7 +255,7 @@ export const arenaSubmitCommand = new Command("submit")
           latency_score: fitness.latencyScore,
           resource_efficiency: fitness.resourceEfficiency,
           content_hash: geneId,
-          method: (isNative && hasIrWasm && binding) ? "sandbox" : "estimated",
+          method: evaluationMethod,
           security_scanned: true,
           evaluated_at: new Date().toISOString(),
         }, null, 2) + "\n",
@@ -304,6 +315,11 @@ export const arenaSubmitCommand = new Command("submit")
             success_rate: fitness.successRate,
             latency_score: fitness.latencyScore,
             resource_efficiency: fitness.resourceEfficiency,
+            evaluation_method: evaluationMethod,
+            // n only means anything on the measured path; an estimate ran
+            // nothing, and claiming a sample size for it would be a lie the
+            // Arena cannot detect.
+            evaluation_n: evaluationMethod === "sandbox" ? SANDBOX_RUNS : undefined,
           });
           cs.stop();
           display.success("Submitted to cloud Arena");

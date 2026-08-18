@@ -80,6 +80,19 @@ export interface FitnessReport {
   success_rate: number;
   latency_score: number;
   resource_efficiency: number;
+  /**
+   * How these numbers were obtained (ADR-319 D2). The CLI already knew this —
+   * it wrote it into .arena-cache.json — and then dropped it at the network
+   * boundary, so every score reached the Arena indistinguishable from every
+   * other. Omitted means the server records 'unknown-legacy', which does not
+   * rank: saying nothing costs the rank rather than granting one.
+   *
+   * `binding_runtime` is not listed: it is attested by the server from the
+   * authenticated principal and refused from clients.
+   */
+  evaluation_method?: "sandbox" | "estimated" | "declared";
+  /** Runs behind the numbers (ADR-318 D5). Omitted means unknown, not 1. */
+  evaluation_n?: number;
 }
 
 export interface CloudError {

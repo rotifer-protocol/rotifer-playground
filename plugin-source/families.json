@@ -1,6 +1,6 @@
 {
   "root": {
-    "version": "0.9.3",
+    "version": "0.9.4",
     "releaseTag": "root-plugin-v{version}",
     "description": "Root Cursor + CodeBuddy + OpenClaw/ClawHub plugin family",
     "outputRoots": [
@@ -13,7 +13,8 @@
       "plugins/rotifer/rules/",
       "plugins/rotifer/openclaw.plugin.json",
       "plugins/rotifer/.claude-plugin/",
-      "plugins/rotifer/package.json"
+      "plugins/rotifer/package.json",
+      "plugins/rotifer/cordis.patch.yml"
     ]
   },
   "vscode": {

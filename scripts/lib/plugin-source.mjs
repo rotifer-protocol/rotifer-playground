@@ -197,6 +197,31 @@ function injectMarketplacePluginVersions(marketplace, version) {
   };
 }
 
+/**
+ * Render the dsh bundle patch.
+ *
+ * The launch line is NOT a second copy: it is read from the same
+ * `openclawPackage.openclaw.mcpServers` object the OpenClaw manifest ships, so
+ * the pin and the tool set cannot drift between the two hosts. Only the facts
+ * dsh alone needs — its own package name, the measured schema cost — come from
+ * `dshBundle`.
+ */
+function renderDshPatch(template, rootFamily, dshBundle) {
+  const server = rootFamily.openclawPackage.openclaw.mcpServers.rotifer;
+  const args = toArray(server.args)
+    .map((arg) => `          - '${String(arg).replaceAll("'", "''")}'`)
+    .join("\n");
+
+  return renderTemplate(template, {
+    packageName: rootFamily.openclawPackage.name,
+    mcpCommand: server.command,
+    mcpArgsYaml: args,
+    mcpToolCount: dshBundle.mcpToolCount,
+    mcpSchemaBytes: dshBundle.mcpSchemaBytes,
+    dshVersion: dshBundle.dshVersion,
+  });
+}
+
 function syncVscodePackage(currentPackage, packageSync, version) {
   return {
     ...currentPackage,
@@ -226,6 +251,11 @@ export function buildOutputs(rootDir = REPO_ROOT) {
     readText(join(rootDir, "plugin-source/content/root/assistant/SKILL.md")),
     { familyVersion: rootVersion },
   );
+  const rootDshPatch = renderDshPatch(
+    readText(join(rootDir, "plugin-source/content/root/dsh/cordis.patch.yml")),
+    rootFamily,
+    rootFamily.dshBundle,
+  );
   const sharedRule = readText(join(rootDir, "plugin-source/content/shared/rotifer-gene-dev.mdc"));
   const rootRotifer = readText(join(rootDir, "plugin-source/content/root/rotifer.md"));
   const vscodeRotifer = readText(join(rootDir, "plugin-source/content/vscode/rotifer.md"));
@@ -248,10 +278,11 @@ export function buildOutputs(rootDir = REPO_ROOT) {
       "plugins/rotifer/.codebuddy-plugin/plugin.json",
       injectVersion(rootFamily.codebuddyPlugin, rootVersion),
     ),
-    // The same folder serves a third host. OpenClaw reads openclaw.plugin.json
-    // and ClawHub publishes the folder as a bundle; Claude Code reads the
-    // .claude-plugin marker. One plugin, one version, three marketplaces —
-    // rather than a second copy of the skills maintained beside this one.
+    // The same folder serves three more hosts. OpenClaw reads
+    // openclaw.plugin.json and ClawHub publishes the folder as a bundle; Claude
+    // Code reads the .claude-plugin marker; DeepSeek Harness reads dsh.bundle in
+    // package.json and applies cordis.patch.yml. One plugin, one version, four
+    // hosts — rather than a second copy of the skills maintained beside this one.
     outputJson(
       "plugins/rotifer/openclaw.plugin.json",
       injectVersion(rootFamily.openclawPlugin, rootVersion),
@@ -264,6 +295,7 @@ export function buildOutputs(rootDir = REPO_ROOT) {
       "plugins/rotifer/package.json",
       injectVersion(rootFamily.openclawPackage, rootVersion),
     ),
+    outputText("plugins/rotifer/cordis.patch.yml", rootDshPatch),
     outputText("plugins/rotifer/skills/evolve/SKILL.md", rootEvolve),
     outputText("plugins/rotifer/skills/hello/SKILL.md", rootHello),
     outputText("plugins/rotifer/skills/assistant/SKILL.md", rootAssistant),

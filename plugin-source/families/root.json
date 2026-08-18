@@ -157,6 +157,11 @@
         }
       }
     },
+    "dsh": {
+      "bundle": {
+        "patch": "./cordis.patch.yml"
+      }
+    },
     "keywords": [
       "rotifer",
       "rotifer-protocol",
@@ -166,11 +171,18 @@
       "self-evolving-agent",
       "mcp",
       "openclaw",
-      "clawhub"
+      "clawhub",
+      "deepseek-harness",
+      "dsh-plugin"
     ],
     "author": {
       "name": "Rotifer Protocol",
       "url": "https://rotifer.dev"
     }
+  },
+  "dshBundle": {
+    "mcpToolCount": 10,
+    "mcpSchemaBytes": 6736,
+    "dshVersion": "0.1.0-rc.7"
   }
 }

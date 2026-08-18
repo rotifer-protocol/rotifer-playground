@@ -1,6 +1,6 @@
 <div align="center">
   <img src="assets/icon.png" alt="Rotifer Protocol" width="96" height="96">
-  <h1>Rotifer Protocol — Cursor Plugin</h1>
+  <h1>Rotifer Protocol — Agent Plugin</h1>
   <p><strong>Self-evolving AI agent capabilities.</strong> Scan what your agent can do, benchmark it against public rankings, and swap in something better.</p>
   <p>
     <a href="https://github.com/rotifer-protocol/rotifer-playground/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
@@ -20,7 +20,44 @@ schema, compiled to WASM, and scored by a fitness function `F(g)` in a public Ar
 Because Genes are portable and comparable, an agent can do something ordinary code
 cannot: **find out that a better implementation of its own capability exists, and adopt it.**
 
-This plugin brings that loop into Cursor.
+This plugin brings that loop into your agent.
+
+## Install
+
+One folder, one version, one set of skills — five hosts read it through their own
+manifest, so nothing drifts between them.
+
+| Host | How it loads |
+|---|---|
+| Cursor | `.cursor-plugin/plugin.json` |
+| CodeBuddy | `.codebuddy-plugin/plugin.json` |
+| OpenClaw / ClawHub | `openclaw.plugin.json` + `package.json#openclaw` |
+| Claude Code | `.claude-plugin/plugin.json` |
+| DeepSeek Harness | `package.json#dsh` + `cordis.patch.yml` |
+
+On [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), install it
+into whichever profile you boot:
+
+```bash
+dsh plugin --profile web add rotifer
+```
+
+That adds two rows, and both mount plugins DSH already ships — this bundle carries
+no runtime code of its own:
+
+- `rotifer-skills` — a `dsh-skill-filesystem` provider scoped to this package's
+  own `skills/` directory. It sets `includeDefaultRoots: false`, so it contributes
+  only the four Rotifer skills and never rescans your project or user skill roots.
+  It cannot shadow a skill you wrote.
+- `mcp-rotifer` — the `dsh-mcp-client` bridge on the pinned, narrowed launch line
+  below. Its 10 tool schemas are paid on every request while mounted (6,736 bytes
+  of JSON, measured on dsh `0.1.0-rc.7`). Drop this row from your profile's own
+  `cordis.patch.yml` and the four skills still work; they cost only their catalog
+  rows.
+
+DSH is in developer preview and says it will make breaking changes. This bundle is
+declarative on purpose: it mounts DSH's own plugins rather than shipping a Cordis
+plugin of ours, so an API change has nothing here to break.
 
 ## What it does
 

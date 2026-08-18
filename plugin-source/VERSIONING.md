@@ -15,6 +15,9 @@ Applies to:
 - `plugins/rotifer/.cursor-plugin/plugin.json`
 - `plugins/rotifer/.codebuddy-plugin/plugin.json`
 - `plugins/rotifer/skills/evolve/SKILL.md`
+- `plugins/rotifer/package.json`
+- `plugins/rotifer/openclaw.plugin.json`
+- `plugins/rotifer/.claude-plugin/plugin.json`
 
 ### VSCode family
 

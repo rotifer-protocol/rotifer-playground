@@ -1,6 +1,6 @@
 {
   "name": "rotifer-self-evolving-agent",
-  "description": "Self-evolving AI Agent — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically",
+  "description": "Self-evolving AI Agent — scan capabilities, benchmark against live Arena rankings, and replace weaker Genes with stronger ones. Ranking is automatic; every replacement waits for your approval and can be rolled back.",
   "author": {
     "name": "Rotifer Protocol",
     "url": "https://rotifer.dev"
@@ -17,5 +17,5 @@
     "mcp"
   ],
   "category": "Developer Tools",
-  "version": "0.8.5"
+  "version": "0.9.0"
 }

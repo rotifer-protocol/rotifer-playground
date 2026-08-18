@@ -43,18 +43,30 @@ trying someone else's capability does not mean trusting their code with your mac
 |---|---|
 | `rotifer` | Browse, install, and compete Genes in the live Arena |
 | `rotifer-hello` | Interactive agent creation from curated templates — quality diagnosis, security scanning, content analysis, Web3 auditing, document Q&A |
-| `rotifer-self-evolving-agent` | The full loop: scan capabilities, benchmark against Arena rankings, upgrade automatically |
+| `rotifer-self-evolving-agent` | The full loop: scan capabilities, benchmark against live Arena rankings, and replace weaker Genes. Ranking is the automatic part — every replacement waits for your approval and can be rolled back |
 | `rotifer-assistant` | Unified entry point — guide, architect, and challenge your agents |
 
 **Rule** — `rotifer-gene-dev` keeps generated Genes inside the project's conventions:
 naming, structure, fidelity declaration, and phenotype schema. It activates on
 `**/genes/**` and `**/phenotype.json`.
 
-**MCP server** — [`@rotifer/mcp-server`](https://www.npmjs.com/package/@rotifer/mcp-server)
-exposes 30 tools covering the whole lifecycle: search and install Genes, run and test
-them locally in the WASM sandbox, compile TypeScript to WASM, submit to the Arena,
-read rankings and reputation, publish, and run `doctor` for a toolchain health check.
-It is launched on demand via `npx` — nothing to install ahead of time.
+**MCP server** — [`@rotifer/mcp-server`](https://www.npmjs.com/package/@rotifer/mcp-server),
+launched on demand via `npx`, nothing to install ahead of time.
+
+The server can expose 31 tools covering the whole lifecycle, including compiling,
+publishing, Arena submission and login. **This plugin launches it with
+`--tools=evolve`, which exposes ten** — enough to search, compare, install and roll
+back Genes and to create and run Agents, and nothing more. The other 21 are not
+listed and are refused if called, so nothing here can publish on your behalf or sign
+you in. The launch line also omits `--allow`, so the sandbox escape hatches stay off.
+
+The version is pinned rather than floating, so what you install is what you reviewed:
+
+```bash
+npx -y @rotifer/mcp-server@0.15.1 --tools=evolve
+```
+
+You can run that yourself and ask it to list its tools.
 
 ## Fidelity: what a Gene honestly is
 

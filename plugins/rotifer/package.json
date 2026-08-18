@@ -1,0 +1,36 @@
+{
+  "name": "rotifer",
+  "description": "The Rotifer Protocol plugin for OpenClaw — three Skills plus the Rotifer MCP server. Create your first Agent from a template (hello), route yourself to the right capability (assistant), and rank an Agent's Genes against live Arena data to swap in stronger ones (evolve). Ranking is the automatic part; every replacement waits for your approval and can be rolled back.",
+  "type": "module",
+  "main": "./index.js",
+  "license": "Apache-2.0",
+  "homepage": "https://rotifer.dev",
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2"
+    },
+    "build": {
+      "openclawVersion": "2026.3.24-beta.2"
+    },
+    "family": "bundle-plugin"
+  },
+  "keywords": [
+    "rotifer",
+    "rotifer-protocol",
+    "gene",
+    "arena",
+    "agent-evolution",
+    "self-evolving-agent",
+    "mcp",
+    "openclaw",
+    "clawhub"
+  ],
+  "author": {
+    "name": "Rotifer Protocol",
+    "url": "https://rotifer.dev"
+  },
+  "version": "0.9.0"
+}

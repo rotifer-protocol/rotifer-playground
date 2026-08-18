@@ -1,6 +1,6 @@
 {
   "name": "rotifer-protocol",
-  "description": "Self-evolving AI Agent framework — scan capabilities, benchmark against Arena rankings, and upgrade to stronger alternatives automatically",
+  "description": "Self-evolving AI Agent framework — scan capabilities, benchmark against live Arena rankings, and replace weaker Genes with stronger ones. Ranking is the automatic part; every replacement waits for your approval and can be rolled back.",
   "author": {
     "name": "Rotifer Protocol",
     "url": "https://rotifer.dev"
@@ -29,9 +29,10 @@
       "command": "npx",
       "args": [
         "-y",
-        "@rotifer/mcp-server"
+        "@rotifer/mcp-server@0.15.1",
+        "--tools=evolve"
       ]
     }
   },
-  "version": "0.8.5"
+  "version": "0.9.0"
 }

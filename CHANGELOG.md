@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.12.0...v0.13.0) (2026-08-18)
+
+
+### Features
+
+* **plugin:** pin and narrow the MCP launch, and publish the same plugin to ClawHub ([#188](https://github.com/rotifer-protocol/rotifer-playground/issues/188)) ([45fd590](https://github.com/rotifer-protocol/rotifer-playground/commit/45fd59043e18206aa5e27525ffc50242028788f9))
+
+
+### Bug Fixes
+
+* **cli:** let the invocation report settle before process.exit kills it ([#192](https://github.com/rotifer-protocol/rotifer-playground/issues/192)) ([de15509](https://github.com/rotifer-protocol/rotifer-playground/commit/de15509ca2f16606d47ddcdf0044be798c15b58b))
+* **db:** mirror migration 20260630123659, applied to production outside this repo ([#187](https://github.com/rotifer-protocol/rotifer-playground/issues/187)) ([bc45d7b](https://github.com/rotifer-protocol/rotifer-playground/commit/bc45d7b385d219e7f660016cf7cd5a167cf2db94))
+* **plugin:** put the OpenClaw declaration where OpenClaw reads it ([#190](https://github.com/rotifer-protocol/rotifer-playground/issues/190)) ([5f6890a](https://github.com/rotifer-protocol/rotifer-playground/commit/5f6890a8e5f9a601548e8f61e3a83b842b63f16c))
+
 ## [0.12.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.11.0...v0.12.0) (2026-08-17)
 
 

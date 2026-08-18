@@ -482,6 +482,45 @@ export async function trackDownload(
 
 // --- Cloud Arena ---
 
+/** One sandbox run's raw measurements (ADR-319 D3). */
+export interface EvaluationRun {
+  run_index: number;
+  sandbox_success: boolean;
+  /** null when nothing was checkable — no usable outputSchema, or no output. */
+  output_schema_valid: boolean | null;
+  latency_ms: number;
+  resource_cost: number;
+}
+
+/**
+ * Publish the per-run measurements a submission was computed from.
+ *
+ * An Arena row states a score; without these it states it on trust, and
+ * §9.7.1's promise that anyone can recompute the rankings is empty. These
+ * rows are public and append-only, so a third party can apply the ADR-318
+ * formula to the same inputs and check the answer.
+ *
+ * `evaluator` is not sent — the server stamps it from the authenticated
+ * principal, for the same reason it does on arena_entries.
+ */
+export async function publishEvaluationRuns(
+  geneId: string,
+  submissionId: string,
+  runs: EvaluationRun[]
+): Promise<void> {
+  if (runs.length === 0) return;
+
+  const res = await fetch(apiUrl("/arena_evaluation_runs"), {
+    method: "POST",
+    headers: { ...authHeaders(true), Prefer: "return=minimal" },
+    body: JSON.stringify(
+      runs.map((r) => ({ gene_id: geneId, submission_id: submissionId, ...r })),
+    ),
+  });
+
+  await handleResponse<unknown>(res);
+}
+
 export async function arenaSubmit(
   geneId: string,
   fitness: FitnessReport

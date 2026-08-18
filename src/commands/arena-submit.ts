@@ -1,13 +1,14 @@
 import { Command } from "commander";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import * as display from "../utils/display.js";
 import { c } from "../utils/palette.js";
 import { contentHash } from "../utils/content-hash.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding } from "../utils/binding.js";
-import { arenaSubmit as cloudArenaSubmit } from "../cloud/client.js";
+import { arenaSubmit as cloudArenaSubmit, publishEvaluationRuns } from "../cloud/client.js";
 import { requireAuth } from "../cloud/auth.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import { compileOutputValidator, isRunSuccessful } from "../utils/arena-success.js";
@@ -130,6 +131,17 @@ export const arenaSubmitCommand = new Command("submit")
     // loop that consumes it.
     const SANDBOX_RUNS = 3;
 
+    // The evidence, hoisted out of the measuring branch because the submit
+    // needs it too. Empty on the estimate path — an estimate ran nothing and
+    // has nothing to show.
+    const evaluationRuns: {
+      run_index: number;
+      sandbox_success: boolean;
+      output_schema_valid: boolean | null;
+      latency_ms: number;
+      resource_cost: number;
+    }[] = [];
+
     let fitness: {
       value: number;
       safetyScore: number;
@@ -143,7 +155,17 @@ export const arenaSubmitCommand = new Command("submit")
       const irWasm = readFileSync(irWasmPath) as Buffer;
       const { irHash: _strip, ...phenotypeForExec } = phenotype;
 
-      const results: { success: boolean; latencyMs: number; resourceCost: number }[] = [];
+      // sandboxOk and schemaOk are kept apart. S_r needs them combined, but the
+      // ledger needs them separate: "crashed" and "ran and returned garbage"
+      // are different failures, and a reader who cannot tell them apart cannot
+      // audit the rule or diagnose the Gene (ADR-319 D3).
+      const results: {
+        success: boolean;
+        sandboxOk: boolean;
+        schemaOk: boolean | null;
+        latencyMs: number;
+        resourceCost: number;
+      }[] = [];
 
       // S_r counts a run as successful only when the sandbox succeeded AND the
       // output honours the Gene's own outputSchema (spec §47.5 T1 "legal
@@ -170,12 +192,27 @@ export const arenaSubmitCommand = new Command("submit")
           if (execResult.success && !isSuccessfulRun) contractFailures++;
           results.push({
             success: isSuccessfulRun,
+            sandboxOk: execResult.success,
+            // null when there was nothing to check: either the Gene declared
+            // no usable outputSchema, or the sandbox never produced an output
+            // to check. Neither is the same as passing.
+            schemaOk: (validateOutput && execResult.success) ? isSuccessfulRun : null,
             latencyMs: execResult.durationMs,
             resourceCost: execResult.fuelConsumed,
           });
         } catch {
-          results.push({ success: false, latencyMs: 0, resourceCost: 0 });
+          results.push({ success: false, sandboxOk: false, schemaOk: null, latencyMs: 0, resourceCost: 0 });
         }
+      }
+
+      for (const [i, r] of results.entries()) {
+        evaluationRuns.push({
+          run_index: i,
+          sandbox_success: r.sandboxOk,
+          output_schema_valid: r.schemaOk,
+          latency_ms: r.latencyMs,
+          resource_cost: r.resourceCost,
+        });
       }
 
       const total = results.length;
@@ -309,6 +346,19 @@ export const arenaSubmitCommand = new Command("submit")
               "' first, then submit to cloud Arena."
           );
         } else {
+          // Evidence before claim. The per-run measurements are what make the
+          // score checkable (§9.7.1); publishing the score first and the
+          // evidence second would leave a window — and, if the second call
+          // fails, a permanent row — asserting a number nobody can verify.
+          // Only measured runs have evidence; an estimate has none to offer.
+          if (evaluationMethod === "sandbox") {
+            await publishEvaluationRuns(
+              cloudGeneId,
+              randomUUID(),
+              evaluationRuns,
+            );
+          }
+
           const cloudEntry = await cloudArenaSubmit(cloudGeneId, {
             value: fitness.value,
             safety_score: fitness.safetyScore,

@@ -10,6 +10,7 @@ import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding, type NativeBinding } from "../utils/binding.js";
 import { createGatewayFetch, type GatewayFetchOptions, type GatewayResponse } from "../runtime/network-gateway.js";
 import { DomainFailoverEngine, type GeneExecutionResult } from "../runtime/domain-failover.js";
+import { flushInvocationReports } from "../cloud/invocation.js";
 import { logGeneExecution } from "../utils/run-logger.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 
@@ -49,12 +50,14 @@ export const agentRunCommand = new Command("run")
         message: `Agent '${agentName}' not found`,
         suggestion: "Create one: rotifer agent create " + agentName + " --genes <g1> <g2>",
       });
+      await flushInvocationReports();
       process.exit(1);
     }
 
     if (agent.genome.length === 0) {
       display.error("Agent has an empty genome — nothing to execute");
       display.info("Recreate with genes: rotifer agent create " + agentName + " --genes <g1> <g2>");
+      await flushInvocationReports();
       process.exit(1);
     }
 
@@ -64,6 +67,7 @@ export const agentRunCommand = new Command("run")
     } catch {
       display.error("Invalid --input JSON: " + options.input);
       display.hint('Example: --input \'{"name":"world"}\'');
+      await flushInvocationReports();
       process.exit(1);
     }
 
@@ -189,6 +193,7 @@ export const agentRunCommand = new Command("run")
               suggestion: "Run 'rotifer test " + geneName + " --verbose' to debug",
             });
             printPipelineLog(pipelineLog);
+            await flushInvocationReports();
             process.exit(1);
           }
         } catch (err: any) {
@@ -209,6 +214,7 @@ export const agentRunCommand = new Command("run")
             suggestion: "Run 'rotifer test " + geneName + " --verbose' to debug",
           });
           printPipelineLog(pipelineLog);
+          await flushInvocationReports();
           process.exit(1);
         }
       } else {
@@ -230,6 +236,7 @@ export const agentRunCommand = new Command("run")
             suggestion: "Ensure genes/" + geneName + "/index.ts exists",
           });
           printPipelineLog(pipelineLog);
+          await flushInvocationReports();
           process.exit(1);
         }
 
@@ -246,6 +253,7 @@ export const agentRunCommand = new Command("run")
             });
             display.error(`${step} Gene '${geneName}' does not export express()`);
             printPipelineLog(pipelineLog);
+            await flushInvocationReports();
             process.exit(1);
           }
 
@@ -306,6 +314,7 @@ export const agentRunCommand = new Command("run")
             suggestion: "Run 'rotifer test " + geneName + " --verbose' to debug",
           });
           printPipelineLog(pipelineLog);
+          await flushInvocationReports();
           process.exit(1);
         }
       }
@@ -462,7 +471,8 @@ async function executeTryPool(
   console.log(JSON.stringify(outputs, null, 2));
 
   if (hasAnyFailed) {
-    process.exit(1);
+    void flushInvocationReports().finally(() => process.exit(1));
+    return undefined as never;
   }
 }
 
@@ -696,7 +706,9 @@ function executeViaAlgebra(
         message: `${compositionType} execution failed: ${result.errorMessage}`,
         suggestion: "Run 'rotifer test <gene-name> --verbose' to debug individual genes",
       });
-      process.exit(1);
+      // Not an async scope here: defer the exit until the report settles.
+      void flushInvocationReports().finally(() => process.exit(1));
+      return undefined as never;
     }
   } catch (err: any) {
     display.rustStyleError({
@@ -704,7 +716,8 @@ function executeViaAlgebra(
       message: `AlgebraExecutor error: ${err.message}`,
       suggestion: "Ensure all genes are compiled and valid",
     });
-    process.exit(1);
+    void flushInvocationReports().finally(() => process.exit(1));
+    return undefined as never;
   }
 }
 

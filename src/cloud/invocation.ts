@@ -33,6 +33,16 @@ import { loadCredentials } from "./auth.js";
  * line, because `.then` never ran. Callers that are about to exit must
  * `await flushInvocationReports()` first. Callers that simply return need not:
  * Node drains the pending request before the event loop empties.
+ *
+ * A fourth gate exists that users do not control: a test run reports nothing.
+ * `tests/e2e/dogfooding-pipeline.test.ts` spawns the real CLI against the
+ * repo's own Cloud-installed Genes, so on 2026-08-18 one `npm test` by a
+ * signed-in developer wrote four invocation records straight into production —
+ * source-linker twice, grammar-checker twice, timestamps two seconds apart.
+ * Those are executions, but they are not usage, and §33.4's whole purpose is to
+ * count callers who actually reached for a Gene. A metrics pipeline that
+ * manufactures its own traffic is broken in the opposite direction from the one
+ * this module was written to fix, and just as quietly.
  */
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -64,6 +74,23 @@ export function telemetryOptedOut(): boolean {
   return flag === "0" || flag === "false" || flag === "off";
 }
 
+/**
+ * True when this process is a test run (or was spawned by one — `execSync` and
+ * friends pass the environment down, which is exactly how the CLI under test
+ * inherits these).
+ *
+ * Deliberately narrow: `CI` is NOT one of these. A Gene invoked from someone's
+ * pipeline is still a caller reaching for it; a Gene invoked by a test asserting
+ * that the pipeline compiles is not.
+ */
+export function runningUnderTest(): boolean {
+  return Boolean(
+    process.env.VITEST ||
+      process.env.JEST_WORKER_ID ||
+      (process.env.NODE_ENV || "").trim().toLowerCase() === "test",
+  );
+}
+
 /** The Cloud id recorded when this Gene was installed, or null. */
 export function cloudGeneId(geneDir: string): string | null {
   const manifestPath = join(geneDir, ".cloud-manifest.json");
@@ -80,7 +107,7 @@ export function cloudGeneId(geneDir: string): string | null {
 export interface InvocationReport {
   /** The Gene id reported, or null when nothing was sent. */
   reported: string | null;
-  /** Why nothing was sent: telemetry-off | not-logged-in | no-cloud-identity. */
+  /** Why nothing was sent: telemetry-off | test-run | not-logged-in | no-cloud-identity. */
   reason?: string;
   /** Resolves when the POST settles; absent when nothing was sent. */
   settled?: Promise<void>;
@@ -92,6 +119,7 @@ export interface InvocationReport {
  */
 export function recordGeneInvocation(geneDir: string): InvocationReport {
   if (telemetryOptedOut()) return { reported: null, reason: "telemetry-off" };
+  if (runningUnderTest()) return { reported: null, reason: "test-run" };
 
   const creds = loadCredentials();
   const callerId = creds?.user?.id;

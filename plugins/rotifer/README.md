@@ -39,8 +39,14 @@ On [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), install 
 into whichever profile you boot:
 
 ```bash
-dsh plugin --profile web add rotifer
+dsh plugin --profile web add "github:rotifer-protocol/rotifer-playground#path:/plugins/rotifer"
 ```
+
+It installs from this repository rather than from npm on purpose. The unscoped
+npm name `rotifer` is already held by a [pointer package](https://www.npmjs.com/package/rotifer)
+whose only job is to stop that name being used to impersonate the toolchain —
+publishing this plugin over it would replace a working redirect with a package
+that has no `bin` at all.
 
 That adds two rows, and both mount plugins DSH already ships — this bundle carries
 no runtime code of its own:

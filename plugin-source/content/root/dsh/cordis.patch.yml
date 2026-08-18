@@ -1,7 +1,9 @@
 # Rotifer bundle layer for DeepSeek Harness.
 #
-# Install:
-#   dsh plugin --profile <name> add {{packageName}}
+# Install (from this repository, not npm — the unscoped npm name `{{packageName}}` is
+# held by a pointer package that exists to stop the toolchain being impersonated,
+# and this plugin has no bin to stand in for it):
+#   dsh plugin --profile <name> add "github:rotifer-protocol/rotifer-playground#path:/plugins/{{packageName}}"
 #
 # Two rows, and both mount plugins DSH already ships. This bundle carries no
 # runtime code of its own, so a Cordis API change has nothing here to break.

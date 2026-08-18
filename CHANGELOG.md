@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.14.1...v0.15.0) (2026-08-18)
+
+
+### Features
+
+* **arena:** publish the per-run evidence behind a score ([#212](https://github.com/rotifer-protocol/rotifer-playground/issues/212)) ([1b94a95](https://github.com/rotifer-protocol/rotifer-playground/commit/1b94a9587a6e4262b56e34d77e9ce17e25193a95))
+* **arena:** write paths declare how a score was measured, server attests what it can ([#210](https://github.com/rotifer-protocol/rotifer-playground/issues/210)) ([618d51d](https://github.com/rotifer-protocol/rotifer-playground/commit/618d51d1772fcf3795404146e47f4f3a5fe51bc7))
+* **db:** give arena_entries provenance and invalidation columns ([#208](https://github.com/rotifer-protocol/rotifer-playground/issues/208)) ([7308f97](https://github.com/rotifer-protocol/rotifer-playground/commit/7308f9722a4ec39a8fd24c0913dc3ebb9ff1fb97))
+
+
+### Bug Fixes
+
+* **db:** make log_gene_invocation idempotent within 5 seconds ([#204](https://github.com/rotifer-protocol/rotifer-playground/issues/204)) ([0ffc92f](https://github.com/rotifer-protocol/rotifer-playground/commit/0ffc92ff373cfaeaa3229c911d934a52b50918cb))
+* **plugin:** lead both dsh rows with the brand ([#209](https://github.com/rotifer-protocol/rotifer-playground/issues/209)) ([dcaf01b](https://github.com/rotifer-protocol/rotifer-playground/commit/dcaf01b9704df4b17f852a5b14c463931c4d8e09))
+* **test:** stop the suite reading and deleting the runner's credentials ([#211](https://github.com/rotifer-protocol/rotifer-playground/issues/211)) ([dbd895f](https://github.com/rotifer-protocol/rotifer-playground/commit/dbd895f599892b80f1846d71135a246902013cdc))
+
 ## [0.14.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.14.0...v0.14.1) (2026-08-18)
 
 

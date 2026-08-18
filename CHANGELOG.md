@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.13.0...v0.13.1) (2026-08-18)
+
+
+### Bug Fixes
+
+* **cli:** a test run must not report Gene invocations to production ([#197](https://github.com/rotifer-protocol/rotifer-playground/issues/197)) ([a928f05](https://github.com/rotifer-protocol/rotifer-playground/commit/a928f05a30f6d551f8128de0e867d4c6b1afe775))
+* **deps:** update h2 to 0.4.16 for RUSTSEC-2026-0258 ([#196](https://github.com/rotifer-protocol/rotifer-playground/issues/196)) ([70dcafd](https://github.com/rotifer-protocol/rotifer-playground/commit/70dcafd63199fd14282e9bfd5d5e6f6d5fb51c27))
+* **plugin:** carry the display name in the manifest instead of a publish flag ([#195](https://github.com/rotifer-protocol/rotifer-playground/issues/195)) ([1464415](https://github.com/rotifer-protocol/rotifer-playground/commit/14644150ed7f0c738071c1513e3fee6e08aa011f))
+
 ## [0.13.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.12.0...v0.13.0) (2026-08-18)
 
 

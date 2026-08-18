@@ -4,7 +4,7 @@
 
 ## Release Families
 
-- `root`: the root Cursor + CodeBuddy plugin surfaces in this repository.
+- `root`: the root Cursor + CodeBuddy + OpenClaw/ClawHub + Claude Code + DeepSeek Harness plugin surfaces in this repository.
 - `vscode`: the `rotifer-vscode` extension plus its bundled marketplace manifests.
 
 The main npm package in `package.json` is intentionally separate from both families.
@@ -25,6 +25,7 @@ The sync pipeline writes to these existing platform-facing paths:
 - `.codebuddy-plugin/marketplace.json`
 - `plugins/rotifer/.cursor-plugin/`
 - `plugins/rotifer/.codebuddy-plugin/`
+- `plugins/rotifer/cordis.patch.yml`
 - `plugins/rotifer/skills/`
 - `plugins/rotifer/rules/`
 - `plugins/rotifer/assets/`

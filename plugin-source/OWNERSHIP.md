@@ -9,6 +9,7 @@ This file defines which plugin-facing files are canonical sources and which file
 | `plugin-source/families.json` | Family versions and release tags |
 | `plugin-source/families/root.json` | Root Cursor + CodeBuddy + OpenClaw/ClawHub manifest metadata |
 | `plugin-source/families/vscode.json` | VSCode-family manifest metadata and package sync fields |
+| `plugin-source/content/root/dsh/cordis.patch.yml` | Root family DeepSeek Harness bundle patch (template) |
 | `plugin-source/content/root/evolve/SKILL.md` | Root family `evolve` skill |
 | `plugin-source/content/root/hello/SKILL.md` | Root family `hello` skill |
 | `plugin-source/content/root/assistant/SKILL.md` | Root family `assistant` skill |
@@ -30,6 +31,7 @@ This file defines which plugin-facing files are canonical sources and which file
 | `plugins/rotifer/openclaw.plugin.json` | `plugin-source/families/root.json` + `plugin-source/families.json` |
 | `plugins/rotifer/.claude-plugin/plugin.json` | `plugin-source/families/root.json` + `plugin-source/families.json` |
 | `plugins/rotifer/package.json` | `plugin-source/families/root.json` + `plugin-source/families.json` |
+| `plugins/rotifer/cordis.patch.yml` | `plugin-source/content/root/dsh/cordis.patch.yml` + `plugin-source/families/root.json` |
 | `plugins/rotifer/skills/evolve/SKILL.md` | `plugin-source/content/root/evolve/SKILL.md` |
 | `plugins/rotifer/rules/rotifer-gene-dev.mdc` | `plugin-source/content/shared/rotifer-gene-dev.mdc` |
 | `plugins/rotifer/skills/rotifer.md` | `plugin-source/content/root/rotifer.md` |
@@ -53,13 +55,23 @@ overwrite:
 Both are hand-authored on purpose. Everything else in that folder is generated;
 edit the source under `plugin-source/` and run `npm run sync:plugins`.
 
-## One Folder, Three Marketplaces
+## One Folder, Five Hosts
 
 `plugins/rotifer/` carries a marker directory per host — `.cursor-plugin/`,
 `.codebuddy-plugin/`, `.claude-plugin/` — plus `openclaw.plugin.json` and
-`package.json` for OpenClaw and ClawHub. They share one version and one set of
+`package.json` for OpenClaw and ClawHub, and `package.json#dsh` plus
+`cordis.patch.yml` for DeepSeek Harness. They share one version and one set of
 skills, because a second copy of the same skills maintained beside the first is
 how the two drift apart without anyone noticing.
+
+The DSH patch does not restate the MCP launch line. `renderDshPatch` reads it
+from the same `openclawPackage.openclaw.mcpServers` object OpenClaw ships, so the
+pin and the `--tools=evolve` narrowing cannot diverge between the two hosts —
+that divergence, across marketplaces, is the defect PR #188 closed.
+
+`plugin-source/families/root.json -> dshBundle` holds only what DSH alone needs:
+the measured schema cost of the mounted tool set and the dsh version it was
+measured on. Re-measure and update it when the tool set changes.
 
 ## Hand-Authored VSCode Fields
 

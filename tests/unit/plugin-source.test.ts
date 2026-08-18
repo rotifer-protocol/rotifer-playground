@@ -196,6 +196,99 @@ describe("plugin source sync pipeline", () => {
     }
   });
 
+  it("declares the dsh bundle where dsh reads it, from the same launch line", () => {
+    const root = createFixture();
+    const outputs = buildOutputs(root);
+
+    // A package without `dsh.bundle` still installs into a profile, but
+    // `dsh plugin` activates no layer and only warns — the same "written,
+    // shipped, never exercised" shape that put mcpServers at the top level of
+    // openclaw.plugin.json where OpenClaw never read it.
+    const packageEntry = outputs.find(
+      (entry) => entry.pathFromRoot === "plugins/rotifer/package.json",
+    );
+    const packageData =
+      packageEntry && "data" in packageEntry ? (packageEntry.data as Record<string, any>) : undefined;
+    expect(packageData?.dsh?.bundle?.patch).toBe("./cordis.patch.yml");
+
+    const patchEntry = outputs.find(
+      (entry) => entry.pathFromRoot === "plugins/rotifer/cordis.patch.yml",
+    );
+    expect(patchEntry?.kind).toBe("text");
+    const patch = patchEntry && "content" in patchEntry ? patchEntry.content : "";
+
+    // Assert against what dsh parses, not what a reader sees: the comments
+    // explain why --allow is absent, and matching that prose would be checking
+    // the documentation rather than the configuration.
+    const rows = patch
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+
+    // The pin and the narrowed tool set have to survive into the fourth host,
+    // not just the three that already had them.
+    expect(rows).toMatch(/@rotifer\/mcp-server@\d+\.\d+\.\d+/);
+    expect(rows).toContain("--tools=evolve");
+    expect(rows).not.toContain("--allow");
+    expect(rows).toContain("name: '@deepseek-ai/dsh-mcp-client'");
+
+    // Anti-drift: dsh does not get its own copy of the launch line. Every arg
+    // OpenClaw declares must appear in the patch, so bumping one host's pin
+    // without the other fails here rather than shipping two different products.
+    const openclawArgs: string[] = packageData?.openclaw?.mcpServers?.rotifer?.args ?? [];
+    expect(openclawArgs.length).toBeGreaterThan(0);
+    for (const arg of openclawArgs) {
+      expect(rows).toContain(`- '${arg}'`);
+    }
+    expect(rows).toContain(`command: ${packageData?.openclaw?.mcpServers?.rotifer?.command}`);
+
+    // The skills ride dsh's own filesystem provider, scoped to this package.
+    // includeDefaultRoots must stay false: true would make this row rescan the
+    // user's project and user skill roots and shadow skills they wrote.
+    expect(rows).toContain("name: '@deepseek-ai/dsh-skill-filesystem'");
+    expect(rows).toContain("includeDefaultRoots: false");
+
+    // The reason this bundle is safe against Cordis API churn is that it mounts
+    // nothing of ours. A row naming our own package would quietly make that
+    // claim false — and the claim is what the ADR rests on.
+    expect(rows).not.toMatch(/name:\s*'?rotifer'?\s*$/m);
+  });
+
+  it("ships skills dsh can actually discover", () => {
+    const root = createFixture();
+    const outputs = buildOutputs(root);
+
+    // dsh takes the skill name from frontmatter, not the directory, and drops a
+    // skill with a missing name/description or a non-kebab name with a log line
+    // and nothing else. A skill that silently never appears is the failure this
+    // asserts against.
+    const skillNames = /^name:\s*(\S+)\s*$/m;
+    const skills = outputs.filter(
+      (entry) =>
+        entry.pathFromRoot.startsWith("plugins/rotifer/skills/") &&
+        entry.pathFromRoot.endsWith(".md"),
+    );
+    expect(skills.length).toBeGreaterThan(0);
+
+    for (const skill of skills) {
+      const content = "content" in skill ? skill.content : "";
+      const name = content.match(skillNames)?.[1];
+      expect(name, `${skill.pathFromRoot} has no frontmatter name`).toBeDefined();
+      expect(name, `${skill.pathFromRoot} name is not kebab-case`).toMatch(
+        /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+      );
+      expect(content, `${skill.pathFromRoot} has no description`).toMatch(/^description:\s*\S/m);
+
+      // dsh rejects these outright rather than ignoring them, taking the whole
+      // skill down with the parse.
+      for (const legacy of ["disableModelInvocation", "modelInvocable", "userInvocable"]) {
+        expect(content, `${skill.pathFromRoot} uses legacy ${legacy}`).not.toMatch(
+          new RegExp(`^${legacy}:`, "m"),
+        );
+      }
+    }
+  });
+
   it("preserves hand-authored vscode package sections while syncing owned fields", () => {
     const root = createFixture();
     const originalPackage = JSON.parse(

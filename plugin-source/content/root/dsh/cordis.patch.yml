@@ -1,0 +1,52 @@
+# Rotifer bundle layer for DeepSeek Harness.
+#
+# Install:
+#   dsh plugin --profile <name> add {{packageName}}
+#
+# Two rows, and both mount plugins DSH already ships. This bundle carries no
+# runtime code of its own, so a Cordis API change has nothing here to break.
+# Override or disable either row by id from your own profile's cordis.patch.yml.
+
+- insert:
+    # The four Rotifer skills, from this package's own skills/ directory.
+    # includeDefaultRoots: false keeps this provider to that directory alone —
+    # it never rescans your project or user skill roots, so it cannot shadow a
+    # skill you wrote. The skills are read-only package files; nothing watches
+    # them for edits.
+    - id: rotifer-skills
+      name: '@deepseek-ai/dsh-skill-filesystem'
+      config:
+        providerName: rotifer
+        includeDefaultRoots: false
+        watch: false
+        customSkillDirs:
+          - !!js "process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('{{packageName}}/package.json'), '..', 'skills')"
+
+    # The Rotifer MCP server through DSH's own bridge, pinned to one version and
+    # narrowed to the evolve tool set: {{mcpToolCount}} tools, reaching Gene search, Arena
+    # rankings, install, rollback and local Agent runs. Left undeclared the
+    # server offers 31 tools, publish_gene, login and arena_submit among them,
+    # so this row is what keeps the assistant from publishing or signing in on
+    # your behalf. The launch line also omits --allow, so the sandbox escapes
+    # (no_sandbox, trust_unsigned) are refused.
+    #
+    # Cost: these {{mcpToolCount}} schemas are paid on EVERY request while the row is
+    # mounted — {{mcpSchemaBytes}} bytes of JSON, measured off ctx.tools.schemas() on
+    # dsh {{dshVersion}}. Remove this row and the four skills still work; they cost
+    # only their catalog rows.
+    #
+    # What it can change: installing a Gene writes to the project's genes/
+    # directory and always waits for your approval, the copy it replaces goes
+    # to genes/.snapshots/, and rollback_gene undoes it. Public Gene and Arena
+    # data needs no login, and login is not in this tool set. Usage reporting
+    # and the install counter are set out in the evolve skill's
+    # "Security & Transparency" section; ROTIFER_TELEMETRY=0 stops both.
+    - id: mcp-rotifer
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: rotifer
+        transport: stdio
+        command: {{mcpCommand}}
+        args:
+{{mcpArgsYaml}}
+        failOnStartupError: false

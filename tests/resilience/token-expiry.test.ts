@@ -53,7 +53,13 @@ describe("Resilience: token expiry", () => {
   });
 
   it("reputation --mine without login gives clear auth error", () => {
-    const result = run("reputation --mine", testDir);
+    // Its two siblings pass an isolated HOME and this one did not, so the
+    // assertion below only held while the machine happened to be signed out:
+    // it passed alone and failed inside a full run on 2026-08-18.
+    const fakeHome = join(testDir, "fakehome3");
+    mkdirSync(fakeHome, { recursive: true });
+
+    const result = run("reputation --mine", testDir, { HOME: fakeHome });
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout.toLowerCase()).toMatch(/not logged in|login|auth/i);
   });

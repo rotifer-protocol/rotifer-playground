@@ -1,8 +1,25 @@
-import { describe, it, expect } from "vitest";
+import { afterAll, describe, it, expect } from "vitest";
 import { execSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const CLI = join(__dirname, "..", "..", "dist", "index.js");
+
+/**
+ * These tests run `logout`, and `clearCredentials()` truncates then unlinks
+ * `~/.rotifer/credentials.json`. Inheriting the runner's HOME meant a full
+ * `npm test` while signed in deleted the developer's real login.
+ *
+ * The global setup already redirects HOME (tests/setup/isolate-home.ts), but a
+ * file whose commands destroy credentials pins its own so the guarantee is
+ * visible at the call site rather than in a file this one never mentions.
+ */
+const TEST_HOME = mkdtempSync(join(tmpdir(), "rotifer-token-safety-home-"));
+
+afterAll(() => {
+  rmSync(TEST_HOME, { recursive: true, force: true });
+});
 
 function run(args: string, env?: Record<string, string>): { stdout: string; stderr: string; exitCode: number } {
   try {
@@ -10,7 +27,7 @@ function run(args: string, env?: Record<string, string>): { stdout: string; stde
       cwd: join(__dirname, "..", ".."),
       encoding: "utf-8",
       timeout: 15000,
-      env: { ...process.env, FORCE_COLOR: "0", ...env },
+      env: { ...process.env, FORCE_COLOR: "0", HOME: TEST_HOME, ...env },
     });
     return { stdout, stderr: "", exitCode: 0 };
   } catch (err: any) {

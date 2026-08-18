@@ -65,3 +65,6 @@ internal/
 # Report written by the scheduled nightly build-and-test run; regenerated each
 # night, so it should never be committed.
 NIGHTLY_REPORT.md
+
+# Written by `clawhub package validate`, not by the sync pipeline.
+plugins/rotifer/reports/

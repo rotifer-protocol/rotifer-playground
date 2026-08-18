@@ -15,7 +15,24 @@
     "build": {
       "openclawVersion": "2026.3.24-beta.2"
     },
-    "family": "bundle-plugin"
+    "family": "bundle-plugin",
+    "mcpServers": {
+      "rotifer": {
+        "transport": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@rotifer/mcp-server@0.15.1",
+          "--tools=evolve"
+        ]
+      }
+    },
+    "environment": {
+      "ROTIFER_TELEMETRY": {
+        "required": false,
+        "description": "Set to 0 (or false/off) to stop all usage reporting. When signed in, each MCP tool call is otherwise reported to Rotifer Cloud — tool name, Gene id, outcome, latency, user id. Installing a Gene also bumps that Gene's public install counter, which carries the Gene id and no identity and fires whether or not you are signed in; this flag stops that too."
+      }
+    }
   },
   "keywords": [
     "rotifer",
@@ -32,5 +49,5 @@
     "name": "Rotifer Protocol",
     "url": "https://rotifer.dev"
   },
-  "version": "0.9.0"
+  "version": "0.9.1"
 }

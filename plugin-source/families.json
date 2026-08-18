@@ -1,6 +1,6 @@
 {
   "root": {
-    "version": "0.9.0",
+    "version": "0.9.1",
     "releaseTag": "root-plugin-v{version}",
     "description": "Root Cursor + CodeBuddy + OpenClaw/ClawHub plugin family",
     "outputRoots": [

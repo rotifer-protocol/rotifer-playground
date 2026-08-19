@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.16.0...v0.17.0) (2026-08-19)
+
+
+### Features
+
+* **arena:** apply the invalidation criteria to the board ([#224](https://github.com/rotifer-protocol/rotifer-playground/issues/224)) ([607a2fe](https://github.com/rotifer-protocol/rotifer-playground/commit/607a2febaf6c8b0fe11cb6c062ae307201f2b144))
+* **arena:** carry base_fitness and the discount, and stop holding Hybrid to an artifact ([#220](https://github.com/rotifer-protocol/rotifer-playground/issues/220)) ([6fcc73d](https://github.com/rotifer-protocol/rotifer-playground/commit/6fcc73dfbfd4fee07858f8834aa4311a46dd894c))
+* **arena:** give legacy rows the provenance their numbers can prove ([#223](https://github.com/rotifer-protocol/rotifer-playground/issues/223)) ([10fb0d4](https://github.com/rotifer-protocol/rotifer-playground/commit/10fb0d4eb63d77e14d6e06a8d93b6fa09ad0513e))
+* **cli:** compile honours declared fidelity; F(g) carries the discount it owed ([#222](https://github.com/rotifer-protocol/rotifer-playground/issues/222)) ([ac7d21b](https://github.com/rotifer-protocol/rotifer-playground/commit/ac7d21b4fccd455decedd0578061bb036a85a972))
+
 ## [0.16.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.15.0...v0.16.0) (2026-08-19)
 
 

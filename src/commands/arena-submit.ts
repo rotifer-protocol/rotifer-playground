@@ -13,6 +13,7 @@ import { requireAuth } from "../cloud/auth.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import { compileOutputValidator, isRunSuccessful } from "../utils/arena-success.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
+import { applyFidelityDiscount, estimateBaseFitness, type DiscountedFitness } from "../utils/fidelity-discount.js";
 import { scan } from "../scanner/index.js";
 import type { Severity } from "../scanner/types.js";
 
@@ -121,7 +122,13 @@ export const arenaSubmitCommand = new Command("submit")
       display.success("Pre-submission tests passed");
     }
 
-    const isNative = phenotype.fidelity === "Native";
+    // The declared tier, carried through to the discount and to every line of
+    // output. Only Native can be measured in the sandbox today — the Hybrid path
+    // that ships runs under Node.js and has no artifact to execute — so the
+    // other two tiers take the estimate path. They keep their own names there:
+    // a Hybrid gene was being reported back to its author as "Wrapped".
+    const declaredFidelity: string = phenotype.fidelity || "Wrapped";
+    const isNative = declaredFidelity === "Native";
     const irWasmPath = join(geneDir, "gene.ir.wasm");
     const hasIrWasm = existsSync(irWasmPath);
     const binding = tryLoadBinding();
@@ -149,6 +156,10 @@ export const arenaSubmitCommand = new Command("submit")
       latencyScore: number;
       resourceEfficiency: number;
     };
+    // §5.1: F(g) = base_fitness × FIDELITY_DISCOUNT[fidelity]. Both paths
+    // produce a base; the discount is applied once, below, so neither path can
+    // forget it or apply it twice.
+    let discounted: DiscountedFitness;
 
     if (isNative && hasIrWasm && binding) {
       display.info("Executing gene in WASM sandbox...");
@@ -237,14 +248,16 @@ export const arenaSubmitCommand = new Command("submit")
       // Spec uses raw L × Resource_Cost (linear penalty); implementation uses sigmoid
       // normalization 1/(1+x/k) to prevent extreme values from zeroing F(g) (ADR-215 P1)
       const denominator = Math.max(latencyScore, 0.001) * Math.max(resourceEfficiency, 0.001);
-      const value = Math.min(denominator > 0 ? numerator / denominator : 0, 1.0);
+      const baseValue = Math.min(denominator > 0 ? numerator / denominator : 0, 1.0);
+      discounted = applyFidelityDiscount(baseValue, declaredFidelity);
 
       // V(g) = Test_Pass_Rate / Security_Leak_Risk  (Spec §5.1, ADR-215 P0)
+      // The discount applies to F(g) only; V(g) is untouched by fidelity.
       const testPassRate = successRate;
       const securityLeakRisk = computeSecurityLeakRisk(geneDir, geneName);
       const safetyScore = testPassRate / securityLeakRisk;
 
-      fitness = { value, safetyScore, successRate, latencyScore, resourceEfficiency };
+      fitness = { value: discounted.fitness, safetyScore, successRate, latencyScore, resourceEfficiency };
       display.success(`Sandbox execution: ${successes}/${total} passed (avg ${avgLatency.toFixed(1)}ms)`);
       if (securityLeakRisk > 1.0) {
         display.warn(`Security scan found issues (leak_risk=${securityLeakRisk.toFixed(2)}, V(g)=${safetyScore.toFixed(4)})`);
@@ -255,8 +268,10 @@ export const arenaSubmitCommand = new Command("submit")
         display.warn("Native addon not available — using deterministic fitness estimation");
       }
       const seed = parseInt(geneId.slice(0, 8), 16);
-      const baseFitness = isNative ? 0.70 : 0.45;
-      const variance = (seed % 250) / 1000;
+      // The estimate is fidelity-agnostic on purpose: the tier penalty is the
+      // discount's job. The old `isNative ? 0.70 : 0.45` baked a second,
+      // undocumented penalty into the estimate itself.
+      discounted = applyFidelityDiscount(estimateBaseFitness(geneId), declaredFidelity);
 
       // V(g) still uses real AST scan even in fallback mode (ADR-215 P0)
       const fallbackTestPassRate = 0.9 + (seed % 100) / 1000;
@@ -264,7 +279,7 @@ export const arenaSubmitCommand = new Command("submit")
       const fallbackSafetyScore = fallbackTestPassRate / fallbackSecurityLeakRisk;
 
       fitness = {
-        value: Math.min(baseFitness + variance, 0.99),
+        value: discounted.fitness,
         safetyScore: fallbackSafetyScore,
         successRate: fallbackTestPassRate,
         latencyScore: 0.7 + ((seed >> 8) % 300) / 1000,
@@ -287,6 +302,8 @@ export const arenaSubmitCommand = new Command("submit")
         join(geneDir, ".arena-cache.json"),
         JSON.stringify({
           fitness: fitness.value,
+          base_fitness: discounted.baseFitness,
+          fidelity_discount: discounted.fidelityDiscount,
           safety: fitness.safetyScore,
           success_rate: fitness.successRate,
           latency_score: fitness.latencyScore,
@@ -315,8 +332,11 @@ export const arenaSubmitCommand = new Command("submit")
     display.success(`Gene '${geneName}' submitted to Arena`);
     display.keyValue("Gene ID", c.warn(geneId));
     display.keyValue("Domain", phenotype.domain);
-    display.keyValue("Fidelity", isNative ? "Native" : "Wrapped");
-    display.keyValue("F(g)", fitness.value.toFixed(4));
+    display.keyValue("Fidelity", declaredFidelity);
+    // §33.1 dual-column: the raw base shows what the gene nominally achieved,
+    // the discounted F(g) is what ranks against the other tiers.
+    display.keyValue("Base fitness", discounted.baseFitness.toFixed(4));
+    display.keyValue("F(g)", `${fitness.value.toFixed(4)}  (× ${discounted.fidelityDiscount.toFixed(2)} ${declaredFidelity.toLowerCase()} discount)`);
     display.keyValue("V(g)", fitness.safetyScore.toFixed(4));
     display.keyValue("Success Rate", `${(fitness.successRate * 100).toFixed(1)}%`);
     display.keyValue("Latency Score", fitness.latencyScore.toFixed(4));
@@ -361,6 +381,8 @@ export const arenaSubmitCommand = new Command("submit")
 
           const cloudEntry = await cloudArenaSubmit(cloudGeneId, {
             value: fitness.value,
+            base_fitness: discounted.baseFitness,
+            fidelity_discount: discounted.fidelityDiscount,
             safety_score: fitness.safetyScore,
             success_rate: fitness.successRate,
             latency_score: fitness.latencyScore,

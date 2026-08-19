@@ -8,6 +8,7 @@ import { requireProjectRoot } from "../utils/project-root.js";
 import { arenaRankings } from "../cloud/client.js";
 import type { CloudArenaEntry } from "../cloud/types.js";
 import { contentHash } from "../utils/content-hash.js";
+import { applyFidelityDiscount, estimateBaseFitness } from "../utils/fidelity-discount.js";
 
 interface RankEntry {
   rank: number;
@@ -45,10 +46,8 @@ function loadRankings(root: string, genesDir: string, domainFilter?: string): Ra
       const gId = contentHash(phenotype);
 
       const seed = parseInt(gId.slice(0, 8), 16);
-      const isNative = phenotype.fidelity === "Native";
-      const baseFitness = isNative ? 0.7 : 0.45;
-      const variance = (seed % 250) / 1000;
-      const fitness = Math.min(baseFitness + variance, 0.99);
+      const { fitness: discountedFitness } = applyFidelityDiscount(estimateBaseFitness(gId), phenotype.fidelity);
+      const fitness = discountedFitness;
       const safety = 0.7 + (seed % 300) / 1000;
 
       entries.push({

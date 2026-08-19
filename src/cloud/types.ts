@@ -76,6 +76,15 @@ export interface CloudArenaRankings {
 
 export interface FitnessReport {
   value: number;
+  /**
+   * §5.1 / §33.1 dual-column: the raw base and the FIDELITY_DISCOUNT entry that
+   * was applied, so `value = base_fitness × fidelity_discount` is reconstructible
+   * from the row after the protocol parameter moves. Optional for the same
+   * reason `evaluation_method` is — a client that omits them leaves the ledger
+   * columns NULL, which reads as "not recorded", never as "discount 1.0".
+   */
+  base_fitness?: number;
+  fidelity_discount?: number;
   safety_score: number;
   success_rate: number;
   latency_score: number;

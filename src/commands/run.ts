@@ -142,7 +142,22 @@ export const runCommand = new Command("run")
             process.exit(1);
             return;
           }
-          const output = await fn(input);
+          // A Hybrid gene expects the network gateway on its second argument —
+          // `rotifer test` and `rotifer agent run` already inject it; `run` did
+          // not, so the same gene that passed `test` threw here asking for a
+          // gatewayFetch nobody gave it.
+          let output: unknown;
+          if (phenotype.fidelity === "Hybrid" && phenotype.network) {
+            const { createGatewayFetch } = await import("../runtime/network-gateway.js");
+            const { gatewayFetch, gateway } = createGatewayFetch(phenotype.network);
+            display.info(`Hybrid gene — gateway active (domains: ${phenotype.network.allowedDomains?.join(", ") || "none"})`);
+            output = await fn(input, { gatewayFetch });
+            if (options.verbose) {
+              display.info(`Gateway: ${gateway.stats.totalRequests} requests, ${gateway.stats.totalBytes} bytes`);
+            }
+          } else {
+            output = await fn(input);
+          }
           console.log();
           display.success("Output:");
           console.log(JSON.stringify(output, null, 2));

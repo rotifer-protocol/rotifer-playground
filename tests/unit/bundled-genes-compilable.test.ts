@@ -33,26 +33,28 @@ const RUST_GENE_TYPES = join(
 );
 
 /**
- * Genes that legitimately await, and so cannot be compiled today.
+ * The async `express()` guard applies to the Javy path, and only Native genes
+ * take it: `compile` now branches on declared fidelity, and a Hybrid gene runs
+ * under Node.js with the network gateway, where `async` is the normal shape.
+ * So the check below covers Native genes only, and the six Hybrid genes that
+ * used to sit in an exemption list here are simply not in scope any more.
  *
- * They are not oversights — each performs real async I/O. The compiler's own
- * E0025 hint says to "keep it async and run via Node (--no-sandbox) / a Hybrid
- * Gene", but `compile` does not branch on declared fidelity: any gene with an
- * `index.ts` goes through Javy regardless. So the escape hatch the error points
- * at is not currently wired, and these genes have nowhere to go until it is.
+ * What remains exempt is narrower and should stay narrow: a *Wrapped* gene that
+ * carries an async `index.ts`. Wrapped promises no artifact, so it never goes
+ * through Javy either; it is listed rather than skipped so that a second one
+ * appearing is a visible event, not a silent addition.
  *
- * This list may shrink; it must never grow. A new async gene should fail here
- * rather than quietly join a backlog. Tracked as ADR-319 plan item 2.11.
+ * This list may shrink; it must never grow.
  */
-const AWAITS_REAL_IO = [
-  "answer-synthesizer",
-  "chain-reader",
+const WRAPPED_WITH_ASYNC_SOURCE = [
   "clawhub-web-search",
-  "doc-retrieval",
-  "polymarket-scanner",
-  "sirchmunk-search",
-  "telegram-bot-notifier",
 ] as const;
+
+/** Fidelities the Javy guard applies to. */
+function fidelityOf(name: string): string {
+  const phenotype = JSON.parse(readFileSync(join(GENES_DIR, name, "phenotype.json"), "utf-8"));
+  return phenotype?.fidelity ?? "Wrapped";
+}
 
 /** Gene directories the compiler can see a source in — the ones it would build. */
 function compilableGenes(): string[] {
@@ -105,9 +107,9 @@ describe("bundled genes are compilable", () => {
    * Promise the shim serialises to `{}` — the gene reports success and produces
    * nothing. Shipping one in the starter corpus hands the user a dead end.
    */
-  it("exports a synchronous express() from every gene that does not do real I/O", () => {
+  it("exports a synchronous express() from every Native gene", () => {
     const offenders = genes
-      .filter((name) => !(AWAITS_REAL_IO as readonly string[]).includes(name))
+      .filter((name) => fidelityOf(name) === "Native")
       .map((name) => {
         const src = findGeneSource(join(GENES_DIR, name))!;
         const shape = detectAsyncExpress(readFileSync(src, "utf-8"));
@@ -118,13 +120,36 @@ describe("bundled genes are compilable", () => {
     expect(offenders).toEqual([]);
   });
 
+  /**
+   * A Hybrid gene that awaits is doing I/O, and the gateway is the only
+   * sanctioned way to do it — so it must say which hosts. The spec treats an
+   * undeclared `network` as "no network access"; an async Hybrid gene with no
+   * declaration is therefore either reaching around the gateway or about to
+   * fail at runtime. A *synchronous* Hybrid gene is not held to this: the spec
+   * lets a Hybrid gene declare no network at all, and three in the corpus do.
+   */
+  it("declares network domains on every Hybrid gene that awaits", () => {
+    const missing = genes
+      .filter((name) => fidelityOf(name) === "Hybrid")
+      .filter((name) => {
+        const src = findGeneSource(join(GENES_DIR, name))!;
+        return detectAsyncExpress(readFileSync(src, "utf-8")) !== null;
+      })
+      .filter((name) => {
+        const phenotype = JSON.parse(readFileSync(join(GENES_DIR, name, "phenotype.json"), "utf-8"));
+        return !(phenotype?.network?.allowedDomains?.length > 0);
+      });
+    expect(missing).toEqual([]);
+  });
+
   /** The exemption list must shrink, never grow — so its contents are pinned. */
-  it("keeps the async exemption list honest", () => {
-    const stillAsync = genes.filter((name) => {
+  it("keeps the Wrapped-with-async list honest", () => {
+    const wrappedAsync = genes.filter((name) => {
+      if (fidelityOf(name) !== "Wrapped") return false;
       const src = findGeneSource(join(GENES_DIR, name))!;
       return detectAsyncExpress(readFileSync(src, "utf-8")) !== null;
     });
-    expect(stillAsync.sort()).toEqual([...AWAITS_REAL_IO].sort());
+    expect(wrappedAsync.sort()).toEqual([...WRAPPED_WITH_ASYNC_SOURCE].sort());
   });
 
   /**

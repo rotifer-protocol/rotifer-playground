@@ -525,6 +525,50 @@ export async function unpublishGene(id: string): Promise<UnpublishedGene> {
   return { id: row.id, name: row.name, version: row.version };
 }
 
+/**
+ * Put an unpublished version back on the public registry.
+ *
+ * The inverse of `unpublishGene`, and it has to exist as its own call:
+ * `publishGene` always writes with a plain POST, so re-running it on a version
+ * that is merely unpublished collides with
+ * `genes_owner_id_name_version_key (owner_id, name, version)` instead of
+ * restoring it. Without this, unpublishing would be a one-way door for an
+ * author — the version could only come back under a new number.
+ *
+ * Immutability is preserved rather than bent: nothing but the `published` flag
+ * moves, so the artifact and content hash that were published under this
+ * version are the ones that come back.
+ *
+ * Same zero-row check as unpublish, for the same reason — RLS narrows the
+ * UPDATE and PostgREST does not treat "matched nothing" as an error.
+ */
+export async function republishGene(id: string): Promise<UnpublishedGene> {
+  const res = await fetch(apiUrl(`/genes?id=eq.${id}`), {
+    method: "PATCH",
+    headers: {
+      ...authHeaders(true),
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify({ published: true }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to republish gene: ${await res.text()}`);
+  }
+
+  const changed = (await res.json()) as Array<{ id: string; name: string; version: string }>;
+  if (changed.length === 0) {
+    throw new Error(
+      `Nothing was republished. Gene ${id} is either not yours or does not exist — ` +
+        "only the author of a version can put it back."
+    );
+  }
+
+  const row = changed[0];
+  return { id: row.id, name: row.name, version: row.version };
+}
+
 /** One of the caller's own versions, for resolving what `unpublish` should act on. */
 export interface OwnedGeneVersion {
   id: string;

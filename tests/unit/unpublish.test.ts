@@ -55,16 +55,16 @@ describe("splitVersionSuffix", () => {
 
 describe("chooseVersion", () => {
   it("reports a gene the caller does not own", () => {
-    expect(chooseVersion([], null).reason).toBe("no-such-gene");
+    expect(chooseVersion([], null, "down").reason).toBe("no-such-gene");
   });
 
   it("takes the exact version when one is named", () => {
     const versions = [v("2.0.0"), v("1.0.0")];
-    expect(chooseVersion(versions, "1.0.0").chosen?.version).toBe("1.0.0");
+    expect(chooseVersion(versions, "1.0.0", "down").chosen?.version).toBe("1.0.0");
   });
 
   it("reports a version the caller does not have", () => {
-    expect(chooseVersion([v("1.0.0")], "9.9.9").reason).toBe("no-such-version");
+    expect(chooseVersion([v("1.0.0")], "9.9.9", "down").reason).toBe("no-such-version");
   });
 
   /**
@@ -78,7 +78,7 @@ describe("chooseVersion", () => {
       v("2.0.0", true, "2026-08-02T00:00:00Z"),
       v("1.0.0", true, "2026-08-01T00:00:00Z"),
     ];
-    expect(chooseVersion(versions, null).chosen?.version).toBe("2.0.0");
+    expect(chooseVersion(versions, null, "down").chosen?.version).toBe("2.0.0");
   });
 
   it("takes the newest published version when none is named", () => {
@@ -86,19 +86,63 @@ describe("chooseVersion", () => {
       v("2.0.0", true, "2026-08-02T00:00:00Z"),
       v("1.0.0", true, "2026-08-01T00:00:00Z"),
     ];
-    expect(chooseVersion(versions, null).chosen?.version).toBe("2.0.0");
+    expect(chooseVersion(versions, null, "down").chosen?.version).toBe("2.0.0");
   });
 
   it("says so rather than acting when everything is already down", () => {
-    const result = chooseVersion([v("1.0.0", false)], null);
+    const result = chooseVersion([v("1.0.0", false)], null, "down");
     expect(result.chosen).toBeNull();
-    expect(result.reason).toBe("all-unpublished");
+    expect(result.reason).toBe("nothing-to-do");
   });
 
   /** Naming an already-down version is a no-op, not a second takedown. */
   it("refuses to re-unpublish a named version that is already down", () => {
-    const result = chooseVersion([v("1.0.0", false)], "1.0.0");
+    const result = chooseVersion([v("1.0.0", false)], "1.0.0", "down");
     expect(result.chosen).toBeNull();
-    expect(result.reason).toBe("already-unpublished");
+    expect(result.reason).toBe("already-in-state");
+  });
+});
+
+/**
+ * The inverse has to exist as its own call, and that is not a convenience
+ * choice. `publishGene` always writes with a plain POST, so re-running it on a
+ * version that is merely unpublished collides with the
+ * `(owner_id, name, version)` unique constraint instead of restoring it.
+ * Without `republish`, unpublishing would be a one-way door: the version could
+ * only come back under a new number.
+ */
+describe("chooseVersion — republish direction", () => {
+  it("takes the newest unpublished version when none is named", () => {
+    const versions = [
+      v("3.0.0", true, "2026-08-03T00:00:00Z"),
+      v("2.0.0", false, "2026-08-02T00:00:00Z"),
+      v("1.0.0", false, "2026-08-01T00:00:00Z"),
+    ];
+    expect(chooseVersion(versions, null, "up").chosen?.version).toBe("2.0.0");
+  });
+
+  it("takes the exact unpublished version when one is named", () => {
+    const versions = [v("2.0.0", true), v("1.0.0", false)];
+    expect(chooseVersion(versions, "1.0.0", "up").chosen?.version).toBe("1.0.0");
+  });
+
+  it("refuses to republish a version that is already published", () => {
+    const result = chooseVersion([v("1.0.0", true)], "1.0.0", "up");
+    expect(result.chosen).toBeNull();
+    expect(result.reason).toBe("already-in-state");
+  });
+
+  it("says so when there is nothing taken down to restore", () => {
+    expect(chooseVersion([v("1.0.0", true)], null, "up").reason).toBe("nothing-to-do");
+  });
+
+  /** The two directions must never pick the same row — that is the whole point. */
+  it("never picks the same version as the other direction", () => {
+    const versions = [v("2.0.0", true), v("1.0.0", false)];
+    const down = chooseVersion(versions, null, "down").chosen;
+    const up = chooseVersion(versions, null, "up").chosen;
+    expect(down?.version).toBe("2.0.0");
+    expect(up?.version).toBe("1.0.0");
+    expect(down?.id).not.toBe(up?.id);
   });
 });

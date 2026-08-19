@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.15.0...v0.16.0) (2026-08-19)
+
+
+### Features
+
+* **arena:** the invalidation criteria, as code anyone can run ([#214](https://github.com/rotifer-protocol/rotifer-playground/issues/214)) ([4719278](https://github.com/rotifer-protocol/rotifer-playground/commit/47192784670602907e5d8810ed01e07822f97978))
+* **cli:** rotifer unpublish — let an author take a version down ([#217](https://github.com/rotifer-protocol/rotifer-playground/issues/217)) ([d8f411f](https://github.com/rotifer-protocol/rotifer-playground/commit/d8f411faa257aa46a486cb5fd5dc73dde403d34e))
+* **telemetry:** publish the evidence that would show double-counting returning ([#218](https://github.com/rotifer-protocol/rotifer-playground/issues/218)) ([46e5122](https://github.com/rotifer-protocol/rotifer-playground/commit/46e5122b44ab83fa4c4cfa1936b361879b409973))
+
+
+### Bug Fixes
+
+* **genes:** make the bundled corpus compilable again ([#216](https://github.com/rotifer-protocol/rotifer-playground/issues/216)) ([c7b018f](https://github.com/rotifer-protocol/rotifer-playground/commit/c7b018f2014086b183d4b66dfe42edd16b6e256a))
+
 ## [0.15.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.14.1...v0.15.0) (2026-08-18)
 
 

@@ -779,6 +779,55 @@ export async function arenaRankings(options: {
   return { rankings, total, domain: options.domain || null };
 }
 
+/** One leaderboard row as the tiered RPC returns it (ADR-319 D4). */
+export interface LeaderboardRow {
+  tier: "verified" | "under_evaluation" | "not_evaluated";
+  tier_rank: number | null;
+  gene_id: string;
+  gene_name: string;
+  gene_version: string;
+  owner_username: string;
+  domain: string;
+  fidelity: string;
+  fitness_value: number | null;
+  base_fitness: number | null;
+  fidelity_discount: number | null;
+  safety_score: number | null;
+  evaluation_method: string | null;
+  evaluation_n: number | null;
+  unique_callers: number;
+  invalidation_reason: string | null;
+  total_calls: number;
+  last_evaluated: string | null;
+  versions_on_board: number;
+}
+
+/**
+ * The Arena leaderboard, one row per logical gene, each carrying the tier it
+ * earned and — where it did not earn one — the reason.
+ *
+ * Goes through `get_arena_leaderboard` rather than selecting `arena_entries`
+ * directly, because a direct select cannot see any of that: it ranked every row
+ * alike, never consulted `invalidated_at`, and showed nine versions of one gene
+ * as nine competitors.
+ */
+export async function arenaLeaderboard(options: {
+  domain?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<LeaderboardRow[]> {
+  const res = await fetch(apiUrl("/rpc/get_arena_leaderboard"), {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({
+      p_domain: options.domain ?? null,
+      p_limit: options.limit ?? 200,
+      p_offset: options.offset ?? 0,
+    }),
+  });
+  return handleResponse<LeaderboardRow[]>(res);
+}
+
 // --- Reputation ---
 
 export interface GeneReputationResponse {

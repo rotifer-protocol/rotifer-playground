@@ -2,10 +2,10 @@ import { Command } from "commander";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import * as display from "../utils/display.js";
-import { fidelityColor, scoreColor2, c } from "../utils/palette.js";
+import { fidelityColor, c } from "../utils/palette.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
-import { arenaRankings } from "../cloud/client.js";
+import { arenaLeaderboard, type LeaderboardRow } from "../cloud/client.js";
 import { contentHash } from "../utils/content-hash.js";
 
 interface ArenaEntry {
@@ -136,61 +136,106 @@ export const arenaListCommand = new Command("list")
     });
   });
 
+/** How each tier reads, and what a reader should take from it. */
+const TIER_LABEL: Record<string, string> = {
+  verified: "Verified",
+  under_evaluation: "Under evaluation",
+  not_evaluated: "Not evaluated",
+};
+
+/** Plain-language reason a gene is not ranked, and what its author can do. */
+function explainReason(row: LeaderboardRow): string {
+  if (row.invalidation_reason) {
+    switch (row.invalidation_reason) {
+      case "async-express-artifact":
+        return "published artifact returns {} — recompile with a synchronous express() and publish a new version";
+      case "no-published-artifact":
+        return "declares Native but published no WASM — compile and publish it, or declare the fidelity it really is";
+      case "test-data":
+        return "submitted under the 'test' domain";
+      default:
+        return row.invalidation_reason;
+    }
+  }
+  if (row.evaluation_method === "estimated") return "score was estimated, never measured — run: rotifer arena submit --cloud";
+  if (row.evaluation_method === "declared") return "score was supplied by the client, not measured";
+  if (row.evaluation_method === "unknown-legacy") return "predates provenance tracking — resubmit to record how it was measured";
+  return "measured, but not yet called by enough distinct callers";
+}
+
 async function showCloudRankings(domain?: string, topN?: number): Promise<void> {
   const s = display.spinner("Fetching cloud Arena rankings...");
+  let rows: LeaderboardRow[];
   try {
-    const result = await arenaRankings({ domain });
+    rows = await arenaLeaderboard({ domain });
     s.stop();
-
-    if (result.rankings.length === 0) {
-      display.renderResult({ rankings: [] }, () => {
-        display.box(
-          [
-            "No genes in cloud Arena" + (domain ? ` for domain '${domain}'` : ""),
-            "",
-            c.muted("Get started:"),
-            `  ${c.accent("rotifer publish <gene-name>")}        ${c.muted("publish first")}`,
-            `  ${c.accent("rotifer arena submit --cloud <gene-name>")} ${c.muted("then submit")}`,
-          ],
-          { title: "Cloud Arena Rankings" },
-        );
-      });
-      return;
-    }
-
-    const totalRankings = result.rankings.length;
-    const displayRankings = topN ? result.rankings.slice(0, topN) : result.rankings;
-
-    display.renderResult(
-      { rankings: displayRankings, total: totalRankings },
-      (data) => {
-        display.header("Cloud Arena Rankings", { separator: false });
-        display.table(data.rankings as unknown as Record<string, unknown>[], [
-          { key: "rank", label: "#", width: 4, format: (v) => String(v) },
-          { key: "gene_name", label: "Name", width: 20 },
-          { key: "owner", label: "Creator", width: 14 },
-          { key: "domain", label: "Domain", width: 14 },
-          { key: "fitness", label: "F(g)", width: 9, format: (v) => (v as number).toFixed(4) },
-          { key: "safety", label: "V(g)", width: 9, format: (v) => (v as number).toFixed(4) },
-          { key: "success_rate", label: "SR", width: 7, format: (v) => v != null ? (v as number).toFixed(2) : "—" },
-          { key: "latency_score", label: "Lat", width: 7, format: (v) => v != null ? (v as number).toFixed(2) : "—" },
-          { key: "resource_efficiency", label: "RE", width: 7, format: (v) => v != null ? (v as number).toFixed(2) : "—" },
-          { key: "reputation_score", label: "R(g)", width: 10,
-            format: (v) => scoreColor2(v as number | null) },
-          { key: "fidelity", label: "Fidelity", width: 10, format: (v) => fidelityColor(String(v)) },
-        ]);
-        console.log();
-        const showing = topN && topN < data.total
-          ? `Showing top ${data.rankings.length} of ${data.total}`
-          : `${data.rankings.length} gene(s)`;
-        display.hint(`${showing} in cloud Arena`);
-      }
-    );
   } catch (err: unknown) {
     s.stop();
-    const msg = err instanceof Error ? err.message : "Failed to fetch cloud rankings";
-    display.error(msg);
+    display.error(err instanceof Error ? err.message : "Failed to fetch cloud rankings");
     display.hint("Check your network connection, or run 'rotifer arena submit' to add local genes.");
     process.exit(1);
+    return;
   }
+
+  if (rows.length === 0) {
+    display.renderResult({ rankings: [] }, () => {
+      display.box(
+        [
+          "No genes in cloud Arena" + (domain ? ` for domain '${domain}'` : ""),
+          "",
+          c.muted("Get started:"),
+          `  ${c.accent("rotifer publish <gene-name>")}        ${c.muted("publish first")}`,
+          `  ${c.accent("rotifer arena submit --cloud <gene-name>")} ${c.muted("then submit")}`,
+        ],
+        { title: "Cloud Arena Rankings" },
+      );
+    });
+    return;
+  }
+
+  display.renderResult({ rankings: rows, total: rows.length }, (data) => {
+    for (const tier of ["verified", "under_evaluation", "not_evaluated"] as const) {
+      const inTier = data.rankings.filter((r) => r.tier === tier);
+      if (inTier.length === 0) continue;
+      const shown = tier === "not_evaluated" ? inTier : (topN ? inTier.slice(0, topN) : inTier);
+
+      console.log();
+      display.header(`${TIER_LABEL[tier]} (${inTier.length})`, { separator: false });
+
+      if (tier === "not_evaluated") {
+        // No score column at all. Printing a stored 0.5 next to the words "not
+        // evaluated" is how a hash-derived number got read as a measurement in
+        // the first place.
+        for (const r of shown) {
+          console.log(`  ${r.gene_name}@${r.gene_version}  ${c.muted(r.owner_username)}`);
+          console.log(`      ${c.muted(explainReason(r))}`);
+        }
+        continue;
+      }
+
+      display.table(shown as unknown as Record<string, unknown>[], [
+        { key: "tier_rank", label: "#", width: 4, format: (v) => String(v ?? "—") },
+        { key: "gene_name", label: "Name", width: 20 },
+        { key: "owner_username", label: "Creator", width: 14 },
+        { key: "domain", label: "Domain", width: 14 },
+        { key: "fitness_value", label: "F(g)", width: 9,
+          format: (v) => v != null ? (v as number).toFixed(4) : c.muted("—") },
+        { key: "base_fitness", label: "base", width: 8,
+          format: (v) => v != null ? (v as number).toFixed(4) : c.muted("—") },
+        { key: "safety_score", label: "V(g)", width: 9,
+          format: (v) => v != null ? (v as number).toFixed(4) : c.muted("—") },
+        { key: "evaluation_n", label: "n", width: 4, format: (v) => String(v ?? "—") },
+        { key: "unique_callers", label: "callers", width: 8, format: (v) => String(v) },
+        { key: "fidelity", label: "Fidelity", width: 10, format: (v) => fidelityColor(String(v)) },
+      ]);
+
+      if (tier === "under_evaluation") {
+        display.hint("Measured, but not yet called by enough distinct callers to rank as verified.");
+      }
+    }
+
+    console.log();
+    display.hint(`${data.total} gene(s) in cloud Arena — one row per gene, newest version that still stands.`);
+    display.hint("Criteria behind 'not evaluated': rotifer arena audit");
+  });
 }

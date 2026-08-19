@@ -690,6 +690,12 @@ export async function arenaSubmit(
   };
   if (fitness.evaluation_method) body.evaluation_method = fitness.evaluation_method;
   if (fitness.evaluation_n !== undefined) body.evaluation_n = fitness.evaluation_n;
+  // Both or neither — the ledger's pair constraint refuses half, and half
+  // would reconstruct nothing anyway.
+  if (fitness.base_fitness !== undefined && fitness.fidelity_discount !== undefined) {
+    body.base_fitness = fitness.base_fitness;
+    body.fidelity_discount = fitness.fidelity_discount;
+  }
 
   const res = await fetch(apiUrl("/arena_entries"), {
     method: "POST",

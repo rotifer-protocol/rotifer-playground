@@ -14,6 +14,7 @@ import { c } from "../utils/palette.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
+import { applyFidelityDiscount, estimateBaseFitness } from "../utils/fidelity-discount.js";
 
 export interface CreateAgentParams {
   root: string;
@@ -224,14 +225,12 @@ function getArenaRankings(
 
       const geneId = contentHash(phenotype);
       const seed = parseInt(geneId.slice(0, 8), 16);
-      const isNative = phenotype.fidelity === "Native";
-      const baseFitness = isNative ? 0.7 : 0.45;
-      const variance = (seed % 250) / 1000;
+      const { fitness: discountedFitness } = applyFidelityDiscount(estimateBaseFitness(geneId), phenotype.fidelity);
 
       entries.push({
         name,
         domain: phenotype.domain || "general",
-        fitness: Math.min(baseFitness + variance, 0.99),
+        fitness: discountedFitness,
         fidelity: phenotype.fidelity || "Wrapped",
       });
     } catch {

@@ -46,8 +46,8 @@ afterwards. Matched exactly (case- and whitespace-insensitive), so
 
 ### 2. `no-published-artifact`
 
-The gene declares `Native` or `Hybrid` fidelity — both of which promise an
-executable WASM artifact — but no artifact is published.
+The gene declares `Native` fidelity — which promises an executable WASM
+artifact — but no artifact is published.
 
 This is about recomputability, not honesty. The score may well have come from a
 real local sandbox run. But with nothing published, nobody else can re-run it,
@@ -55,6 +55,16 @@ and §9.7.1 asks that every published number be one a third party can arrive at
 independently.
 
 `Wrapped` genes are untouched: they never promised an artifact.
+
+`Hybrid` genes are untouched **for now**, and the reason is worth stating. The
+spec's Hybrid tier is headed for a WASM core with host functions for I/O, and
+in that design a Hybrid gene does carry an artifact. But the Hybrid path that
+currently ships was chosen deliberately as an interim: the gene runs under
+Node.js with a gateway-wrapped `fetch` injected, and there is nothing to
+publish. Holding Hybrid genes to an artifact the toolchain told them not to
+produce would invalidate them for doing the right thing. When the
+host-function path lands, this criterion widens to Hybrid — and the rows it
+then catches will be genuine.
 
 An **unpublished** gene is also untouched. The foreign key from `arena_entries`
 cascades on delete, so a row can never outlive its gene; a gene that anonymous

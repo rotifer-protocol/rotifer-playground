@@ -53,8 +53,24 @@ export const CRITERION_ORDER: readonly CriterionId[] = [
   "async-express-artifact",
 ];
 
-/** Fidelities that promise an executable WASM artifact (see the fidelity red line). */
-const WASM_BEARING_FIDELITIES = new Set(["Native", "Hybrid"]);
+/**
+ * Fidelities that promise a published WASM artifact.
+ *
+ * Native only. The spec's Hybrid tier (L-II, "partially native execution") is
+ * headed for a WASM core plus host functions for I/O, and when that lands a
+ * Hybrid gene will carry an artifact too. But the shipping Hybrid path is the
+ * one the v0.7 plan chose on purpose as an interim: the gene runs under
+ * Node.js with a gateway-wrapped fetch injected, and there is no WASM to
+ * publish. Holding Hybrid genes to an artifact they were told not to produce
+ * would invalidate them for following the toolchain. When the host-function
+ * path ships, add "Hybrid" here — and the production rows it then catches
+ * will be genuine.
+ *
+ * This is the one criterion whose answer depends on which Hybrid design is
+ * in force, which is why the dependency is written down here rather than left
+ * implicit in a set literal.
+ */
+const WASM_BEARING_FIDELITIES = new Set(["Native"]);
 
 /** One Arena row plus the gene fields the criteria read. */
 export interface AuditInput {
@@ -101,6 +117,9 @@ export function hitsTestData(row: AuditInput): CriterionHit | null {
 /**
  * `no-published-artifact` — the gene claims a WASM-executing fidelity but has
  * published no artifact.
+ *
+ * Only Native is WASM-executing today; see WASM_BEARING_FIDELITIES for why
+ * Hybrid is not (yet) held to this.
  *
  * The verdict is about *recomputability*, not honesty. The score may well have
  * come from a real local sandbox run; but with no published artifact nobody

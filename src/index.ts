@@ -12,6 +12,7 @@ import { doctorCommand } from "./commands/doctor.js";
 import { arenaSubmitCommand } from "./commands/arena-submit.js";
 import { arenaListCommand } from "./commands/arena-list.js";
 import { arenaWatchCommand } from "./commands/arena-watch.js";
+import { arenaAuditCommand } from "./commands/arena-audit.js";
 import { agentCreateCommand } from "./commands/agent-create.js";
 import { agentListCommand } from "./commands/agent-list.js";
 import { agentRunCommand } from "./commands/agent-run.js";
@@ -95,6 +96,7 @@ const arena = program.command("arena").description("Arena competition commands")
 arena.addCommand(arenaSubmitCommand);
 arena.addCommand(arenaListCommand);
 arena.addCommand(arenaWatchCommand);
+arena.addCommand(arenaAuditCommand);
 
 const agent = program.command("agent").description("Agent lifecycle commands");
 agent.addCommand(agentCreateCommand);

@@ -263,9 +263,7 @@ export async function getGene(idOrName: string): Promise<CloudGene> {
 
   const row = data[0];
   const config = loadCloudConfig();
-  const wasmUrl = row.wasm_path
-    ? `${config.endpoint.replace(/\/+$/, "")}/storage/v1/object/public/gene-wasm/${row.wasm_path}`
-    : null;
+  const wasmUrl = row.wasm_path ? geneWasmUrl(row.wasm_path) : null;
 
   return {
     id: row.id,
@@ -404,9 +402,7 @@ export async function publishGene(opts: {
     fidelity: row.fidelity,
     description: row.description,
     phenotype: row.phenotype,
-    wasm_url: wasmPath
-      ? `${loadCloudConfig().endpoint}/storage/v1/object/public/gene-wasm/${wasmPath}`
-      : null,
+    wasm_url: wasmPath ? geneWasmUrl(wasmPath) : null,
     wasm_size: row.wasm_size,
     wasm_hash: row.wasm_hash ?? null,
     content_hash: row.content_hash ?? null,
@@ -417,6 +413,58 @@ export async function publishGene(opts: {
     updated_at: row.updated_at,
     isUpdate,
   };
+}
+
+/** Public URL of a gene's WASM in the `gene-wasm` bucket — no credentials needed. */
+export function geneWasmUrl(wasmPath: string): string {
+  return `${storageUrl("/object/public/gene-wasm")}/${wasmPath}`;
+}
+
+/** One Arena row with the gene fields the invalidation criteria read. */
+export interface ArenaAuditRow {
+  gene_id: string;
+  domain: string | null;
+  fitness_value: number | null;
+  evaluation_method: string | null;
+  invalidated_at: string | null;
+  invalidation_reason: string | null;
+  genes: {
+    name: string;
+    version: string;
+    fidelity: string;
+    wasm_path: string | null;
+    wasm_size: number | null;
+  } | null;
+}
+
+/**
+ * Every Arena row, with its gene, for a criteria audit.
+ *
+ * Paginated to completion rather than capped: an audit that silently stopped at
+ * the first page would report a clean tail it never looked at, which is the
+ * failure mode this whole audit exists to catch.
+ *
+ * `genes` comes back null for unpublished genes — RLS hides them from anonymous
+ * callers. That is not an orphaned row: the foreign key cascades on delete.
+ */
+export async function fetchArenaAuditRows(): Promise<ArenaAuditRow[]> {
+  const perPage = 200;
+  const rows: ArenaAuditRow[] = [];
+  for (let offset = 0; ; offset += perPage) {
+    const params = new URLSearchParams();
+    params.set(
+      "select",
+      "gene_id,domain,fitness_value,evaluation_method,invalidated_at,invalidation_reason,genes(name,version,fidelity,wasm_path,wasm_size)"
+    );
+    params.set("order", "gene_id.asc");
+    params.set("limit", String(perPage));
+    params.set("offset", String(offset));
+
+    const res = await fetch(apiUrl(`/arena_entries?${params}`), { headers: authHeaders() });
+    const page = await handleResponse<ArenaAuditRow[]>(res);
+    rows.push(...page);
+    if (page.length < perPage) return rows;
+  }
 }
 
 export async function unpublishGene(id: string): Promise<void> {

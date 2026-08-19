@@ -467,35 +467,92 @@ export async function fetchArenaAuditRows(): Promise<ArenaAuditRow[]> {
   }
 }
 
-export async function unpublishGene(id: string): Promise<void> {
-  const geneRes = await fetch(apiUrl(`/genes?id=eq.${id}&select=wasm_path,owner_id`), {
-    headers: authHeaders(),
-  });
-  const geneData = geneRes.ok ? ((await geneRes.json()) as any[]) : [];
+/** The version that was taken down, echoed back from the row the server actually changed. */
+export interface UnpublishedGene {
+  id: string;
+  name: string;
+  version: string;
+}
 
+/**
+ * Take one published version off the public registry.
+ *
+ * The row is kept and only `published` flips, so nothing that referenced this
+ * version — Arena entries, invocation history, another author's dependency —
+ * loses its referent. Republishing the same version restores it: `publishGene`
+ * refuses to overwrite a *published* version but updates an unpublished one.
+ *
+ * Reads back the changed row rather than trusting the status code. RLS narrows
+ * the UPDATE to rows the caller owns, and an UPDATE that matches nothing is not
+ * an error in PostgREST — with `return=minimal` it answers 204, exactly like a
+ * successful one. So a caller trying to unpublish someone else's gene would
+ * have been told it worked. `return=representation` makes the two
+ * distinguishable: no rows back means nothing was changed.
+ *
+ * The published artifact is deliberately left in storage. An unpublished gene
+ * keeps its Arena row, and §9.7.1 asks that any published score stay
+ * recomputable — deleting the binary would strand a score with no way to check
+ * it, and would blind the `async-express-artifact` criterion that reads exactly
+ * that file. (The previous best-effort delete never ran anyway: its URL omitted
+ * the bucket segment, so the object path's first component was read as a bucket
+ * name and the request failed with `NoSuchBucket` inside a catch that swallowed
+ * it. Fixing that URL would have turned a silent no-op into real data loss.)
+ */
+export async function unpublishGene(id: string): Promise<UnpublishedGene> {
   const res = await fetch(apiUrl(`/genes?id=eq.${id}`), {
     method: "PATCH",
     headers: {
       ...authHeaders(true),
-      Prefer: "return=minimal",
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
     },
     body: JSON.stringify({ published: false }),
   });
+
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Failed to unpublish gene: ${err}`);
+    throw new Error(`Failed to unpublish gene: ${await res.text()}`);
   }
 
-  if (geneData.length > 0 && geneData[0].wasm_path) {
-    try {
-      await fetch(storageUrl(`/object/${geneData[0].wasm_path}`), {
-        method: "DELETE",
-        headers: authHeaders(true),
-      });
-    } catch { /* WASM cleanup is best-effort */ }
+  const changed = (await res.json()) as Array<{ id: string; name: string; version: string }>;
+  if (changed.length === 0) {
+    throw new Error(
+      `Nothing was unpublished. Gene ${id} is either not yours or does not exist — ` +
+        "only the author of a version can take it down."
+    );
   }
 
-  // Reputation recompute after unpublish is handled by server-side triggers (service_role only)
+  const row = changed[0];
+  return { id: row.id, name: row.name, version: row.version };
+}
+
+/** One of the caller's own versions, for resolving what `unpublish` should act on. */
+export interface OwnedGeneVersion {
+  id: string;
+  name: string;
+  version: string;
+  published: boolean;
+  created_at: string;
+}
+
+/**
+ * The caller's own versions of a gene, newest first.
+ *
+ * Scoped to `owner_id` rather than searching the public registry: only an author
+ * can unpublish, so resolving a bare name against someone else's gene would only
+ * produce a confusing permission error later.
+ */
+export async function listOwnGeneVersions(name: string): Promise<OwnedGeneVersion[]> {
+  const creds = loadCredentials();
+  if (!creds) throw new Error("Not logged in. Run 'rotifer login' first.");
+
+  const params = new URLSearchParams();
+  params.set("owner_id", `eq.${creds.user.id}`);
+  params.set("name", `eq.${name}`);
+  params.set("select", "id,name,version,published,created_at");
+  params.set("order", "created_at.desc");
+
+  const res = await fetch(apiUrl(`/genes?${params}`), { headers: authHeaders(true) });
+  return handleResponse<OwnedGeneVersion[]>(res);
 }
 
 export async function downloadGeneWasm(wasmUrl: string): Promise<Buffer> {

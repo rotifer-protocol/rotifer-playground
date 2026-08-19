@@ -37,7 +37,7 @@
   "semanticRequirements": {
     "timeModel": "Sync",
     "concurrencyModel": "Stateless",
-    "failureSemantics": "Fail"
+    "failureSemantics": "FAIL_FAST"
   },
   "tags": ["json-schema", "validation", "errors", "strict-mode", "data-quality"]
 }

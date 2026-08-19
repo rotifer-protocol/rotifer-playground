@@ -61,7 +61,7 @@ function extractKeyPhrases(text: string, topN: number): string[] {
     .map(([w]) => w);
 }
 
-export async function express(input: SummarizerInput): Promise<SummarizerOutput> {
+export function express(input: SummarizerInput): SummarizerOutput {
   const text = (input.text || "").trim();
   const maxWords = input.maxWords ?? 100;
   const format = input.format ?? "paragraph";

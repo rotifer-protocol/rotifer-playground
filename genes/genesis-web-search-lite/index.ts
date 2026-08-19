@@ -14,7 +14,7 @@ interface LiteSearchOutput {
  * instead of a list. Lower resource cost, suitable for Par composition
  * with deadline constraints.
  */
-export async function express(input: LiteSearchInput): Promise<LiteSearchOutput> {
+export function express(input: LiteSearchInput): LiteSearchOutput {
   return {
     answer: `[Simulated] Quick answer for "${input.query}": This is a placeholder response from genesis-web-search-lite. In production, this returns a concise answer from a search provider.`,
     source: "https://example.com/instant?q=" + encodeURIComponent(input.query),

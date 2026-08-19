@@ -39,7 +39,7 @@ function cleanUrl(url: string): string {
   return url.replace(/[.,;:!?)]+$/, "");
 }
 
-export async function express(input: ExtractorInput): Promise<ExtractorOutput> {
+export function express(input: ExtractorInput): ExtractorOutput {
   const text = input.text || "";
   const includeEmails = input.includeEmails ?? false;
   const deduplicate = input.deduplicate ?? true;

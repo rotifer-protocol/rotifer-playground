@@ -100,7 +100,7 @@ function validate(
   return errors;
 }
 
-export async function express(input: ValidatorInput): Promise<ValidatorOutput> {
+export function express(input: ValidatorInput): ValidatorOutput {
   const { data, schema, strict = false } = input;
 
   if (!schema || typeof schema !== "object") {

@@ -33,7 +33,7 @@
   "semanticRequirements": {
     "timeModel": "Sync",
     "concurrencyModel": "Stateless",
-    "failureSemantics": "Fail"
+    "failureSemantics": "FAIL_FAST"
   },
   "tags": ["l0", "constraints", "wasm", "compliance", "sandbox"]
 }

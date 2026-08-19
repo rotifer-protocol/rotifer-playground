@@ -15,7 +15,7 @@ interface CodeFormatOutput {
  * Formats source code. MVP uses simple heuristic formatting.
  * Production binding would delegate to prettier/rustfmt/etc.
  */
-export async function express(input: CodeFormatInput): Promise<CodeFormatOutput> {
+export function express(input: CodeFormatInput): CodeFormatOutput {
   let formatted: string;
 
   switch (input.language) {

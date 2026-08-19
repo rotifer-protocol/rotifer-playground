@@ -56,7 +56,7 @@
   "semanticRequirements": {
     "timeModel": "Async",
     "concurrencyModel": "Stateless",
-    "failureSemantics": "Fail"
+    "failureSemantics": "FAIL_FAST"
   },
   "tags": ["telegram", "notifications", "arbitrage", "bot-api", "alerts"]
 }

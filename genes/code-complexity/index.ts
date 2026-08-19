@@ -54,7 +54,7 @@ function countNesting(code: string, lang: string): number {
   return max;
 }
 
-export async function express(input: ComplexityInput): Promise<ComplexityOutput> {
+export function express(input: ComplexityInput): ComplexityOutput {
   const code = input.code || "";
   const lang = (input.language || "javascript").toLowerCase();
   const threshold = input.threshold ?? 10;

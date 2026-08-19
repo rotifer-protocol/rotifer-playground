@@ -11,7 +11,7 @@ interface FormatterOutput {
   changeCount: number;
 }
 
-export async function express(input: FormatterInput): Promise<FormatterOutput> {
+export function express(input: FormatterInput): FormatterOutput {
   const src = input.markdown || "";
   const marker = input.listMarker ?? "-";
   let changes = 0;

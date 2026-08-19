@@ -126,7 +126,7 @@ const RULES: Rule[] = [
  * Rule-based English grammar checker with ~15 rules.
  * Detects common errors like double spaces, capitalization, repeated words, etc.
  */
-export async function express(input: GrammarInput): Promise<GrammarOutput> {
+export function express(input: GrammarInput): GrammarOutput {
   const text = (input.text || "").trim();
   const strict = input.strict ?? false;
 

@@ -23,7 +23,7 @@
   "semanticRequirements": {
     "timeModel": "Async",
     "concurrencyModel": "Stateless",
-    "failureSemantics": "Fallback"
+    "failureSemantics": "SILENT_DEGRADE"
   },
   "tags": ["web-search", "single-answer", "attribution", "lightweight", "async"]
 }

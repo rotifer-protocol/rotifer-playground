@@ -29,6 +29,6 @@
   "semanticRequirements": {
     "timeModel": "Sync",
     "concurrencyModel": "Stateless",
-    "failureSemantics": "Fail"
+    "failureSemantics": "FAIL_FAST"
   }
 }

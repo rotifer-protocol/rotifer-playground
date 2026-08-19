@@ -13,6 +13,10 @@ jobs:
   stryker:
     name: Stryker Mutation Testing
     runs-on: ubuntu-latest
+    # Measured at 4–7 minutes for 1,181 mutants across three files. A run that
+    # reaches half an hour is stuck, and a stuck job that eventually reports as
+    # a failure is indistinguishable from a real one.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -23,10 +27,20 @@ jobs:
 
       - run: npm ci
 
+      # This used to read `npx stryker run` with no Stryker in package.json, so
+      # npx fetched the deprecated `stryker` package from the registry — which
+      # cannot load its own internals on Node 22. The job failed at require
+      # time on every tag from v0.13.0 to v0.16.0 and measured nothing, while
+      # presenting as a quality gate. `@stryker-mutator/core` is now a pinned
+      # devDependency, so this resolves locally and the version is reviewable.
+      - name: Verify Stryker resolves to the pinned local package
+        run: |
+          RESOLVED=$(node -p "require('@stryker-mutator/core/package.json').version")
+          echo "@stryker-mutator/core resolved to $RESOLVED"
+          test -n "$RESOLVED"
+
       - name: Run Stryker (security & auth modules only)
-        run: npx stryker run
-        env:
-          STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_API_KEY }}
+        run: npm run test:mutation
 
       - name: Upload mutation report
         if: always()

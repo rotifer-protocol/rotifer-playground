@@ -35,24 +35,37 @@ answers the question this tool asks.
 
 ## The score
 
-As of 2026-08-19, on 1,181 mutants:
+As of 2026-08-19, on 1,181 mutants (the CI run on `ubuntu-latest`):
 
 | | Score | Killed | Survived | No coverage |
 |---|---|---|---|---|
-| **All** | **36.41%** | 430 | 263 | 488 |
-| `cloud/auth.ts` | 37.50% | 60 | 37 | 63 |
-| `cloud/client.ts` | 22.57% | 146 | 112 | 389 |
+| **All** | **36.33%** | 429 | 262 | 490 |
+| `cloud/auth.ts` | 36.88% | 59 | 38 | 63 |
+| `cloud/client.ts` | 22.57% | 146 | 110 | 391 |
 | `publish/pre-publish-check.ts` | 59.89% | 224 | 114 | 36 |
 
 This is poor, and it is the first real number this project has had — the
 workflow that was supposed to produce it had been failing at load time since
 v0.13.0 and measuring nothing.
 
-The score is not perfectly stable — three runs of the same code gave 36.41,
-36.41 and 36.49, moving by a fraction of a point as a handful of mutants time
-out differently under load. `thresholds.break` is set to **36**: a floor under
-the measured score with enough margin to absorb that jitter, so the number
-cannot fall meaningfully without failing the build.
+The score is not perfectly stable. Four runs of the same code:
+
+```
+36.33  CI (ubuntu-latest)
+36.41  local
+36.41  local
+36.49  local
+```
+
+`coverageAnalysis: "perTest"` is slightly non-deterministic under concurrency —
+which mutants are attributed to which test shifts a little, and a handful land
+in "no coverage" on one run and not the next.
+
+`thresholds.break` is **35**, below that band with room to spare. The first
+attempt set it at 36, which left 0.33 of margin against an observed spread of
+0.16 — close enough that an unlucky run would have failed for no reason, and a
+gate that goes red at random is the failure mode this whole change exists to
+remove.
 
 It is a ratchet, not a target. Raise it as the score improves; never lower it
 to turn a red build green.

@@ -174,7 +174,7 @@ function toAscii(alive: Set<number>, w: number, h: number): string {
   return lines.join("\n");
 }
 
-export async function express(input: LifeInput): Promise<LifeOutput> {
+export function express(input: LifeInput): LifeOutput {
   const w = Math.max(4, Math.min(512, input.width ?? 64));
   const h = Math.max(4, Math.min(512, input.height ?? 64));
   const maxGen = Math.max(1, Math.min(10000, input.generations ?? 100));

@@ -96,7 +96,7 @@ function fleschKincaid(text: string): number {
  * Analyzes content for search engine optimization metrics.
  * Checks keyword density, heading structure, meta tags, and readability.
  */
-export async function express(input: SEOInput): Promise<SEOOutput> {
+export function express(input: SEOInput): SEOOutput {
   const content = (input.content || "").trim();
   const keyword = (input.targetKeyword || "").trim();
   const issues: SEOIssue[] = [];

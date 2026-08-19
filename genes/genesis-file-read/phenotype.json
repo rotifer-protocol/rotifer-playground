@@ -25,7 +25,7 @@
   "semanticRequirements": {
     "timeModel": "Sync",
     "concurrencyModel": "Stateless",
-    "failureSemantics": "Fail"
+    "failureSemantics": "FAIL_FAST"
   },
   "tags": ["file-io", "encoding", "base64", "local-files", "genesis"]
 }

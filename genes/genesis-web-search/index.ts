@@ -21,7 +21,7 @@ interface SearchOutput {
  * Full-featured web search gene. In MVP, returns simulated results.
  * Production binding would connect to a real search API.
  */
-export async function express(input: SearchInput): Promise<SearchOutput> {
+export function express(input: SearchInput): SearchOutput {
   const start = Date.now();
   const max = input.maxResults ?? 5;
 

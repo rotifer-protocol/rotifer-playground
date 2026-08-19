@@ -146,7 +146,7 @@ function formatChicago(source: Source): string {
  * Formats academic citations in APA, MLA, and Chicago styles.
  * Pure string processing with no external dependencies.
  */
-export async function express(input: CitationInput): Promise<CitationOutput> {
+export function express(input: CitationInput): CitationOutput {
   const sources = input.sources || [];
   const style = input.style || "apa";
 

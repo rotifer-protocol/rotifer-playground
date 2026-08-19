@@ -64,7 +64,7 @@ function pathToUrl(source: string): string {
   return `${BASE_URL}/${slug}`;
 }
 
-export async function express(input: SourceLinkerInput): Promise<SourceLinkerOutput> {
+export function express(input: SourceLinkerInput): SourceLinkerOutput {
   const sources = input.sources || [];
   const seen = new Set<string>();
   const links: SourceLink[] = [];

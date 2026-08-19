@@ -27,7 +27,7 @@
   "semanticRequirements": {
     "timeModel": "Sync",
     "concurrencyModel": "Stateless",
-    "failureSemantics": "Fail"
+    "failureSemantics": "FAIL_FAST"
   },
   "tags": ["markdown", "formatting", "headings", "lists", "wrapping"]
 }

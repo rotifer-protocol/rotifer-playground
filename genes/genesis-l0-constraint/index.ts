@@ -29,7 +29,7 @@ const DEFAULT_MAX_FUEL = 1_000_000;
  * constraints. This is a meta-gene used by the Arena admission process
  * and the testing framework.
  */
-export async function express(input: ConstraintCheckInput): Promise<ConstraintCheckOutput> {
+export function express(input: ConstraintCheckInput): ConstraintCheckOutput {
   const maxMem = input.constraints?.maxMemoryBytes ?? DEFAULT_MAX_MEMORY;
   const maxFuel = input.constraints?.maxFuel ?? DEFAULT_MAX_FUEL;
   const allowed = input.constraints?.allowedHostFunctions ?? [];

@@ -17,7 +17,7 @@ interface FileReadOutput {
  * Reads a local file and returns its contents.
  * Restricted by L0 sandbox constraints (path allowlist).
  */
-export async function express(input: FileReadInput): Promise<FileReadOutput> {
+export function express(input: FileReadInput): FileReadOutput {
   const encoding = input.encoding ?? "utf-8";
 
   let buffer: Buffer;

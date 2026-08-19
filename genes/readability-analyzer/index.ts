@@ -57,7 +57,7 @@ function getVerdict(score: number): string {
  * Computes Flesch-Kincaid readability metrics for English text.
  * Pure algorithmic implementation with no external dependencies.
  */
-export async function express(input: ReadabilityInput): Promise<ReadabilityOutput> {
+export function express(input: ReadabilityInput): ReadabilityOutput {
   const text = (input.text || "").trim();
   if (!text) {
     return {

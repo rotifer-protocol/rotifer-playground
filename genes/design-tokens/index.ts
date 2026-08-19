@@ -107,7 +107,7 @@ function generateShadows(dark: boolean): Record<string, string> {
  * Generates a complete CSS custom property system from brand parameters.
  * Pure HSL math and scale calculations — no external dependencies.
  */
-export async function express(input: DesignTokenInput): Promise<DesignTokenOutput> {
+export function express(input: DesignTokenInput): DesignTokenOutput {
   const hue = input.primaryHue ?? 220;
   const dark = (input.mode ?? "dark") === "dark";
   const density = input.density ?? "normal";

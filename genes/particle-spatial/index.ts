@@ -231,7 +231,7 @@ function computeForcesSpatial(
   return interactions;
 }
 
-export async function express(input: ParticleInput): Promise<ParticleOutput> {
+export function express(input: ParticleInput): ParticleOutput {
   const count = Math.max(2, Math.min(2048, input.count ?? 64));
   const steps = Math.max(1, Math.min(10000, input.steps ?? 100));
   const dt = input.dt ?? 0.01;

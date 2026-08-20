@@ -17,6 +17,34 @@ import { applyFidelityDiscount, estimateBaseFitness, type DiscountedFitness } fr
 import { scan } from "../scanner/index.js";
 import type { Severity } from "../scanner/types.js";
 
+/**
+ * The two §5.1 fitness inputs that still have no measurement behind them.
+ *
+ * `C_util` (input-space coverage) needs property-based testing and `R_rob`
+ * (adversarial stability) needs fuzzing; ADR-318 D4 defines both and v0.9.3 #6
+ * carries the implementation. They are named rather than inlined so that the
+ * thing making them placeholders is visible from the flag below.
+ */
+const FITNESS_COVERAGE_PLACEHOLDER = 0.5;
+const FITNESS_ROBUSTNESS_PLACEHOLDER = 0.5;
+
+/**
+ * Whether F(g) is computed from measurements alone.
+ *
+ * False today, and deliberately a constant rather than a runtime check: two of
+ * the five inputs are the placeholders above, and the denominator still divides
+ * by efficiency scores instead of multiplying by them, so the result is capped
+ * at 1.000 and increases with latency (ADR-318 D2, superseding ADR-215 P1's
+ * claim that the direction was equivalent).
+ *
+ * While this is false, ADR-318 D4 requires every submission to be recorded as
+ * `estimated` no matter how thoroughly the sandbox ran it. Flip it in the same
+ * change that lands D2's formula and D4's real C_util / R_rob — not before, and
+ * not separately: a `sandbox` label on a capped number is the exact claim the
+ * Arena's tiers exist to prevent.
+ */
+const hasCompleteFitnessInputs = false;
+
 const SEVERITY_WEIGHT: Record<Severity, number> = {
   CRITICAL: 1.0,
   HIGH: 0.5,
@@ -241,9 +269,12 @@ export const arenaSubmitCommand = new Command("submit")
       const resourceEfficiency = 1.0 / (1.0 + avgCost / 10000.0);
 
       // F(g) = [S_r · log(1+C_util) · (1+R_rob)] / [L · Resource_Cost]  (Spec §5.1)
-      // C_util and R_rob require fuzzing infrastructure — hardcoded until v0.9 (ADR-215 P2)
-      const coverage = 0.5;   // TODO(v0.9): property-based testing input space coverage
-      const robustness = 0.5; // TODO(v0.9): adversarial input stability from fuzzing
+      // C_util and R_rob need fuzzing and property-based testing to measure;
+      // ADR-318 D4 defines both, and v0.9.3 #6 carries the implementation.
+      // Until then they are constants, which is why hasCompleteFitnessInputs
+      // is false and every score here is recorded as an estimate.
+      const coverage = FITNESS_COVERAGE_PLACEHOLDER;
+      const robustness = FITNESS_ROBUSTNESS_PLACEHOLDER;
       const numerator = successRate * Math.log1p(coverage) * (1 + robustness);
       // Spec uses raw L × Resource_Cost (linear penalty); implementation uses sigmoid
       // normalization 1/(1+x/k) to prevent extreme values from zeroing F(g) (ADR-215 P1)
@@ -294,8 +325,27 @@ export const arenaSubmitCommand = new Command("submit")
     // this; the cloud submit dropped it, so every score arrived at the Arena
     // indistinguishable from every other one (ADR-319 D2/D3). One variable now,
     // read by both, so the cache and the ledger cannot disagree.
+    //
+    // Running in the sandbox is necessary but not sufficient to call the result
+    // a measurement. Two of the five §5.1 variables are still constants, and
+    // the denominator is still inverted (ADR-318 D2, superseding ADR-215 P1) —
+    // so the number that comes out is capped at 1.000 for anything slower than
+    // ~645 ms and rises with latency rather than falling. Labelling that
+    // `sandbox` would put it in the Arena's measured tier, which is exactly the
+    // claim it cannot support. ADR-318 D4, routed through v0.9.3 plan §3.4 ④:
+    // while C_util and R_rob are transitional values the entry MUST be marked
+    // `estimated`.
+    //
+    // The sandbox run is not thrown away. `evaluation_n` still carries the run
+    // count, so a reader can tell the two kinds of estimate apart: n > 0 means
+    // the Gene ran and the formula is incomplete; no n means the number came
+    // off a content hash and the Gene never ran at all. Latency and resource
+    // cost are uploaded either way — that is the population D2's L_ref and
+    // Cost_ref are the median of, and it cannot exist until submissions like
+    // this one create it.
+    const didRunInSandbox = Boolean(isNative && hasIrWasm && binding);
     const evaluationMethod: "sandbox" | "estimated" =
-      (isNative && hasIrWasm && binding) ? "sandbox" : "estimated";
+      (didRunInSandbox && hasCompleteFitnessInputs) ? "sandbox" : "estimated";
 
     try {
       writeFileSync(
@@ -341,10 +391,21 @@ export const arenaSubmitCommand = new Command("submit")
     display.keyValue("Success Rate", `${(fitness.successRate * 100).toFixed(1)}%`);
     display.keyValue("Latency Score", fitness.latencyScore.toFixed(4));
     display.keyValue("Admission", "PASSED");
-    if (isNative && hasIrWasm && binding) {
-      display.keyValue("Execution", "Sandbox verified");
+    if (didRunInSandbox) {
+      display.keyValue("Execution", `Sandbox verified (${SANDBOX_RUNS} runs)`);
     } else {
-      display.keyValue("Execution", "Estimated");
+      display.keyValue("Execution", "Not executed — score derived from the content hash");
+    }
+    display.keyValue("Recorded as", evaluationMethod);
+    // Saying "sandbox verified" and then filing the row as an estimate looks
+    // like a contradiction unless the reason is right there. It is not the
+    // sandbox that is in doubt.
+    if (didRunInSandbox && !hasCompleteFitnessInputs) {
+      display.hint(
+        "The Gene ran and its output was checked, but F(g) still uses placeholder values for C_util and R_rob " +
+        "and a denominator that caps the result at 1.000 (ADR-318 D2/D4). Until that lands the score is filed " +
+        "as an estimate and does not rank — the run itself, its latency and its cost are still recorded."
+      );
     }
     if (options.cloud) {
       try {
@@ -391,7 +452,11 @@ export const arenaSubmitCommand = new Command("submit")
             // n only means anything on the measured path; an estimate ran
             // nothing, and claiming a sample size for it would be a lie the
             // Arena cannot detect.
-            evaluation_n: evaluationMethod === "sandbox" ? SANDBOX_RUNS : undefined,
+            // Tied to whether the Gene actually ran, not to the method label.
+            // The label is `estimated` while the formula is incomplete; the run
+            // count is what lets a reader tell that apart from a content-hash
+            // estimate that never executed anything (ADR-318 D5).
+            evaluation_n: didRunInSandbox ? SANDBOX_RUNS : undefined,
           });
           cs.stop();
           display.success("Submitted to cloud Arena");

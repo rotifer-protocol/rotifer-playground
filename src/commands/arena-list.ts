@@ -157,7 +157,16 @@ function explainReason(row: LeaderboardRow): string {
         return row.invalidation_reason;
     }
   }
-  if (row.evaluation_method === "estimated") return "score was estimated, never measured — run: rotifer arena submit --cloud";
+  if (row.evaluation_method === "estimated") {
+    // Two different things arrive as `estimated`, and telling an author the
+    // wrong one wastes their time. A run count means the Gene executed and the
+    // fitness formula is what is incomplete (ADR-318 D2/D4) — resubmitting
+    // changes nothing. No run count means nothing ever executed.
+    if ((row.evaluation_n ?? 0) > 0) {
+      return `ran in the sandbox ${row.evaluation_n}× — but F(g) still uses placeholder inputs and a capped denominator, so it does not rank yet (ADR-318 D2)`;
+    }
+    return "score was estimated, never measured — run: rotifer arena submit --cloud";
+  }
   if (row.evaluation_method === "declared") return "score was supplied by the client, not measured";
   if (row.evaluation_method === "unknown-legacy") return "predates provenance tracking — resubmit to record how it was measured";
   return "measured, but not yet called by enough distinct callers";

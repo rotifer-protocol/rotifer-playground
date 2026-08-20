@@ -64,7 +64,10 @@ jobs:
           ')"
 
           if [ "$ONLY_PLATFORM" = "yes" ] && git diff --quiet -- Cargo.lock; then
-            echo "::error::这不是你的改动。main 刚发布完，package-lock.json 还缺 @rotifer/playground-* 平台包的条目（发布前 npm 无法解析它们，会静默丢弃）。等标题为 'chore(release): sync package-lock.json to vX.Y.Z' 的 PR 合并后重跑本次检查即可 —— 不要在本地重新生成锁文件再提交，那会把发布修复混进你的 PR。"
+            # English, unlike the generic message below: this one is addressed to
+            # whoever just watched their PR go red for someone else's reason, and
+            # this repo takes contributions from outside.
+            echo "::error::This is not your change. main was released moments ago and package-lock.json carries no entries for the @rotifer/playground-* platform packages yet — npm cannot resolve a version that is not published, and drops the entries instead of failing. The release pipeline opens and merges a 'chore(release): sync package-lock.json to vX.Y.Z' PR that restores them; re-run this check once it lands. Do NOT regenerate the lockfile locally and commit it — that pulls a release fix into your branch."
             git --no-pager diff --stat -- package-lock.json
             exit 1
           fi

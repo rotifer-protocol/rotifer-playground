@@ -108,7 +108,14 @@ describe("arena submit edge cases", () => {
     );
     const { stdout, exitCode } = run("arena submit test-gene", projectDir);
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("Estimated");
+    // A Wrapped gene has no artifact to run, so the number comes off the
+    // content hash. The summary now says which of the two kinds of estimate
+    // this is — "not executed" rather than the bare word "Estimated", which a
+    // gene that *did* run also earns while F(g)'s inputs are placeholders
+    // (ADR-318 D4).
+    expect(stdout).toContain("Not executed");
+    expect(stdout).toContain("Recorded as");
+    expect(stdout).toContain("estimated");
     expect(stdout).toContain("Wrapped");
   });
 

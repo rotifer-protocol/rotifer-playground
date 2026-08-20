@@ -35,42 +35,44 @@ answers the question this tool asks.
 
 ## The score
 
-As of 2026-08-19, on 1,181 mutants (the CI run on `ubuntu-latest`):
+As of 2026-08-19, on 1,181 mutants:
 
 | | Score | Killed | Survived | No coverage |
 |---|---|---|---|---|
-| **All** | **36.33%** | 429 | 262 | 490 |
-| `cloud/auth.ts` | 36.88% | 59 | 38 | 63 |
-| `cloud/client.ts` | 22.57% | 146 | 110 | 391 |
+| **All** | **38.87%** | 459 | 277 | 445 |
+| `cloud/auth.ts` | 55.63% | 89 | 51 | 20 |
+| `cloud/client.ts` | 22.57% | 146 | 112 | 389 |
 | `publish/pre-publish-check.ts` | 59.89% | 224 | 114 | 36 |
 
-This is poor, and it is the first real number this project has had — the
+Still poor, and still the first real number this project has had — the
 workflow that was supposed to produce it had been failing at load time since
 v0.13.0 and measuring nothing.
 
-The score is not perfectly stable. Four runs of the same code:
+The first measurement, before the refresh guards were covered, read 36.33%
+overall with `auth.ts` at 36.88% and 63 of its mutants never reached. Covering
+one function moved that file to 55.63% and dropped its uncovered count to 20.
+Two thirds of the remaining gap is `client.ts`, where 389 mutants are still in
+code no in-process test executes.
 
-```
-36.33  CI (ubuntu-latest)
-36.41  local
-36.41  local
-36.49  local
-```
+The score is not perfectly stable. Four runs of the earlier code read 36.33
+(CI), 36.41, 36.41 and 36.49 — `coverageAnalysis: "perTest"` is slightly
+non-deterministic under concurrency, so which mutants are attributed to which
+test shifts a little and a handful land in "no coverage" on one run but not the
+next. CI reads a shade under local.
 
-`coverageAnalysis: "perTest"` is slightly non-deterministic under concurrency —
-which mutants are attributed to which test shifts a little, and a handful land
-in "no coverage" on one run and not the next.
+`thresholds.break` is **37**, below the 38.87 measured here with room for that
+jitter. It has moved once already: 35 at first measurement, 37 once the refresh
+guards were covered.
 
-`thresholds.break` is **35**, below that band with room to spare. The first
-attempt set it at 36, which left 0.33 of margin against an observed spread of
-0.16 — close enough that an unlucky run would have failed for no reason, and a
-gate that goes red at random is the failure mode this whole change exists to
-remove.
+The floor sits below the band rather than against it, deliberately. An earlier
+draft set it 0.33 above the lowest observed run, which is close enough that an
+unlucky pass fails for no reason — and a gate that goes red at random is the
+failure mode this whole file exists to describe.
 
 It is a ratchet, not a target. Raise it as the score improves; never lower it
 to turn a red build green.
 
-## The finding worth acting on first
+## The first finding, and what closing it looked like
 
 `auth.ts` decides whether to refresh an expired credential on two lines:
 
@@ -79,17 +81,36 @@ if (!data.expires_at || Date.now() <= data.expires_at) return;
 if (!data.refresh_token) return;
 ```
 
-Ten mutants live on those two lines and **not one is covered**. Flip `<=` to
-`>=`, or delete either guard, and the suite stays green.
+Ten mutants live there, and on the first run **not one was covered**. Flipping
+`<=` to `>` — which reverses the decision, so expired credentials are never
+renewed and valid ones are renewed constantly — left the suite green.
 
-There is a test for this — `tests/resilience/token-expiry.test.ts` — and it
-does exercise expiry. It runs `execSync('node ' + CLI)`, so it tests the built
-binary's behaviour and cannot see a change in the logic that produced it. The
-gap is not missing intent; it is a test written at the wrong level for the
-question.
+A test for this already existed. `tests/resilience/token-expiry.test.ts` does
+exercise expiry, via `execSync('node ' + CLI)`. It tests the built binary's
+behaviour and cannot see a change in the logic that produced it. The gap was
+not missing intent; it was a test written at the wrong level for the question.
 
-Closing it means an in-process test that imports `refreshIfNeeded` and asserts
-on the boundary: not expired, expired, expired with no refresh token.
+`tests/unit/token-refresh-guards.test.ts` closes it by importing the function
+and pinning each decision through the one observable that separates them —
+whether the network call happens at all:
+
+| Case | Expected |
+|---|---|
+| Expired | renews |
+| Still valid | does not renew |
+| Exactly at `expires_at` | does not renew |
+| One millisecond past | renews |
+| No expiry recorded | does not renew |
+| Expired, no refresh token | does not renew |
+| Endpoint refuses | keeps the old credential |
+| Unreadable credentials file | returns quietly |
+
+The two boundary cases exist for one mutant: `<=` replaced by `<`, which
+renews one millisecond early. Only a test sitting exactly on the instant can
+tell those apart, which is the kind of case a person writing tests by
+intuition rarely reaches for and a mutation report names outright.
+
+All ten mutants are killed. `auth.ts` went from 36.88% to 55.63%.
 
 ## Configuration notes
 

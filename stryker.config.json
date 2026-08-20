@@ -21,10 +21,10 @@
     "src/cloud/client.ts",
     "src/publish/pre-publish-check.ts"
   ],
-  "_thresholds_comment": "break is a ratchet, not a target. Four runs of the same code scored 36.33 (CI), 36.41, 36.41 and 36.49 — perTest coverage analysis is slightly non-deterministic under concurrency. 35 sits below that band with room to spare, so a real regression fails the build and jitter does not. Raise it as the score improves; never lower it to make a red build green.",
+  "_thresholds_comment": "break is a ratchet, not a target. It went 35 -> 37 when the token-refresh guards got in-process tests and the score moved 36.33 -> 38.87. The margin is deliberate: perTest coverage attribution is slightly non-deterministic (a 0.16 spread across runs, and CI reads a shade under local), so the floor sits below the band rather than against it. Raise it as the score improves; never lower it to make a red build green.",
   "thresholds": {
     "high": 80,
     "low": 60,
-    "break": 35
+    "break": 37
   }
 }

@@ -345,25 +345,56 @@ jobs:
           BRANCH: ${{ steps.sync.outputs.branch }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # The PR is seconds old and its check runs may not be registered yet;
-          # `gh pr checks` errors in that state rather than reporting "pending".
-          for _ in $(seq 1 18); do
-            if gh pr checks "$PR" --required >/dev/null 2>&1; then break; fi
-            echo "Required checks not registered on #${PR} yet — waiting."
-            sleep 10
-          done
-
-          # --required on purpose: branch protection gates on five checks, so a red
-          # non-required one must not hold the repair hostage. gh exits 0 when all
-          # required checks passed, 8 while any is pending, 1 when one failed.
-          set +e
-          timeout 1800 gh pr checks "$PR" --required --watch --fail-fast --interval 15
-          STATUS=$?
-          set -e
-          if [ "$STATUS" -ne 0 ]; then
-            echo "::error::Required checks on #${PR} did not pass (gh exit ${STATUS}). main's package-lock is still missing the v${VERSION} platform entries, and npm ci fails on every PR until #${PR} merges."
-            exit 1
+          # `gh pr checks --required` lists only the checks that have already
+          # REPORTED. A required job still queued behind its `needs:` has no check
+          # run yet — `Build` sits behind eight of them — so an early --watch can
+          # exit 0 with the gate half empty, the merge then bounces off branch
+          # protection, and this job fails for what was only ever a race. Ask the
+          # API which contexts are required and wait for each of those names.
+          REQUIRED="$(gh api "repos/${GITHUB_REPOSITORY}/branches/main/protection/required_status_checks" --jq '.contexts[]' 2>/dev/null || true)"
+          if [ -z "$REQUIRED" ]; then
+            # Reading branch protection needs an administration:read scope this
+            # token may not carry. GitHub's own verdict is the fallback: CLEAN
+            # means every required check reported and passed.
+            echo "::warning::Could not read the required-check list — waiting on mergeStateStatus instead. A red required check will surface as a timeout rather than by name."
           fi
+
+          DEADLINE=$(( $(date +%s) + 1800 ))
+          while :; do
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "::error::Timed out waiting for #${PR} to become mergeable. main's package-lock is still missing the v${VERSION} platform entries, and npm ci fails on every PR until #${PR} merges — merge it by hand."
+              exit 1
+            fi
+
+            CHECKS="$(gh pr checks "$PR" --json name,bucket 2>/dev/null || echo '[]')"
+
+            if [ -n "$REQUIRED" ]; then
+              FAILED="$(printf '%s' "$CHECKS" | jq -r --arg req "$REQUIRED" '
+                ($req | split("\n") | map(select(length > 0))) as $names
+                | map(select((.name as $n | $names | index($n)) and (.bucket == "fail" or .bucket == "cancel")))
+                | map(.name) | join(", ")')"
+              if [ -n "$FAILED" ]; then
+                echo "::error::Required checks failed on #${PR}: ${FAILED}. main's package-lock is still missing the v${VERSION} platform entries, and npm ci fails on every PR until #${PR} merges."
+                exit 1
+              fi
+
+              # A red NON-required check is deliberately ignored: branch protection
+              # does not gate on it, so neither does the repair.
+              MISSING="$(printf '%s' "$CHECKS" | jq -r --arg req "$REQUIRED" '
+                . as $checks
+                | ($req | split("\n") | map(select(length > 0)))
+                | map(select(. as $n | ($checks | map(select(.name == $n and .bucket == "pass")) | length) == 0))
+                | join(", ")')"
+              if [ -z "$MISSING" ]; then break; fi
+              echo "Waiting on required checks for #${PR}: ${MISSING}"
+            else
+              STATE="$(gh pr view "$PR" --json mergeStateStatus --jq .mergeStateStatus 2>/dev/null || echo UNKNOWN)"
+              if [ "$STATE" = "CLEAN" ]; then break; fi
+              echo "Waiting for #${PR} to become mergeable (state ${STATE})."
+            fi
+
+            sleep 15
+          done
 
           if ! ERR=$(gh pr merge "$PR" --squash 2>&1); then
             if printf '%s' "$ERR" | grep -qiE "not open|already merged"; then

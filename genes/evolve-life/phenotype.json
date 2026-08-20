@@ -1,6 +1,6 @@
 {
   "domain": "evolve.life",
-  "description": "Conway's Game of Life simulator. Computes cellular automaton evolution from an initial grid state over N generations. Supports preset patterns (glider, pulsar, random) and custom grids. Pure computation \u2014 ideal Native Gene benchmark.",
+  "description": "Conway's Game of Life simulator. Computes cellular automaton evolution from an initial grid state over N generations. Supports preset patterns (glider, pulsar, random) and custom grids. Pure computation — ideal Native Gene benchmark.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -125,6 +125,12 @@
   "createdAt": 1741906800000,
   "fidelity": "Native",
   "transparency": "Open",
-  "irHash": "f04e1e5913d7b6624630254dc97e18f2bea5b113bd52e3cd6fdddc0ce0f471c2",
-  "tags": ["cellular-automaton", "game-of-life", "simulation", "benchmark", "deterministic"]
+  "irHash": "d7e8b8120d271fa0df610526e21ad6fecc578b4e75635ab79c9b9c51f8b16d69",
+  "tags": [
+    "cellular-automaton",
+    "game-of-life",
+    "simulation",
+    "benchmark",
+    "deterministic"
+  ]
 }

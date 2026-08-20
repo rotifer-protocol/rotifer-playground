@@ -133,6 +133,12 @@
   "author": "rotifer-team",
   "fidelity": "Native",
   "transparency": "Open",
-  "irHash": "391614d239e64ad94d257ec59c079a1a060d0143b28f6edd8ec255858f961d1c",
-  "tags": ["n-body", "spatial-hash", "simulation", "performance", "neighbor-search"]
+  "irHash": "bfea26086b4eb933a0e986a331e8c102971858de4d73b7b8e85788f40c6381aa",
+  "tags": [
+    "n-body",
+    "spatial-hash",
+    "simulation",
+    "performance",
+    "neighbor-search"
+  ]
 }

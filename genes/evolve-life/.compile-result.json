@@ -1,12 +1,12 @@
 {
-  "geneId": "d1b35fa940b68e1099bd950958f8d63f1a624664228e1b8f240fd68f4ed078cc",
+  "geneId": "3d4ec0c2e34cd170b84f5c292e3269fc7b8b054567a90c4d9cf38efa61ef1423",
   "name": "evolve-life",
   "domain": "evolve.life",
-  "compiledAt": "2026-03-14T06:06:59.806Z",
+  "compiledAt": "2026-08-20T02:13:13.357Z",
   "fidelity": "Native",
   "wasmAvailable": true,
-  "irHash": "f04e1e5913d7b6624630254dc97e18f2bea5b113bd52e3cd6fdddc0ce0f471c2",
-  "totalSize": 1299905,
+  "irHash": "d7e8b8120d271fa0df610526e21ad6fecc578b4e75635ab79c9b9c51f8b16d69",
+  "wasmSize": 1298883,
   "codeSectionSize": 956115,
-  "durationMs": 16095
+  "durationMs": 2624
 }

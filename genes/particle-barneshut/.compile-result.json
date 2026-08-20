@@ -1,12 +1,12 @@
 {
-  "geneId": "303fa9c27069e25be94e2e2e336cc2bb09c153d595bc6ea84c485b08db13c35e",
+  "geneId": "5b5347990b3b6f59d6dd56179c62b62d1ab4d3ab1f2ef5a9fe4a62ee92fd14de",
   "name": "particle-barneshut",
   "domain": "sim.particle",
-  "compiledAt": "2026-03-14T09:13:45.199Z",
+  "compiledAt": "2026-08-20T02:13:10.556Z",
   "fidelity": "Native",
   "wasmAvailable": true,
-  "irHash": "391614d239e64ad94d257ec59c079a1a060d0143b28f6edd8ec255858f961d1c",
-  "totalSize": 1335283,
+  "irHash": "bfea26086b4eb933a0e986a331e8c102971858de4d73b7b8e85788f40c6381aa",
+  "wasmSize": 1335501,
   "codeSectionSize": 956115,
-  "durationMs": 7374
+  "durationMs": 2582
 }

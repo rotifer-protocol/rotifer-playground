@@ -1,12 +1,12 @@
 {
-  "geneId": "91f0c58c3342d9853eef2747aa91cf59e23f80a5426be2ce9200a1e44a0de113",
+  "geneId": "3b68ad1ab19d0b7537f04d9a55b37427a9dbe75aecdbab90ee2783b2673258e6",
   "name": "particle-spatial",
   "domain": "sim.particle",
-  "compiledAt": "2026-03-14T09:13:54.298Z",
+  "compiledAt": "2026-08-20T02:13:07.791Z",
   "fidelity": "Native",
   "wasmAvailable": true,
-  "irHash": "391614d239e64ad94d257ec59c079a1a060d0143b28f6edd8ec255858f961d1c",
-  "totalSize": 1322156,
+  "irHash": "bfea26086b4eb933a0e986a331e8c102971858de4d73b7b8e85788f40c6381aa",
+  "wasmSize": 1312351,
   "codeSectionSize": 956115,
-  "durationMs": 5868
+  "durationMs": 2391
 }

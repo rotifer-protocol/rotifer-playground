@@ -1,12 +1,12 @@
 {
-  "geneId": "0ec8e0410da37367e5a3fbacdfbb53e44f22da0741bc538eeef819d728a4305c",
+  "geneId": "6a59b280be96b13515c5b0f4a7c8c3f10934eb8714e5f6ea6e561004c81b7b19",
   "name": "particle-brute",
   "domain": "sim.particle",
-  "compiledAt": "2026-03-14T09:13:33.395Z",
+  "compiledAt": "2026-08-20T02:13:05.116Z",
   "fidelity": "Native",
   "wasmAvailable": true,
-  "irHash": "391614d239e64ad94d257ec59c079a1a060d0143b28f6edd8ec255858f961d1c",
-  "totalSize": 1295630,
+  "irHash": "bfea26086b4eb933a0e986a331e8c102971858de4d73b7b8e85788f40c6381aa",
+  "wasmSize": 1296625,
   "codeSectionSize": 956115,
-  "durationMs": 6609
+  "durationMs": 2755
 }

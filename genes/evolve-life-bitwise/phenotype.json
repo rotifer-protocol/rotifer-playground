@@ -125,6 +125,12 @@
   "createdAt": 1741906800000,
   "fidelity": "Native",
   "transparency": "Open",
-  "irHash": "29095a3f52e096d1e8ba016b9025cacb90e95f9be1b157f6f5d0c487114ec538",
-  "tags": ["cellular-automaton", "bitwise", "game-of-life", "throughput", "optimization"]
+  "irHash": "d7e8b8120d271fa0df610526e21ad6fecc578b4e75635ab79c9b9c51f8b16d69",
+  "tags": [
+    "cellular-automaton",
+    "bitwise",
+    "game-of-life",
+    "throughput",
+    "optimization"
+  ]
 }

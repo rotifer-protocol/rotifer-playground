@@ -46,8 +46,16 @@ const PLATFORM_PACKAGES = [
   "@rotifer/playground-win32-x64-msvc",
 ] as const;
 
+interface LockEntry {
+  version?: string;
+  integrity?: string;
+  resolved?: string;
+  optional?: boolean;
+  optionalDependencies?: Record<string, string>;
+}
+
 interface Lockfile {
-  packages: Record<string, { version?: string; integrity?: string; optionalDependencies?: Record<string, string> }>;
+  packages: Record<string, LockEntry>;
 }
 
 /**
@@ -93,21 +101,47 @@ function runGuard(source: string, options: { cwd?: string; env?: Record<string, 
   }
 }
 
-function committedLock(): Lockfile {
+/**
+ * The repo's own lockfile, in whatever state it happens to be.
+ *
+ * Read it for shape, never for health. Between a release landing and its lock
+ * repair, this file IS the window state — the exact condition under test. The
+ * first version of this file used it directly as the healthy fixture, and so
+ * failed on the v0.19.0 release commit and blocked the publish. A fixture may
+ * not assume the absence of the thing it exists to describe.
+ */
+function repoLock(): Lockfile {
   return JSON.parse(readFileSync(join(ROOT, "package-lock.json"), "utf-8")) as Lockfile;
 }
 
-/** The version the repo currently ships, read from the lock so no release edits this file. */
+/** The version the root manifest asks for — true in both states, so safe to read. */
 function releasedVersion(): string {
-  const declared = committedLock().packages[""].optionalDependencies ?? {};
+  const declared = repoLock().packages[""].optionalDependencies ?? {};
   const version = declared[PLATFORM_PACKAGES[0]];
   expect(version, "the root manifest no longer declares the platform packages").toBeTruthy();
-  return version;
+  return version as string;
+}
+
+/** A lock that covers every platform package, whichever state the repo is in. */
+function healthyLock(): Lockfile {
+  const lock = repoLock();
+  const version = releasedVersion();
+  for (const name of PLATFORM_PACKAGES) {
+    const path = `node_modules/${name}`;
+    lock.packages[path] = {
+      ...(lock.packages[path] ?? {}),
+      version,
+      resolved: lock.packages[path]?.resolved ?? `https://registry.npmjs.org/${name}/-/fixture-${version}.tgz`,
+      integrity: lock.packages[path]?.integrity ?? "sha512-fixture",
+      optional: true,
+    };
+  }
+  return lock;
 }
 
 /** Exactly what `npm install --package-lock-only` leaves on a release branch. */
 function releaseWindowLock(): Lockfile {
-  const lock = committedLock();
+  const lock = healthyLock();
   for (const name of PLATFORM_PACKAGES) delete lock.packages[`node_modules/${name}`];
   return lock;
 }
@@ -131,6 +165,32 @@ function withTempDir<T>(run: (dir: string) => T): T {
   }
 }
 
+describe("the fixtures themselves", () => {
+  // This suite is only meaningful if its two fixtures actually differ in the way
+  // the guards look for. They did not, on a release commit, and three tests then
+  // failed the v0.19.0 publish. Check the premise before checking the guards.
+  it("differ in exactly the four platform entries, in either repo state", () => {
+    const healthy = healthyLock();
+    const window = releaseWindowLock();
+    const paths = new Set([...Object.keys(healthy.packages), ...Object.keys(window.packages)]);
+    const changed = [...paths].filter(
+      (path) => JSON.stringify(healthy.packages[path]) !== JSON.stringify(window.packages[path]),
+    );
+    expect(changed.sort()).toEqual(PLATFORM_PACKAGES.map((name) => `node_modules/${name}`).sort());
+  });
+
+  it("gives the healthy fixture a resolvable entry for every platform package", () => {
+    const healthy = healthyLock();
+    const version = releasedVersion();
+    for (const name of PLATFORM_PACKAGES) {
+      const entry = healthy.packages[`node_modules/${name}`];
+      expect(entry, `healthy fixture is missing ${name}`).toBeTruthy();
+      expect(entry.version).toBe(version);
+      expect(entry.integrity).toBeTruthy();
+    }
+  });
+});
+
 describe("the release-branch guard names what npm dropped", () => {
   const guard = guardFrom("release-please.yml", "Commit the lockfiles if they moved");
 
@@ -145,7 +205,7 @@ describe("the release-branch guard names what npm dropped", () => {
 
   it("says nothing when the lock is whole", () => {
     withTempDir((dir) => {
-      writeFileSync(join(dir, "package-lock.json"), JSON.stringify(committedLock(), null, 2));
+      writeFileSync(join(dir, "package-lock.json"), JSON.stringify(healthyLock(), null, 2));
       const { code, stdout } = runGuard(guard, { cwd: dir });
       expect(code).toBe(0);
       expect(stdout.trim()).toBe("");
@@ -167,7 +227,7 @@ describe("the post-publish verifier checks that main installs, not that a PR mer
   }
 
   it("passes once every platform package resolves at the released version", () => {
-    const { code, stdout } = underGuard(committedLock(), version);
+    const { code, stdout } = underGuard(healthyLock(), version);
     expect(code).toBe(0);
     expect(stdout).toContain(`platform packages at v${version}`);
   });
@@ -181,7 +241,7 @@ describe("the post-publish verifier checks that main installs, not that a PR mer
   it("fails when the entries are present but pin a different version", () => {
     // Without this the guard could pass on any lock that merely mentions them,
     // which is the state a stale sync PR would leave behind.
-    const { code } = underGuard(committedLock(), "0.0.0-not-this-release");
+    const { code } = underGuard(healthyLock(), "0.0.0-not-this-release");
     expect(code).toBe(1);
   });
 });
@@ -207,14 +267,14 @@ describe("CI can tell a contributor the red is not theirs", () => {
   }
 
   it("recognises the window: only the platform entries came back", () => {
-    expect(inRepo(releaseWindowLock(), committedLock())).toBe("yes");
+    expect(inRepo(releaseWindowLock(), healthyLock())).toBe("yes");
   });
 
   it("does not claim the window when an unrelated dependency also moved", () => {
-    expect(inRepo(releaseWindowLock(), unrelatedDrift(committedLock()))).toBe("no");
+    expect(inRepo(releaseWindowLock(), unrelatedDrift(healthyLock()))).toBe("no");
   });
 
   it("does not claim the window for ordinary lock drift", () => {
-    expect(inRepo(committedLock(), unrelatedDrift(committedLock()))).toBe("no");
+    expect(inRepo(healthyLock(), unrelatedDrift(healthyLock()))).toBe("no");
   });
 });

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.18.0...v0.19.0) (2026-08-20)
+
+
+### Features
+
+* **identity:** move the official genes to an account someone can sign in to ([#234](https://github.com/rotifer-protocol/rotifer-playground/issues/234)) ([c43c843](https://github.com/rotifer-protocol/rotifer-playground/commit/c43c84365725dda625d8796d2ff51e39bb2f83e4))
+
+
+### Bug Fixes
+
+* **arena:** a sandbox run is not enough to call a score measured ([#233](https://github.com/rotifer-protocol/rotifer-playground/issues/233)) ([768dd68](https://github.com/rotifer-protocol/rotifer-playground/commit/768dd68f55682f3c9003007b7e1fceca24709077))
+* **identity:** the ownership move also trips the version-chain guard ([#236](https://github.com/rotifer-protocol/rotifer-playground/issues/236)) ([f8c5340](https://github.com/rotifer-protocol/rotifer-playground/commit/f8c534010192643bce91252bd520afd6f25e068d))
+* **reputation:** an owner who loses every gene keeps a ghost score ([#237](https://github.com/rotifer-protocol/rotifer-playground/issues/237)) ([89cb647](https://github.com/rotifer-protocol/rotifer-playground/commit/89cb647649b173e4b65225e93e6175672f0a3547))
+
 ## [0.18.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.17.0...v0.18.0) (2026-08-20)
 
 

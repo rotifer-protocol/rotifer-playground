@@ -93,23 +93,56 @@ BEGIN
   --
   -- Found by simulating this migration against production-shaped fixtures on a
   -- local database. Without that it would have failed on the production push.
+  -- `trg_genes_check_prev_version` blocks it for a second, subtler reason. It
+  -- is a per-row BEFORE trigger asserting that `previous_version_id` points at
+  -- a gene with the same owner and name. A bulk owner change updates rows one
+  -- at a time, so partway through the statement an already-moved row still
+  -- points at a predecessor that has not moved yet, and the check fails on
+  -- ordering rather than on anything being wrong. The end state is perfectly
+  -- valid; only the intermediate states are not.
+  --
+  -- This one the first simulation missed, because its fixtures were
+  -- single-version genes with no chain at all. Production has nine versions of
+  -- `contract-revision-advisor` alone. A fixture has to mirror the shape of the
+  -- data, not just its column list — the production push is where that was
+  -- found, and it is the reason for the chain fixture added below.
   ALTER TABLE genes DISABLE TRIGGER trg_version_immutability;
+  ALTER TABLE genes DISABLE TRIGGER trg_genes_check_prev_version;
 
   UPDATE genes SET owner_id = v_live WHERE owner_id = v_dead;
   GET DIAGNOSTICS v_moved = ROW_COUNT;
 
   ALTER TABLE genes ENABLE TRIGGER trg_version_immutability;
+  ALTER TABLE genes ENABLE TRIGGER trg_genes_check_prev_version;
 
-  -- The guard has to be back on before anything else runs. Asserting it here
-  -- rather than trusting the statement above: a migration that silently left
-  -- the table unprotected would be a far worse outcome than one that fails.
-  IF NOT EXISTS (
+  -- Both guards have to be back on before anything else runs. Asserted rather
+  -- than trusted: a migration that silently left the table unprotected would be
+  -- a far worse outcome than one that fails.
+  IF EXISTS (
     SELECT 1 FROM pg_trigger
-     WHERE tgname = 'trg_version_immutability'
-       AND tgrelid = 'public.genes'::regclass
-       AND tgenabled <> 'D'
+     WHERE tgrelid = 'public.genes'::regclass
+       AND tgname IN ('trg_version_immutability', 'trg_genes_check_prev_version')
+       AND tgenabled = 'D'
   ) THEN
-    RAISE EXCEPTION 'ADR-323: trg_version_immutability did not come back on — aborting';
+    RAISE EXCEPTION 'ADR-323: a guard did not come back on — aborting';
+  END IF;
+
+  -- Re-enabling a constraint trigger says nothing about whether the data still
+  -- satisfies it — the trigger only looks at rows written after it comes back.
+  -- Since the whole reason for switching it off was that intermediate states
+  -- violated it, the honest check is the invariant itself, over every row:
+  -- every version chain link must land on a gene with the same owner and name.
+  IF EXISTS (
+    SELECT 1
+      FROM genes g
+      LEFT JOIN genes prev
+        ON prev.id = g.previous_version_id
+       AND prev.owner_id = g.owner_id
+       AND prev.name = g.name
+     WHERE g.previous_version_id IS NOT NULL
+       AND prev.id IS NULL
+  ) THEN
+    RAISE EXCEPTION 'ADR-323: version chains are broken after the move — aborting';
   END IF;
 
   -- 4. ADR-323 D3: the disclosure is a condition of keeping the name, so it

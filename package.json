@@ -61,7 +61,8 @@
     "smoke-test": "npx tsx scripts/post-deploy-smoke-test.ts",
     "postinstall": "node scripts/postinstall.js",
     "prepublishOnly": "npm run verify:versions && npm run lint && npm run test && npm run build",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "test:mutation": "stryker run"
   },
   "dependencies": {
     "@clack/prompts": "^1.2.0",
@@ -72,6 +73,8 @@
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.7.0",
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
     "@supabase/supabase-js": "^2.105.4",
     "@types/node": "^25.9.2",
     "@vitest/coverage-v8": "^4.1.2",

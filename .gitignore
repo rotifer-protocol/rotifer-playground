@@ -68,3 +68,9 @@ NIGHTLY_REPORT.md
 
 # Written by `clawhub package validate`, not by the sync pipeline.
 plugins/rotifer/reports/
+
+# Stryker mutation testing — the sandbox it builds per run, and the report it
+# writes. The report is a CI artifact; the score that matters lives in
+# docs/mutation-testing.md and in stryker.config.json's break threshold.
+.stryker-tmp/
+reports/mutation/

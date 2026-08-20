@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "Mutation testing for the modules that hold credentials and gate publishing. Coverage says a line ran; mutation testing says an assertion would have noticed it change. See docs/mutation-testing.md for why the scope is these three files.",
+  "packageManager": "npm",
+  "testRunner": "vitest",
+  "vitest": {
+    "configFile": "vitest.stryker.config.ts"
+  },
+  "reporters": ["html", "json", "clear-text", "progress"],
+  "htmlReporter": {
+    "fileName": "reports/mutation/index.html"
+  },
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation.json"
+  },
+  "coverageAnalysis": "perTest",
+  "timeoutMS": 60000,
+  "concurrency": 2,
+  "mutate": [
+    "src/cloud/auth.ts",
+    "src/cloud/client.ts",
+    "src/publish/pre-publish-check.ts"
+  ],
+  "_thresholds_comment": "break is a ratchet, not a target. Four runs of the same code scored 36.33 (CI), 36.41, 36.41 and 36.49 — perTest coverage analysis is slightly non-deterministic under concurrency. 35 sits below that band with room to spare, so a real regression fails the build and jitter does not. Raise it as the score improves; never lower it to make a red build green.",
+  "thresholds": {
+    "high": 80,
+    "low": 60,
+    "break": 35
+  }
+}

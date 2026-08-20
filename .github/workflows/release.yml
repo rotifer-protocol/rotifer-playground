@@ -256,6 +256,9 @@ jobs:
     name: Sync package-lock to released versions
     runs-on: ubuntu-latest
     needs: [publish]
+    # Long enough to wait out a full CI cycle on the sync PR (the required set
+    # runs in about three minutes) without a stuck watch holding a runner all day.
+    timeout-minutes: 45
     permissions:
       contents: write
       pull-requests: write
@@ -276,6 +279,7 @@ jobs:
         run: npm install --package-lock-only
 
       - name: Open a sync PR if the lock changed
+        id: sync
         env:
           # Must be the PAT, not GITHUB_TOKEN: this org disables "Allow GitHub
           # Actions to create and approve pull requests", so GITHUB_TOKEN gets
@@ -314,3 +318,101 @@ jobs:
               exit 1
             fi
           fi
+
+          PR="$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number')"
+          if [ -z "$PR" ]; then
+            echo "::error::${BRANCH} is pushed but no open PR resolves against it — open and merge one by hand."
+            exit 1
+          fi
+          echo "pr=${PR}" >> "$GITHUB_OUTPUT"
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+      # Opening the PR was never the missing piece — merging it was. main's
+      # `npm ci` stays broken for every contributor until this lands, and the
+      # wait has been 17 minutes (v0.18.0), 13 hours (v0.15.0), and never at all
+      # for v0.10.2, v0.11.0 and v0.14.0, whose sync PRs were closed unmerged and
+      # repaired by hand afterwards. Nobody reviews a regenerated lockfile line by
+      # line, so the wait buys nothing that the checks do not already buy.
+      #
+      # This is not a bypass. It waits for exactly the checks branch protection
+      # requires and merges through the ordinary path; one red check stops it and
+      # fails this job loudly. Never add --admin here.
+      - name: Merge the sync PR once its required checks pass
+        if: steps.sync.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          PR: ${{ steps.sync.outputs.pr }}
+          BRANCH: ${{ steps.sync.outputs.branch }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # The PR is seconds old and its check runs may not be registered yet;
+          # `gh pr checks` errors in that state rather than reporting "pending".
+          for _ in $(seq 1 18); do
+            if gh pr checks "$PR" --required >/dev/null 2>&1; then break; fi
+            echo "Required checks not registered on #${PR} yet — waiting."
+            sleep 10
+          done
+
+          # --required on purpose: branch protection gates on five checks, so a red
+          # non-required one must not hold the repair hostage. gh exits 0 when all
+          # required checks passed, 8 while any is pending, 1 when one failed.
+          set +e
+          timeout 1800 gh pr checks "$PR" --required --watch --fail-fast --interval 15
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 0 ]; then
+            echo "::error::Required checks on #${PR} did not pass (gh exit ${STATUS}). main's package-lock is still missing the v${VERSION} platform entries, and npm ci fails on every PR until #${PR} merges."
+            exit 1
+          fi
+
+          if ! ERR=$(gh pr merge "$PR" --squash 2>&1); then
+            if printf '%s' "$ERR" | grep -qiE "not open|already merged"; then
+              echo "#${PR} was merged already — nothing to do."
+            else
+              echo "::error::Could not merge #${PR}: ${ERR}"
+              exit 1
+            fi
+          fi
+
+          # Tidying only. It must never decide whether this job passed.
+          git push origin --delete "$BRANCH" || true
+
+      # "The PR merged" and "main installs again" are different claims, and only
+      # the second one is the reason this job exists. Check that one.
+      - name: Verify main's lockfile now resolves the released platform packages
+        if: steps.sync.outputs.pr != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # FETCH_HEAD rather than origin/main: fetch always writes it, whereas
+          # the remote-tracking ref depends on the refspec checkout happened to
+          # configure. Retry briefly — the merge commit can take a moment to be
+          # visible on a fetch, and a false red here would be a red release.
+          for attempt in 1 2 3; do
+            git fetch --quiet origin main
+            git show FETCH_HEAD:package-lock.json > /tmp/main-lock.json
+            if node -e 'const l=require("/tmp/main-lock.json");process.exit(Object.keys(l.packages).some((k)=>k.startsWith("node_modules/@rotifer/playground-"))?0:1)'; then
+              break
+            fi
+            echo "main does not show the merged lock yet (attempt ${attempt}) — refetching."
+            sleep 5
+          done
+          node -e '
+            const lock = require("/tmp/main-lock.json");
+            const version = process.env.VERSION;
+            const wanted = Object.keys(lock.packages[""].optionalDependencies || {})
+              .filter((name) => name.startsWith("@rotifer/playground-"));
+            if (wanted.length === 0) {
+              console.log("::error::package.json lists no @rotifer/playground-* platform packages — this check is looking at the wrong thing.");
+              process.exit(1);
+            }
+            const missing = wanted.filter((name) => {
+              const entry = lock.packages["node_modules/" + name];
+              return !entry || entry.version !== version || !entry.integrity;
+            });
+            if (missing.length > 0) {
+              console.log("::error::main package-lock.json still has no resolvable v" + version + " entry for: " + missing.join(", "));
+              process.exit(1);
+            }
+            console.log("\u2713 main package-lock.json resolves all " + wanted.length + " platform packages at v" + version);
+          '

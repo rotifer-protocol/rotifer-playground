@@ -40,13 +40,42 @@ jobs:
 
       - name: Lockfiles must already match the manifests
         run: |
-          if ! git diff --quiet -- package-lock.json Cargo.lock; then
-            echo "::error::锁文件与 manifest 不一致。本地跑 'npm install --package-lock-only --ignore-scripts' 和 'cargo metadata' 后提交结果。"
-            git --no-pager diff --stat -- package-lock.json Cargo.lock
-            git --no-pager diff -- package-lock.json Cargo.lock
+          if git diff --quiet -- package-lock.json Cargo.lock; then
+            echo "✓ package-lock.json 与 Cargo.lock 均与 manifest 一致"
+            exit 0
+          fi
+
+          # One drift has a different cause and a different fix. In the window
+          # between a release landing on main and its post-publish lock repair,
+          # package.json asks for platform packages the lock does not carry —
+          # npm could not resolve them before they were published. Every open PR
+          # inherits that through its merge ref, so the failure looks like the
+          # contributor's and the generic advice below is actively wrong for it:
+          # regenerating locally would drag a release fix into their branch.
+          ONLY_PLATFORM="$(node -e '
+            const { execSync } = require("child_process");
+            const fs = require("fs");
+            const head = JSON.parse(execSync("git show HEAD:package-lock.json", { encoding: "utf8", maxBuffer: 128 * 1024 * 1024 }));
+            const now = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+            const paths = new Set([...Object.keys(head.packages), ...Object.keys(now.packages)]);
+            const changed = [...paths].filter((path) => JSON.stringify(head.packages[path]) !== JSON.stringify(now.packages[path]));
+            const isPlatform = (path) => path.startsWith("node_modules/@rotifer/playground-");
+            console.log(changed.length > 0 && changed.every(isPlatform) ? "yes" : "no");
+          ')"
+
+          if [ "$ONLY_PLATFORM" = "yes" ] && git diff --quiet -- Cargo.lock; then
+            # English, unlike the generic message below: this one is addressed to
+            # whoever just watched their PR go red for someone else's reason, and
+            # this repo takes contributions from outside.
+            echo "::error::This is not your change. main was released moments ago and package-lock.json carries no entries for the @rotifer/playground-* platform packages yet — npm cannot resolve a version that is not published, and drops the entries instead of failing. The release pipeline opens and merges a 'chore(release): sync package-lock.json to vX.Y.Z' PR that restores them; re-run this check once it lands. Do NOT regenerate the lockfile locally and commit it — that pulls a release fix into your branch."
+            git --no-pager diff --stat -- package-lock.json
             exit 1
           fi
-          echo "✓ package-lock.json 与 Cargo.lock 均与 manifest 一致"
+
+          echo "::error::锁文件与 manifest 不一致。本地跑 'npm install --package-lock-only --ignore-scripts' 和 'cargo metadata' 后提交结果。"
+          git --no-pager diff --stat -- package-lock.json Cargo.lock
+          git --no-pager diff -- package-lock.json Cargo.lock
+          exit 1
 
   lint:
     name: Lint & Type Check

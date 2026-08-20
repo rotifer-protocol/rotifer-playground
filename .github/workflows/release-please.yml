@@ -67,9 +67,33 @@ jobs:
             exit 0
           fi
           git --no-pager diff --stat -- package-lock.json Cargo.lock
+
+          # npm cannot write a lockfile entry for a package that is not on the
+          # registry yet — and it does not fail when asked to: it drops the entry
+          # and exits 0. The four @rotifer/playground-* platform packages are
+          # published from the tag this PR creates, so on a release branch they
+          # always drop. The hole itself is unavoidable (resolved/integrity need
+          # the published tarball); committing it under the word "sync" is not.
+          # Name it, so `git log` shows the hole instead of a tidy label.
+          DROPPED="$(node -e '
+            const fs = require("fs");
+            const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+            const covered = new Set(Object.keys(lock.packages));
+            const wanted = Object.keys(lock.packages[""].optionalDependencies || {})
+              .filter((name) => name.startsWith("@rotifer/playground-"));
+            console.log(wanted.filter((name) => !covered.has("node_modules/" + name)).join(" "));
+          ')"
+
           git config user.name "rotifer-release-bot"
           git config user.email "dev@rotifer.dev"
           git add package-lock.json Cargo.lock
           # -s keeps the release PR passing the DCO gate.
-          git commit -s -m "chore: sync lockfiles with the bumped manifests"
+          if [ -n "$DROPPED" ]; then
+            echo "::warning::npm dropped the lockfile entries for ${DROPPED} — those versions are not published yet. Merging this PR leaves npm ci broken on main until release.yml's sync-lock job restores them after publish."
+            git commit -s \
+              -m "chore: sync lockfiles with the bumped manifests" \
+              -m "The @rotifer/playground-* entries are dropped rather than bumped: npm cannot record resolved/integrity for a version that is not published yet, and those packages are published from the tag this PR creates. release.yml's sync-lock job restores them once the tag has published, and merges that repair itself."
+          else
+            git commit -s -m "chore: sync lockfiles with the bumped manifests"
+          fi
           git push

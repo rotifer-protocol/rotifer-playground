@@ -76,6 +76,15 @@ PRs must pass:
 The Rust `p2p` module has extra test tiers that are `#[ignore]`d by default —
 see [docs/p2p-testing.md](docs/p2p-testing.md) for which ones you can run and how.
 
+**If the lockfile checks go red on a PR that never touched the lockfile**, look at
+whether a release just landed. For a few minutes after one, `package-lock.json` on
+main has no entries for the `@rotifer/playground-*` platform packages: they are
+published from the release tag, and npm quietly drops entries it cannot resolve
+rather than failing. Every open PR inherits that through its merge ref. The release
+pipeline opens and merges a `chore(release): sync package-lock.json to vX.Y.Z` PR
+that restores them — re-run your checks once it lands. Do not regenerate the
+lockfile in your branch; that pulls a release fix into an unrelated PR.
+
 ## Architecture Decisions
 
 Major decisions are documented as ADRs (Architecture Decision Records) in the specification repository. Key ADRs for Playground development:

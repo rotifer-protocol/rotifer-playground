@@ -345,20 +345,22 @@ jobs:
           BRANCH: ${{ steps.sync.outputs.branch }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # `gh pr checks --required` lists only the checks that have already
-          # REPORTED. A required job still queued behind its `needs:` has no check
-          # run yet — `Build` sits behind eight of them — so an early --watch can
-          # exit 0 with the gate half empty, the merge then bounces off branch
-          # protection, and this job fails for what was only ever a race. Ask the
-          # API which contexts are required and wait for each of those names.
-          REQUIRED="$(gh api "repos/${GITHUB_REPOSITORY}/branches/main/protection/required_status_checks" --jq '.contexts[]' 2>/dev/null || true)"
-          if [ -z "$REQUIRED" ]; then
-            # Reading branch protection needs an administration:read scope this
-            # token may not carry. GitHub's own verdict is the fallback: CLEAN
-            # means every required check reported and passed.
-            echo "::warning::Could not read the required-check list — waiting on mergeStateStatus instead. A red required check will surface as a timeout rather than by name."
-          fi
-
+          # Ask GitHub whether the PR can merge, rather than reassembling that
+          # answer here. mergeStateStatus is computed FROM branch protection, so
+          # it already knows about a required job that has not reported yet —
+          # `Build` sits behind eight others — and it needs no extra token scope.
+          #
+          # Two earlier attempts got this wrong. `gh pr checks --required` lists
+          # only checks that have REPORTED, so it went green with the gate half
+          # empty. Reading branch protection directly needs administration:read,
+          # which this PAT does not carry: `gh api` printed its 403 body to
+          # STDOUT, the emptiness test therefore passed, and the loop spent
+          # thirty minutes waiting for a required check named
+          # `{"message":"Resource not accessible by personal access token"...}`.
+          #
+          # CLEAN = every required check passed. UNSTABLE = mergeable with a
+          # failing NON-required check, which is exactly the case that must not
+          # hold the repair hostage. BLOCKED = required checks unsatisfied.
           DEADLINE=$(( $(date +%s) + 1800 ))
           while :; do
             if [ "$(date +%s)" -ge "$DEADLINE" ]; then
@@ -366,43 +368,41 @@ jobs:
               exit 1
             fi
 
+            # A transient API failure leaves this empty, which simply means "wait".
+            STATE="$(gh pr view "$PR" --json mergeStateStatus --jq .mergeStateStatus 2>/dev/null || true)"
+            case "$STATE" in
+              CLEAN|UNSTABLE|HAS_HOOKS) break ;;
+            esac
+
             CHECKS="$(gh pr checks "$PR" --json name,bucket 2>/dev/null || echo '[]')"
+            PENDING="$(printf '%s' "$CHECKS" | jq '[.[] | select(.bucket == "pending")] | length' 2>/dev/null || echo 1)"
+            FAILED="$(printf '%s' "$CHECKS" | jq -r '[.[] | select(.bucket == "fail" or .bucket == "cancel") | .name] | join(", ")' 2>/dev/null || true)"
 
-            if [ -n "$REQUIRED" ]; then
-              FAILED="$(printf '%s' "$CHECKS" | jq -r --arg req "$REQUIRED" '
-                ($req | split("\n") | map(select(length > 0))) as $names
-                | map(select((.name as $n | $names | index($n)) and (.bucket == "fail" or .bucket == "cancel")))
-                | map(.name) | join(", ")')"
-              if [ -n "$FAILED" ]; then
-                echo "::error::Required checks failed on #${PR}: ${FAILED}. main's package-lock is still missing the v${VERSION} platform entries, and npm ci fails on every PR until #${PR} merges."
-                exit 1
-              fi
-
-              # A red NON-required check is deliberately ignored: branch protection
-              # does not gate on it, so neither does the repair.
-              MISSING="$(printf '%s' "$CHECKS" | jq -r --arg req "$REQUIRED" '
-                . as $checks
-                | ($req | split("\n") | map(select(length > 0)))
-                | map(select(. as $n | ($checks | map(select(.name == $n and .bucket == "pass")) | length) == 0))
-                | join(", ")')"
-              if [ -z "$MISSING" ]; then break; fi
-              echo "Waiting on required checks for #${PR}: ${MISSING}"
-            else
-              STATE="$(gh pr view "$PR" --json mergeStateStatus --jq .mergeStateStatus 2>/dev/null || echo UNKNOWN)"
-              if [ "$STATE" = "CLEAN" ]; then break; fi
-              echo "Waiting for #${PR} to become mergeable (state ${STATE})."
+            # Nothing left running and still not mergeable: a required check is red.
+            # Say which, instead of burning the rest of the timeout to say nothing.
+            if [ "$PENDING" = "0" ] && [ -n "$FAILED" ]; then
+              echo "::error::#${PR} cannot merge (state ${STATE:-unknown}); these checks are red: ${FAILED}. main's package-lock is still missing the v${VERSION} platform entries, and npm ci fails on every PR until #${PR} merges."
+              exit 1
             fi
 
+            echo "Waiting for #${PR} to become mergeable — state ${STATE:-unknown}, ${PENDING} check(s) still running."
             sleep 15
           done
 
-          if ! ERR=$(gh pr merge "$PR" --squash 2>&1); then
+          MERGED=false
+          for attempt in 1 2 3; do
+            if ERR=$(gh pr merge "$PR" --squash 2>&1); then MERGED=true; break; fi
             if printf '%s' "$ERR" | grep -qiE "not open|already merged"; then
               echo "#${PR} was merged already — nothing to do."
-            else
-              echo "::error::Could not merge #${PR}: ${ERR}"
-              exit 1
+              MERGED=true
+              break
             fi
+            echo "Merge attempt ${attempt} on #${PR} failed: ${ERR}"
+            sleep 10
+          done
+          if [ "$MERGED" != "true" ]; then
+            echo "::error::Could not merge #${PR} after three attempts: ${ERR}"
+            exit 1
           fi
 
           # Tidying only. It must never decide whether this job passed.

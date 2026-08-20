@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.19.0...v0.19.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* **release:** wait for every required check, not just the ones that reported ([#242](https://github.com/rotifer-protocol/rotifer-playground/issues/242)) ([2ea00ee](https://github.com/rotifer-protocol/rotifer-playground/commit/2ea00ee0f298a85f6f2661cccb6ceada3909b0c1))
+* **test:** the window fixtures assumed the lockfile was not in the window ([#240](https://github.com/rotifer-protocol/rotifer-playground/issues/240)) ([4369d77](https://github.com/rotifer-protocol/rotifer-playground/commit/4369d77e52c1864ba7c9cf6dac810d5f493c5e51))
+
 ## [0.19.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.18.0...v0.19.0) (2026-08-20)
 
 

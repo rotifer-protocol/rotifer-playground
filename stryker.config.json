@@ -21,6 +21,7 @@
     "src/cloud/client.ts",
     "src/publish/pre-publish-check.ts"
   ],
+  "_single_config_comment": "This is the only Stryker config in the repo, and it has to stay that way. `npm run test:mutation` is a bare `stryker run`, so the file is picked by Stryker's own search order — stryker.conf.{json,js,mjs,cjs}, then stryker.config.{json,js,mjs,cjs}. This file sits fifth. A stale stryker.config.mjs sat seventh for months, pointing at a different set of source files with break: 50 and a different vitest config; it was never loaded, and nothing referenced it, but renaming this file or adding a stryker.conf.json would have silently switched to it. The resulting failure would read as `the mutation score got worse`, not as `we read the wrong config`, which sends the next person to lower the threshold. Removed in the same change that added this note. If a second config is ever genuinely needed, pass --configFile explicitly rather than relying on the search order.",
   "_thresholds_comment": "break is a ratchet, not a target. It went 35 -> 37 when the token-refresh guards got in-process tests and the score moved 36.33 -> 38.87. The margin is deliberate: perTest coverage attribution is slightly non-deterministic (a 0.16 spread across runs, and CI reads a shade under local), so the floor sits below the band rather than against it. Raise it as the score improves; never lower it to make a red build green.",
   "thresholds": {
     "high": 80,

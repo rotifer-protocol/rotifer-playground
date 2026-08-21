@@ -8,6 +8,8 @@ import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { createAgentCore } from "./agent-create.js";
 import { findAgent, printProtocolInsights } from "./agent-run.js";
+import { tryLoadBinding } from "../utils/binding.js";
+import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
 
 interface HelloTemplate {
   id: string;
@@ -400,6 +402,15 @@ async function tryGeneDisplay(
   const srcFile = findGeneSource(geneDir);
   if (!srcFile) return false;
 
+  // 这里只想拿 display()，但 import 依然会执行该模块的顶层代码，所以同样过门控。
+  const phenotypePath = join(geneDir, "phenotype.json");
+  const phenotype = existsSync(phenotypePath)
+    ? JSON.parse(readFileSync(phenotypePath, "utf-8"))
+    : {};
+  const displayL0 = evaluateL0(tryLoadBinding(), phenotype);
+  if (displayL0.kind === "violation") return false;
+  if (displayL0.kind === "unavailable" && isExternallySourced(geneDir)) return false;
+
   try {
     const absPath = resolve(geneDir, srcFile);
     const mod = await import(pathToFileURL(absPath).href);
@@ -666,7 +677,7 @@ async function promptInputSelection(
   return JSON.parse(customInput);
 }
 
-async function executeGenomePipeline(
+export async function executeGenomePipeline(
   genome: string[],
   genesDir: string,
   input: unknown,
@@ -692,6 +703,29 @@ async function executeGenomePipeline(
     if (!srcFile) {
       display.warn(`${step} Gene '${geneName}' has no executable source — passing through`);
       continue;
+    }
+
+    // 门控放在 import 之前：import 会执行模块顶层代码，等到 express() 就晚了。
+    const phenotypePath = join(geneDir, "phenotype.json");
+    const phenotype = existsSync(phenotypePath)
+      ? JSON.parse(readFileSync(phenotypePath, "utf-8"))
+      : {};
+    const l0 = evaluateL0(tryLoadBinding(), phenotype);
+    const blocked =
+      l0.kind === "violation"
+        ? l0.detail
+        : l0.kind === "unavailable" && isExternallySourced(geneDir)
+          ? `could not run (${l0.detail}) on an installed gene`
+          : null;
+    if (l0.kind === "unavailable" && !blocked) {
+      display.warn(`${step} L0 gate could not run (${l0.detail}) — running this local gene unchecked.`);
+    }
+    if (blocked) {
+      display.error(`${step} L0 gate blocked '${geneName}': ${blocked}`);
+      hasFailed = true;
+      failedGene = geneName;
+      error = `L0 gate blocked: ${blocked}`;
+      break;
     }
 
     try {

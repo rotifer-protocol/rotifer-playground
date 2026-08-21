@@ -6,6 +6,7 @@ import { getProjectRoot, loadConfig } from "../utils/config.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { flushInvocationReports, recordGeneInvocation } from "../cloud/invocation.js";
+import { evaluateL0 } from "../utils/l0-gate.js";
 
 export const runCommand = new Command("run")
   .description("Execute a single gene directly")
@@ -138,23 +139,25 @@ export const runCommand = new Command("run")
         // 这条路径没有沙箱，基因以宿主进程的完整权限运行（fs / child_process /
         // 全局 fetch 都在手）。Spec 定义 L0 是唯一不参与进化、不可绕过的约束，
         // 因此这里 fail closed：门控跑不了就不执行，而不是静默放行。
-        if (!binding) {
-          display.error("L0 gate unavailable (native addon failed to load) — refusing to run.");
+        const l0 = evaluateL0(binding, phenotype);
+        if (l0.kind === "violation") {
+          display.error("L0 gate blocked: " + l0.detail);
           display.hint("The Node.js fallback runs the gene with full host privileges, unchecked.");
-          display.hint("Reinstall the platform package, or compile and run under the sandbox.");
           process.exit(1);
           return;
         }
-        const { irHash: _l0Strip, ...phenotypeForL0 } = phenotype;
-        const l0 = binding.l0Check(JSON.stringify(phenotypeForL0));
-        if (!l0.passed) {
-          display.error("L0 gate blocked: " + l0.violations.join("; "));
-          display.hint("The gene declares permissions its phenotype is not allowed to hold.");
-          process.exit(1);
-          return;
-        }
-        if (options.verbose) {
-          display.info(`L0 gate: PASS (${l0.checksPerformed} checks)`);
+        if (l0.kind === "unavailable") {
+          // 门控跑不了。外部来源的基因一律拒绝；本地源码基因放行并警告——
+          // 否则拿不到原生插件的平台上，CLI 会整个不可用。
+          if (isCloudGene) {
+            display.error(`L0 gate could not run (${l0.detail}) — refusing to run an installed gene unchecked.`);
+            display.hint("Reinstall the platform package, or compile and run under the sandbox.");
+            process.exit(1);
+            return;
+          }
+          display.warn(`L0 gate could not run (${l0.detail}) — running this local gene unchecked.`);
+        } else if (options.verbose) {
+          display.info("L0 gate: PASS");
         }
 
         display.info("Running via Node.js...");

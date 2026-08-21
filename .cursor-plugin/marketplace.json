@@ -8,9 +8,9 @@
   },
   "plugins": [
     {
-      "name": "rotifer-protocol",
+      "name": "rotifer",
       "source": "plugins/rotifer",
-      "description": "Self-evolving AI Agent framework — scan capabilities, benchmark against live Arena rankings, and replace weaker Genes with stronger ones. Ranking is the automatic part; every replacement waits for your approval and can be rolled back."
+      "description": "The Rotifer Protocol plugin — three Skills plus the Rotifer MCP server. Create your first Agent from a template (hello), route yourself to the right capability (assistant), and rank an Agent's Genes against live Arena data to swap in stronger ones (evolve). Ranking is the automatic part; every replacement waits for your approval and can be rolled back."
     }
   ]
 }

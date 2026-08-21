@@ -443,15 +443,21 @@ describe("plugin source sync pipeline", () => {
     };
 
     const claude = named("plugins/rotifer/.claude-plugin/plugin.json");
-    expect(named("plugins/rotifer/.codebuddy-plugin/plugin.json")).toBe(claude);
+    for (const manifest of [
+      "plugins/rotifer/.codebuddy-plugin/plugin.json",
+      "plugins/rotifer/.cursor-plugin/plugin.json",
+    ]) {
+      expect(named(manifest), `${manifest} calls the bundle something else`).toBe(claude);
+    }
 
-    const marketplace = outputs.find(
-      (entry) => entry.pathFromRoot === ".codebuddy-plugin/marketplace.json",
-    );
-    const listed = (marketplace as { data: { plugins: Array<{ name: string }> } }).data.plugins;
-    expect(listed.length).toBeGreaterThan(0);
-    for (const plugin of listed) {
-      expect(plugin.name, "the marketplace entry disagrees with the plugin manifest").toBe(claude);
+    for (const path of [".codebuddy-plugin/marketplace.json", ".cursor-plugin/marketplace.json"]) {
+      const marketplace = outputs.find((entry) => entry.pathFromRoot === path);
+      expect(marketplace, `${path} is not generated`).toBeDefined();
+      const listed = (marketplace as { data: { plugins: Array<{ name: string }> } }).data.plugins;
+      expect(listed.length).toBeGreaterThan(0);
+      for (const plugin of listed) {
+        expect(plugin.name, `${path} disagrees with the plugin manifest`).toBe(claude);
+      }
     }
   });
 

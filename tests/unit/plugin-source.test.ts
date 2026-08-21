@@ -426,6 +426,35 @@ describe("plugin source sync pipeline", () => {
     });
   });
 
+  it("names the bundle the same way on every host that slugs it", () => {
+    const root = createFixture();
+    const outputs = buildOutputs(root);
+
+    // The CodeBuddy listing called this bundle `rotifer-self-evolving-agent` —
+    // one skill out of a box that also ships `hello`, `assistant`, the umbrella
+    // `rotifer` skill and the MCP server, and a name a separate artifact
+    // already publishes on its own. One bundle wearing a different name per
+    // host is how a reader ends up unsure what they installed.
+    const named = (path: string) => {
+      const entry = outputs.find((candidate) => candidate.pathFromRoot === path);
+      expect(entry, `${path} is not generated`).toBeDefined();
+      const data = (entry as { data: Record<string, unknown> }).data;
+      return data.name as string;
+    };
+
+    const claude = named("plugins/rotifer/.claude-plugin/plugin.json");
+    expect(named("plugins/rotifer/.codebuddy-plugin/plugin.json")).toBe(claude);
+
+    const marketplace = outputs.find(
+      (entry) => entry.pathFromRoot === ".codebuddy-plugin/marketplace.json",
+    );
+    const listed = (marketplace as { data: { plugins: Array<{ name: string }> } }).data.plugins;
+    expect(listed.length).toBeGreaterThan(0);
+    for (const plugin of listed) {
+      expect(plugin.name, "the marketplace entry disagrees with the plugin manifest").toBe(claude);
+    }
+  });
+
   it("removes obsolete legacy outputs during sync", () => {
     const root = createFixture();
 

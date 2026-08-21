@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.2](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.19.1...v0.19.2) (2026-08-21)
+
+
+### Bug Fixes
+
+* **cloud:** unpublish never once worked, and now it is on the record ([#249](https://github.com/rotifer-protocol/rotifer-playground/issues/249)) ([5f1c2a5](https://github.com/rotifer-protocol/rotifer-playground/commit/5f1c2a575496d3cde5196a617cf3c191d9fc30f9))
+* **l0:** judge by provenance when the gate cannot run, and cover the last paths ([#251](https://github.com/rotifer-protocol/rotifer-playground/issues/251)) ([4490211](https://github.com/rotifer-protocol/rotifer-playground/commit/449021140c38a4e136775a0b3e88831f2ab9b54a))
+* **l0:** move the gate onto the Sandbox trait and cover genome + agent paths ([#248](https://github.com/rotifer-protocol/rotifer-playground/issues/248)) ([f7c6c83](https://github.com/rotifer-protocol/rotifer-playground/commit/f7c6c83645f9079891d727130e00553f34b773fb))
+* **l0:** run the L0 gate on the Node.js fallback path too ([#247](https://github.com/rotifer-protocol/rotifer-playground/issues/247)) ([a1bac93](https://github.com/rotifer-protocol/rotifer-playground/commit/a1bac937149b36a8901b88fd7200f408512f7fec))
+* **plugins:** the bundled evolve skill was wearing a published skill's name ([#243](https://github.com/rotifer-protocol/rotifer-playground/issues/243)) ([56f118e](https://github.com/rotifer-protocol/rotifer-playground/commit/56f118e4f3e4089b527d7ee809acaa5cf5b422e8))
+* **plugins:** the CodeBuddy listing named the box after one thing inside it ([#250](https://github.com/rotifer-protocol/rotifer-playground/issues/250)) ([18e7de8](https://github.com/rotifer-protocol/rotifer-playground/commit/18e7de88b0449a4755da10024b545570bf069831))
+* **release:** ask GitHub whether the PR can merge, instead of recomputing it ([#245](https://github.com/rotifer-protocol/rotifer-playground/issues/245)) ([2e1604e](https://github.com/rotifer-protocol/rotifer-playground/commit/2e1604e00e3f7cf0117b2df116c1212d8bc9bf3d))
+* **test:** ask the loader, don't guess the platform package name ([#253](https://github.com/rotifer-protocol/rotifer-playground/issues/253)) ([2561810](https://github.com/rotifer-protocol/rotifer-playground/commit/2561810c2f25640d6633656f7da3f3b43a91a721))
+
 ## [0.19.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.19.0...v0.19.1) (2026-08-20)
 
 

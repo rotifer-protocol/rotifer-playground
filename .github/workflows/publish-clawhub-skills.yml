@@ -1,0 +1,227 @@
+name: Publish ClawHub Skills
+
+# The three Skills under skills/ are published to ClawHub one listing each. They
+# used to live in a repository that can never be pushed, which meant no public
+# source, no CI, and a manifest naming a repository that did not carry them.
+#
+# Real publishes happen only on a `clawhub-skills-v*` tag or a deliberate
+# workflow_dispatch. Pull requests run the same path with --dry-run, so the
+# publish command is exercised on every change instead of being discovered
+# broken on release day — the lesson from clawhub-v2.3.0 in the
+# rotifer-self-evolving-agent repo, where dry-run needed no auth and every
+# check before the first real publish passed.
+
+on:
+  push:
+    tags: ["clawhub-skills-v*"]
+  pull_request:
+    branches: [main]
+    paths:
+      - "skills/**"
+      - ".github/workflows/publish-clawhub-skills.yml"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Preview without publishing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  manifest-consistency:
+    name: Manifest Consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      # A listing whose manifest disagrees with the directory it ships from is
+      # how a Skill ends up published under a name nobody expects.
+      - name: Every manifest matches its directory and carries what ClawHub reads
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, sys
+
+          # ClawHub's summary — the line that decides both discovery and when an
+          # assistant activates the Skill — is the SKILL.md frontmatter
+          # description, not the clawhub.json one. Both have to be present and
+          # the manifest fields have to be real, or the listing ships blank.
+          REQUIRED = ("name", "display_name", "description", "version", "author", "license")
+
+          failed = False
+          for directory in sorted(pathlib.Path("skills").iterdir()):
+              if not directory.is_dir():
+                  continue
+              manifest_path = directory / "clawhub.json"
+              skill_path = directory / "SKILL.md"
+              for required_file in (manifest_path, skill_path, directory / "README.md"):
+                  if not required_file.exists():
+                      print(f"::error::{required_file} is missing")
+                      failed = True
+              if not manifest_path.exists() or not skill_path.exists():
+                  continue
+
+              manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+              for field in REQUIRED:
+                  if not manifest.get(field):
+                      print(f"::error::{manifest_path} has no {field}")
+                      failed = True
+              if manifest.get("name") != directory.name:
+                  print(
+                      f"::error::{manifest_path} is named {manifest.get('name')!r}"
+                      f" but sits in {directory.name}/"
+                  )
+                  failed = True
+
+              skill = skill_path.read_text(encoding="utf-8")
+              if not skill.startswith("---"):
+                  print(f"::error::{skill_path} has no frontmatter")
+                  failed = True
+              frontmatter = skill.split("---", 2)[1] if skill.count("---") >= 2 else ""
+              if "description:" not in frontmatter:
+                  print(
+                      f"::error::{skill_path} has no frontmatter description —"
+                      " ClawHub shows and searches that line"
+                  )
+                  failed = True
+              print(f"  {directory.name}: {manifest['version']} ok")
+
+          sys.exit(1 if failed else 0)
+          PY
+
+      # A tag that disagrees with a manifest would publish a version nobody
+      # asked for.
+      - name: Tag matches the version it publishes
+        if: startsWith(github.ref, 'refs/tags/clawhub-skills-v')
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#clawhub-skills-v}"
+          echo "  tag: $TAG_VERSION"
+          python3 - "$TAG_VERSION" <<'PY'
+          import json, pathlib, sys
+          tag = sys.argv[1]
+          mismatched = []
+          for manifest_path in sorted(pathlib.Path("skills").glob("*/clawhub.json")):
+              version = json.loads(manifest_path.read_text(encoding="utf-8"))["version"]
+              print(f"  {manifest_path}: {version}")
+              if version != tag:
+                  mismatched.append(f"{manifest_path} is at {version}")
+          if mismatched:
+              for line in mismatched:
+                  print(f"::error::{line}, but the tag says {tag}")
+              print("::error::Bump every manifest together, or tag the version they agree on.")
+              sys.exit(1)
+          print(f"✅ every manifest is at {tag}")
+          PY
+
+      # Both sides describe the same protocol. If one grows a composition
+      # strategy or a fidelity level the other does not have, a reader gets a
+      # different answer depending on which door they came in.
+      - name: The bundle's router and these manuals agree on the facts
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+
+          def strategies(text):
+              return set(re.findall(r"\b(Seq|Par|Cond|TryPool|Try)\b", text))
+
+          def fidelity(text):
+              return set(re.findall(r"\b(Native|Hybrid|Wrapped)\b", text))
+
+          router = pathlib.Path(
+              "plugin-source/content/root/assistant/SKILL.md"
+          ).read_text(encoding="utf-8")
+          manuals = "\n".join(
+              path.read_text(encoding="utf-8") for path in sorted(pathlib.Path("skills").glob("*/SKILL.md"))
+          )
+
+          failed = False
+          for label, extract in (("composition strategies", strategies), ("fidelity levels", fidelity)):
+              only_router = extract(router) - extract(manuals)
+              only_manuals = extract(manuals) - extract(router)
+              if only_router:
+                  print(f"::error::the router names {label} the manuals do not: {sorted(only_router)}")
+                  failed = True
+              if only_manuals:
+                  print(f"::error::the manuals name {label} the router does not: {sorted(only_manuals)}")
+                  failed = True
+              if not (only_router or only_manuals):
+                  print(f"  {label}: {sorted(extract(router))}")
+
+          sys.exit(1 if failed else 0)
+          PY
+
+  publish:
+    name: Publish
+    needs: manifest-consistency
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        skill: [rotifer-guide, rotifer-agent, rotifer-arena]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Decide dry-run or real publish
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "dry_run=false" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "dry_run=true" >> "$GITHUB_OUTPUT"
+          fi
+          MANIFEST="skills/${{ matrix.skill }}/clawhub.json"
+          echo "version=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['version'])")" >> "$GITHUB_OUTPUT"
+          # Without --name the CLI falls back to the slug and the listing loses
+          # its display name.
+          echo "display_name=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['display_name'])")" >> "$GITHUB_OUTPUT"
+
+      # Fail loudly rather than skipping: a real publish that silently does
+      # nothing looks identical to a successful one in the run summary.
+      - name: Require a token for a real publish
+        if: steps.mode.outputs.dry_run == 'false'
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: |
+          if [ -z "$CLAWHUB_TOKEN" ]; then
+            echo "::error::CLAWHUB_TOKEN is not configured, so this publish would do nothing."
+            exit 1
+          fi
+          echo "✅ token present"
+
+      # The CLI does not read a token from the environment — it reads the config
+      # file `clawhub login` writes. Passing CLAWHUB_TOKEN to `publish` alone
+      # gets "Not logged in".
+      - name: Log in
+        if: steps.mode.outputs.dry_run == 'false'
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: npx --yes clawhub@0.23.3 login --token "$CLAWHUB_TOKEN" --no-browser
+
+      - name: Publish ${{ matrix.skill }}
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: |
+          ARGS=(
+            publish "skills/${{ matrix.skill }}"
+            --slug "${{ matrix.skill }}"
+            --name "${{ steps.mode.outputs.display_name }}"
+            --version "${{ steps.mode.outputs.version }}"
+            --tags latest
+            --no-input
+            --json
+            --source-repo "${{ github.repository }}"
+            --source-commit "${{ github.sha }}"
+            --source-ref "${{ github.ref }}"
+          )
+          if [ "${{ steps.mode.outputs.dry_run }}" = "true" ]; then
+            ARGS+=(--dry-run)
+            echo "Dry run — nothing will be published."
+          fi
+          npx --yes clawhub@0.23.3 "${ARGS[@]}"

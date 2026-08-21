@@ -11,12 +11,21 @@ export const PLUGIN_SOURCE_ROOT = join(REPO_ROOT, "plugin-source");
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const CRC_TABLE = buildCrcTable();
+// Paths the pre-Phase-C layout generated at the repo root. Sync deletes them so
+// a stale checkout cannot keep serving an output nothing regenerates.
+//
+// `skills` used to be on this list. It was the old home of one generated file,
+// `skills/evolve/SKILL.md`, deleted from the tree in April; git removes it from
+// any checkout that moves past that commit, so the entry had nothing left to
+// clean. Meanwhile it made the most natural name in the repo unusable: a
+// directory placed there would be deleted, recursively and silently, by the
+// next sync. `skills/` now holds the Skills published to ClawHub on their own,
+// and sync does not own it — see plugin-source/OWNERSHIP.md.
 const OBSOLETE_OUTPUT_PATHS = [
   ".cursor-plugin/plugin.json",
   ".cursor-plugin/skills",
   ".cursor-plugin/rules",
   ".codebuddy-plugin/plugins",
-  "skills",
   "rules",
   "assets/icon.png",
 ];

@@ -44,6 +44,25 @@ This file defines which plugin-facing files are canonical sources and which file
 | `rotifer-vscode/icon.png` | `plugin-source/assets/brandmark.png` |
 | `rotifer-vscode/assets/logo.png` | `plugin-source/assets/brandmark.png` |
 
+## What Sync Does Not Own
+
+`skills/` at the repo root holds the Skills published to ClawHub on their own —
+`rotifer-guide`, `rotifer-agent`, `rotifer-arena`. They are neither canonical
+inputs nor generated outputs. Nothing in `plugin-source/` produces them, and
+`npm run sync:plugins` neither writes nor removes them.
+
+That name used to be on the obsolete list: the pre-Phase-C layout generated one
+file there, and sync deleted the directory to clean up after the move. The file
+had already left the tree in April, so the entry cleaned nothing while making
+the most natural name in the repo unusable — a directory placed there would
+have been removed, recursively and silently, on the next sync. The entry is
+gone, and `leaves the published skills alone` in `tests/unit/plugin-source.test.ts`
+fails if it comes back.
+
+Do not add these Skills to `plugins/rotifer/`. That folder is one bundle shipped
+to five hosts under a single family version; these three carry their own version
+lines and ship as separate ClawHub listings. See `skills/README.md`.
+
 ## Hand-Authored Files Inside a Generated Folder
 
 `plugins/rotifer/` holds two files the sync step does not own and does not

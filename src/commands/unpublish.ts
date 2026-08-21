@@ -83,7 +83,10 @@ const WORDING: Record<Direction, Wording> = {
   },
 };
 
-async function run(geneRef: string, direction: Direction, shouldSkipConfirm: boolean): Promise<void> {
+async function run(
+  geneRef: string, direction: Direction, shouldSkipConfirm: boolean,
+  reason?: string
+): Promise<void> {
   const w = WORDING[direction];
 
   try {
@@ -134,8 +137,8 @@ async function run(geneRef: string, direction: Direction, shouldSkipConfirm: boo
 
   try {
     const result = direction === "down"
-      ? await unpublishGene(targetId)
-      : await republishGene(targetId);
+      ? await unpublishGene(targetId, reason)
+      : await republishGene(targetId, reason);
     display.renderResult(
       { ok: true, direction, id: result.id, name: result.name, version: result.version },
       (data) => {
@@ -151,19 +154,24 @@ async function run(geneRef: string, direction: Direction, shouldSkipConfirm: boo
   }
 }
 
+// `--reason` is optional and goes into gene_visibility_log beside the actor and
+// the timestamp. A version disappearing from the registry is worth explaining,
+// and the field is useless if the only client cannot fill it.
 export const unpublishCommand = new Command("unpublish")
   .description("Take one of your published gene versions off the public registry")
   .argument("<gene>", "gene name, optionally name@version, or a gene UUID")
   .option("--yes", "skip the confirmation prompt", false)
-  .action(async (geneRef: string, options: { yes: boolean }) => {
-    await run(geneRef, "down", options.yes);
+  .option("--reason <text>", "why it is coming down, recorded with the takedown")
+  .action(async (geneRef: string, options: { yes: boolean; reason?: string }) => {
+    await run(geneRef, "down", options.yes, options.reason);
   });
 
 export const republishCommand = new Command("republish")
   .description("Put one of your unpublished gene versions back on the public registry")
   .argument("<gene>", "gene name, optionally name@version, or a gene UUID")
-  .action(async (geneRef: string) => {
-    await run(geneRef, "up", true);
+  .option("--reason <text>", "why it is going back up, recorded with the restore")
+  .action(async (geneRef: string, options: { reason?: string }) => {
+    await run(geneRef, "up", true, options.reason);
   });
 
 function reportUnresolved(

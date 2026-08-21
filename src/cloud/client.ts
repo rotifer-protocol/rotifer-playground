@@ -482,12 +482,19 @@ export interface UnpublishedGene {
  * loses its referent. Republishing the same version restores it: `publishGene`
  * refuses to overwrite a *published* version but updates an unpublished one.
  *
- * Reads back the changed row rather than trusting the status code. RLS narrows
- * the UPDATE to rows the caller owns, and an UPDATE that matches nothing is not
- * an error in PostgREST — with `return=minimal` it answers 204, exactly like a
- * successful one. So a caller trying to unpublish someone else's gene would
- * have been told it worked. `return=representation` makes the two
- * distinguishable: no rows back means nothing was changed.
+ * Goes through the `unpublish_gene` RPC rather than PATCHing the table. The
+ * direct PATCH this replaces never worked once: `trg_version_immutability`
+ * fires BEFORE UPDATE on a published row and refuses anything that moves
+ * `published`, so every call since #217 came back with "Published gene version
+ * is immutable." The command shipped with tests, but they mocked `fetch` — they
+ * asserted how this function reacts to a reply the database would never send.
+ * `supabase/tests/gene_visibility_unpublish.sql` now exercises it for real.
+ *
+ * The RPC checks ownership itself (SECURITY DEFINER bypasses RLS, so it has
+ * to), records the takedown in `gene_visibility_log`, and recomputes the
+ * author's reputation — a version the registry no longer serves should stop
+ * counting toward its author's score. It raises rather than returning an empty
+ * result, so "nothing happened" can no longer read as success.
  *
  * The published artifact is deliberately left in storage. An unpublished gene
  * keeps its Arena row, and §9.7.1 asks that any published score stay
@@ -498,27 +505,26 @@ export interface UnpublishedGene {
  * name and the request failed with `NoSuchBucket` inside a catch that swallowed
  * it. Fixing that URL would have turned a silent no-op into real data loss.)
  */
-export async function unpublishGene(id: string): Promise<UnpublishedGene> {
-  const res = await fetch(apiUrl(`/genes?id=eq.${id}`), {
-    method: "PATCH",
+export async function unpublishGene(id: string, reason?: string): Promise<UnpublishedGene> {
+  const res = await fetch(apiUrl("/rpc/unpublish_gene"), {
+    method: "POST",
     headers: {
       ...authHeaders(true),
       "Content-Type": "application/json",
-      Prefer: "return=representation",
     },
-    body: JSON.stringify({ published: false }),
+    body: JSON.stringify({ p_gene_id: id, p_reason: reason ?? null }),
   });
 
   if (!res.ok) {
     throw new Error(`Failed to unpublish gene: ${await res.text()}`);
   }
 
+  // The function returns a one-row table, so PostgREST answers with an array.
   const changed = (await res.json()) as Array<{ id: string; name: string; version: string }>;
   if (changed.length === 0) {
-    throw new Error(
-      `Nothing was unpublished. Gene ${id} is either not yours or does not exist — ` +
-        "only the author of a version can take it down."
-    );
+    // Should be unreachable: the RPC raises rather than returning nothing.
+    // Kept so a future change to the function cannot turn silence into success.
+    throw new Error(`Nothing was unpublished. The registry accepted the request for ${id} but changed no row.`);
   }
 
   const row = changed[0];
@@ -535,22 +541,27 @@ export async function unpublishGene(id: string): Promise<UnpublishedGene> {
  * restoring it. Without this, unpublishing would be a one-way door for an
  * author — the version could only come back under a new number.
  *
+ * This half was never broken: the immutability trigger's WHEN clause does not
+ * fire on a row where `OLD.published = false`. It moved to an RPC anyway so
+ * both directions reach `gene_visibility_log` — a record that only ever shows
+ * disappearances tells half the story.
+ *
  * Immutability is preserved rather than bent: nothing but the `published` flag
  * moves, so the artifact and content hash that were published under this
  * version are the ones that come back.
  *
- * Same zero-row check as unpublish, for the same reason — RLS narrows the
- * UPDATE and PostgREST does not treat "matched nothing" as an error.
+ * Same zero-row check as unpublish, kept for the same reason: it should be
+ * unreachable now that the RPC raises, and it stays so a later change to the
+ * function cannot turn silence back into success.
  */
-export async function republishGene(id: string): Promise<UnpublishedGene> {
-  const res = await fetch(apiUrl(`/genes?id=eq.${id}`), {
-    method: "PATCH",
+export async function republishGene(id: string, reason?: string): Promise<UnpublishedGene> {
+  const res = await fetch(apiUrl("/rpc/republish_gene"), {
+    method: "POST",
     headers: {
       ...authHeaders(true),
       "Content-Type": "application/json",
-      Prefer: "return=representation",
     },
-    body: JSON.stringify({ published: true }),
+    body: JSON.stringify({ p_gene_id: id, p_reason: reason ?? null }),
   });
 
   if (!res.ok) {

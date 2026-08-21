@@ -22,7 +22,19 @@ function cli(args: string): string {
 
 const PIPELINE = ["doc-retrieval", "answer-synthesizer", "source-linker", "grammar-checker"];
 const nodeVersion = parseInt(process.versions.node.split(".")[0], 10);
-const skipRuntime = nodeVersion < 22;
+
+// The runs below also need the native addon, and not because they execute WASM —
+// they don't. These Genes are Cloud-installed, and with no addon the L0 gate
+// cannot run at all; provenance then decides, and someone else's code does not
+// get to run unchecked with full host privileges. Refusing them is the intended
+// behaviour, so an addon-less environment is simply outside what these cases
+// cover. The release branch is one such environment: `npm install
+// --package-lock-only` silently drops the @rotifer/playground-* entries whose
+// new version is not published yet, so `npm ci` installs no addon.
+const hasNativeAddon = existsSync(
+  join(ROOT, "node_modules", "@rotifer", `playground-${process.platform}-${process.arch}`),
+) || existsSync(join(ROOT, `index.${process.platform}-${process.arch}.node`));
+const skipRuntime = nodeVersion < 22 || !hasNativeAddon;
 
 describe("Dogfooding Pipeline", () => {
   it("all 4 genes have phenotype.json", () => {

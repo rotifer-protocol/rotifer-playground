@@ -3,8 +3,6 @@ use std::sync::{Arc, Mutex};
 use wasmtime::*;
 
 use super::{ConstraintSet, Sandbox, SandboxError};
-use crate::l0::L0Gate;
-use crate::types::gene::Phenotype;
 use crate::types::{Context, ExecutionMetadata, GeneResult};
 
 /// Source-level shapes of an async `express()`, mirroring the compile-time
@@ -97,32 +95,6 @@ impl WasmtimeSandbox {
     /// Create a sandbox with protocol-default constraints (64 MB, 1M fuel, 30 s).
     pub fn with_defaults() -> Result<Self, SandboxError> {
         Self::new(ConstraintSet::default())
-    }
-
-    /// Execute with L0 gate enforcement — the preferred entry point.
-    ///
-    /// Runs `L0Gate::check()` before delegating to `Sandbox::execute()`.
-    /// Returns `SandboxError::ConstraintViolation` if L0 checks fail.
-    pub fn execute_gated(
-        &self,
-        wasm_bytes: &[u8],
-        context: &Context,
-        input: serde_json::Value,
-        phenotype: &Phenotype,
-    ) -> Result<GeneResult, SandboxError> {
-        let l0_result = L0Gate::check(phenotype, &context.permissions, &self.constraints);
-        if !l0_result.passed {
-            let msgs: Vec<String> = l0_result.violations.iter().map(|v| v.to_string()).collect();
-            return Err(SandboxError::ConstraintViolation(
-                format!("L0 gate blocked: {}", msgs.join("; ")),
-            ));
-        }
-        self.execute(wasm_bytes, context, input)
-    }
-
-    /// Return the constraint set for external inspection (e.g. memory peak estimation).
-    pub fn constraints(&self) -> &ConstraintSet {
-        &self.constraints
     }
 
     /// Register the minimal WASI preview 1 host functions required by Javy modules.
@@ -615,6 +587,11 @@ impl WasmtimeSandbox {
 }
 
 impl Sandbox for WasmtimeSandbox {
+    fn constraints(&self) -> &ConstraintSet {
+        &self.constraints
+    }
+
+
     fn execute(
         &self,
         wasm_bytes: &[u8],

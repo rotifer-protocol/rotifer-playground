@@ -108,7 +108,14 @@ impl<'a> AlgebraExecutor<'a> {
         })?;
 
         match &gene.wasm_bytes {
-            Some(bytes) => self.sandbox.execute(bytes, context, input),
+            // execute_gated, not execute: a gene running as one step of a genome must
+            // clear the same L0 gate it clears when run on its own. Using the ungated
+            // path here meant any gene wrapped in Seq / Par / Cond / Try / Transform
+            // had its domain allowlist and resource caps go unchecked — and genome
+            // composition is the protocol's headline usage.
+            Some(bytes) => self
+                .sandbox
+                .execute_gated(bytes, context, input, &gene.phenotype),
             None => Ok(GeneResult::Error {
                 code: ErrorCode::ExecutionFailure,
                 message: "gene has no wasm bytes".to_string(),
@@ -277,6 +284,11 @@ mod tests {
     }
 
     impl Sandbox for MockSandbox {
+        fn constraints(&self) -> &ConstraintSet {
+            static C: std::sync::OnceLock<ConstraintSet> = std::sync::OnceLock::new();
+            C.get_or_init(ConstraintSet::default)
+        }
+
         fn execute(
             &self,
             _wasm_bytes: &[u8],
@@ -348,6 +360,115 @@ mod tests {
             source_code: None,
         };
         (gene_id, gene)
+    }
+
+    // ── L0 门控覆盖（回归：Genome 编排曾整条绕过门控）──
+
+    fn ctx_allowing(domain: &str) -> Context {
+        Context {
+            permissions: PermissionSet {
+                allowed_domains: Some(vec![domain.into()]),
+                ..Default::default()
+            },
+            ..test_context()
+        }
+    }
+
+    #[test]
+    fn genome_step_clears_the_same_l0_gate_as_a_direct_run() {
+        // make_gene 的 domain 是 "test"；只放行 "allowed" 时它必须被拦下——
+        // 单独执行如此，包进 Seq 也必须如此。回归点：execute_gene 曾调用裸
+        // execute()，于是任何基因只要被包进算子就不再过门控。
+        let sandbox = MockSandbox::succeeding();
+        let (id, gene) = make_gene(1);
+        let store: HashMap<GeneId, Gene> = [(id, gene)].into_iter().collect();
+        let exec = AlgebraExecutor::new(&sandbox, &store);
+        let ctx = ctx_allowing("allowed");
+
+        let direct = exec.execute(&AlgebraExpr::Gene(id), &ctx, serde_json::json!({}));
+        assert!(
+            matches!(direct, Err(SandboxError::ConstraintViolation(_))),
+            "单独执行必须被 L0 拦下，实际: {direct:?}"
+        );
+
+        let wrapped = exec.execute(
+            &AlgebraExpr::Seq(vec![AlgebraExpr::Gene(id)]),
+            &ctx,
+            serde_json::json!({}),
+        );
+        assert!(
+            matches!(wrapped, Err(SandboxError::ConstraintViolation(_))),
+            "包进 Seq 后同样必须被拦下，实际: {wrapped:?}"
+        );
+
+        assert_eq!(sandbox.calls(), 0, "被门控拦下的基因不应进入沙箱");
+    }
+
+    #[test]
+    fn l0_gate_blocks_every_composition_operator() {
+        // 门控不能只覆盖 Seq——Par / Cond / Try / Transform 都会走 execute_gene。
+        let sandbox = MockSandbox::succeeding();
+        let (id, gene) = make_gene(1);
+        let store: HashMap<GeneId, Gene> = [(id, gene)].into_iter().collect();
+        let exec = AlgebraExecutor::new(&sandbox, &store);
+        let ctx = ctx_allowing("allowed");
+        let leaf = || Box::new(AlgebraExpr::Gene(id));
+
+        let exprs = vec![
+            (
+                "Par",
+                AlgebraExpr::Par {
+                    branches: vec![AlgebraExpr::Gene(id)],
+                    merge: MergeStrategy::WaitAll,
+                    deadline: None,
+                },
+            ),
+            (
+                "Try",
+                AlgebraExpr::Try {
+                    primary: leaf(),
+                    fallback: leaf(),
+                },
+            ),
+            (
+                "Transform",
+                AlgebraExpr::Transform {
+                    inner: leaf(),
+                    mapper: id,
+                },
+            ),
+        ];
+
+        for (name, expr) in exprs {
+            let r = exec.execute(&expr, &ctx, serde_json::json!({}));
+            let blocked = match &r {
+                Err(SandboxError::ConstraintViolation(_)) => true,
+                // Par / Try 把分支错误收进 GeneResult::Error 而非向上抛
+                Ok(GeneResult::Error { message, .. }) => message.contains("L0 gate blocked"),
+                _ => false,
+            };
+            assert!(blocked, "{name} 未被 L0 拦下，实际: {r:?}");
+        }
+
+        assert_eq!(sandbox.calls(), 0, "没有任何算子应把被拦基因送进沙箱");
+    }
+
+    #[test]
+    fn l0_gate_does_not_over_block_a_permitted_domain() {
+        // 控制项：域在白名单内时必须照常执行，证明上面的拦截不是无差别拒绝。
+        let sandbox = MockSandbox::succeeding();
+        let (id, gene) = make_gene(1);
+        let store: HashMap<GeneId, Gene> = [(id, gene)].into_iter().collect();
+        let exec = AlgebraExecutor::new(&sandbox, &store);
+        let ctx = ctx_allowing("test"); // make_gene 的 domain
+
+        let r = exec.execute(
+            &AlgebraExpr::Seq(vec![AlgebraExpr::Gene(id)]),
+            &ctx,
+            serde_json::json!({}),
+        );
+        assert!(matches!(r, Ok(GeneResult::Success { .. })), "不应误拦，实际: {r:?}");
+        assert_eq!(sandbox.calls(), 1, "放行的基因应正常进入沙箱一次");
     }
 
     // ── T0: Try bug fix tests ──
@@ -645,6 +766,11 @@ mod tests {
     fn seq_chains_output_to_next_input() {
         struct TransformSandbox;
         impl Sandbox for TransformSandbox {
+            fn constraints(&self) -> &ConstraintSet {
+                static C: std::sync::OnceLock<ConstraintSet> = std::sync::OnceLock::new();
+                C.get_or_init(ConstraintSet::default)
+            }
+
             fn execute(
                 &self, _: &[u8], _: &Context, input: serde_json::Value,
             ) -> Result<GeneResult, SandboxError> {

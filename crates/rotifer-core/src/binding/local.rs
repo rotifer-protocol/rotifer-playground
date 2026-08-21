@@ -9,7 +9,7 @@ use super::{
     BindingCapabilities, HostFunctionDecl, IrRequirements, MeteringUnit,
     NegotiationResult, RotiferBinding,
 };
-use crate::sandbox::{ConstraintSet, SandboxError, WasmtimeSandbox};
+use crate::sandbox::{ConstraintSet, Sandbox, SandboxError, WasmtimeSandbox};
 use crate::types::gene::Phenotype;
 use crate::types::{Context, GeneResult, ResourceLimits};
 

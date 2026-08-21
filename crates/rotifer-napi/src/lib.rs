@@ -6,7 +6,7 @@ use rotifer_core::arena::{ArenaEngine, ArenaEntry, LocalArena};
 use rotifer_core::compiler::{self, CandidateFunction};
 use rotifer_core::fitness;
 use rotifer_core::l0::{L0Gate, AuditLog};
-use rotifer_core::sandbox::{ConstraintSet, WasmtimeSandbox};
+use rotifer_core::sandbox::{ConstraintSet, Sandbox, WasmtimeSandbox};
 use rotifer_core::types::{Context, GeneResult, PermissionSet};
 
 use rotifer_core::storage::{AgentStore, ArenaStore, GeneStore, SqliteStore};

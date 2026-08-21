@@ -71,7 +71,7 @@ export const agentRunCommand = new Command("run")
       process.exit(1);
     }
 
-    const isSandboxEnabled = !process.argv.includes("--no-sandbox");
+    const isSandboxEnabled = options.sandbox;
 
     const compositionType =
       (typeof agent.composition === "object" ? agent.composition?.type : agent.composition) ||
@@ -84,12 +84,16 @@ export const agentRunCommand = new Command("run")
     console.log();
 
     const genesDir = join(root, config.genes_dir);
-    const binding = isSandboxEnabled ? tryLoadBinding() : null;
+    // 两个角色，两个变量：L0 门控只查元数据、不需要沙箱，所以它不该随
+    // --no-sandbox 一起关掉——那个开关的意思是「不用沙箱执行」，不是
+    // 「跳过宪法级约束」。binding 保持原语义，供沙箱执行路径使用。
+    const l0Binding = tryLoadBinding();
+    const binding = isSandboxEnabled ? l0Binding : null;
     const startTime = performance.now();
 
     // TryPool: domain-based failover with fitness tracking
     if (compositionType === "TryPool") {
-      await executeTryPool(agent, genesDir, binding, input, root, options.verbose);
+      await executeTryPool(agent, genesDir, binding, l0Binding, input, root, options.verbose);
       return;
     }
 
@@ -261,6 +265,19 @@ export const agentRunCommand = new Command("run")
             ? JSON.parse(readFileSync(phenotypePath, "utf-8"))
             : {};
 
+          const violation = l0Violation(l0Binding, phenotypeData);
+          if (violation) {
+            pipelineLog.push({
+              gene: geneName, status: "error", engine: "node",
+              durationMs: performance.now() - stepStart, inputPreview, outputPreview: "",
+              error: `L0 gate blocked: ${violation}`,
+            });
+            display.error(`${step} L0 gate blocked '${geneName}': ${violation}`);
+            printPipelineLog(pipelineLog);
+            await flushInvocationReports();
+            process.exit(1);
+          }
+
           let result: unknown;
 
           if (phenotypeData.fidelity === "Hybrid" && phenotypeData.network) {
@@ -340,6 +357,24 @@ export const agentRunCommand = new Command("run")
     printProtocolInsights(agent.genome, genesDir, totalElapsed);
   });
 
+/**
+ * L0 门控——Node.js 降级路径同样必须过。
+ *
+ * 返回违规描述；null 表示放行。降级路径没有沙箱，基因以宿主进程的完整权限
+ * 运行，因此门控跑不了时返回违规而不是放行（fail closed）。
+ */
+function l0Violation(
+  l0Binding: NativeBinding | null,
+  phenotype: Record<string, unknown>,
+): string | null {
+  if (!l0Binding) {
+    return "L0 gate unavailable (native addon failed to load)";
+  }
+  const { irHash: _strip, ...phenotypeForL0 } = phenotype;
+  const result = l0Binding.l0Check(JSON.stringify(phenotypeForL0));
+  return result.passed ? null : result.violations.join("; ");
+}
+
 function printPipelineLog(log: Array<{
   gene: string; status: string; engine: string;
   durationMs: number; inputPreview: string;
@@ -376,6 +411,7 @@ async function executeTryPool(
   agent: AgentInfo,
   genesDir: string,
   binding: NativeBinding | null,
+  l0Binding: NativeBinding | null,
   input: unknown,
   root: string,
   isVerbose: boolean,
@@ -394,7 +430,7 @@ async function executeTryPool(
     const hasWasm = existsSync(irWasmPath);
 
     const executor = await buildGeneExecutor(
-      geneName, geneDir, irWasmPath, hasWasm, phenotype, binding
+      geneName, geneDir, irWasmPath, hasWasm, phenotype, binding, l0Binding
     );
     engine.registerGene(geneName, domain, executor);
   }
@@ -483,6 +519,7 @@ async function buildGeneExecutor(
   hasWasm: boolean,
   phenotype: Record<string, unknown>,
   binding: NativeBinding | null,
+  l0Binding: NativeBinding | null,
 ): Promise<(input: unknown) => Promise<GeneExecutionResult>> {
   if (hasWasm && binding) {
     const wasmBytes = readFileSync(irWasmPath) as Buffer;
@@ -527,6 +564,19 @@ async function buildGeneExecutor(
         };
       }
     };
+  }
+
+  // 走到这里说明没有可用的 WASM 路径，接下来是 Node.js 执行——它没有沙箱，
+  // 所以门控必须在这里拦。TryPool 语义下拦截表现为「该基因失败」而非终止进程，
+  // 这样 failover 会照常换下一个基因。
+  const violation = l0Violation(l0Binding, phenotype);
+  if (violation) {
+    return async (): Promise<GeneExecutionResult> => ({
+      success: false,
+      error: `L0 gate blocked: ${violation}`,
+      engine: "none",
+      durationMs: 0,
+    });
   }
 
   const srcFile = findSourceFile(geneDir);

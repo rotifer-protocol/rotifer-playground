@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.19.2...v0.20.0) (2026-08-21)
+
+
+### Features
+
+* **skills:** give the three published Skills a public home ([#254](https://github.com/rotifer-protocol/rotifer-playground/issues/254)) ([e412b82](https://github.com/rotifer-protocol/rotifer-playground/commit/e412b8276339b017536198def73da7a49909a02d))
+* **skills:** publish the Gene manual the other three point at ([#258](https://github.com/rotifer-protocol/rotifer-playground/issues/258)) ([caaee46](https://github.com/rotifer-protocol/rotifer-playground/commit/caaee46e48df2bd4f17d505d66a8193123fc5952))
+
+
+### Bug Fixes
+
+* **plugins:** Cursor was the last host calling the bundle something else ([#259](https://github.com/rotifer-protocol/rotifer-playground/issues/259)) ([b8dcb7a](https://github.com/rotifer-protocol/rotifer-playground/commit/b8dcb7a72648961341280395420cb2cfb14e368a))
+* **readme:** the freshness check I added had no exit ([#260](https://github.com/rotifer-protocol/rotifer-playground/issues/260)) ([28947be](https://github.com/rotifer-protocol/rotifer-playground/commit/28947bea7e951c2731becb4cfb157158d373c063))
+* **readme:** the Status line said v0.10.1 while npm served 0.19.2 ([#257](https://github.com/rotifer-protocol/rotifer-playground/issues/257)) ([7109596](https://github.com/rotifer-protocol/rotifer-playground/commit/710959675dc5e4278152e9998813c895aa997f94))
+
 ## [0.19.2](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.19.1...v0.19.2) (2026-08-21)
 
 

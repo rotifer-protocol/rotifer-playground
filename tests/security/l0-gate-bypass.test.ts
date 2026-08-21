@@ -131,3 +131,88 @@ describe("L0 gate must cover the Node.js fallback path", () => {
     expect(output()).not.toContain("Running via Node.js");
   });
 });
+
+describe("L0 gate must cover `agent run` fallback too", () => {
+  let projectDir: string;
+  let previousCwd: string;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    previousCwd = process.cwd();
+    projectDir = mkdtempSync(join(tmpdir(), "rotifer-l0-agent-"));
+    writeFileSync(
+      join(projectDir, "rotifer.json"),
+      JSON.stringify({ name: "test", version: "0.1.0", author: "test", genes_dir: "genes" }),
+    );
+    const geneDir = join(projectDir, "genes", "solo");
+    mkdirSync(geneDir, { recursive: true });
+    writeFileSync(
+      join(geneDir, "phenotype.json"),
+      JSON.stringify({ domain: "evil.hack", version: "0.1.0", fidelity: "Native" }),
+    );
+    writeFileSync(join(geneDir, "index.ts"), "export function express(i) { return i; }\n");
+
+    mkdirSync(join(projectDir, ".rotifer", "agents"), { recursive: true });
+    writeFileSync(
+      join(projectDir, ".rotifer", "agents", "a.json"),
+      JSON.stringify({ id: "a1", name: "agent-x", state: "Active", genome: ["solo"] }),
+    );
+
+    process.chdir(projectDir);
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.chdir(previousCwd);
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    rmSync(projectDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  const output = () =>
+    [
+      ...errorSpy.mock.calls.map((c) => String(c[0])),
+      ...logSpy.mock.calls.map((c) => String(c[0])),
+    ].join("\n");
+
+  it("E. agent run 的 Node.js 降级路径必须过门控", async () => {
+    const l0Check = vi.fn(() => ({
+      passed: false,
+      violations: ["domain 'evil.hack' is not in the allowed list"],
+      checksPerformed: 4,
+    }));
+    vi.doMock("../../src/utils/binding.js", () => ({ tryLoadBinding: () => ({ l0Check }) }));
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`EXIT:${code}`);
+    }) as never);
+
+    const { agentRunCommand } = await import("../../src/commands/agent-run.js");
+    await agentRunCommand.parseAsync(["agent-x"], { from: "user" }).catch(() => {});
+
+    expect(l0Check).toHaveBeenCalled();
+    expect(output()).toContain("L0 gate blocked");
+  });
+
+  it("F. --no-sandbox 不得让 agent run 跳过门控", async () => {
+    const l0Check = vi.fn(() => ({
+      passed: false,
+      violations: ["domain 'evil.hack' is not in the allowed list"],
+      checksPerformed: 4,
+    }));
+    vi.doMock("../../src/utils/binding.js", () => ({ tryLoadBinding: () => ({ l0Check }) }));
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`EXIT:${code}`);
+    }) as never);
+
+    const { agentRunCommand } = await import("../../src/commands/agent-run.js");
+    await agentRunCommand.parseAsync(["agent-x", "--no-sandbox"], { from: "user" }).catch(() => {});
+
+    // 回归点：--no-sandbox 曾让 binding 直接为 null，门控连同沙箱一起被关掉。
+    expect(l0Check).toHaveBeenCalled();
+    expect(output()).toContain("L0 gate blocked");
+  });
+});

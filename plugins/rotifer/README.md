@@ -91,7 +91,7 @@ trying someone else's capability does not mean trusting their code with your mac
 |---|---|
 | `rotifer` | Browse, install, and compete Genes in the live Arena |
 | `rotifer-hello` | Interactive agent creation from curated templates — quality diagnosis, security scanning, content analysis, Web3 auditing, document Q&A |
-| `rotifer-self-evolving-agent` | The full loop: scan capabilities, benchmark against live Arena rankings, and replace weaker Genes. Ranking is the automatic part — every replacement waits for your approval and can be rolled back |
+| `rotifer-evolve` | The full loop: scan capabilities, benchmark against live Arena rankings, and replace weaker Genes. Ranking is the automatic part — every replacement waits for your approval and can be rolled back |
 | `rotifer-assistant` | Unified entry point — guide, architect, and challenge your agents |
 
 **Rule** — `rotifer-gene-dev` keeps generated Genes inside the project's conventions:

@@ -300,6 +300,37 @@ describe("plugin source sync pipeline", () => {
     }
   });
 
+  it("bundles no skill under a name another artifact already publishes", () => {
+    const root = createFixture();
+    const outputs = buildOutputs(root);
+
+    // A bundled skill and an independently published one carried the same
+    // frontmatter name — `rotifer-self-evolving-agent`, shipped here at the
+    // family version and from its own repo at 2.4.5, with contents that had
+    // already diverged. Installing both got you two different things claiming
+    // to be one skill. The bundle is not the source of truth for a name that
+    // ships on its own, so it may not spend one.
+    const SEPARATELY_PUBLISHED = ["rotifer-self-evolving-agent"];
+
+    const skillNames = /^name:\s*(\S+)\s*$/m;
+    const bundled = outputs
+      .filter(
+        (entry) =>
+          entry.pathFromRoot.startsWith("plugins/rotifer/skills/") &&
+          entry.pathFromRoot.endsWith(".md"),
+      )
+      .map((entry) => ("content" in entry ? entry.content : ""))
+      .map((content) => content.match(skillNames)?.[1])
+      .filter((name): name is string => Boolean(name));
+
+    expect(bundled.length).toBeGreaterThan(0);
+    for (const taken of SEPARATELY_PUBLISHED) {
+      expect(bundled, `a bundled skill claims ${taken}, which ships on its own`).not.toContain(
+        taken,
+      );
+    }
+  });
+
   it("preserves hand-authored vscode package sections while syncing owned fields", () => {
     const root = createFixture();
     const originalPackage = JSON.parse(

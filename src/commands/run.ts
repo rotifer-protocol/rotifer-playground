@@ -61,7 +61,7 @@ export const runCommand = new Command("run")
         return;
       }
 
-      const isSandboxEnabled = !process.argv.includes("--no-sandbox");
+      const isSandboxEnabled = options.sandbox;
 
       if (options.verbose) {
         display.keyValue("Gene", geneName);
@@ -74,6 +74,12 @@ export const runCommand = new Command("run")
       const wasmPath = join(geneDir, "gene.ir.wasm");
       const sourcePath = join(geneDir, "index.ts");
 
+      // L0 门控只检查元数据（域、资源上限声明、文件系统路径），不需要沙箱。
+      // 加载点必须在两条执行路径之外：原先它关在 WASM 分支内部，降级路径根本
+      // 拿不到它——那正是「Node.js 降级整条绕过 L0」的成因。
+      const { tryLoadBinding } = await import("../utils/binding.js");
+      const binding = tryLoadBinding();
+
       if (existsSync(wasmPath) && isSandboxEnabled) {
         // #58: warn when the source was edited after the last compile — the
         // sandbox would otherwise silently execute stale WASM.
@@ -85,8 +91,6 @@ export const runCommand = new Command("run")
         }
         display.info("Running via WASM sandbox...");
         try {
-          const { tryLoadBinding } = await import("../utils/binding.js");
-          const binding = tryLoadBinding();
           if (binding) {
             const wasmBytes = readFileSync(wasmPath);
             const rawPhenotype = JSON.parse(readFileSync(join(geneDir, "phenotype.json"), "utf-8"));
@@ -130,6 +134,29 @@ export const runCommand = new Command("run")
           process.exit(1);
           return;
         }
+        // ── L0 门控：降级路径同样必须过 ──────────────────────────────────
+        // 这条路径没有沙箱，基因以宿主进程的完整权限运行（fs / child_process /
+        // 全局 fetch 都在手）。Spec 定义 L0 是唯一不参与进化、不可绕过的约束，
+        // 因此这里 fail closed：门控跑不了就不执行，而不是静默放行。
+        if (!binding) {
+          display.error("L0 gate unavailable (native addon failed to load) — refusing to run.");
+          display.hint("The Node.js fallback runs the gene with full host privileges, unchecked.");
+          display.hint("Reinstall the platform package, or compile and run under the sandbox.");
+          process.exit(1);
+          return;
+        }
+        const { irHash: _l0Strip, ...phenotypeForL0 } = phenotype;
+        const l0 = binding.l0Check(JSON.stringify(phenotypeForL0));
+        if (!l0.passed) {
+          display.error("L0 gate blocked: " + l0.violations.join("; "));
+          display.hint("The gene declares permissions its phenotype is not allowed to hold.");
+          process.exit(1);
+          return;
+        }
+        if (options.verbose) {
+          display.info(`L0 gate: PASS (${l0.checksPerformed} checks)`);
+        }
+
         display.info("Running via Node.js...");
         try {
           recordGeneInvocation(geneDir);

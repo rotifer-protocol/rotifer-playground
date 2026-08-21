@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { verifyRustVersionAlignment } from "../../scripts/lib/version-alignment.mjs";
+import {
+  verifyRustVersionAlignment,
+  verifyReadmeStatusFreshness,
+} from "../../scripts/lib/version-alignment.mjs";
 
 const tempRoots: string[] = [];
 
@@ -143,5 +146,73 @@ describe("verifyRustVersionAlignment", () => {
     expect(result.ok).toBe(false);
     expect(result.errors).toContain("crates/rotifer-core/Cargo.toml: expected publish = false");
     expect(result.errors).toContain("crates/rotifer-napi/Cargo.toml: expected publish = false");
+  });
+});
+
+/**
+ * The README's `Status:` line is the paragraph npm prints under the package
+ * title, and it is hand-written. On 2026-08-21 the npm page showed 0.19.2 above
+ * a paragraph describing v0.10.1's P2P work — nine days and thirty-six
+ * changelog entries stale, while the real work had moved to Arena integrity.
+ * The badge beside it was right because it is generated; the sentence was the
+ * project's public first impression and nobody owned keeping it true.
+ *
+ * The interesting assertions here are the ones where the check must stay quiet.
+ * A guard that fires on a patch release trains people to bump the number and
+ * move on, and a guard that fires on the roadmap's protocol-line versions —
+ * a separate numbering line that is *meant* to differ — gets deleted.
+ */
+describe("README Status freshness", () => {
+  function withReadme(readme: string, npmVersion: string) {
+    const root = mkdtempSync(join(tmpdir(), "rotifer-readme-status-"));
+    tempRoots.push(root);
+    writeFile(join(root, "package.json"), JSON.stringify({ version: npmVersion }));
+    writeFile(join(root, "README.md"), readme);
+    return root;
+  }
+
+  const CURRENT = "> **Status:** v0.19.x — Arena integrity, on top of v0.9's Open Mesh.";
+
+  it("passes when the Status line names the released minor", () => {
+    const result = verifyReadmeStatusFreshness(withReadme(CURRENT, "0.19.2"));
+    expect(result.ok).toBe(true);
+  });
+
+  it("stays quiet across a patch release, so the red lands only when the phase moved", () => {
+    const result = verifyReadmeStatusFreshness(withReadme(CURRENT, "0.19.9"));
+    expect(result.ok).toBe(true);
+  });
+
+  it("fails on the drift that was actually shipped, and says not to bump the number alone", () => {
+    const stale = "> **Status:** v0.10.1 — P2P Reliability on top of v0.9's Open Mesh.";
+    const result = verifyReadmeStatusFreshness(withReadme(stale, "0.19.2"));
+    expect(result.ok).toBe(false);
+    expect(result.errors[0]).toContain("describes v0.10.x but this release is 0.19.2");
+    expect(result.errors[0]).toContain("Do not bump the number alone");
+  });
+
+  it("fails on a minor bump, which is where a re-read is owed", () => {
+    const result = verifyReadmeStatusFreshness(withReadme(CURRENT, "0.20.0"));
+    expect(result.ok).toBe(false);
+  });
+
+  it("ignores the roadmap's protocol-line versions, which are meant to differ", () => {
+    // These sit further down the same README. They track the protocol, not the
+    // npm releases; matching them would make the check fire forever.
+    const readme = [
+      CURRENT,
+      "",
+      "- **v0.9** — economic framework design",
+      "- **v0.9.1** — P2P network (metadata discovery)",
+      "- **v1.0** — Stable release: L0-L3 complete",
+    ].join("\n");
+    const result = verifyReadmeStatusFreshness(withReadme(readme, "0.19.2"));
+    expect(result.ok).toBe(true);
+  });
+
+  it("fails loudly when the Status line is gone, rather than passing on nothing found", () => {
+    const result = verifyReadmeStatusFreshness(withReadme("> **Note:** moved.", "0.19.2"));
+    expect(result.ok).toBe(false);
+    expect(result.errors[0]).toContain("re-point this check at it");
   });
 });

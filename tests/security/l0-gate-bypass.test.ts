@@ -87,8 +87,27 @@ describe("L0 gate must cover the Node.js fallback path", () => {
     expect(output()).not.toContain("Running via Node.js");
   });
 
-  it("B. 原生插件不可用时必须 fail closed，而不是无门控执行", async () => {
+  it("B. 原生插件不可用时，本地基因放行但必须留下警告", async () => {
+    // 这条原先锁的是「插件缺失一律 fail closed」。那个设计把发布分支 CI 和
+    // 所有拿不到预编译二进制的平台一起卡死了（见 #246），所以改成按来源区分：
+    // 门控跑不了不是关于这个基因的安全结论，本地代码用户自己可读可审。
     writeGene({ withWasm: false });
+    vi.doMock("../../src/utils/binding.js", () => ({ tryLoadBinding: () => null }));
+    vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+
+    const { runCommand } = await import("../../src/commands/run.js");
+    await runCommand.parseAsync(["test-gene"], { from: "user" }).catch(() => {});
+
+    expect(output()).toContain("could not run");
+    expect(output()).toContain("Running via Node.js");
+  });
+
+  it("B2. 装来的基因即使门控跑不了也必须被拦", async () => {
+    writeGene({ withWasm: false });
+    writeFileSync(
+      join(projectDir, "genes", "test-gene", ".cloud-manifest.json"),
+      JSON.stringify({ cloud_id: "x", owner: "someone-else" }),
+    );
     vi.doMock("../../src/utils/binding.js", () => ({ tryLoadBinding: () => null }));
     expectExit();
 

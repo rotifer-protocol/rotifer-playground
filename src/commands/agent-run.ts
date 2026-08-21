@@ -8,6 +8,7 @@ import { c } from "../utils/palette.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding, type NativeBinding } from "../utils/binding.js";
+import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
 import { createGatewayFetch, type GatewayFetchOptions, type GatewayResponse } from "../runtime/network-gateway.js";
 import { DomainFailoverEngine, type GeneExecutionResult } from "../runtime/domain-failover.js";
 import { flushInvocationReports } from "../cloud/invocation.js";
@@ -265,7 +266,16 @@ export const agentRunCommand = new Command("run")
             ? JSON.parse(readFileSync(phenotypePath, "utf-8"))
             : {};
 
-          const violation = l0Violation(l0Binding, phenotypeData);
+          const l0 = evaluateL0(l0Binding, phenotypeData);
+          const violation =
+            l0.kind === "violation"
+              ? l0.detail
+              : l0.kind === "unavailable" && isExternallySourced(geneDir)
+                ? `could not run (${l0.detail}) on an installed gene`
+                : null;
+          if (l0.kind === "unavailable" && !violation) {
+            display.warn(`${step} L0 gate could not run (${l0.detail}) — running this local gene unchecked.`);
+          }
           if (violation) {
             pipelineLog.push({
               gene: geneName, status: "error", engine: "node",
@@ -356,24 +366,6 @@ export const agentRunCommand = new Command("run")
 
     printProtocolInsights(agent.genome, genesDir, totalElapsed);
   });
-
-/**
- * L0 门控——Node.js 降级路径同样必须过。
- *
- * 返回违规描述；null 表示放行。降级路径没有沙箱，基因以宿主进程的完整权限
- * 运行，因此门控跑不了时返回违规而不是放行（fail closed）。
- */
-function l0Violation(
-  l0Binding: NativeBinding | null,
-  phenotype: Record<string, unknown>,
-): string | null {
-  if (!l0Binding) {
-    return "L0 gate unavailable (native addon failed to load)";
-  }
-  const { irHash: _strip, ...phenotypeForL0 } = phenotype;
-  const result = l0Binding.l0Check(JSON.stringify(phenotypeForL0));
-  return result.passed ? null : result.violations.join("; ");
-}
 
 function printPipelineLog(log: Array<{
   gene: string; status: string; engine: string;
@@ -569,11 +561,17 @@ async function buildGeneExecutor(
   // 走到这里说明没有可用的 WASM 路径，接下来是 Node.js 执行——它没有沙箱，
   // 所以门控必须在这里拦。TryPool 语义下拦截表现为「该基因失败」而非终止进程，
   // 这样 failover 会照常换下一个基因。
-  const violation = l0Violation(l0Binding, phenotype);
-  if (violation) {
+  const l0 = evaluateL0(l0Binding, phenotype);
+  const blocked =
+    l0.kind === "violation"
+      ? l0.detail
+      : l0.kind === "unavailable" && isExternallySourced(geneDir)
+        ? `could not run (${l0.detail}) on an installed gene`
+        : null;
+  if (blocked) {
     return async (): Promise<GeneExecutionResult> => ({
       success: false,
-      error: `L0 gate blocked: ${violation}`,
+      error: `L0 gate blocked: ${blocked}`,
       engine: "none",
       durationMs: 0,
     });

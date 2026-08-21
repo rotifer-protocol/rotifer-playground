@@ -7,6 +7,7 @@ import * as display from "../utils/display.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding } from "../utils/binding.js";
+import { evaluateL0 } from "../utils/l0-gate.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import { createGatewayFetch } from "../runtime/network-gateway.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
@@ -153,6 +154,21 @@ export const testCommand = new Command("test")
       } else {
         display.warn("  ⚠ Running without sandbox — run 'rotifer compile " + geneName + "' first");
       }
+      // 门控必须在 import 之前：动态 import 本身就会执行模块顶层代码，
+      // 等到 express() 才拦就已经晚了。C3 那个 L0Gate 检查项不承担这个职责——
+      // 它挂在 opt-in 的 --compliance 下、且排在本段之后，判定失败也只是给
+      // 报告计一笔，基因早跑完了。
+      const l0 = evaluateL0(binding, phenotype);
+      // isCloudGene 在上面已把外部来源基因挡在这条分支之外，所以这里
+      // unavailable 只会落在本地源码基因上：警告并继续，不阻断。
+      if (l0.kind === "unavailable") {
+        display.warn(`  L0 gate could not run (${l0.detail}) — checking this local gene unchecked.`);
+      }
+      if (l0.kind === "violation") {
+        failed++;
+        display.error("  L0 gate blocked: " + l0.detail);
+        display.info("  The Node.js fallback would run this gene with full host privileges.");
+      } else {
       try {
         const absPath = resolve(geneDir, srcFile);
         const mod = await import(pathToFileURL(absPath).href);
@@ -211,6 +227,7 @@ export const testCommand = new Command("test")
       } catch (err: any) {
         failed++;
         display.error("  express() threw an error: " + err.message);
+      }
       }
       }
     } else {

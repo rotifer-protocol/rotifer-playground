@@ -13,7 +13,10 @@ name: Publish ClawHub Skills
 
 on:
   push:
-    tags: ["clawhub-skills-v*"]
+    # One Skill per tag: clawhub-<skill>-v<version>, matching that Skill's own
+    # clawhub.json. They are separate listings on separate version lines, so a
+    # tag that tried to cover all of them could only ever match by accident.
+    tags: ["clawhub-*-v*"]
   pull_request:
     branches: [main]
     paths:
@@ -21,6 +24,11 @@ on:
       - ".github/workflows/publish-clawhub-skills.yml"
   workflow_dispatch:
     inputs:
+      skill:
+        description: "Which Skill to publish"
+        type: choice
+        options: [rotifer-guide, rotifer-agent, rotifer-arena, rotifer-gene]
+        required: true
       dry_run:
         description: "Preview without publishing"
         type: boolean
@@ -90,28 +98,33 @@ jobs:
           sys.exit(1 if failed else 0)
           PY
 
-      # A tag that disagrees with a manifest would publish a version nobody
-      # asked for.
-      - name: Tag matches the version it publishes
-        if: startsWith(github.ref, 'refs/tags/clawhub-skills-v')
+      # A tag that disagrees with its manifest would publish a version nobody
+      # asked for, and a tag naming a Skill that does not exist would publish
+      # nothing while looking like it worked.
+      - name: The tag names a real Skill, at the version its manifest declares
+        if: startsWith(github.ref, 'refs/tags/clawhub-')
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#clawhub-skills-v}"
-          echo "  tag: $TAG_VERSION"
-          python3 - "$TAG_VERSION" <<'PY'
-          import json, pathlib, sys
-          tag = sys.argv[1]
-          mismatched = []
-          for manifest_path in sorted(pathlib.Path("skills").glob("*/clawhub.json")):
-              version = json.loads(manifest_path.read_text(encoding="utf-8"))["version"]
-              print(f"  {manifest_path}: {version}")
-              if version != tag:
-                  mismatched.append(f"{manifest_path} is at {version}")
-          if mismatched:
-              for line in mismatched:
-                  print(f"::error::{line}, but the tag says {tag}")
-              print("::error::Bump every manifest together, or tag the version they agree on.")
+          python3 - "${GITHUB_REF_NAME}" <<'PY'
+          import json, pathlib, re, sys
+
+          match = re.fullmatch(r"clawhub-(.+)-v(\d+\.\d+\.\d+)", sys.argv[1])
+          if not match:
+              print(f"::error::{sys.argv[1]} is not clawhub-<skill>-v<version>")
               sys.exit(1)
-          print(f"✅ every manifest is at {tag}")
+          skill, tagged = match.group(1), match.group(2)
+
+          manifest_path = pathlib.Path("skills")/skill/"clawhub.json"
+          if not manifest_path.exists():
+              have = sorted(p.name for p in pathlib.Path("skills").iterdir() if p.is_dir())
+              print(f"::error::there is no skills/{skill}/ — this repo has {have}")
+              sys.exit(1)
+
+          declared = json.loads(manifest_path.read_text(encoding="utf-8"))["version"]
+          print(f"  tag:      {tagged}\n  manifest: {declared}")
+          if declared != tagged:
+              print(f"::error::{manifest_path} is at {declared}, but the tag says {tagged}.")
+              sys.exit(1)
+          print(f"✅ {skill} {tagged}")
           PY
 
       # Both sides describe the same protocol. If one grows a composition
@@ -158,7 +171,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        skill: [rotifer-guide, rotifer-agent, rotifer-arena]
+        skill: [rotifer-guide, rotifer-agent, rotifer-arena, rotifer-gene]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -166,15 +179,27 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Decide dry-run or real publish
+      # A pull request exercises every Skill under --dry-run, so the publish
+      # command is tested on every change. A tag or a dispatch targets one.
+      - name: Decide what this leg does
         id: mode
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
+            TARGET="$(python3 -c "import re,sys;print(re.fullmatch(r'clawhub-(.+)-v[0-9.]+', sys.argv[1]).group(1))" "${GITHUB_REF_NAME}")"
             echo "dry_run=false" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TARGET="${{ inputs.skill }}"
             echo "dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
           else
+            TARGET="${{ matrix.skill }}"
             echo "dry_run=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$TARGET" = "${{ matrix.skill }}" ]; then
+            echo "  this leg handles ${{ matrix.skill }}"
+            echo "selected=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "  $TARGET was asked for, not ${{ matrix.skill }} — nothing to do here"
+            echo "selected=false" >> "$GITHUB_OUTPUT"
           fi
           MANIFEST="skills/${{ matrix.skill }}/clawhub.json"
           echo "version=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['version'])")" >> "$GITHUB_OUTPUT"
@@ -205,6 +230,7 @@ jobs:
         run: npx --yes clawhub@0.23.3 login --token "$CLAWHUB_TOKEN" --no-browser
 
       - name: Publish ${{ matrix.skill }}
+        if: steps.mode.outputs.selected == 'true'
         env:
           CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
         run: |

@@ -1,0 +1,27 @@
+{
+  "name": "rotifer-gene",
+  "display_name": "Rotifer Gene",
+  "description": "The Gene manual for Rotifer Protocol — write a Gene's express function and phenotype schema, run the four-layer security audit before publishing, and migrate a Gene's fidelity from Wrapped to Hybrid or Native. Invoke explicitly when building, auditing, or upgrading a Rotifer Gene. Not for general code review, dependency auditing, or framework migration — every procedure operates on Rotifer Genes and the Rotifer CLI.",
+  "tagline": "The reference for building, auditing and upgrading a Gene",
+  "version": "1.0.0",
+  "author": "rotifer-protocol",
+  "license": "Apache-2.0",
+  "category": "developer-tools",
+  "tags": [
+    "rotifer",
+    "gene",
+    "wasm",
+    "fidelity",
+    "security-audit"
+  ],
+  "homepage": "https://rotifer.dev",
+  "repository": "https://github.com/rotifer-protocol/rotifer-playground",
+  "permissions": [
+    "process:exec",
+    "filesystem:read",
+    "filesystem:write",
+    "network:outbound"
+  ],
+  "screenshots": [],
+  "demo_video": null
+}

@@ -94,6 +94,36 @@ export function readReadmeStatusVersion(readmeText) {
   return match ? { major: Number(match[1]), minor: Number(match[2]), raw: match[0] } : null;
 }
 
+/**
+ * May the Status line sit one release ahead of package.json?
+ *
+ * It has to, and the first version of this check said no — which left it with no
+ * exit. The released version lives in package.json, and release-please bumps
+ * that on its own branch. So on main, all the way through a cycle, package.json
+ * still holds the PREVIOUS number. Demanding equality means the paragraph can
+ * only ever be rewritten on the bot's branch; rewriting it on main, the one
+ * obvious place, turns main red instead. That is what blocked the v0.20.0
+ * release PR the day this check shipped.
+ *
+ * Drift only ever runs backwards. The bug this exists for was a Status line
+ * stuck at v0.10.1 while npm served 0.19.2 — nine minors behind, never once
+ * ahead. So the rule is "not behind, and not further out than the next
+ * release": the paragraph may describe the version being prepared, and may not
+ * describe one nobody could install even after that ships.
+ *
+ * Known residue, accepted rather than papered over: update the Status line for
+ * v0.20.x and then cut a 0.19.3 patch, and the patch ships prose naming a
+ * version it is not. It is one release wide, it self-corrects at the next
+ * minor, and closing it would mean a second strictness mode wired through the
+ * release path — more machinery than the hole is deep.
+ */
+function describesThisOrNextRelease(status, major, minor) {
+  if (status.major === major) {
+    return status.minor === minor || status.minor === minor + 1;
+  }
+  return status.major === major + 1 && status.minor === 0;
+}
+
 export function verifyReadmeStatusFreshness(rootDir = REPO_ROOT) {
   const errors = [];
   const npmVersion = readJson(join(rootDir, "package.json")).version;
@@ -110,13 +140,24 @@ export function verifyReadmeStatusFreshness(rootDir = REPO_ROOT) {
     return { ok: false, errors };
   }
 
-  if (status.major !== major || status.minor !== minor) {
+  const isBehind =
+    status.major < major || (status.major === major && status.minor < minor);
+
+  if (isBehind) {
     errors.push(
-      `README.md: the Status line describes v${status.major}.${status.minor}.x but this ` +
-        `release is ${npmVersion}. A minor bump means the phase moved — rewrite the ` +
-        "paragraph to say what is true now, then set the version to " +
-        `v${major}.${minor}.x. Do not bump the number alone: a fresh version on stale ` +
+      `README.md: the Status line describes v${status.major}.${status.minor}.x but the ` +
+        `released version is ${npmVersion}. A minor bump means the phase moved — rewrite ` +
+        "the paragraph to say what is true now, then set the version to " +
+        `v${major}.${minor}.x (or v${major}.${minor + 1}.x if you are writing it for the ` +
+        "release being prepared). Do not bump the number alone: a fresh version on stale " +
         "prose reads as current and is not.",
+    );
+  } else if (!describesThisOrNextRelease(status, major, minor)) {
+    errors.push(
+      `README.md: the Status line describes v${status.major}.${status.minor}.x, but the ` +
+        `released version is ${npmVersion} and the furthest this repo can be preparing is ` +
+        `v${major}.${minor + 1}.x. A Status line beyond the next release describes ` +
+        "something nobody can install.",
     );
   }
 

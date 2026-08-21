@@ -64,11 +64,36 @@ describe("unpublishGene", () => {
 
     const { unpublishGene } = await import("../../src/cloud/client.js");
     await expect(unpublishGene("someone-elses-gene")).rejects.toThrow(
-      /Nothing was unpublished.*not yours or does not exist/s
+      /Nothing was unpublished.*changed no row/s
     );
   });
 
-  it("asks the server to return the row, so nothing can be silent", async () => {
+  /**
+   * This test used to assert a PATCH to `/genes?id=eq.…` carrying
+   * `{ published: false }`. That request was refused by
+   * `trg_version_immutability` every single time it was sent, and the assertion
+   * passed anyway because the reply was a mock. What a mocked test can honestly
+   * check is the wire shape; whether the server accepts it is settled in
+   * `supabase/tests/gene_visibility_unpublish.sql` against a real database.
+   */
+  it("calls the audited RPC, with the argument names the function declares", async () => {
+    fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([OWNED_ROW]), { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { unpublishGene } = await import("../../src/cloud/client.js");
+    await unpublishGene("gene-1", "superseded");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/rpc/unpublish_gene");
+    expect(init.method).toBe("POST");
+    // PostgREST matches these names against the function signature; a typo here
+    // is a 404 from the server, not a TypeScript error.
+    expect(JSON.parse(init.body)).toEqual({ p_gene_id: "gene-1", p_reason: "superseded" });
+  });
+
+  it("sends an explicit null when no reason is given", async () => {
     fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify([OWNED_ROW]), { status: 200 })
     );
@@ -78,9 +103,7 @@ describe("unpublishGene", () => {
     await unpublishGene("gene-1");
 
     const [, init] = fetchMock.mock.calls[0];
-    expect(init.method).toBe("PATCH");
-    expect(init.headers.Prefer).toBe("return=representation");
-    expect(JSON.parse(init.body)).toEqual({ published: false });
+    expect(JSON.parse(init.body)).toEqual({ p_gene_id: "gene-1", p_reason: null });
   });
 
   /**
@@ -157,13 +180,14 @@ describe("republishGene", () => {
     const { republishGene } = await import("../../src/cloud/client.js");
     await expect(republishGene("gene-1")).resolves.toEqual(OWNED_ROW);
 
-    const [, init] = fetchMock.mock.calls[0];
-    expect(init.method).toBe("PATCH");
-    expect(JSON.parse(init.body)).toEqual({ published: true });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/rpc/republish_gene");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ p_gene_id: "gene-1", p_reason: null });
   });
 
   /** Same silent-success trap as unpublish, so the same guard. */
-  it("refuses to report success when RLS matched no rows", async () => {
+  it("refuses to report success when the server changed no row", async () => {
     fetchMock = vi.fn().mockResolvedValue(new Response("[]", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 

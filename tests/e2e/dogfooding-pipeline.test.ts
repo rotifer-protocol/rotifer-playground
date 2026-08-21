@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { tryLoadBinding } from "../../src/utils/binding.js";
 
 const ROOT = process.cwd();
 const CLI = "node dist/index.js";
@@ -31,9 +32,11 @@ const nodeVersion = parseInt(process.versions.node.split(".")[0], 10);
 // cover. The release branch is one such environment: `npm install
 // --package-lock-only` silently drops the @rotifer/playground-* entries whose
 // new version is not published yet, so `npm ci` installs no addon.
-const hasNativeAddon = existsSync(
-  join(ROOT, "node_modules", "@rotifer", `playground-${process.platform}-${process.arch}`),
-) || existsSync(join(ROOT, `index.${process.platform}-${process.arch}.node`));
+// Ask the loader the CLI itself uses. Deriving the package name here instead —
+// `playground-${platform}-${arch}` — silently skipped these cases everywhere,
+// because two of the four platform packages don't follow that shape
+// (`linux-x64-gnu`, `win32-x64-msvc`). The suite went green by not running.
+const hasNativeAddon = tryLoadBinding() !== null;
 const skipRuntime = nodeVersion < 22 || !hasNativeAddon;
 
 describe("Dogfooding Pipeline", () => {

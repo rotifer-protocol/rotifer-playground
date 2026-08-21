@@ -455,6 +455,30 @@ describe("plugin source sync pipeline", () => {
     }
   });
 
+  it("leaves the published skills alone", () => {
+    const root = createFixture();
+
+    // `skills/` was on the obsolete list, left over from one generated file the
+    // old layout wrote there and April deleted. Sync removes an obsolete path
+    // recursively and says nothing, so the day that name got reused for the
+    // Skills published to ClawHub on their own, the next sync would have taken
+    // all three with it. Nothing regenerates them — they are the source.
+    mkdirSync(join(root, "skills/rotifer-guide"), { recursive: true });
+    writeFileSync(join(root, "skills/README.md"), "published on their own\n", "utf8");
+    writeFileSync(join(root, "skills/rotifer-guide/SKILL.md"), "the manual\n", "utf8");
+    writeFileSync(join(root, "skills/rotifer-guide/clawhub.json"), '{"name":"x"}\n', "utf8");
+
+    syncOutputs(root);
+
+    expect(existsSync(join(root, "skills/rotifer-guide/SKILL.md"))).toBe(true);
+    expect(readFileSync(join(root, "skills/rotifer-guide/SKILL.md"), "utf8")).toBe("the manual\n");
+    expect(existsSync(join(root, "skills/README.md"))).toBe(true);
+    expect(existsSync(join(root, "skills/rotifer-guide/clawhub.json"))).toBe(true);
+
+    // And it is not drift either — check:plugins must not ask for them back.
+    expect(diffOutputs(root)).toEqual([]);
+  });
+
   it("removes obsolete legacy outputs during sync", () => {
     const root = createFixture();
 
@@ -462,7 +486,6 @@ describe("plugin source sync pipeline", () => {
     mkdirSync(join(root, ".codebuddy-plugin/plugins/rotifer-self-evolving-agent/skills"), {
       recursive: true,
     });
-    mkdirSync(join(root, "skills/evolve"), { recursive: true });
     mkdirSync(join(root, "rules"), { recursive: true });
 
     writeFileSync(join(root, ".cursor-plugin/plugin.json"), "{}\n", "utf8");
@@ -472,7 +495,6 @@ describe("plugin source sync pipeline", () => {
       "legacy\n",
       "utf8",
     );
-    writeFileSync(join(root, "skills/evolve/SKILL.md"), "legacy\n", "utf8");
     writeFileSync(join(root, "rules/rotifer-gene-dev.mdc"), "legacy\n", "utf8");
 
     syncOutputs(root);
@@ -480,7 +502,6 @@ describe("plugin source sync pipeline", () => {
     expect(existsSync(join(root, ".cursor-plugin/plugin.json"))).toBe(false);
     expect(existsSync(join(root, ".cursor-plugin/skills"))).toBe(false);
     expect(existsSync(join(root, ".codebuddy-plugin/plugins"))).toBe(false);
-    expect(existsSync(join(root, "skills"))).toBe(false);
     expect(existsSync(join(root, "rules"))).toBe(false);
   });
 });

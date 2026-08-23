@@ -139,6 +139,11 @@ describe("rotifer hello", () => {
         join(ws, "fresh"),
       );
       expect(stdout).not.toContain("None of the required genes");
+      // 到这里基因已经在了、模板已经解析。再往下是真的把 index.ts import 进来跑：
+      // 这一步要 Node 自带的 TypeScript 剥离（22.18+ / 23.6+，`process.features.typescript`）。
+      // Node 20 上任何 .ts 基因都 import 不了（"Unknown file extension .ts"）——那是
+      // 早就存在、与 init 无关的另一件事，不在这里伪装成通过，也不在这里替它背锅。
+      if (!(process.features as { typescript?: unknown }).typescript) return;
       expect(exitCode).toBe(0);
       expect(stdout).toContain("Execution complete");
     } finally {

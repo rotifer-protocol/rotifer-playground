@@ -106,7 +106,7 @@ describe("L0 gate must cover the Node.js fallback path", () => {
     writeGene({ withWasm: false });
     writeFileSync(
       join(projectDir, "genes", "test-gene", ".cloud-manifest.json"),
-      JSON.stringify({ cloud_id: "x", owner: "someone-else" }),
+      JSON.stringify({ cloud_id: "x", owner: "someone-else", installed_at: "2026-08-20T00:00:00.000Z" }),
     );
     vi.doMock("../../src/utils/binding.js", () => ({ tryLoadBinding: () => null }));
     expectExit();

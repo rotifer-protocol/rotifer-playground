@@ -159,7 +159,7 @@ describe("when the gate cannot run, provenance decides", () => {
     );
     writeFileSync(join(dir, "index.ts"), "export function express(i) { return i; }\n");
     if (opts.installed) {
-      writeFileSync(join(dir, ".cloud-manifest.json"), JSON.stringify({ cloud_id: "x", owner: "someone-else" }));
+      writeFileSync(join(dir, ".cloud-manifest.json"), JSON.stringify({ cloud_id: "x", owner: "someone-else", installed_at: "2026-08-20T00:00:00.000Z" }));
     }
   };
 

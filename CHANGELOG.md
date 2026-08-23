@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.20.0...v0.21.0) (2026-08-23)
+
+
+### Features
+
+* **cloud:** put the Chinese disclosure where the disclosure lives ([#265](https://github.com/rotifer-protocol/rotifer-playground/issues/265)) ([bcd29df](https://github.com/rotifer-protocol/rotifer-playground/commit/bcd29df2b18c58eef7cef6c92317fe3598af351d))
+* **profiles:** hold the disclosure's translations where the disclosure lives ([#263](https://github.com/rotifer-protocol/rotifer-playground/issues/263)) ([4f2a373](https://github.com/rotifer-protocol/rotifer-playground/commit/4f2a3732bb7bf91d43ada99962c6b2caac0b848a))
+
+
+### Bug Fixes
+
+* **engines:** state the Node floor the CLI already has ([#269](https://github.com/rotifer-protocol/rotifer-playground/issues/269)) ([370e550](https://github.com/rotifer-protocol/rotifer-playground/commit/370e55006c2f7284fafc7df65a688b56e4ee837f))
+* **init:** ship the gene the recommended first command depends on ([#268](https://github.com/rotifer-protocol/rotifer-playground/issues/268)) ([d579f23](https://github.com/rotifer-protocol/rotifer-playground/commit/d579f239c2c2744b60c2300d81b0bd305973594e))
+* **l0:** judge provenance by who wrote the manifest, not by whether one exists ([#267](https://github.com/rotifer-protocol/rotifer-playground/issues/267)) ([10d53ca](https://github.com/rotifer-protocol/rotifer-playground/commit/10d53ca9869355b335ce10b650fddd5bd7bc6275))
+
 ## [0.20.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.19.2...v0.20.0) (2026-08-21)
 
 

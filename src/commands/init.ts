@@ -21,6 +21,14 @@ const GENESIS_GENES = [
   "genesis-l0-constraint",
 ];
 
+// The welcome banner below and the README both name `hello --template
+// quality-advisor` as the first command to run. Its primary gene is not a
+// Genesis gene, and the template's fallbacks (the web-search pair) require a
+// `query` the template's own example input does not carry — so on a workspace
+// that has only the Genesis five, the recommended first command answers "None of
+// the required genes are available". Ship the gene the recommendation depends on.
+const RECOMMENDED_TEMPLATE_GENES = ["gene-health-scanner"];
+
 export const initCommand = new Command("init")
   .description("Initialize a new Rotifer Agent workspace")
   .argument("[workspace-name]", "Agent workspace directory name", "my-agent")
@@ -132,6 +140,18 @@ export const initCommand = new Command("init")
         }
       }
       display.success(`${installedCount} Genesis genes installed`);
+
+      let templateCount = 0;
+      for (const gene of RECOMMENDED_TEMPLATE_GENES) {
+        const srcDir = join(genesisSourceDir, gene);
+        if (existsSync(srcDir)) {
+          copyDirRecursive(srcDir, join(projectDir, "genes", gene));
+          templateCount++;
+        }
+      }
+      if (templateCount > 0) {
+        display.success(`${templateCount} starter gene installed for the recommended template (quality-advisor)`);
+      }
     }
 
     console.log();

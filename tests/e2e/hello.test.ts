@@ -125,6 +125,32 @@ describe("rotifer hello", () => {
     expect(stdout).not.toContain("Fitness Score");
   });
 
+  it("the recommended first command works on a workspace init just created", () => {
+    // README 和 init 的欢迎语都把 `hello --template quality-advisor` 当作第一条命令。
+    // 它的主基因 gene-health-scanner 得由 init 装进去——否则在一个刚 init 的工作区里，
+    // 第一条命令就是 "None of the required genes are available"。对着真实 0.20.0 包复现过。
+    const ws = join(tmpdir(), "rotifer-fresh-" + randomUUID());
+    mkdirSync(ws, { recursive: true });
+    try {
+      const init = run("init fresh", ws);
+      expect(init.exitCode).toBe(0);
+      const { stdout, exitCode } = run(
+        `hello --template quality-advisor --input '{"verbose":false}'`,
+        join(ws, "fresh"),
+      );
+      expect(stdout).not.toContain("None of the required genes");
+      // 到这里基因已经在了、模板已经解析。再往下是真的把 index.ts import 进来跑：
+      // 这一步要 Node 自带的 TypeScript 剥离（22.18+ / 23.6+，`process.features.typescript`）。
+      // Node 20 上任何 .ts 基因都 import 不了（"Unknown file extension .ts"）——那是
+      // 早就存在、与 init 无关的另一件事，不在这里伪装成通过，也不在这里替它背锅。
+      if (!(process.features as { typescript?: unknown }).typescript) return;
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain("Execution complete");
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
   it("fails gracefully when no genes are installed", () => {
     const { stdout, exitCode } = run(
       `hello --template quality-advisor --input '{"query":"test"}'`,

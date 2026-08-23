@@ -46,27 +46,29 @@ rotifer hello --template quality-advisor
 $ rotifer init my-agent
 
   Rotifer Protocol - Agent Workspace Initialization
-  ───────────────────────────────────────────
+  ───────────────────────────────────────────────────
 ✓ Agent workspace scaffolding created
 ℹ Installing Genesis genes...
 ✓ 5 Genesis genes installed
+✓ 1 starter gene installed for the recommended template (quality-advisor)
 
-  Arena Rankings
-  ────────────────
-  #   Name                        Domain        F(g)    Fidelity
-  ────────────────────────────────────────────────────────────────
-  1   genesis-web-search          search        0.87    Native
-  2   genesis-code-format         tooling       0.81    Native
-  3   genesis-l0-constraint       safety        0.79    Native
-  4   genesis-web-search-lite     search        0.77    Native
-  5   genesis-file-read           filesystem    0.74    Native
-  6   hello-world                 general       0.57    Wrapped
+  Starter Genes
+  ───────────────
+  Name                        Domain            Fidelity
+  ────────────────────────────────────────────────────────
+  genesis-file-read           filesystem        Native
+  hello-world                 general           Wrapped
+  gene-health-scanner         meta.diagnostics  Native
+  genesis-l0-constraint       safety            Native
+  genesis-web-search          search            Native
+  genesis-web-search-lite     search            Native
+  genesis-code-format         tooling           Native
+ℹ 7 starter gene(s) across 6 domain(s)
 
-ℹ 6 genes across 5 domain(s) — Arena is alive!
-✓ Agent workspace ready: my-agent
+  Agent workspace "my-agent" is ready!
 ```
 
-One command boots the Arena. `rotifer hello --template quality-advisor` turns those bundled genes into your first preset agent.
+One command scaffolds the workspace and ships the starter genes, including the one the recommended template needs. `rotifer hello --template quality-advisor` then turns them into your first preset agent.
 
 ---
 

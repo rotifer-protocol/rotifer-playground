@@ -4,7 +4,7 @@ This guide walks you through the full Rotifer gene lifecycle in about 10 minutes
 
 ## Prerequisites
 
-- **Node.js** >= 20.0.0
+- **Node.js** >= 22.18.0
 - **npm** >= 9
 - (Optional) **Rust toolchain** — only needed for building the NAPI bridge from source
 

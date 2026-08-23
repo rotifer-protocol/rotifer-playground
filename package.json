@@ -93,7 +93,7 @@
     "@rotifer/playground-win32-x64-msvc": "0.20.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.18.0"
   },
   "files": [
     "dist/",

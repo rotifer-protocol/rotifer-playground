@@ -3,7 +3,7 @@
 [![CI](https://github.com/rotifer-protocol/rotifer-playground/actions/workflows/ci.yml/badge.svg)](https://github.com/rotifer-protocol/rotifer-playground/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@rotifer/playground)](https://www.npmjs.com/package/@rotifer/playground)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22.18.0-brightgreen)](https://nodejs.org/)
 [![Protocol](https://img.shields.io/badge/Protocol-Frozen-orange)](https://github.com/rotifer-protocol/rotifer-spec)
 [![Discord](https://img.shields.io/discord/placeholder?label=Discord&logo=discord&color=5865F2)](https://rotifer.dev/discord)
 
@@ -25,7 +25,7 @@ Or use directly via npx:
 npx -y @rotifer/playground@latest init my-agent
 ```
 
-**Requirements:** Node.js >= 20.0.0
+**Requirements:** Node.js >= 22.18.0 (genes are TypeScript; the CLI relies on Node’s built-in type stripping to run them from source)
 
 ---
 

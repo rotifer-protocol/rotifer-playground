@@ -6,7 +6,7 @@ import { getProjectRoot, loadConfig } from "../utils/config.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { flushInvocationReports, recordGeneInvocation } from "../cloud/invocation.js";
-import { evaluateL0 } from "../utils/l0-gate.js";
+import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
 
 export const runCommand = new Command("run")
   .description("Execute a single gene directly")
@@ -127,7 +127,9 @@ export const runCommand = new Command("run")
       }
 
       if (existsSync(sourcePath)) {
-        const isCloudGene = existsSync(join(geneDir, ".cloud-manifest.json"));
+        // 「外来」按纸条的写入者判（install 写的才算），不按纸条有没有——随包发的
+        // 起步基因和用户自己发布过的基因都带纸条，但那是他们自己的代码。见 l0-gate.ts。
+        const isCloudGene = isExternallySourced(geneDir);
         if (isCloudGene && !options.trustUnsigned) {
           display.error("Cloud-installed genes cannot run via Node.js without sandbox.");
           display.hint("Use --trust-unsigned to explicitly allow unsandboxed execution.");

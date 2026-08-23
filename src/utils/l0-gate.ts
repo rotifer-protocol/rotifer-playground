@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { NativeBinding } from "./binding.js";
 
@@ -46,16 +46,35 @@ export function evaluateL0(
 }
 
 /**
- * 门控跑不了时，这个基因还能不能放行——取决于它是谁写的。
+ * 门控跑不了时，这个基因还能不能放行——取决于它是怎么来的。
  *
- * 外部来源的基因（装过来的、带 `.cloud-manifest.json`）一律拒绝：代码不是用户
- * 写的，没有沙箱也没有门控就以宿主全权限跑它，正是这次修复要堵的东西。
+ * 外部来源的基因一律拒绝：代码不是用户写的，没有沙箱也没有门控就以宿主全权限
+ * 跑它，正是 #251 要堵的东西。本地源码基因放行并警告：代码就在用户自己的项目里、
+ * 可读可改，而降级路径下的 L0 本来也只查元数据、拦不住实际行为；反过来，拒绝它
+ * 的代价是 CLI 在任何拿不到原生插件的环境里彻底不可用（不受支持的平台、optional
+ * dependency 装失败、发布分支 CI 的锁文件窗口）。
  *
- * 本地源码基因放行并警告：代码就在用户自己的项目里、可读可改，而降级路径下的
- * L0 本来也只查元数据、拦不住实际行为，所以这里的安全损失有限；反过来，拒绝它
- * 的代价是 `rotifer run` / `agent run` 在任何拿不到原生插件的环境里彻底不可用
- * （不受支持的平台、optional dependency 装失败、发布分支 CI 的锁文件窗口）。
+ * 「外来」怎么判，#251 最初用的是「有没有 `.cloud-manifest.json`」。这张纸条有两个
+ * 写入者：`install` 写（装过来的，别人的代码），`publish` 也写（你自己发出去之后
+ * 留下的记录）。随包发的基因全是后者——它们是从本仓库发布出去的，`init` 把其中五个
+ * 连纸条一起拷进每个新项目。于是在没有预编译插件的平台上，CLI 自己拷进去的起步基因
+ * 被 CLI 自己当成别人的代码拒绝：`hello` / `agent run` 全报「on an installed gene」。
+ * 对着真实发布的 0.20.0 包复现过。
+ *
+ * 两个写入者留的时间戳不同：`publish` 写 `published_at`，三个安装器（CLI / MCP /
+ * VS Code）写的都是 `installed_at`。所以外来 = 纸条是 install 写的。其余一律 fail
+ * closed——没有时间戳、读不出来、两个都有——都按外来处理：宁可在怪环境里多拦一个，
+ * 不在任何环境里放过一个。
  */
 export function isExternallySourced(geneDir: string): boolean {
-  return existsSync(join(geneDir, ".cloud-manifest.json"));
+  const manifestPath = join(geneDir, ".cloud-manifest.json");
+  if (!existsSync(manifestPath)) return false;
+  try {
+    const m = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<string, unknown>;
+    const hasPublishStamp = typeof m.published_at === "string";
+    const hasInstallStamp = "installed_at" in m;
+    return !(hasPublishStamp && !hasInstallStamp);
+  } catch {
+    return true;
+  }
 }

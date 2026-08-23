@@ -7,7 +7,7 @@ import * as display from "../utils/display.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding } from "../utils/binding.js";
-import { evaluateL0 } from "../utils/l0-gate.js";
+import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import { createGatewayFetch } from "../runtime/network-gateway.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
@@ -142,7 +142,8 @@ export const testCommand = new Command("test")
       }
     } else if (srcFile) {
       // Node.js fallback path — for uncompiled (Wrapped) genes
-      const isCloudGene = existsSync(join(geneDir, ".cloud-manifest.json"));
+      // 同 run：按纸条的写入者判外来（见 l0-gate.ts）。
+      const isCloudGene = isExternallySourced(geneDir);
       if (isCloudGene) {
         failed++;
         display.error("Test 6: Cloud-installed genes cannot run via Node.js without sandbox.");

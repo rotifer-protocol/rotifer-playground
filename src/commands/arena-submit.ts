@@ -10,7 +10,12 @@ import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding } from "../utils/binding.js";
 import { arenaSubmit as cloudArenaSubmit, publishEvaluationRuns } from "../cloud/client.js";
 import { requireAuth } from "../cloud/auth.js";
-import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
+import {
+  FUEL_LADDER,
+  classifyRunFailure,
+  constraintsForFuel,
+  type RunFailureKind,
+} from "../utils/run-fuel-ladder.js";
 import { compileOutputValidator, isRunSuccessful } from "../utils/arena-success.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { applyFidelityDiscount, estimateBaseFitness, type DiscountedFitness } from "../utils/fidelity-discount.js";
@@ -169,13 +174,7 @@ export const arenaSubmitCommand = new Command("submit")
     // The evidence, hoisted out of the measuring branch because the submit
     // needs it too. Empty on the estimate path — an estimate ran nothing and
     // has nothing to show.
-    const evaluationRuns: {
-      run_index: number;
-      sandbox_success: boolean;
-      output_schema_valid: boolean | null;
-      latency_ms: number;
-      resource_cost: number;
-    }[] = [];
+    const evaluationRuns: import("../cloud/client.js").EvaluationRun[] = [];
 
     let fitness: {
       value: number;
@@ -204,6 +203,7 @@ export const arenaSubmitCommand = new Command("submit")
         schemaOk: boolean | null;
         latencyMs: number;
         resourceCost: number;
+        failureKind: RunFailureKind | null;
       }[] = [];
 
       // S_r counts a run as successful only when the sandbox succeeded AND the
@@ -215,15 +215,30 @@ export const arenaSubmitCommand = new Command("submit")
       }
       let contractFailures = 0;
 
+      let fuelRetries = 0;
       for (let i = 0; i < SANDBOX_RUNS; i++) {
         const testInput = generateTestInput(phenotype.inputSchema, i);
         try {
-          const execResult = binding.executeGene(
-            irWasm,
-            JSON.stringify(testInput),
-            JSON.stringify(phenotypeForExec),
-            DEFAULT_SANDBOX_CONSTRAINTS_JSON
-          );
+          // Climb the fuel ladder: a run that fails on fuel alone is retried
+          // with a larger budget. Every other failure — and success — is
+          // final on the rung where it happened, and the fuel actually burned
+          // is what gets recorded, so an expensive Gene still pays its price
+          // in the efficiency term.
+          let execResult!: ReturnType<typeof binding.executeGene>;
+          let failureKind: RunFailureKind | null = null;
+          for (let rung = 0; rung < FUEL_LADDER.length; rung++) {
+            execResult = binding.executeGene(
+              irWasm,
+              JSON.stringify(testInput),
+              JSON.stringify(phenotypeForExec),
+              constraintsForFuel(FUEL_LADDER[rung])
+            );
+            failureKind = execResult.success
+              ? null
+              : classifyRunFailure(execResult.errorMessage);
+            if (failureKind !== "fuel-exhausted" || rung === FUEL_LADDER.length - 1) break;
+            fuelRetries++;
+          }
           const isSuccessfulRun = isRunSuccessful(
             { sandboxSuccess: execResult.success, output: execResult.output },
             validateOutput,
@@ -238,10 +253,16 @@ export const arenaSubmitCommand = new Command("submit")
             schemaOk: (validateOutput && execResult.success) ? isSuccessfulRun : null,
             latencyMs: execResult.durationMs,
             resourceCost: execResult.fuelConsumed,
+            failureKind,
           });
         } catch {
-          results.push({ success: false, sandboxOk: false, schemaOk: null, latencyMs: 0, resourceCost: 0 });
+          results.push({ success: false, sandboxOk: false, schemaOk: null, latencyMs: 0, resourceCost: 0, failureKind: "crash" });
         }
+      }
+      if (fuelRetries > 0) {
+        display.info(
+          `Fuel ladder: ${fuelRetries} run(s) retried with a larger budget — cost recorded as burned`
+        );
       }
 
       for (const [i, r] of results.entries()) {
@@ -251,6 +272,10 @@ export const arenaSubmitCommand = new Command("submit")
           output_schema_valid: r.schemaOk,
           latency_ms: r.latencyMs,
           resource_cost: r.resourceCost,
+          // Separates "ran out of a rationed resource at the top of the fuel
+          // ladder" from "crashed" in the public ledger (plan 2.12): a reader
+          // auditing S_r can tell an evaluation-design limit from a defect.
+          failure_kind: r.failureKind,
         });
       }
 

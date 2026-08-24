@@ -76,7 +76,6 @@ describe("isExternallySourced judges by channel, not by presence", () => {
 
 describe("when the gate cannot run, the genes init ships must still run", () => {
   let projectDir: string;
-  let previousCwd: string;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -97,7 +96,6 @@ describe("when the gate cannot run, the genes init ships must still run", () => 
 
   beforeEach(() => {
     vi.resetModules();
-    previousCwd = process.cwd();
     projectDir = mkdtempSync(join(tmpdir(), "rotifer-l0-ship-"));
     writeFileSync(
       join(projectDir, "rotifer.json"),
@@ -105,13 +103,15 @@ describe("when the gate cannot run, the genes init ships must still run", () => 
     );
     // 原生插件缺失——linux-arm64 / alpine / 可选依赖没装上 的处境
     vi.doMock("../../src/utils/binding.js", () => ({ tryLoadBinding: () => null }));
-    process.chdir(projectDir);
+    // chdir 在 worker 线程里会抛（Stryker 的 vitest runner 就跑在里面，
+    // 初始测试一挂整轮变异测试就中止）；命令全经 process.cwd() 找项目根，
+    // spy 等效且线程安全。
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
-    process.chdir(previousCwd);
     logSpy.mockRestore();
     errorSpy.mockRestore();
     rmSync(projectDir, { recursive: true, force: true });

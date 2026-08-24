@@ -53,7 +53,6 @@ describe("evaluateL0 separates a safety verdict from an inability to judge", () 
 
 describe("L0 gate must cover `test` and `hello` fallbacks", () => {
   let projectDir: string;
-  let previousCwd: string;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -75,20 +74,21 @@ describe("L0 gate must cover `test` and `hello` fallbacks", () => {
 
   beforeEach(() => {
     vi.resetModules();
-    previousCwd = process.cwd();
     projectDir = mkdtempSync(join(tmpdir(), "rotifer-l0-rest-"));
     writeFileSync(
       join(projectDir, "rotifer.json"),
       JSON.stringify({ name: "test", version: "0.1.0", author: "test", genes_dir: "genes" }),
     );
     writeGene("solo");
-    process.chdir(projectDir);
+    // chdir 在 worker 线程里会抛（Stryker 的 vitest runner 就跑在里面，
+    // 初始测试一挂整轮变异测试就中止）；命令全经 process.cwd() 找项目根，
+    // spy 等效且线程安全。
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
-    process.chdir(previousCwd);
     logSpy.mockRestore();
     errorSpy.mockRestore();
     rmSync(projectDir, { recursive: true, force: true });
@@ -142,7 +142,6 @@ describe("L0 gate must cover `test` and `hello` fallbacks", () => {
 
 describe("when the gate cannot run, provenance decides", () => {
   let projectDir: string;
-  let previousCwd: string;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -165,7 +164,6 @@ describe("when the gate cannot run, provenance decides", () => {
 
   beforeEach(() => {
     vi.resetModules();
-    previousCwd = process.cwd();
     projectDir = mkdtempSync(join(tmpdir(), "rotifer-l0-prov-"));
     writeFileSync(
       join(projectDir, "rotifer.json"),
@@ -173,13 +171,12 @@ describe("when the gate cannot run, provenance decides", () => {
     );
     // 原生插件缺失——正是发布分支锁文件窗口、以及无预编译二进制平台的处境
     vi.doMock("../../src/utils/binding.js", () => ({ tryLoadBinding: () => null }));
-    process.chdir(projectDir);
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
-    process.chdir(previousCwd);
     logSpy.mockRestore();
     errorSpy.mockRestore();
     rmSync(projectDir, { recursive: true, force: true });

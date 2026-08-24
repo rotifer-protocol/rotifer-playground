@@ -1144,7 +1144,7 @@ impl WasmtimeSandbox {
         // Host metering (ADR-327 D4): fuel surcharges are already inside
         // fuel_consumed; the host-side channel is reported alongside.
         let hy = &store.data().hybrid;
-        let host = (hy.host_calls > 0).then(|| HostMetering {
+        let host = (hy.host_calls > 0).then_some(HostMetering {
             host_call_millis: hy.host_call_millis,
             host_calls: hy.host_calls,
             host_bytes_in: hy.host_bytes_in,

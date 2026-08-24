@@ -107,6 +107,19 @@ export interface ExternalDependency {
   apiType: string;
   /** Semantic identifier (e.g. "cve-database", "llm-judge", "git-cli"). */
   semanticTag: string;
+  /**
+   * Hosts this dependency talks to. The `rotifer.net.fetch` host function
+   * refuses any request whose host is not attributable to a declared
+   * dependency (ADR-327 pre-execution validation, B-2) — a dependency
+   * without domains cannot be fetched against.
+   */
+  domains?: string[];
+  /**
+   * Env NAMES this dependency needs. Values never appear in a phenotype;
+   * secret-tier values are substituted host-side into request headers via
+   * `${env:NAME}` and never enter guest memory (ADR-327).
+   */
+  credentials?: string[];
   /** Optional expected SLA. */
   sla?: {
     expectedLatency?: number;

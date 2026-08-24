@@ -426,14 +426,14 @@ pub fn perform_fetch(
         };
 
         // Whitelist-checked manual redirect.
-        if (300..400).contains(&response.status()) {
-            if let Some(location) = response.header("location") {
-                let next = checked
-                    .join(location)
-                    .map_err(|_| errors::ERR_INVALID_REQUEST)?;
-                current_url = next.to_string();
-                continue;
-            }
+        if (300..400).contains(&response.status())
+            && let Some(location) = response.header("location")
+        {
+            let next = checked
+                .join(location)
+                .map_err(|_| errors::ERR_INVALID_REQUEST)?;
+            current_url = next.to_string();
+            continue;
         }
 
         let status = response.status();

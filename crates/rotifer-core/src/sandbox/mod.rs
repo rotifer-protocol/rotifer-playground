@@ -5,6 +5,8 @@
 
 mod wasmtime_sandbox;
 pub mod hybrid;
+#[cfg(test)]
+mod hybrid_wasm_tests;
 
 pub use wasmtime_sandbox::WasmtimeSandbox;
 
@@ -70,6 +72,23 @@ pub trait Sandbox: Send + Sync {
     /// can compare a gene's declared caps against what the sandbox actually allows.
     fn constraints(&self) -> &ConstraintSet;
 
+    /// Execute with phenotype-derived capability policy. The default ignores
+    /// the phenotype and behaves exactly like `execute()` — an implementor
+    /// that supports hybrid capability modules (ADR-327) overrides this to
+    /// enforce fidelity honesty and derive the network/env policy. Callers
+    /// should not invoke this directly; it exists so `execute_gated` can
+    /// thread the phenotype past the L0 gate into the runtime.
+    fn execute_with_phenotype(
+        &self,
+        wasm_bytes: &[u8],
+        context: &Context,
+        input: serde_json::Value,
+        phenotype: &Phenotype,
+    ) -> Result<GeneResult, SandboxError> {
+        let _ = phenotype;
+        self.execute(wasm_bytes, context, input)
+    }
+
     /// Execute with L0 gate enforcement — the entry point every caller should use.
     ///
     /// This lives on the trait, not on a concrete sandbox, on purpose. It used to be
@@ -94,6 +113,6 @@ pub trait Sandbox: Send + Sync {
                 msgs.join("; ")
             )));
         }
-        self.execute(wasm_bytes, context, input)
+        self.execute_with_phenotype(wasm_bytes, context, input, phenotype)
     }
 }

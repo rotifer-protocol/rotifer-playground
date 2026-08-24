@@ -467,6 +467,28 @@ pub fn perform_fetch(
     Err(errors::ERR_NETWORK)
 }
 
+/// The three capability module names (ADR-327 D2).
+pub const CAPABILITY_MODULES: [&str; 3] = ["rotifer.net", "rotifer.kv", "rotifer.env"];
+
+/// Cheap wasmparser scan: does this module import any capability module?
+/// Malformed bytes report `false` — `Module::new` rejects them later with a
+/// proper compilation error.
+pub fn imports_capability_modules(wasm: &[u8]) -> bool {
+    use wasmparser::{Parser, Payload};
+    for payload in Parser::new(0).parse_all(wasm) {
+        let Ok(Payload::ImportSection(reader)) = payload else { continue };
+        for imports in reader.into_iter().flatten() {
+            for entry in imports {
+                let Ok((_, import)) = entry else { continue };
+                if CAPABILITY_MODULES.contains(&import.module) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Wall-clock guard for one host call: measures elapsed time into the
 /// runtime's cumulative counter and reports whether the budget was already
 /// gone before the call.

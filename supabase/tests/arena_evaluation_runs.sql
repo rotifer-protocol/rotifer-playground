@@ -23,7 +23,7 @@
 
 BEGIN;
 
-SELECT plan(10);
+SELECT plan(12);
 
 INSERT INTO auth.users (id, email, raw_user_meta_data)
 VALUES ('b9111111-1111-4111-8111-111111111111', 'runs-test@example.com',
@@ -112,6 +112,27 @@ SELECT is(
       AND privilege_type IN ('UPDATE', 'DELETE', 'TRUNCATE')),
   0::bigint,
   'T10: UPDATE/DELETE/TRUNCATE are revoked outright, not merely unpolicied');
+
+-- T11 — failure_kind accepts the four vocabulary values and NULL (plan 2.12).
+-- NULL is load-bearing: it means "successful run" or "row predating the
+-- column", never a fifth kind.
+SELECT lives_ok(
+  $$ INSERT INTO arena_evaluation_runs
+       (gene_id, submission_id, run_index, sandbox_success, latency_ms, resource_cost, failure_kind)
+     VALUES ('b9222222-2222-4222-8222-222222222222',
+             'b9555555-5555-4555-8555-555555555555', 0, false, 12.5, 500000000, 'fuel-exhausted') $$,
+  'T11: fuel-exhausted is a recordable failure kind');
+
+-- T12 — a made-up kind is rejected: the vocabulary is the contract, and a
+-- client inventing "oom-ish" must fail loudly rather than pollute the ledger.
+SELECT throws_ok(
+  $$ INSERT INTO arena_evaluation_runs
+       (gene_id, submission_id, run_index, sandbox_success, latency_ms, resource_cost, failure_kind)
+     VALUES ('b9222222-2222-4222-8222-222222222222',
+             'b9555555-5555-4555-8555-555555555555', 1, false, 12.5, 1, 'oom-ish') $$,
+  '23514',
+  NULL,
+  'T12: an unknown failure kind is rejected');
 
 SELECT * FROM finish();
 

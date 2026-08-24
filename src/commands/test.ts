@@ -9,6 +9,11 @@ import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding } from "../utils/binding.js";
 import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
+import {
+  FUEL_LADDER,
+  classifyRunFailure,
+  constraintsForFuel,
+} from "../utils/run-fuel-ladder.js";
 import { createGatewayFetch } from "../runtime/network-gateway.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 
@@ -97,12 +102,23 @@ export const testCommand = new Command("test")
       try {
         const irWasm = readFileSync(irWasmPath) as Buffer;
         const { irHash: _strip, ...phenotypeForExec } = phenotype;
-        const result = binding.executeGene(
-          irWasm,
-          JSON.stringify(testInput),
-          JSON.stringify(phenotypeForExec),
-          DEFAULT_SANDBOX_CONSTRAINTS_JSON,
-        );
+        // Same fuel ladder as arena submit: a run that dies of fuel alone
+        // retries with a larger budget, so `rotifer test` and admission agree
+        // about what a compute-heavy Gene is.
+        let result!: ReturnType<typeof binding.executeGene>;
+        for (let rung = 0; rung < FUEL_LADDER.length; rung++) {
+          result = binding.executeGene(
+            irWasm,
+            JSON.stringify(testInput),
+            JSON.stringify(phenotypeForExec),
+            constraintsForFuel(FUEL_LADDER[rung]),
+          );
+          if (result.success) break;
+          if (classifyRunFailure(result.errorMessage) !== "fuel-exhausted") break;
+          if (rung < FUEL_LADDER.length - 1) {
+            display.info(`  fuel exhausted at ${FUEL_LADDER[rung]} — retrying with a larger budget`);
+          }
+        }
 
         if (result.success) {
           passed++;
@@ -134,7 +150,13 @@ export const testCommand = new Command("test")
           }
         } else {
           failed++;
+          const kind = classifyRunFailure(result.errorMessage);
           display.error("  executeGene() failed: " + result.errorMessage);
+          if (kind === "fuel-exhausted") {
+            display.hint(
+              `This input exhausts the top of the fuel ladder (${FUEL_LADDER[FUEL_LADDER.length - 1]}) — a resource ceiling, not necessarily a defect.`
+            );
+          }
         }
       } catch (err: any) {
         failed++;

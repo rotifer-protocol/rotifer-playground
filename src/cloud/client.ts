@@ -650,6 +650,13 @@ export interface EvaluationRun {
   output_schema_valid: boolean | null;
   latency_ms: number;
   resource_cost: number;
+  /**
+   * Why a failed run failed, when the sandbox could say: "fuel-exhausted",
+   * "memory-exceeded", "timeout", or "crash". null for successful runs (and
+   * for rows written before the column existed). Lets an auditor separate an
+   * evaluation-resource limit from a Gene defect (plan 2.12).
+   */
+  failure_kind: string | null;
 }
 
 /**

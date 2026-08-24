@@ -261,6 +261,36 @@ function collectDiagnostics(phenotype: Record<string, unknown>): ValidationDiagn
               `${VALID_DEGRADATION_BEHAVIORS.join(", ")} (got '${db ?? "<undefined>"}')`,
           });
         }
+        // ADR-327: optional domains / credentials — arrays of non-empty
+        // strings when present.
+        const isStringArray = (v: unknown): v is string[] =>
+          Array.isArray(v) && v.every((s) => typeof s === "string" && s.length > 0);
+        if (dep.domains !== undefined && !isStringArray(dep.domains)) {
+          diags.push({
+            level: "error",
+            code: "E0115",
+            message: `externalDependencies[${i}].domains must be an array of non-empty strings`,
+          });
+        }
+        if (dep.credentials !== undefined && !isStringArray(dep.credentials)) {
+          diags.push({
+            level: "error",
+            code: "E0116",
+            message: `externalDependencies[${i}].credentials must be an array of non-empty strings (env NAMES only — never values)`,
+          });
+        }
+        // A dependency without domains can never be fetched against — the
+        // runtime refuses unattributable request hosts (ADR-327 B-2).
+        if (phenotype.network !== undefined && dep.domains === undefined) {
+          diags.push({
+            level: "warning",
+            code: "W0115",
+            message:
+              `externalDependencies[${i}] declares no domains — rotifer.net.fetch requires ` +
+              `every request host to be attributable to a declared dependency, so this ` +
+              `dependency cannot be reached at runtime`,
+          });
+        }
       }
     }
   }

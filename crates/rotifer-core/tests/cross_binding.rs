@@ -66,6 +66,7 @@ fn test_phenotype() -> Phenotype {
         pricing_hint: None,
         semantic_requirements: None,
         network: None,
+        external_dependencies: None,
         llm_requirements: None,
         guard_config: None,
     }

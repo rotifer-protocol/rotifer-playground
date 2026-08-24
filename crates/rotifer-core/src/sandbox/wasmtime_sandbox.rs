@@ -2,8 +2,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use wasmtime::*;
 
+use super::hybrid::{self, HybridConfig};
 use super::{ConstraintSet, Sandbox, SandboxError};
-use crate::types::{Context, ExecutionMetadata, GeneResult};
+use crate::types::gene::{Fidelity, Phenotype};
+use crate::types::{Context, ExecutionMetadata, GeneResult, HostMetering};
 
 /// Source-level shapes of an async `express()`, mirroring the compile-time
 /// guard (E0025) in the CLI's Javy compiler.
@@ -38,6 +40,9 @@ struct HostState {
     stdout: Arc<Mutex<Vec<u8>>>,
     stderr: Arc<Mutex<Vec<u8>>>,
     limiter: StoreLimits,
+    /// Hybrid capability state (ADR-327). `HybridRuntime::default()` denies
+    /// everything, which is what the ungated `execute()` path carries.
+    hybrid: hybrid::HybridRuntime,
 }
 
 impl ResourceLimiter for HostState {
@@ -75,6 +80,14 @@ struct StoreLimits {
 pub struct WasmtimeSandbox {
     engine: Arc<Engine>,
     constraints: ConstraintSet,
+    /// Deployer-granted env values for hybrid genes (ADR-327 D3): `plain`
+    /// is readable via `rotifer.env.read`; `secret` is usable only through
+    /// host-side `${env:NAME}` substitution and never enters guest memory.
+    hybrid_env_plain: std::collections::HashMap<String, String>,
+    hybrid_env_secret: std::collections::HashMap<String, String>,
+    /// Test hook: admit plain-http loopback URLs in `rotifer.net.fetch`.
+    /// Never derived from a phenotype and never wired to the CLI.
+    insecure_loopback: bool,
 }
 
 impl WasmtimeSandbox {
@@ -89,7 +102,26 @@ impl WasmtimeSandbox {
         Ok(Self {
             engine: engine.into(),
             constraints,
+            hybrid_env_plain: Default::default(),
+            hybrid_env_secret: Default::default(),
+            insecure_loopback: false,
         })
+    }
+
+    /// Grant env values to hybrid executions (binding deployment wiring).
+    pub fn set_hybrid_env(
+        &mut self,
+        plain: std::collections::HashMap<String, String>,
+        secret: std::collections::HashMap<String, String>,
+    ) {
+        self.hybrid_env_plain = plain;
+        self.hybrid_env_secret = secret;
+    }
+
+    /// Binding-internal test hook — see the field doc.
+    #[doc(hidden)]
+    pub fn set_insecure_loopback(&mut self, on: bool) {
+        self.insecure_loopback = on;
     }
 
     /// Create a sandbox with protocol-default constraints (64 MB, 1M fuel, 30 s).
@@ -479,6 +511,392 @@ impl WasmtimeSandbox {
         Ok(())
     }
 
+    /// Register the hybrid capability modules `rotifer.net` / `rotifer.kv` /
+    /// `rotifer.env` (ADR-327, `nonstandard` preview pending IR spec §6.2
+    /// incorporation). Every permission decision happens per call against the
+    /// store's `HybridRuntime`, so linking is unconditional-when-imported.
+    fn link_hybrid(linker: &mut Linker<HostState>) -> Result<(), SandboxError> {
+        let map_err = |e: wasmtime::Error| SandboxError::ExecutionFailed(e.to_string());
+
+        linker
+            .func_wrap(
+                "rotifer.net",
+                "fetch",
+                |mut caller: Caller<'_, HostState>,
+                 req_ptr: i32,
+                 req_len: i32,
+                 out_ptr: i32,
+                 out_cap: i32|
+                 -> i32 {
+                    let timer = hybrid::HostCallTimer::start();
+                    let code = Self::net_fetch_call(&mut caller, req_ptr, req_len, out_ptr, out_cap);
+                    timer.stop_into(&mut caller.data_mut().hybrid);
+                    code
+                },
+            )
+            .map_err(map_err)?;
+
+        linker
+            .func_wrap(
+                "rotifer.kv",
+                "put",
+                |mut caller: Caller<'_, HostState>,
+                 key_ptr: i32,
+                 key_len: i32,
+                 val_ptr: i32,
+                 val_len: i32|
+                 -> i32 {
+                    let timer = hybrid::HostCallTimer::start();
+                    let code = Self::kv_put_call(&mut caller, key_ptr, key_len, val_ptr, val_len);
+                    timer.stop_into(&mut caller.data_mut().hybrid);
+                    code
+                },
+            )
+            .map_err(map_err)?;
+
+        linker
+            .func_wrap(
+                "rotifer.kv",
+                "get",
+                |mut caller: Caller<'_, HostState>,
+                 key_ptr: i32,
+                 key_len: i32,
+                 out_ptr: i32,
+                 out_cap: i32|
+                 -> i32 {
+                    let timer = hybrid::HostCallTimer::start();
+                    let code = Self::kv_get_call(&mut caller, key_ptr, key_len, out_ptr, out_cap);
+                    timer.stop_into(&mut caller.data_mut().hybrid);
+                    code
+                },
+            )
+            .map_err(map_err)?;
+
+        linker
+            .func_wrap(
+                "rotifer.kv",
+                "del",
+                |mut caller: Caller<'_, HostState>, key_ptr: i32, key_len: i32| -> i32 {
+                    let timer = hybrid::HostCallTimer::start();
+                    let code = Self::kv_del_call(&mut caller, key_ptr, key_len);
+                    timer.stop_into(&mut caller.data_mut().hybrid);
+                    code
+                },
+            )
+            .map_err(map_err)?;
+
+        linker
+            .func_wrap(
+                "rotifer.env",
+                "read",
+                |mut caller: Caller<'_, HostState>,
+                 key_ptr: i32,
+                 key_len: i32,
+                 out_ptr: i32,
+                 out_cap: i32|
+                 -> i32 {
+                    let timer = hybrid::HostCallTimer::start();
+                    let code = Self::env_read_call(&mut caller, key_ptr, key_len, out_ptr, out_cap);
+                    timer.stop_into(&mut caller.data_mut().hybrid);
+                    code
+                },
+            )
+            .map_err(map_err)?;
+
+        Ok(())
+    }
+
+    // ── hybrid host call bodies ─────────────────────────────────────────
+
+    fn hybrid_memory(caller: &mut Caller<'_, HostState>) -> Option<Memory> {
+        caller.get_export("memory").and_then(|e| e.into_memory())
+    }
+
+    /// Bounds-checked guest read; `None` on out-of-range args.
+    fn hybrid_read(
+        caller: &mut Caller<'_, HostState>,
+        memory: &Memory,
+        ptr: i32,
+        len: i32,
+    ) -> Option<Vec<u8>> {
+        if ptr < 0 || len < 0 {
+            return None;
+        }
+        let mut buf = vec![0u8; len as usize];
+        memory.read(&mut *caller, ptr as usize, &mut buf).ok()?;
+        Some(buf)
+    }
+
+    /// Bounds-checked guest write.
+    fn hybrid_write(
+        caller: &mut Caller<'_, HostState>,
+        memory: &Memory,
+        ptr: i32,
+        data: &[u8],
+    ) -> bool {
+        ptr >= 0 && memory.write(&mut *caller, ptr as usize, data).is_ok()
+    }
+
+    /// Deduct a fuel surcharge (ADR-327 D4). Saturates at zero: an
+    /// underfunded call leaves the guest with no fuel, so its next
+    /// instruction traps as fuel-exhausted — the surcharge is a real bill,
+    /// not advisory.
+    fn hybrid_charge(caller: &mut Caller<'_, HostState>, amount: u64) {
+        let fuel = caller.get_fuel().unwrap_or(0);
+        let _ = caller.set_fuel(fuel.saturating_sub(amount));
+    }
+
+    fn net_fetch_call(
+        caller: &mut Caller<'_, HostState>,
+        req_ptr: i32,
+        req_len: i32,
+        out_ptr: i32,
+        out_cap: i32,
+    ) -> i32 {
+        use hybrid::errors::*;
+        use sha2::{Digest, Sha256};
+
+        if caller.data().hybrid.host_budget_exhausted() {
+            return ERR_TIMEOUT;
+        }
+        let Some(memory) = Self::hybrid_memory(caller) else {
+            return ERR_INVALID_REQUEST;
+        };
+        let Some(req_bytes) = Self::hybrid_read(caller, &memory, req_ptr, req_len) else {
+            return ERR_INVALID_REQUEST;
+        };
+        if out_cap < 0 {
+            return ERR_INVALID_REQUEST;
+        }
+
+        let digest: [u8; 32] = Sha256::digest(&req_bytes).into();
+
+        // Retained-response retry (ADR-327 §2.1): a byte-identical repeat is
+        // served from the buffer — no new network I/O, no new surcharge.
+        if let Some((held_digest, held)) = &caller.data().hybrid.retained {
+            if *held_digest == digest {
+                let held = held.clone();
+                if held.len() <= out_cap as usize {
+                    if !Self::hybrid_write(caller, &memory, out_ptr, &held) {
+                        return ERR_INVALID_REQUEST;
+                    }
+                    caller.data_mut().hybrid.retained = None;
+                    return held.len() as i32;
+                }
+                return ERR_BUFFER_TOO_SMALL;
+            }
+            // A different request invalidates the buffer.
+            caller.data_mut().hybrid.retained = None;
+        }
+
+        let (policy, plain, secret, loopback) = {
+            let cfg = &caller.data().hybrid.config;
+            (
+                cfg.net.clone(),
+                cfg.env_plain.clone(),
+                cfg.env_secret.clone(),
+                cfg.allow_insecure_loopback,
+            )
+        };
+        let Some(policy) = policy else {
+            return ERR_PERMISSION_DENIED;
+        };
+
+        let req = match hybrid::parse_request_envelope(&req_bytes) {
+            Ok(r) => r,
+            Err(code) => return code,
+        };
+        if let Err(code) = hybrid::check_url(&policy, &req.url, loopback) {
+            return code;
+        }
+        if caller.data().hybrid.requests_made >= policy.max_requests {
+            return ERR_RATE_LIMITED;
+        }
+        let resolved_headers = match hybrid::substitute_headers(&req.headers, &plain, &secret) {
+            Ok(h) => h,
+            Err(code) => return code,
+        };
+
+        caller.data_mut().hybrid.requests_made += 1;
+        let envelope = match hybrid::perform_fetch(&policy, loopback, &req, &resolved_headers) {
+            Ok(e) => e,
+            Err(code) => return code,
+        };
+
+        let bytes_out = req_bytes.len() as u64;
+        let bytes_in = envelope.len() as u64;
+        {
+            let rt = &mut caller.data_mut().hybrid;
+            rt.host_bytes_out += bytes_out;
+            rt.host_bytes_in += bytes_in;
+        }
+        Self::hybrid_charge(
+            caller,
+            hybrid::fuel_surcharge(
+                hybrid::constants::BASE_CALL_FUEL_NET_FETCH,
+                bytes_in,
+                bytes_out,
+            ),
+        );
+
+        if envelope.len() > out_cap as usize {
+            caller.data_mut().hybrid.retained = Some((digest, envelope));
+            return ERR_BUFFER_TOO_SMALL;
+        }
+        if !Self::hybrid_write(caller, &memory, out_ptr, &envelope) {
+            return ERR_INVALID_REQUEST;
+        }
+        envelope.len() as i32
+    }
+
+    fn kv_put_call(
+        caller: &mut Caller<'_, HostState>,
+        key_ptr: i32,
+        key_len: i32,
+        val_ptr: i32,
+        val_len: i32,
+    ) -> i32 {
+        use hybrid::errors::*;
+
+        if caller.data().hybrid.host_budget_exhausted() {
+            return ERR_TIMEOUT;
+        }
+        let Some(memory) = Self::hybrid_memory(caller) else {
+            return ERR_INVALID_REQUEST;
+        };
+        let Some(key) = Self::hybrid_read(caller, &memory, key_ptr, key_len)
+            .and_then(|b| String::from_utf8(b).ok())
+        else {
+            return ERR_INVALID_REQUEST;
+        };
+        let Some(value) = Self::hybrid_read(caller, &memory, val_ptr, val_len) else {
+            return ERR_INVALID_REQUEST;
+        };
+
+        let bytes_out = (key.len() + value.len()) as u64;
+        let code = {
+            let rt = &mut caller.data_mut().hybrid;
+            rt.host_bytes_out += bytes_out;
+            rt.kv.put(&key, &value)
+        };
+        Self::hybrid_charge(
+            caller,
+            hybrid::fuel_surcharge(hybrid::constants::BASE_CALL_FUEL_KV, 0, bytes_out),
+        );
+        code
+    }
+
+    fn kv_get_call(
+        caller: &mut Caller<'_, HostState>,
+        key_ptr: i32,
+        key_len: i32,
+        out_ptr: i32,
+        out_cap: i32,
+    ) -> i32 {
+        use hybrid::errors::*;
+
+        if caller.data().hybrid.host_budget_exhausted() {
+            return ERR_TIMEOUT;
+        }
+        let Some(memory) = Self::hybrid_memory(caller) else {
+            return ERR_INVALID_REQUEST;
+        };
+        let Some(key) = Self::hybrid_read(caller, &memory, key_ptr, key_len)
+            .and_then(|b| String::from_utf8(b).ok())
+        else {
+            return ERR_INVALID_REQUEST;
+        };
+        if out_cap < 0 {
+            return ERR_INVALID_REQUEST;
+        }
+
+        let Some(value) = caller.data().hybrid.kv.get(&key).map(|v| v.to_vec()) else {
+            Self::hybrid_charge(caller, hybrid::constants::BASE_CALL_FUEL_KV);
+            return 0;
+        };
+        if value.len() > out_cap as usize {
+            return ERR_BUFFER_TOO_SMALL;
+        }
+        if !Self::hybrid_write(caller, &memory, out_ptr, &value) {
+            return ERR_INVALID_REQUEST;
+        }
+        let bytes_in = value.len() as u64;
+        caller.data_mut().hybrid.host_bytes_in += bytes_in;
+        Self::hybrid_charge(
+            caller,
+            hybrid::fuel_surcharge(hybrid::constants::BASE_CALL_FUEL_KV, bytes_in, 0),
+        );
+        value.len() as i32
+    }
+
+    fn kv_del_call(caller: &mut Caller<'_, HostState>, key_ptr: i32, key_len: i32) -> i32 {
+        use hybrid::errors::*;
+
+        if caller.data().hybrid.host_budget_exhausted() {
+            return ERR_TIMEOUT;
+        }
+        let Some(memory) = Self::hybrid_memory(caller) else {
+            return ERR_INVALID_REQUEST;
+        };
+        let Some(key) = Self::hybrid_read(caller, &memory, key_ptr, key_len)
+            .and_then(|b| String::from_utf8(b).ok())
+        else {
+            return ERR_INVALID_REQUEST;
+        };
+        let code = caller.data_mut().hybrid.kv.del(&key);
+        Self::hybrid_charge(caller, hybrid::constants::BASE_CALL_FUEL_KV);
+        code
+    }
+
+    fn env_read_call(
+        caller: &mut Caller<'_, HostState>,
+        key_ptr: i32,
+        key_len: i32,
+        out_ptr: i32,
+        out_cap: i32,
+    ) -> i32 {
+        use hybrid::errors::*;
+
+        if caller.data().hybrid.host_budget_exhausted() {
+            return ERR_TIMEOUT;
+        }
+        let Some(memory) = Self::hybrid_memory(caller) else {
+            return ERR_INVALID_REQUEST;
+        };
+        let Some(name) = Self::hybrid_read(caller, &memory, key_ptr, key_len)
+            .and_then(|b| String::from_utf8(b).ok())
+        else {
+            return ERR_INVALID_REQUEST;
+        };
+        if out_cap < 0 {
+            return ERR_INVALID_REQUEST;
+        }
+
+        // Secret-tier names are substitution-only (ADR-327 D3): reading one
+        // is a permission error, and its bytes never reach guest memory.
+        if caller.data().hybrid.config.env_secret.contains_key(&name) {
+            Self::hybrid_charge(caller, hybrid::constants::BASE_CALL_FUEL_ENV_READ);
+            return ERR_PERMISSION_DENIED;
+        }
+        let Some(value) = caller.data().hybrid.config.env_plain.get(&name).cloned() else {
+            Self::hybrid_charge(caller, hybrid::constants::BASE_CALL_FUEL_ENV_READ);
+            return 0;
+        };
+        if value.len() > out_cap as usize {
+            return ERR_BUFFER_TOO_SMALL;
+        }
+        if !Self::hybrid_write(caller, &memory, out_ptr, value.as_bytes()) {
+            return ERR_INVALID_REQUEST;
+        }
+        let bytes_in = value.len() as u64;
+        caller.data_mut().hybrid.host_bytes_in += bytes_in;
+        Self::hybrid_charge(
+            caller,
+            hybrid::fuel_surcharge(hybrid::constants::BASE_CALL_FUEL_ENV_READ, bytes_in, 0),
+        );
+        value.len() as i32
+    }
+
     /// Execute a WASI module (Javy-compiled) via stdin/stdout.
     fn execute_wasi(
         &self,
@@ -586,17 +1004,17 @@ impl WasmtimeSandbox {
     }
 }
 
-impl Sandbox for WasmtimeSandbox {
-    fn constraints(&self) -> &ConstraintSet {
-        &self.constraints
-    }
-
-
-    fn execute(
+impl WasmtimeSandbox {
+    /// Execute with an explicit hybrid capability configuration. The public
+    /// `execute()` passes `HybridConfig::disabled()`; the phenotype-aware
+    /// entry (`execute_with_phenotype`) derives the config from the
+    /// phenotype + deployer permissions.
+    pub(crate) fn execute_inner(
         &self,
         wasm_bytes: &[u8],
         context: &Context,
         input: serde_json::Value,
+        hybrid_config: HybridConfig,
     ) -> Result<GeneResult, SandboxError> {
         let start = std::time::Instant::now();
 
@@ -628,6 +1046,7 @@ impl Sandbox for WasmtimeSandbox {
                 max_memory: self.constraints.max_memory_bytes as usize,
                 max_table_elements: 10_000,
             },
+            hybrid: hybrid::HybridRuntime::new(hybrid_config),
         };
 
         let mut store = Store::new(&self.engine, host_state);
@@ -668,6 +1087,17 @@ impl Sandbox for WasmtimeSandbox {
             .any(|imp| imp.module() == "rotifer" || imp.module() == "env");
         if has_rotifer_imports {
             Self::link_rotifer(&mut linker)?;
+        }
+
+        // Hybrid capability modules (ADR-327, nonstandard preview). Linked
+        // whenever imported — permission checks happen per call, so an
+        // ungranted gene observes -2 instead of an instantiation trap and can
+        // run its declared degradation behavior.
+        let has_hybrid_imports = module
+            .imports()
+            .any(|imp| hybrid::CAPABILITY_MODULES.contains(&imp.module()));
+        if has_hybrid_imports {
+            Self::link_hybrid(&mut linker)?;
         }
 
         let instance = linker
@@ -711,14 +1141,66 @@ impl Sandbox for WasmtimeSandbox {
         let duration_ms = start.elapsed().as_millis() as u64;
         let fuel_consumed = self.constraints.max_fuel - store.get_fuel().unwrap_or(0);
 
+        // Host metering (ADR-327 D4): fuel surcharges are already inside
+        // fuel_consumed; the host-side channel is reported alongside.
+        let hy = &store.data().hybrid;
+        let host = (hy.host_calls > 0).then_some(HostMetering {
+            host_call_millis: hy.host_call_millis,
+            host_calls: hy.host_calls,
+            host_bytes_in: hy.host_bytes_in,
+            host_bytes_out: hy.host_bytes_out,
+        });
+
         Ok(GeneResult::Success {
             data: output,
             metadata: ExecutionMetadata {
                 duration_ms,
                 resource_cost: fuel_consumed as f64,
                 cache_hit: None,
+                host,
             },
         })
+    }
+}
+
+impl Sandbox for WasmtimeSandbox {
+    fn constraints(&self) -> &ConstraintSet {
+        &self.constraints
+    }
+
+    fn execute(
+        &self,
+        wasm_bytes: &[u8],
+        context: &Context,
+        input: serde_json::Value,
+    ) -> Result<GeneResult, SandboxError> {
+        self.execute_inner(wasm_bytes, context, input, HybridConfig::disabled())
+    }
+
+    /// Phenotype-aware entry: fidelity honesty gate (ADR-327 D1) + policy
+    /// derivation from the phenotype and deployer permissions.
+    fn execute_with_phenotype(
+        &self,
+        wasm_bytes: &[u8],
+        context: &Context,
+        input: serde_json::Value,
+        phenotype: &Phenotype,
+    ) -> Result<GeneResult, SandboxError> {
+        if hybrid::imports_capability_modules(wasm_bytes)
+            && phenotype.fidelity == Fidelity::Native
+        {
+            return Err(SandboxError::ConstraintViolation(
+                "fidelity honesty: module imports capability host functions \
+                 (rotifer.net/kv/env) but the phenotype declares fidelity \
+                 'native' — declare 'hybrid' or 'wrapped' (ADR-327 D1)"
+                    .into(),
+            ));
+        }
+        let mut config = HybridConfig::from_phenotype(phenotype, &context.permissions);
+        config.env_plain = self.hybrid_env_plain.clone();
+        config.env_secret = self.hybrid_env_secret.clone();
+        config.allow_insecure_loopback = self.insecure_loopback;
+        self.execute_inner(wasm_bytes, context, input, config)
     }
 
     fn validate(

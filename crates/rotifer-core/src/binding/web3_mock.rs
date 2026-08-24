@@ -239,6 +239,7 @@ mod tests {
                 duration_ms: 50,
                 resource_cost: 100.0,   // fuel
                 cache_hit: None,
+                host: None,
             },
         };
         let converted = binding.convert_to_gas(result);

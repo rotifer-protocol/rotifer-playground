@@ -44,12 +44,46 @@ pub struct Phenotype {
     /// Network access configuration for Hybrid genes.
     #[serde(default)]
     pub network: Option<NetworkConfig>,
+    /// Semantic-layer external API dependency declarations (spec §4.2 v2.11,
+    /// A2=b). Complements `network`: `network` is the protocol-layer domain
+    /// whitelist, `external_dependencies` the semantic contract. The
+    /// `rotifer.net` host function additionally requires every request host
+    /// to be attributable to one of these entries (ADR-327 D5, B-2).
+    #[serde(default)]
+    pub external_dependencies: Option<Vec<ExternalDependency>>,
     /// LLM-specific metadata for Prompt Genes (optional, forward-compatible).
     #[serde(default)]
     pub llm_requirements: Option<LlmRequirements>,
     /// Guard-specific metadata for Guard Genes (optional, forward-compatible).
     #[serde(default)]
     pub guard_config: Option<GuardConfig>,
+}
+
+/// Semantic-layer declaration of one external API dependency (spec §4.2
+/// v2.11; ADR-220 A2=b; ADR-327 additions `domains` / `credentials`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalDependency {
+    /// Protocol family — "rest" | "graphql" | "grpc" | "websocket".
+    pub api_type: String,
+    /// Semantic identifier (e.g. "cve-database", "llm-judge").
+    pub semantic_tag: String,
+    /// Hosts this dependency talks to. `rotifer.net.fetch` refuses requests
+    /// whose host is not attributable to a declared dependency (ADR-327 D5).
+    #[serde(default)]
+    pub domains: Option<Vec<String>>,
+    /// Env NAMES this dependency needs — values never appear in a phenotype,
+    /// and secret-tier values never enter guest memory (ADR-327 D3).
+    #[serde(default)]
+    pub credentials: Option<Vec<String>>,
+    /// Behavior when the dependency is unreachable (spec §4.2, ADR-297 4-value
+    /// table). Kept as a free string here; enum validation is the TS
+    /// validator's and IR verifier's job.
+    #[serde(default)]
+    pub degradation_behavior: Option<String>,
+    /// Optional expected SLA, passed through untyped.
+    #[serde(default)]
+    pub sla: Option<serde_json::Value>,
 }
 
 /// Controlled network access declaration for Hybrid genes.

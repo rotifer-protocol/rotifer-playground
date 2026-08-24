@@ -436,6 +436,92 @@ describe("validateLlmNativePhenotype", () => {
       }
     });
 
+    it("accepts valid domains and credentials fields (ADR-327)", () => {
+      validateLlmNativePhenotype(
+        basePhenotype({
+          fidelity: "Hybrid",
+          network: { allowedDomains: ["api.example.com"] },
+          externalDependencies: [
+            {
+              apiType: "rest",
+              semanticTag: "example-api",
+              degradationBehavior: "FAIL",
+              domains: ["api.example.com"],
+              credentials: ["EXAMPLE_KEY"],
+            },
+          ],
+        }),
+        "test.json",
+      );
+      expect(display.rustStyleError).not.toHaveBeenCalled();
+      expect(exitSpy).not.toHaveBeenCalled();
+    });
+
+    it("errors when domains is not an array of non-empty strings", () => {
+      for (const bad of ["api.example.com", ["api.example.com", ""], [42]]) {
+        vi.clearAllMocks();
+        validateLlmNativePhenotype(
+          basePhenotype({
+            fidelity: "Hybrid",
+            externalDependencies: [
+              {
+                apiType: "rest",
+                semanticTag: "svc",
+                degradationBehavior: "FAIL",
+                domains: bad,
+              },
+            ],
+          }),
+          "test.json",
+        );
+        expect(display.rustStyleError).toHaveBeenCalledWith(
+          expect.objectContaining({ code: "E0115" }),
+        );
+      }
+    });
+
+    it("errors when credentials is not an array of non-empty strings", () => {
+      for (const bad of ["KEY", [""], [null]]) {
+        vi.clearAllMocks();
+        validateLlmNativePhenotype(
+          basePhenotype({
+            fidelity: "Hybrid",
+            externalDependencies: [
+              {
+                apiType: "rest",
+                semanticTag: "svc",
+                degradationBehavior: "FAIL",
+                credentials: bad,
+              },
+            ],
+          }),
+          "test.json",
+        );
+        expect(display.rustStyleError).toHaveBeenCalledWith(
+          expect.objectContaining({ code: "E0116" }),
+        );
+      }
+    });
+
+    it("warns when network is declared but a dependency lists no domains", () => {
+      // The runtime refuses fetches it cannot attribute to a declared
+      // dependency (ADR-327 B-2) — a hybrid gene shaped like this can
+      // never make a request, which is almost certainly a mistake.
+      validateLlmNativePhenotype(
+        basePhenotype({
+          fidelity: "Hybrid",
+          network: { allowedDomains: ["api.example.com"] },
+          externalDependencies: [
+            { apiType: "rest", semanticTag: "svc", degradationBehavior: "FAIL" },
+          ],
+        }),
+        "test.json",
+      );
+      expect(display.warn).toHaveBeenCalledWith(
+        expect.stringContaining("domains"),
+      );
+    });
+
     it("errors when externalDependencies is not an array", () => {
       validateLlmNativePhenotype(
         basePhenotype({ externalDependencies: "rest" }),

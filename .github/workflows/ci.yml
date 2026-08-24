@@ -124,7 +124,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-14]
-        node-version: ["20", "22"]
+        # Node floor is 22.18 (#269/#270): genes are TypeScript and the CLI
+        # imports them from source, which needs built-in type stripping. A
+        # Node 20 job can only ever exercise the .js fixtures, so it guards
+        # nothing the 22 job does not.
+        node-version: ["22"]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 

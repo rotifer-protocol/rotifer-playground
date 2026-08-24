@@ -92,6 +92,26 @@ pub struct ExecutionMetadata {
     pub duration_ms: u64,
     pub resource_cost: f64,
     pub cache_hit: Option<bool>,
+    /// Host-side metering for hybrid genes (ADR-327 D4). `None` for pure
+    /// Native runs — absent from serialized output, so stored records are
+    /// unchanged for non-hybrid executions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<HostMetering>,
+}
+
+/// IR spec §6.1 "metering participation" made concrete: what the gene spent
+/// inside host functions, on top of (not instead of) the fuel surcharges
+/// already deducted per call (ADR-327 D4).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HostMetering {
+    /// Total wall time spent inside host functions.
+    pub host_call_millis: u64,
+    /// Number of hybrid host function invocations.
+    pub host_calls: u64,
+    /// Payload bytes crossing the boundary into the guest.
+    pub host_bytes_in: u64,
+    /// Payload bytes crossing the boundary out of the guest.
+    pub host_bytes_out: u64,
 }
 
 /// Standardized error codes per Rotifer spec §6.
@@ -187,6 +207,7 @@ mod tests {
                 pricing_hint: None,
                 semantic_requirements: None,
                 network: None,
+                external_dependencies: None,
             llm_requirements: None,
             guard_config: None,
             },
@@ -222,6 +243,7 @@ mod tests {
                 pricing_hint: None,
                 semantic_requirements: None,
                 network: None,
+                external_dependencies: None,
             llm_requirements: None,
             guard_config: None,
             },

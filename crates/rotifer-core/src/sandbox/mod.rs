@@ -4,6 +4,7 @@
 //! Rotifer host functions (`rotifer.log`, `rotifer.readContext`, etc.).
 
 mod wasmtime_sandbox;
+pub mod hybrid;
 
 pub use wasmtime_sandbox::WasmtimeSandbox;
 

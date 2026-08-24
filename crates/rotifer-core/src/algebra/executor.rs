@@ -151,6 +151,7 @@ impl<'a> AlgebraExecutor<'a> {
                 duration_ms: start.elapsed().as_millis() as u64,
                 resource_cost: total_cost,
                 cache_hit: None,
+                host: None,
             },
         })
     }
@@ -252,6 +253,7 @@ impl<'a> AlgebraExecutor<'a> {
                 duration_ms: start.elapsed().as_millis() as u64,
                 resource_cost: total_cost,
                 cache_hit: None,
+                host: None,
             },
         })
     }
@@ -310,6 +312,7 @@ mod tests {
                         duration_ms: 1,
                         resource_cost: 10.0,
                         cache_hit: None,
+                        host: None,
                     },
                 })
             }
@@ -353,6 +356,7 @@ mod tests {
                 pricing_hint: None,
                 semantic_requirements: None,
                 network: None,
+                external_dependencies: None,
             llm_requirements: None,
             guard_config: None,
             },
@@ -777,7 +781,7 @@ mod tests {
                 let n = input.get("n").and_then(|v| v.as_i64()).unwrap_or(0);
                 Ok(GeneResult::Success {
                     data: serde_json::json!({"n": n + 1}),
-                    metadata: ExecutionMetadata { duration_ms: 0, resource_cost: 0.0, cache_hit: None },
+                    metadata: ExecutionMetadata { duration_ms: 0, resource_cost: 0.0, cache_hit: None, host: None },
                 })
             }
             fn validate(&self, _: &[u8], _: &ConstraintSet) -> Result<bool, SandboxError> { Ok(true) }

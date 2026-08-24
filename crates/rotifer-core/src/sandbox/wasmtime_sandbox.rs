@@ -717,6 +717,7 @@ impl Sandbox for WasmtimeSandbox {
                 duration_ms,
                 resource_cost: fuel_consumed as f64,
                 cache_hit: None,
+                host: None,
             },
         })
     }

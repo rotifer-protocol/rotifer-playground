@@ -371,6 +371,7 @@ mod tests {
             pricing_hint: None,
             semantic_requirements: None,
             network: None,
+            external_dependencies: None,
             llm_requirements: None,
             guard_config: None,
         }
@@ -463,6 +464,7 @@ mod tests {
             pricing_hint: None,
             semantic_requirements: None,
             network: None,
+            external_dependencies: None,
             llm_requirements: None,
             guard_config: None,
         }

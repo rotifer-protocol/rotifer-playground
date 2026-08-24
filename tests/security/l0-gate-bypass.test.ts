@@ -16,7 +16,6 @@ import { tmpdir } from "node:os";
  */
 describe("L0 gate must cover the Node.js fallback path", () => {
   let projectDir: string;
-  let previousCwd: string;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -39,19 +38,20 @@ describe("L0 gate must cover the Node.js fallback path", () => {
 
   beforeEach(() => {
     vi.resetModules();
-    previousCwd = process.cwd();
     projectDir = mkdtempSync(join(tmpdir(), "rotifer-l0-bypass-"));
     writeFileSync(
       join(projectDir, "rotifer.json"),
       JSON.stringify({ name: "test", version: "0.1.0", author: "test", genes_dir: "genes" }),
     );
-    process.chdir(projectDir);
+    // chdir 在 worker 线程里会抛（Stryker 的 vitest runner 就跑在里面，
+    // 初始测试一挂整轮变异测试就中止）；命令全经 process.cwd() 找项目根，
+    // spy 等效且线程安全。
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
-    process.chdir(previousCwd);
     logSpy.mockRestore();
     errorSpy.mockRestore();
     rmSync(projectDir, { recursive: true, force: true });
@@ -153,13 +153,11 @@ describe("L0 gate must cover the Node.js fallback path", () => {
 
 describe("L0 gate must cover `agent run` fallback too", () => {
   let projectDir: string;
-  let previousCwd: string;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.resetModules();
-    previousCwd = process.cwd();
     projectDir = mkdtempSync(join(tmpdir(), "rotifer-l0-agent-"));
     writeFileSync(
       join(projectDir, "rotifer.json"),
@@ -179,13 +177,12 @@ describe("L0 gate must cover `agent run` fallback too", () => {
       JSON.stringify({ id: "a1", name: "agent-x", state: "Active", genome: ["solo"] }),
     );
 
-    process.chdir(projectDir);
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
-    process.chdir(previousCwd);
     logSpy.mockRestore();
     errorSpy.mockRestore();
     rmSync(projectDir, { recursive: true, force: true });

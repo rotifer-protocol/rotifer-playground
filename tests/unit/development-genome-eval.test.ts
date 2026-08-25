@@ -92,7 +92,7 @@ const TEST_MESSAGES: TestMessage[] = [
     text: "审查一下安全问题，有没有凭证泄露",
     expectedRules: [
       "rotifer-credential-hygiene",
-      "rotifer-adr-publish-safety",
+      "rotifer-public-content-safety",
     ],
     description: "安全审查场景",
   },
@@ -125,7 +125,7 @@ const TEST_MESSAGES: TestMessage[] = [
     text: "把这个文件移到 internal/adr/ 目录", // leak-allow: 测试夹具文本，非真实内部路径
     expectedRules: [
       "rotifer-file-move-protocol",
-      "rotifer-doc-taxonomy",
+      "rotifer-doc-sync",
     ],
     description: "文件移动场景",
   },
@@ -237,9 +237,31 @@ describe.skipIf(!HAS_RULES)("Rule Router Automated Evaluation", () => {
     relScores.push(relScore);
 
     it(`[${msg.description}] frequency F1=${freqScore.f1.toFixed(2)}, relevance F1=${relScore.f1.toFixed(2)}`, () => {
-      expect(freqScore.f1 + relScore.f1).toBeGreaterThanOrEqual(0);
+      for (const score of [freqScore, relScore]) {
+        expect(score.precision).toBeGreaterThanOrEqual(0);
+        expect(score.precision).toBeLessThanOrEqual(1);
+        expect(score.recall).toBeGreaterThanOrEqual(0);
+        expect(score.recall).toBeLessThanOrEqual(1);
+        expect(score.f1).toBeGreaterThanOrEqual(0);
+        expect(score.f1).toBeLessThanOrEqual(1);
+      }
     });
   }
+
+  // Quality ratchets — measured baseline 2026-08-25 (after fixing two stale
+  // expected-rule names): avg frequency F1 = 0.226, avg relevance F1 = 0.283,
+  // 5 of 10 scenarios score zero on BOTH routers. The floors sit slightly
+  // below the measured values so rule-set drift doesn't flake, but a real
+  // regression (a router change or rule rename that silently zeroes routing)
+  // fails. Raise the floors when routing improves; never lower them silently.
+  it("router quality does not regress below the measured baseline", () => {
+    const avgFreqF1 = freqScores.reduce((s, v) => s + v.f1, 0) / freqScores.length;
+    const avgRelF1 = relScores.reduce((s, v) => s + v.f1, 0) / relScores.length;
+    const bothZero = freqScores.filter((f, i) => f.f1 === 0 && relScores[i].f1 === 0).length;
+    expect(avgFreqF1).toBeGreaterThanOrEqual(0.2);
+    expect(avgRelF1).toBeGreaterThanOrEqual(0.25);
+    expect(bothZero).toBeLessThanOrEqual(5);
+  });
 
   it("computes aggregate scores and declares winner", () => {
     const avgFreqF1 = freqScores.reduce((s, v) => s + v.f1, 0) / freqScores.length;
@@ -401,16 +423,42 @@ const GUARD_GENES: GuardProfile[] = [
   { name: "guard-balanced", passRate: 0.85 },
 ];
 
+// Deterministic PRNG (mulberry32) + FNV-1a seed. Math.random here made the
+// whole genome ranking non-reproducible: the same commit could rank genomes
+// differently between two runs, so no assertion stronger than ">= 0" could
+// ever hold. Seeding by genome name keeps the simulated noise but makes every
+// run — local or CI — produce identical scores.
+function mulberry32(seed: number): () => number {
+  let t = seed >>> 0;
+  return () => {
+    t += 0x6d2b79f5;
+    let x = t;
+    x = Math.imul(x ^ (x >>> 15), x | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hashSeed(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
 function simulateReview(
   gene: PromptGeneProfile,
   sample: CodeSample,
+  rand: () => number,
 ): { found: string[]; falsePositives: number } {
   const found = sample.knownIssues
     .filter((issue) => gene.detectableCategories.includes(issue.category))
     .map((issue) => issue.category);
 
   const fpChance = gene.specialization === "readability" ? 0.15 : 0.05;
-  const falsePositives = sample.knownIssues.length === 0 && Math.random() < fpChance ? 1 : 0;
+  const falsePositives = sample.knownIssues.length === 0 && rand() < fpChance ? 1 : 0;
 
   return { found, falsePositives };
 }
@@ -441,8 +489,9 @@ function computeGenomeScore(
   let totalKeptTrue = 0;
   let totalKeptFalse = 0;
 
+  const rand = mulberry32(hashSeed(`${promptGene.name}|${guard.name}`));
   for (const sample of samples) {
-    const review = simulateReview(promptGene, sample);
+    const review = simulateReview(promptGene, sample, rand);
     totalTrueIssues += sample.knownIssues.length;
     totalFound += review.found.length;
     totalFalsePositives += review.falsePositives;
@@ -476,12 +525,22 @@ describe("Code Review Genome Automated Evaluation (3×2 = 6 combinations)", () =
       results.push(score);
 
       it(`${score.genomeName}: F1=${score.f1.toFixed(3)}`, () => {
-        expect(score.f1).toBeGreaterThanOrEqual(0);
+        // Ratchet: worst measured combination (readability + guard-strict)
+        // scores 0.222 with the deterministic seed. Anything below 0.2 means
+        // the simulation or a genome profile regressed, not noise.
+        expect(score.f1).toBeGreaterThanOrEqual(0.2);
+        expect(score.f1).toBeLessThanOrEqual(1);
         expect(score.precision).toBeGreaterThanOrEqual(0);
         expect(score.precision).toBeLessThanOrEqual(1);
       });
     }
   }
+
+  it("scoring is deterministic — same seed, same result", () => {
+    const a = computeGenomeScore(PROMPT_GENES[0], GUARD_GENES[0], CODE_SAMPLES);
+    const b = computeGenomeScore(PROMPT_GENES[0], GUARD_GENES[0], CODE_SAMPLES);
+    expect(a).toEqual(b);
+  });
 
   it("ranks all 6 genomes and declares winner", () => {
     results.sort((a, b) => b.f1 - a.f1);
@@ -501,23 +560,41 @@ describe("Code Review Genome Automated Evaluation (3×2 = 6 combinations)", () =
     console.log(`║   Detection=${(results[0].detectionRate * 100).toFixed(1)}%  Precision=${(results[0].precision * 100).toFixed(1)}%  F1=${results[0].f1.toFixed(3)}${"".padEnd(14)}║`);
     console.log("╚═══════════════════════════════════════════════════════════════╝\n");
 
-    expect(results[0].f1).toBeGreaterThan(0);
+    // Winner measured at 0.545 with the deterministic seed; a drop below 0.5
+    // means detection or guarding regressed for the best genome.
+    expect(results[0].f1).toBeGreaterThanOrEqual(0.5);
   });
 
-  it("security gene detects all security issues", () => {
+  it("security gene detects every security issue in its specialty", () => {
     const secGene = PROMPT_GENES.find((g) => g.name === "prompt-review-security")!;
+    const rand = mulberry32(hashSeed("detect-check"));
     const secSamples = CODE_SAMPLES.filter((s) =>
       s.knownIssues.some((i) => secGene.detectableCategories.includes(i.category)),
     );
     expect(secSamples.length).toBeGreaterThanOrEqual(3);
+    for (const sample of secSamples) {
+      const expectedCats = sample.knownIssues
+        .filter((i) => secGene.detectableCategories.includes(i.category))
+        .map((i) => i.category);
+      const { found } = simulateReview(secGene, sample, rand);
+      expect(found, `${secGene.name} missed issues in ${sample.name}`).toEqual(expectedCats);
+    }
   });
 
-  it("perf gene detects all performance issues", () => {
+  it("perf gene detects every performance issue in its specialty", () => {
     const perfGene = PROMPT_GENES.find((g) => g.name === "prompt-review-perf")!;
+    const rand = mulberry32(hashSeed("detect-check"));
     const perfSamples = CODE_SAMPLES.filter((s) =>
       s.knownIssues.some((i) => perfGene.detectableCategories.includes(i.category)),
     );
     expect(perfSamples.length).toBeGreaterThanOrEqual(2);
+    for (const sample of perfSamples) {
+      const expectedCats = sample.knownIssues
+        .filter((i) => perfGene.detectableCategories.includes(i.category))
+        .map((i) => i.category);
+      const { found } = simulateReview(perfGene, sample, rand);
+      expect(found, `${perfGene.name} missed issues in ${sample.name}`).toEqual(expectedCats);
+    }
   });
 
   it("clean code produces zero findings for strict guard", () => {

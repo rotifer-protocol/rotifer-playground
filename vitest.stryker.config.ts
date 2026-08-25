@@ -19,7 +19,8 @@ import base from "./vitest.config";
  * Coverage off — Stryker instruments the source itself, and running v8
  * coverage on top of that instrumentation costs time on every one of the
  * hundreds of test runs a mutation pass performs, for a number nobody reads.
- * The thresholds still apply to `npm test`, which is where they belong.
+ * The thresholds are enforced by `npm run test:coverage` (plain `npm test`
+ * never loads them — vitest only applies thresholds when coverage runs).
  */
 export default mergeConfig(
   base,

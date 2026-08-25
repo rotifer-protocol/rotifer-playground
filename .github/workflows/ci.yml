@@ -143,8 +143,30 @@ jobs:
       - name: Build TypeScript
         run: npm run build
 
-      - name: Run tests
+      # The coverage gate (60/55 thresholds in vitest.config.ts) ran on this
+      # lane from cdb9d727 until b108617 dropped it as a side effect of the
+      # native-addon work. Restored: one canonical lane enforces thresholds,
+      # the other lanes stay plain cross-platform test runs.
+      - name: Run coverage gate
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run test:coverage
+
+      - name: Run cross-platform tests
+        if: matrix.os != 'ubuntu-latest'
         run: npm test
+
+  deno-functions:
+    name: Edge Function Tests (Deno)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: denoland/setup-deno@e95548e56dfa95d4e1a28d6f422fafe75c4c26fb # v2.0.3
+        with:
+          deno-version: v2.x
+      # Self-contained pure-logic tests for the chat edge function's RAG
+      # ranking. They have always existed but no CI job ever ran them.
+      - name: Run chat ranking tests
+        run: deno test supabase/functions/chat/rank.test.ts
 
   vscode-extension:
     name: VSCode Extension Tests
@@ -192,7 +214,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, plugin-source, test, rust-check, security-check, vscode-extension, vscode-packaging, supabase-migrations]
+    needs: [lint, plugin-source, test, deno-functions, rust-check, security-check, vscode-extension, vscode-packaging, supabase-migrations]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -472,7 +494,11 @@ jobs:
     name: Report to Quality Observatory
     runs-on: ubuntu-latest
     needs: [test, vscode-extension, security-check]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    # always(): telemetry must record red main runs too. Without it, any
+    # upstream failure skips this job and the Observatory never sees the
+    # failure it exists to observe. The steps themselves stay best-effort
+    # (|| true), so a broken upload never blocks the pipeline.
+    if: always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 

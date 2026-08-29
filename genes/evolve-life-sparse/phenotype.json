@@ -120,12 +120,12 @@
     ]
   },
   "dependencies": [],
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "rotifer-team",
   "createdAt": 1741906800000,
   "fidelity": "Native",
   "transparency": "Open",
-  "irHash": "d7e8b8120d271fa0df610526e21ad6fecc578b4e75635ab79c9b9c51f8b16d69",
+  "irHash": "177efba7f402d54251c8153fce9095957abd8a1fa2a031b8b2fec7c92c5e54cb",
   "tags": [
     "cellular-automaton",
     "sparse-set",

@@ -1,0 +1,15 @@
+# Supabase project configuration (deploy-relevant subset).
+#
+# This file exists so function deploy settings live in code instead of in
+# whoever-deployed-last's shell history. On 2026-08-29 a routine
+# `supabase functions deploy chat` (no flags) silently re-enabled JWT
+# verification — the platform default — and 401'd every caller of the
+# public chat endpoint, including the rotifer.dev chat widget, which sends
+# no Authorization header by design. The function does its own protection
+# (rate limiting, content filter, daily cost ceiling); the gateway JWT
+# check adds nothing here and breaking it takes the assistant down.
+
+project_id = "vihbmpuqlamhxbmahcje"
+
+[functions.chat]
+verify_jwt = false

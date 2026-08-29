@@ -251,8 +251,9 @@ jobs:
     # but cannot regenerate the lock (the resolved/integrity fields need the
     # published package). Now that the new platform packages are published (above),
     # regenerate the lock and open a PR so `npm ci` on main + every later PR stays
-    # green. Direct push to main is gated by the DCO required check and auto-merge is
-    # disabled, so this goes through a PR for a maintainer to merge.
+    # green. Direct push to main is gated by the DCO required check, so this goes
+    # through a PR — which the merge step below merges itself once GitHub reports
+    # the required checks green (#239/#242/#245); nobody waits on a maintainer.
     name: Sync package-lock to released versions
     runs-on: ubuntu-latest
     needs: [publish]

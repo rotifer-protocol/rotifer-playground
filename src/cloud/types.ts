@@ -68,12 +68,6 @@ export interface CloudArenaEntry {
   last_evaluated: string;
 }
 
-export interface CloudArenaRankings {
-  rankings: CloudArenaEntry[];
-  total: number;
-  domain: string | null;
-}
-
 export interface FitnessReport {
   value: number;
   /**

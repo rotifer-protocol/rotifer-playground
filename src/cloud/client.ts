@@ -5,7 +5,6 @@ import type {
   CloudConfig,
   CloudGene,
   CloudGeneListResponse,
-  CloudArenaRankings,
   CloudArenaEntry,
   FitnessReport,
   ContributionMetrics,
@@ -743,58 +742,6 @@ export async function arenaSubmit(
     total_calls: row.total_calls,
     last_evaluated: row.last_evaluated,
   };
-}
-
-export async function arenaRankings(options: {
-  domain?: string;
-  page?: number;
-  perPage?: number;
-}): Promise<CloudArenaRankings> {
-  const params = new URLSearchParams();
-  params.set(
-    "select",
-    "fitness_value,safety_score,success_rate,latency_score,resource_efficiency,total_calls,last_evaluated,domain,genes(id,name,fidelity,reputation_score,profiles(username))"
-  );
-  params.set("order", "fitness_value.desc");
-
-  if (options.domain) params.set("domain", `eq.${options.domain}`);
-
-  const limit = options.perPage || 50;
-  const offset = ((options.page || 1) - 1) * limit;
-  params.set("limit", String(limit));
-  params.set("offset", String(offset));
-
-  const res = await fetch(apiUrl(`/arena_entries?${params}`), {
-    headers: {
-      ...authHeaders(),
-      Prefer: "count=exact",
-    },
-  });
-
-  const total = parseInt(
-    res.headers.get("content-range")?.split("/")[1] || "0",
-    10
-  );
-  const data = await handleResponse<any[]>(res);
-
-  const rankings: CloudArenaEntry[] = data.map((row, i) => ({
-    rank: offset + i + 1,
-    gene_id: row.genes?.id || "",
-    gene_name: row.genes?.name || "unknown",
-    owner: row.genes?.profiles?.username || "unknown",
-    domain: row.domain,
-    fidelity: row.genes?.fidelity || "Wrapped",
-    fitness: row.fitness_value,
-    safety: row.safety_score,
-    success_rate: row.success_rate,
-    latency_score: row.latency_score,
-    resource_efficiency: row.resource_efficiency,
-    reputation_score: row.genes?.reputation_score ?? null,
-    total_calls: row.total_calls || 0,
-    last_evaluated: row.last_evaluated,
-  }));
-
-  return { rankings, total, domain: options.domain || null };
 }
 
 /** One leaderboard row as the tiered RPC returns it (ADR-319 D4). */

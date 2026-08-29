@@ -3,7 +3,7 @@ members = ["crates/rotifer-core", "crates/rotifer-napi"]
 resolver = "2"
 
 [workspace.package]
-version = "0.21.1"
+version = "0.22.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/rotifer-protocol/rotifer-playground"

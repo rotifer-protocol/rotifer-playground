@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.21.1...v0.22.0) (2026-08-29)
+
+
+### Features
+
+* hybrid host functions — rotifer.net/kv/env capability modules (nonstandard preview) ([#279](https://github.com/rotifer-protocol/rotifer-playground/issues/279)) ([f099163](https://github.com/rotifer-protocol/rotifer-playground/commit/f09916378a96bfe5447ca9dab40510758aa315c3))
+
+
+### Bug Fixes
+
+* **arena:** stop failing compute-heavy genes on our own fuel constant ([#277](https://github.com/rotifer-protocol/rotifer-playground/issues/277)) ([081ba12](https://github.com/rotifer-protocol/rotifer-playground/commit/081ba1274e27c00f4e5f562b67c370a9075e11e9))
+
 ## [0.21.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.21.0...v0.21.1) (2026-08-24)
 
 

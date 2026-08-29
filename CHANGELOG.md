@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.22.0...v0.22.1) (2026-08-29)
+
+
+### Bug Fixes
+
+* **arena:** watch reads the tiered leaderboard, and the raw path is gone ([#285](https://github.com/rotifer-protocol/rotifer-playground/issues/285)) ([7ed7881](https://github.com/rotifer-protocol/rotifer-playground/commit/7ed7881692a9607c694107a1d0a9c841a12555a8))
+* **chat:** stop caching generations the model never finished ([#287](https://github.com/rotifer-protocol/rotifer-playground/issues/287)) ([452706b](https://github.com/rotifer-protocol/rotifer-playground/commit/452706b4def1def198f2ae87156b27da5bbd4f8e))
+* **supabase:** declare the chat function's verify_jwt in config, not in flags ([#288](https://github.com/rotifer-protocol/rotifer-playground/issues/288)) ([05a8646](https://github.com/rotifer-protocol/rotifer-playground/commit/05a86462952850004072b5571095f9a37723bc4b))
+
 ## [0.22.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.21.1...v0.22.0) (2026-08-29)
 
 

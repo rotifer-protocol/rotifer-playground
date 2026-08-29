@@ -163,10 +163,13 @@ jobs:
       - uses: denoland/setup-deno@e95548e56dfa95d4e1a28d6f422fafe75c4c26fb # v2.0.3
         with:
           deno-version: v2.x
-      # Self-contained pure-logic tests for the chat edge function's RAG
-      # ranking. They have always existed but no CI job ever ran them.
-      - name: Run chat ranking tests
-        run: deno test supabase/functions/chat/rank.test.ts
+      # Self-contained pure-logic tests for the chat edge function: RAG
+      # ranking plus upstream-stream completion handling. Collect the whole
+      # directory so a new .test.ts cannot be written without being run.
+      # --allow-read is scoped to the function dir: the wiring guard reads
+      # index.ts as text to assert the cache call stays behind its gate.
+      - name: Run chat edge function tests
+        run: deno test --allow-read=supabase/functions/chat supabase/functions/chat/
 
   vscode-extension:
     name: VSCode Extension Tests

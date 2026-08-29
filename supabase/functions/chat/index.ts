@@ -6,6 +6,7 @@ import { checkDailyLimit, recordCost } from "./cost-monitor.ts";
 import { recordAnalytics, recordSecurityEvent } from "./analytics.ts";
 import { filterContent } from "./content-filter.ts";
 import { selectContextDocs, isUserLangFor, normalizePath } from "./rank.ts";
+import { consumeUpstreamStream, isCompleteGeneration } from "./upstream-stream.ts";
 
 const RAG_URL = Deno.env.get("RAG_SUPABASE_URL")!;
 const RAG_ANON_KEY = Deno.env.get("RAG_SUPABASE_ANON_KEY")!;
@@ -308,45 +309,23 @@ ${context || "No relevant documentation found."}`;
             return;
           }
 
-          let fullResponse = "";
-          const reader = llmRes.body!.getReader();
-          const decoder = new TextDecoder();
-          let buffer = "";
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-
-            for (const line of lines) {
-              if (!line.startsWith("data: ")) continue;
-              const data = line.slice(6).trim();
-              if (data === "[DONE]") continue;
-
-              try {
-                const event = JSON.parse(data);
-                const delta = event.choices?.[0]?.delta?.content;
-                if (delta) {
-                  fullResponse += delta;
-                  controller.enqueue(
-                    new TextEncoder().encode(
-                      `data: ${JSON.stringify({ type: "text", text: delta })}\n\n`
-                    )
-                  );
-                }
-              } catch {
-                // skip unparseable lines
-              }
-            }
-          }
+          const upstream = await consumeUpstreamStream(llmRes.body!, (delta) => {
+            controller.enqueue(
+              new TextEncoder().encode(
+                `data: ${JSON.stringify({ type: "text", text: delta })}\n\n`
+              )
+            );
+          });
+          const fullResponse = upstream.fullResponse;
+          const generationComplete = isCompleteGeneration(upstream);
 
           controller.enqueue(
             new TextEncoder().encode(
               `data: ${JSON.stringify({
                 type: "done",
+                // Additive field: absent for complete generations, so older
+                // clients see the exact payload they always did.
+                ...(generationComplete ? {} : { degraded: true }),
                 sources,
                 pipeline: [
                   { gene: "doc-retrieval", domain: "retrieval.document", ms: 0 },
@@ -359,10 +338,19 @@ ${context || "No relevant documentation found."}`;
           );
           controller.close();
 
-          await setCachedResponse(body.question, {
-            answer: fullResponse,
-            sources,
-          });
+          if (generationComplete) {
+            await setCachedResponse(body.question, {
+              answer: fullResponse,
+              sources,
+            });
+          } else {
+            // The transport closing is not a completion signal. A generation
+            // the model never finished must not be served for the next two
+            // hours as if it had been (2026-08-29 truncated-cache incident).
+            console.error(
+              `chat: upstream generation incomplete (finish_reason=${upstream.finishReason}, sawDone=${upstream.sawDoneMarker}, chars=${fullResponse.length}) — response not cached`
+            );
+          }
 
           await recordCost(LLM_MODEL, fullResponse.length);
 

@@ -5,8 +5,13 @@ import * as display from "../utils/display.js";
 import { c, icon, fidelityColor } from "../utils/palette.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
-import { arenaRankings } from "../cloud/client.js";
-import type { CloudArenaEntry } from "../cloud/types.js";
+import { arenaLeaderboard, type LeaderboardRow } from "../cloud/client.js";
+import {
+  diffLeaderboard,
+  fitnessCell,
+  rankCell,
+  safetyCell,
+} from "../utils/leaderboard-watch.js";
 import { contentHash } from "../utils/content-hash.js";
 import { applyFidelityDiscount, estimateBaseFitness } from "../utils/fidelity-discount.js";
 
@@ -206,14 +211,17 @@ async function watchCloudArena(domainFilter?: string, intervalMs: number = 5000)
   display.info(`Polling every ${intervalMs}ms — press Ctrl+C to stop`);
   console.log();
 
-  let prevEntries: CloudArenaEntry[] = [];
+  let prevEntries: LeaderboardRow[] = [];
   let pollCount = 0;
   let totalChanges = 0;
   const startTime = Date.now();
 
   try {
-    const initial = await arenaRankings({ domain: domainFilter });
-    prevEntries = initial.rankings;
+    // The tiered leaderboard, not a raw select over arena_entries: only the
+    // RPC consults invalidated_at and folds versions, so only it can say what
+    // the board actually shows (ADR-319 D4). The raw path served invalidated
+    // scores here long after the board dropped them.
+    prevEntries = await arenaLeaderboard({ domain: domainFilter });
     renderCloudTable(prevEntries);
     console.log();
   } catch (err: unknown) {
@@ -226,28 +234,42 @@ async function watchCloudArena(domainFilter?: string, intervalMs: number = 5000)
   const timer = setInterval(async () => {
     pollCount++;
     try {
-      const result = await arenaRankings({ domain: domainFilter });
-      const currEntries = result.rankings;
+      const currEntries = await arenaLeaderboard({ domain: domainFilter });
 
-      const changes: string[] = [];
-      const prevMap = new Map(prevEntries.map((e) => [e.gene_id, e]));
-
-      for (const curr of currEntries) {
-        const prev = prevMap.get(curr.gene_id);
-        if (!prev) {
-          changes.push(c.success(`  + NEW  ${curr.gene_name.padEnd(24)} rank #${curr.rank}`));
-        } else if (curr.rank < prev.rank) {
-          changes.push(c.success(`  ${icon.up} UP   ${curr.gene_name.padEnd(24)} #${prev.rank} ${icon.arrow} #${curr.rank}`));
-        } else if (curr.rank > prev.rank) {
-          changes.push(c.error(`  ${icon.down} DOWN ${curr.gene_name.padEnd(24)} #${prev.rank} ${icon.arrow} #${curr.rank}`));
+      const lines: string[] = [];
+      for (const change of diffLeaderboard(prevEntries, currEntries)) {
+        switch (change.kind) {
+          case "new":
+            lines.push(
+              c.success(
+                `  + NEW  ${change.row.gene_name.padEnd(24)} ${change.row.tier}` +
+                  (change.row.tier_rank != null ? ` #${change.row.tier_rank}` : "")
+              )
+            );
+            break;
+          case "tier":
+            lines.push(
+              c.warn(`  ~ TIER ${change.key.padEnd(24)} ${change.from} ${icon.arrow} ${change.to}`)
+            );
+            break;
+          case "up":
+            lines.push(
+              c.success(`  ${icon.up} UP   ${change.key.padEnd(24)} #${change.from} ${icon.arrow} #${change.to}`)
+            );
+            break;
+          case "down":
+            lines.push(
+              c.error(`  ${icon.down} DOWN ${change.key.padEnd(24)} #${change.from} ${icon.arrow} #${change.to}`)
+            );
+            break;
         }
       }
 
-      if (changes.length > 0) {
-        totalChanges += changes.length;
+      if (lines.length > 0) {
+        totalChanges += lines.length;
         const ts = new Date().toLocaleTimeString();
-        console.log(c.muted(`  ── ${ts} ──  ${changes.length} change(s)`));
-        changes.forEach((ch) => console.log(ch));
+        console.log(c.muted(`  ── ${ts} ──  ${lines.length} change(s)`));
+        lines.forEach((ln) => console.log(ln));
         console.log();
       }
 
@@ -274,17 +296,27 @@ async function watchCloudArena(domainFilter?: string, intervalMs: number = 5000)
   process.on("SIGTERM", shutdown);
 }
 
-function renderCloudTable(entries: CloudArenaEntry[]): void {
-  display.table(entries as unknown as Record<string, unknown>[], [
+function renderCloudTable(entries: LeaderboardRow[]): void {
+  // Cells are precomputed because the score rule needs the whole row: a
+  // not_evaluated row shows no number even when the ledger stores one.
+  const records = entries.map((r) => ({
+    rank: rankCell(r),
+    tier: r.tier,
+    gene_name: r.gene_name,
+    owner: r.owner_username,
+    domain: r.domain,
+    fitness: fitnessCell(r),
+    safety: safetyCell(r),
+    fidelity: r.fidelity,
+  }));
+  display.table(records as unknown as Record<string, unknown>[], [
     { key: "rank", label: "#", width: 4, format: (v) => String(v) },
+    { key: "tier", label: "Tier", width: 17 },
     { key: "gene_name", label: "Name", width: 22 },
     { key: "owner", label: "Creator", width: 14 },
     { key: "domain", label: "Domain", width: 14 },
-    { key: "fitness", label: "F(g)", width: 9, format: (v) => (v as number).toFixed(4) },
-    { key: "safety", label: "V(g)", width: 9, format: (v) => (v as number).toFixed(4) },
-    { key: "success_rate", label: "SR", width: 7, format: (v) => v != null ? (v as number).toFixed(2) : "—" },
-    { key: "latency_score", label: "Lat", width: 7, format: (v) => v != null ? (v as number).toFixed(2) : "—" },
-    { key: "resource_efficiency", label: "RE", width: 7, format: (v) => v != null ? (v as number).toFixed(2) : "—" },
+    { key: "fitness", label: "F(g)", width: 9, format: (v) => String(v) },
+    { key: "safety", label: "V(g)", width: 9, format: (v) => String(v) },
     { key: "fidelity", label: "Fidelity", width: 10, format: (v) => fidelityColor(String(v)) },
   ]);
 }

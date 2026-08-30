@@ -1,4 +1,4 @@
-# Rotifer
+# Rotifer Guide
 
 > From zero to your first Gene in five minutes.
 

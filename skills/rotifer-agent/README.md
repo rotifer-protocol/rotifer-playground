@@ -65,9 +65,9 @@ first, never run silently. Full detail in [SKILL.md](SKILL.md).
 
 ## Related Skills
 
-- [rotifer-guide](https://clawhub.ai/skills/rotifer-guide) — Learn Rotifer from scratch
-- [rotifer-arena](https://clawhub.ai/skills/rotifer-arena) — Compare and evaluate Genes
-- [rotifer-self-evolving-agent](https://clawhub.ai/skills/rotifer-self-evolving-agent) — Auto-evolve your Agent
+- [rotifer-guide](https://clawhub.ai/skill/rotifer-guide) — Learn Rotifer from scratch
+- [rotifer-arena](https://clawhub.ai/skill/rotifer-arena) — Compare and evaluate Genes
+- [rotifer-self-evolving-agent](https://clawhub.ai/skill/rotifer-self-evolving-agent) — Auto-evolve your Agent
 
 ## Links
 

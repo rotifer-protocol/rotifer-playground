@@ -1,10 +1,10 @@
 name: Publish ClawHub Skills
 
-# The three Skills under skills/ are published to ClawHub one listing each. They
+# The Skills under skills/ are published to ClawHub one listing each. They
 # used to live in a repository that can never be pushed, which meant no public
 # source, no CI, and a manifest naming a repository that did not carry them.
 #
-# Real publishes happen only on a `clawhub-skills-v*` tag or a deliberate
+# Real publishes happen only on a `clawhub-<skill>-v<version>` tag or a deliberate
 # workflow_dispatch. Pull requests run the same path with --dry-run, so the
 # publish command is exercised on every change instead of being discovered
 # broken on release day — the lesson from clawhub-v2.3.0 in the

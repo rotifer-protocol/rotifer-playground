@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadCloudConfig } from "./client.js";
 import { loadCredentials } from "./auth.js";
+import { telemetryOptedOutByEnv } from "../telemetry/consent.js";
 
 /**
  * Report one execution of a Cloud-installed Gene to Rotifer Cloud.
@@ -69,9 +70,16 @@ export async function flushInvocationReports(timeoutMs: number = FLUSH_TIMEOUT_M
   if (timer) clearTimeout(timer);
 }
 
+/**
+ * Delegates to the shared check (../telemetry/consent.js) so this and the
+ * anonymous heartbeat (ADR-329) can never drift apart on what "off" means.
+ * ADR-329's decision is explicit that ROTIFER_TELEMETRY=0 turns off both —
+ * a second, slightly different copy of this check here would be exactly the
+ * kind of silent divergence that made ADR-319's metrics pipeline sit dead
+ * for months without producing an error anyone could see.
+ */
 export function telemetryOptedOut(): boolean {
-  const flag = (process.env.ROTIFER_TELEMETRY || "").trim().toLowerCase();
-  return flag === "0" || flag === "false" || flag === "off";
+  return telemetryOptedOutByEnv();
 }
 
 /**

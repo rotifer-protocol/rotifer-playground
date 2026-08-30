@@ -32,6 +32,7 @@ import { whoamiCommand } from "./commands/whoami.js";
 import { statsCommand } from "./commands/stats.js";
 import { compareCommand } from "./commands/compare.js";
 import { networkCommand } from "./commands/network.js";
+import { telemetryCommand } from "./commands/telemetry.js";
 import { vgCommand } from "./commands/vg.js";
 import { helloCommand } from "./commands/hello.js";
 import { selfUpdateCommand } from "./commands/self-update.js";
@@ -108,6 +109,7 @@ agent.addCommand(agentRunCommand);
 
 program.addCommand(helloCommand);
 program.addCommand(networkCommand);
+program.addCommand(telemetryCommand);
 program.addCommand(vgCommand);
 program.addCommand(selfUpdateCommand);
 program.addCommand(userConfigCommand);

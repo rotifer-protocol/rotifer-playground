@@ -87,16 +87,32 @@ Seeing the notice is recorded in `~/.rotifer/telemetry.json`
 (`first_run_notice_shown`), so it prints exactly once per machine, not once
 per command.
 
-## The aggregate is public
+## The aggregate is queryable — there is no dashboard for it (yet)
 
 The raw heartbeat table — one row per machine, per day, per channel — is
 not directly readable by anyone, not even the machine that wrote it. What's
-public is an aggregate view grouped by day and channel with no per-machine
-column at all (not filtered out for the public — structurally absent from
-what's exposed). It answers "how many machines were active on channel X on
-day Y" and "how many Gene calls did that add up to" — the same numbers this
-project uses internally to decide where to invest distribution effort,
-visible to anyone who asks.
+queryable is an aggregate view grouped by day and channel with no
+per-machine column at all (not filtered out for the public — structurally
+absent from what's exposed). It answers "how many machines were active on
+channel X on day Y" and "how many Gene calls did that add up to" — the
+same numbers this project uses internally to decide where to invest
+distribution effort.
+
+To be precise about what "public" means here: there is no web page for
+this yet, just an API anyone can call with the same public credential every
+Rotifer client already ships with (the `anon` key in
+`~/.rotifer/cloud.json`, or visible in this repo's own client source). If
+you have it handy:
+
+```bash
+curl "https://cloud.rotifer.dev/rest/v1/usage_heartbeat_public?select=day,channel,active_machines,total_invocations&order=day.desc&limit=20" \
+  -H "apikey: $ROTIFER_CLOUD_ANON_KEY" \
+  -H "Authorization: Bearer $ROTIFER_CLOUD_ANON_KEY"
+```
+
+That's the whole surface: a REST endpoint returning the same rows this
+project itself reads to decide where usage is coming from, nothing rendered
+for it beyond what the JSON gives you.
 
 ## Reporting a concern
 

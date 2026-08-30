@@ -1,0 +1,95 @@
+name: MCP Pin Drift
+
+# The publish gates prove every @rotifer/mcp-server pin in this repository
+# agrees with itself — they cannot notice that npm has moved on. That gap is
+# real: 0.17.0 shipped on 2026-08-21 and the pins sat on 0.16.1 for over a
+# week until a human happened to look at the ClawHub page.
+#
+# This job compares the agreed pin against the npm dist-tag once a week and
+# opens (or refreshes) one standing issue when they differ. It deliberately
+# does NOT open a PR: a bump travels through several surfaces at once — the
+# plugin bundle, the /evolve Skill, mcp.json — plus a manifest version bump
+# and a human-approved publish tag, and an auto-PR would make the easy half
+# of that job look like the whole job.
+#
+# Ported from the rotifer-self-evolving-agent repository when its Skill moved
+# into skills/ here; watching one repository now watches every surface.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    name: Pinned vs npm latest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Compare
+        id: compare
+        run: |
+          # The publish gate asserts all pins agree, so any one of them is the
+          # repository's answer; read it from the Skill manifest that declares
+          # the runtime.
+          PINNED="$(python3 -c "
+          import json, pathlib, re
+          for d in sorted(pathlib.Path('skills').iterdir()):
+              if not d.is_dir(): continue
+              args = json.loads((d/'clawhub.json').read_text()).get('mcp_server', {}).get('args', [])
+              m = [re.search(r'@rotifer/mcp-server@([0-9.]+)', a) for a in args]
+              hit = next((x.group(1) for x in m if x), None)
+              if hit: print(hit); break
+          ")"
+          if [ -z "$PINNED" ]; then
+            echo "::error::no skill declares an mcp_server pin — this watcher is watching nothing"
+            exit 1
+          fi
+          LATEST="$(npm view @rotifer/mcp-server version)"
+          echo "pinned=$PINNED" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "  pinned: $PINNED"
+          echo "  latest: $LATEST"
+          if [ "$PINNED" = "$LATEST" ]; then
+            echo "in_sync=true" >> "$GITHUB_OUTPUT"
+            echo "✅ in sync"
+          else
+            echo "in_sync=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::pinned $PINNED but npm latest is $LATEST"
+          fi
+
+      # One standing issue, refreshed in place — a weekly duplicate per drift
+      # week would train everyone to ignore the label.
+      - name: Open or refresh the drift issue
+        if: steps.compare.outputs.in_sync == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ steps.compare.outputs.pinned }}
+          LATEST: ${{ steps.compare.outputs.latest }}
+        run: |
+          TITLE="MCP server pin has drifted behind npm"
+          BODY="$(cat <<TXT
+          Every \`@rotifer/mcp-server\` pin in this repository (the publish
+          gate keeps them in agreement) says \`${PINNED}\`, but npm latest is
+          \`${LATEST}\`.
+
+          Bumping means, together:
+          1. every runtime pin — \`skills/rotifer-self-evolving-agent/\`, \`plugin-source/\`, \`mcp.json\` — historical references written as bare \`x.y.z\` stay as they are
+          2. \`skills/rotifer-self-evolving-agent/clawhub.json\` + SKILL.md frontmatter version bump
+          3. a human-approved \`clawhub-rotifer-self-evolving-agent-v*\` tag to republish
+
+          Refreshed automatically by \`.github/workflows/mcp-pin-drift.yml\`.
+          TXT
+          )"
+          EXISTING="$(gh issue list --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "Still drifted: pinned \`$PINNED\`, npm latest \`$LATEST\` ($(date -u +%F))."
+            echo "refreshed issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi

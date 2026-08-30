@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   unlinkSync,
   writeFileSync,
@@ -310,7 +311,17 @@ describe("plugin source sync pipeline", () => {
     // already diverged. Installing both got you two different things claiming
     // to be one skill. The bundle is not the source of truth for a name that
     // ships on its own, so it may not spend one.
-    const SEPARATELY_PUBLISHED = ["rotifer-self-evolving-agent"];
+    //
+    // The published names come from skills/ rather than a list kept here: a
+    // guard shaped around the one collision it caught was silent about the
+    // next one, and skills/ is where every separately published Skill now
+    // lives — a sixth arrives on this list by being added there.
+    const SEPARATELY_PUBLISHED = readdirSync(join(process.cwd(), "skills"), {
+      withFileTypes: true,
+    })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+    expect(SEPARATELY_PUBLISHED.length).toBeGreaterThanOrEqual(5);
 
     const skillNames = /^name:\s*(\S+)\s*$/m;
     const bundled = outputs

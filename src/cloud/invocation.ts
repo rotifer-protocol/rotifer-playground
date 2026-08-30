@@ -111,6 +111,43 @@ export interface InvocationReport {
   reason?: string;
   /** Resolves when the POST settles; absent when nothing was sent. */
   settled?: Promise<void>;
+  /** The channel attributed to this report, or null when none could be. */
+  channel?: string | null;
+}
+
+/**
+ * What the registry's `client_channel` column accepts: lowercase snake_case,
+ * optionally one colon qualifying a transport with its host. Mirrored from the
+ * CHECK constraint in migration 20260830000000 — kept in sync deliberately,
+ * because a value this side considers fine and the database rejects would fail
+ * the whole report, and reporting is fire-and-forget: nobody would find out.
+ */
+const CHANNEL_RE = /^[a-z0-9_]{1,32}(:[a-z0-9_]{1,32})?$/;
+
+/**
+ * Who is reporting this invocation.
+ *
+ * Defaults to `cli`, because that is what this process is. When the CLI was
+ * spawned by something else — today the MCP server's `run_gene`, which shells
+ * out rather than executing Genes itself — that parent sets
+ * ROTIFER_INVOCATION_CHANNEL and the run is attributed to the real entry point
+ * instead of to the CLI that happens to be doing the work.
+ *
+ * Why the parent tells us rather than us guessing: the alternative is
+ * inspecting the process tree, which differs per platform and per host, and
+ * would quietly mislabel every host it has not been taught about. An explicit
+ * handshake is either present and correct, or absent and honestly `cli`.
+ *
+ * A malformed value is dropped rather than sanitised. Silently rewriting
+ * `Claude Code` into `claude_code` would invent an attribution the caller
+ * never made; null says "not attributable", which is true and readable.
+ */
+export function resolveInvocationChannel(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const declared = (env.ROTIFER_INVOCATION_CHANNEL || "").trim();
+  if (!declared) return "cli";
+  return CHANNEL_RE.test(declared) ? declared : null;
 }
 
 /**
@@ -128,8 +165,17 @@ export function recordGeneInvocation(geneDir: string): InvocationReport {
   const geneId = cloudGeneId(geneDir);
   if (!geneId) return { reported: null, reason: "no-cloud-identity" };
 
+  const channel = resolveInvocationChannel();
+
+  // v2 carries the channel; the original entry point is still there for
+  // clients that predate it, and both share one idempotency guard server-side
+  // (migration 20260830000000) so an MCP call reported through both is still
+  // one row. When the channel is unattributable we call the older function
+  // rather than sending an explicit null: same outcome in the ledger, and it
+  // keeps "no channel" from looking like a client that tried and failed.
   const config = loadCloudConfig();
-  const url = `${config.endpoint.replace(/\/+$/, "")}/rest/v1/rpc/log_gene_invocation`;
+  const rpc = channel === null ? "log_gene_invocation" : "log_gene_invocation_v2";
+  const url = `${config.endpoint.replace(/\/+$/, "")}/rest/v1/rpc/${rpc}`;
 
   const settled = fetch(url, {
     method: "POST",
@@ -138,16 +184,20 @@ export function recordGeneInvocation(geneDir: string): InvocationReport {
       apikey: config.anonKey,
       Authorization: `Bearer ${creds!.access_token}`,
     },
-    body: JSON.stringify({ p_gene_id: geneId, p_caller_agent_id: callerId }),
+    body: JSON.stringify(
+      channel === null
+        ? { p_gene_id: geneId, p_caller_agent_id: callerId }
+        : { p_gene_id: geneId, p_caller_agent_id: callerId, p_client_channel: channel },
+    ),
   })
     .then((res) => {
       if (!res.ok && process.env.ROTIFER_DEBUG) {
-        process.stderr.write(`[rotifer] log_gene_invocation failed (${res.status})\n`);
+        process.stderr.write(`[rotifer] ${rpc} failed (${res.status})\n`);
       }
     })
     .catch((err: unknown) => {
       if (process.env.ROTIFER_DEBUG) {
-        process.stderr.write(`[rotifer] log_gene_invocation error: ${(err as Error)?.message ?? err}\n`);
+        process.stderr.write(`[rotifer] ${rpc} error: ${(err as Error)?.message ?? err}\n`);
       }
     })
     .finally(() => {
@@ -155,5 +205,5 @@ export function recordGeneInvocation(geneDir: string): InvocationReport {
     });
 
   inFlight.add(settled);
-  return { reported: geneId, settled };
+  return { reported: geneId, settled, channel };
 }

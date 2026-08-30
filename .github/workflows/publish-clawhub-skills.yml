@@ -27,7 +27,7 @@ on:
       skill:
         description: "Which Skill to publish"
         type: choice
-        options: [rotifer-guide, rotifer-agent, rotifer-arena, rotifer-gene, rotifer-self-evolving-agent]
+        options: [rotifer, rotifer-agent, rotifer-arena, rotifer-gene, rotifer-self-evolving-agent]
         required: true
       dry_run:
         description: "Preview without publishing"
@@ -172,7 +172,10 @@ jobs:
 
           dirs = sorted(d.name for d in pathlib.Path("skills").iterdir() if d.is_dir())
           readme = pathlib.Path("skills/README.md").read_text(encoding="utf-8")
-          rows = re.findall(r"^\| \[?`?(rotifer-[a-z-]+)`?\]?", readme, re.M)
+          # `rotifer-[a-z-]+` missed the bare `rotifer` row the day the entry
+          # point took that slug: the pattern assumed every Skill carries a
+          # suffix. Match the directory names this index is checked against.
+          rows = re.findall(r"^\| \[?`?(rotifer(?:-[a-z-]+)?)`?\]?", readme, re.M)
 
           missing = [d for d in dirs if d not in rows]
           ghost = [r for r in rows if r not in dirs]
@@ -277,7 +280,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        skill: [rotifer-guide, rotifer-agent, rotifer-arena, rotifer-gene, rotifer-self-evolving-agent]
+        skill: [rotifer, rotifer-agent, rotifer-arena, rotifer-gene, rotifer-self-evolving-agent]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 

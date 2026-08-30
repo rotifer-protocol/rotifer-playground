@@ -266,8 +266,8 @@ export function buildOutputs(rootDir = REPO_ROOT) {
     rootFamily.dshBundle,
   );
   const sharedRule = readText(join(rootDir, "plugin-source/content/shared/rotifer-gene-dev.mdc"));
-  const rootRotifer = readText(join(rootDir, "plugin-source/content/root/rotifer.md"));
-  const vscodeRotifer = readText(join(rootDir, "plugin-source/content/vscode/rotifer.md"));
+  const rootRotifer = readText(join(rootDir, "plugin-source/content/root/rotifer-overview.md"));
+  const vscodeRotifer = readText(join(rootDir, "plugin-source/content/vscode/rotifer-overview.md"));
   const vscodeRule = readText(
     join(rootDir, "plugin-source/content/vscode/rotifer-conventions.mdc"),
   );
@@ -309,7 +309,7 @@ export function buildOutputs(rootDir = REPO_ROOT) {
     outputText("plugins/rotifer/skills/hello/SKILL.md", rootHello),
     outputText("plugins/rotifer/skills/assistant/SKILL.md", rootAssistant),
     outputText("plugins/rotifer/rules/rotifer-gene-dev.mdc", sharedRule),
-    outputText("plugins/rotifer/skills/rotifer.md", rootRotifer),
+    outputText("plugins/rotifer/skills/rotifer-overview.md", rootRotifer),
     outputBinary("plugins/rotifer/assets/icon.png", brandPng),
 
     outputJson(
@@ -328,7 +328,7 @@ export function buildOutputs(rootDir = REPO_ROOT) {
       "rotifer-vscode/.codebuddy-plugin/plugin.json",
       injectVersion(vscodeFamily.codebuddyPlugin, vscodeVersion),
     ),
-    outputText("rotifer-vscode/skills/rotifer.md", vscodeRotifer),
+    outputText("rotifer-vscode/skills/rotifer-overview.md", vscodeRotifer),
     outputText("rotifer-vscode/rules/rotifer-conventions.mdc", vscodeRule),
     outputBinary("rotifer-vscode/icon.png", brandPng),
     outputBinary("rotifer-vscode/assets/logo.png", brandPng),

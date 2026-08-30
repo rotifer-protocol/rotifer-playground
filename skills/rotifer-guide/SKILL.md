@@ -1,5 +1,5 @@
 ---
-name: rotifer
+name: rotifer-guide
 description: >-
   Entry point for Rotifer Protocol — onboarding to Rotifer Genes, scaffolding a Gene from a
   description, diagnosing a Gene's F(g) or compile failure, searching the Rotifer Gene registry,
@@ -9,7 +9,7 @@ description: >-
   here operates on Rotifer Genes and the Rotifer CLI, and nothing else.
 ---
 
-# Rotifer — Protocol Entry Point
+# Rotifer Guide — User Entry Point
 
 > This Skill handles intent recognition and workflow routing. Deep technical details are delegated to specialized Skills.
 

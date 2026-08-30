@@ -27,7 +27,7 @@ on:
       skill:
         description: "Which Skill to publish"
         type: choice
-        options: [rotifer, rotifer-agent, rotifer-arena, rotifer-gene, rotifer-self-evolving-agent]
+        options: [rotifer-guide, rotifer-agent, rotifer-arena, rotifer-gene, rotifer-self-evolving-agent]
         required: true
       dry_run:
         description: "Preview without publishing"
@@ -280,7 +280,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        skill: [rotifer, rotifer-agent, rotifer-arena, rotifer-gene, rotifer-self-evolving-agent]
+        skill: [rotifer-guide, rotifer-agent, rotifer-arena, rotifer-gene, rotifer-self-evolving-agent]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 

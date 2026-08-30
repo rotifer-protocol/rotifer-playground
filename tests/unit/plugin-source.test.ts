@@ -480,17 +480,17 @@ describe("plugin source sync pipeline", () => {
     // recursively and says nothing, so the day that name got reused for the
     // Skills published to ClawHub on their own, the next sync would have taken
     // all three with it. Nothing regenerates them — they are the source.
-    mkdirSync(join(root, "skills/rotifer"), { recursive: true });
+    mkdirSync(join(root, "skills/rotifer-guide"), { recursive: true });
     writeFileSync(join(root, "skills/README.md"), "published on their own\n", "utf8");
-    writeFileSync(join(root, "skills/rotifer/SKILL.md"), "the manual\n", "utf8");
-    writeFileSync(join(root, "skills/rotifer/clawhub.json"), '{"name":"x"}\n', "utf8");
+    writeFileSync(join(root, "skills/rotifer-guide/SKILL.md"), "the manual\n", "utf8");
+    writeFileSync(join(root, "skills/rotifer-guide/clawhub.json"), '{"name":"x"}\n', "utf8");
 
     syncOutputs(root);
 
-    expect(existsSync(join(root, "skills/rotifer/SKILL.md"))).toBe(true);
-    expect(readFileSync(join(root, "skills/rotifer/SKILL.md"), "utf8")).toBe("the manual\n");
+    expect(existsSync(join(root, "skills/rotifer-guide/SKILL.md"))).toBe(true);
+    expect(readFileSync(join(root, "skills/rotifer-guide/SKILL.md"), "utf8")).toBe("the manual\n");
     expect(existsSync(join(root, "skills/README.md"))).toBe(true);
-    expect(existsSync(join(root, "skills/rotifer/clawhub.json"))).toBe(true);
+    expect(existsSync(join(root, "skills/rotifer-guide/clawhub.json"))).toBe(true);
 
     // And it is not drift either — check:plugins must not ask for them back.
     expect(diffOutputs(root)).toEqual([]);

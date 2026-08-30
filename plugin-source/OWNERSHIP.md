@@ -47,7 +47,7 @@ This file defines which plugin-facing files are canonical sources and which file
 ## What Sync Does Not Own
 
 `skills/` at the repo root holds the Skills published to ClawHub on their own —
-`rotifer`, `rotifer-agent`, `rotifer-arena`. They are neither canonical
+`rotifer-guide`, `rotifer-agent`, `rotifer-arena`. They are neither canonical
 inputs nor generated outputs. Nothing in `plugin-source/` produces them, and
 `npm run sync:plugins` neither writes nor removes them.
 

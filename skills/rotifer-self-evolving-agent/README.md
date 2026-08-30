@@ -115,7 +115,7 @@ Two things worth knowing beyond that:
 
 ## Related Skills
 
-- [`rotifer`](https://clawhub.ai/skill/rotifer) — where to start if you are new to Rotifer
+- [`rotifer-guide`](https://clawhub.ai/skill/rotifer-guide) — where to start if you are new to Rotifer
 - [`rotifer-gene`](https://clawhub.ai/skill/rotifer-gene) — write, audit and upgrade a Gene
 - [`rotifer-arena`](https://clawhub.ai/skill/rotifer-arena) — benchmark a Gene against the field
 - [`rotifer-agent`](https://clawhub.ai/skill/rotifer-agent) — compose several Genes into an Agent

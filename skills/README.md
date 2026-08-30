@@ -6,7 +6,7 @@ generated from `plugin-source/`.
 
 | Skill | What it is for |
 |---|---|
-| [`rotifer`](rotifer/) | Entry point — onboarding, scaffolding a Gene, diagnosing F(g) or a compile failure, registry search, fidelity upgrade |
+| [`rotifer-guide`](rotifer-guide/) | Entry point — onboarding, scaffolding a Gene, diagnosing F(g) or a compile failure, registry search, fidelity upgrade |
 | [`rotifer-agent`](rotifer-agent/) | Composing an Agent from Genes — capability decomposition, Arena-ranked selection, Genome assembly |
 | [`rotifer-arena`](rotifer-arena/) | Benchmarking Genes against each other — import, compile, match, and an F(g)/V(g) report |
 | [`rotifer-gene`](rotifer-gene/) | The Gene manual — writing `express` and a phenotype schema, the four-layer security audit, and Wrapped → Hybrid → Native migration |

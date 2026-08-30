@@ -1,10 +1,10 @@
 name: Publish ClawHub Skills
 
-# The three Skills under skills/ are published to ClawHub one listing each. They
+# The Skills under skills/ are published to ClawHub one listing each. They
 # used to live in a repository that can never be pushed, which meant no public
 # source, no CI, and a manifest naming a repository that did not carry them.
 #
-# Real publishes happen only on a `clawhub-skills-v*` tag or a deliberate
+# Real publishes happen only on a `clawhub-<skill>-v<version>` tag or a deliberate
 # workflow_dispatch. Pull requests run the same path with --dry-run, so the
 # publish command is exercised on every change instead of being discovered
 # broken on release day — the lesson from clawhub-v2.3.0 in the
@@ -27,7 +27,7 @@ on:
       skill:
         description: "Which Skill to publish"
         type: choice
-        options: [rotifer-guide, rotifer-agent, rotifer-arena, rotifer-gene]
+        options: [rotifer-guide, rotifer-agent, rotifer-arena, rotifer-gene, rotifer-self-evolving-agent]
         required: true
       dry_run:
         description: "Preview without publishing"
@@ -161,6 +161,112 @@ jobs:
               if not (only_router or only_manuals):
                   print(f"  {label}: {sorted(extract(router))}")
 
+
+      # The index has already miscounted once — four directories under a line
+      # reading "three separate listings" — so the count is asserted, not
+      # trusted to prose.
+      - name: The index counts what the directory holds
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+
+          dirs = sorted(d.name for d in pathlib.Path("skills").iterdir() if d.is_dir())
+          readme = pathlib.Path("skills/README.md").read_text(encoding="utf-8")
+          rows = re.findall(r"^\| \[?`?(rotifer-[a-z-]+)`?\]?", readme, re.M)
+
+          missing = [d for d in dirs if d not in rows]
+          ghost = [r for r in rows if r not in dirs]
+          if missing:
+              print(f"::error::skills/README.md has no row for: {missing}")
+          if ghost:
+              print(f"::error::skills/README.md lists directories that do not exist: {ghost}")
+          print(f"  {len(dirs)} directories, {len(rows)} rows")
+          sys.exit(1 if (missing or ghost) else 0)
+          PY
+
+      # These gates follow the mcp_server field, not a skill's name. A Skill
+      # that launches a runtime pins it, says the version everywhere it repeats
+      # it, and warns before anything it does to the user's machine — whichever
+      # directory it lives in. Keying on a name is how a fifth Skill with the
+      # field would arrive ungated; keying on the field means it cannot.
+      - name: Gates that travel with the mcp_server field
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, re, sys
+
+          PIN = re.compile(r"@rotifer/mcp-server@(\d+\.\d+\.\d+)")
+          failed = False
+
+          bound = []
+          for directory in sorted(pathlib.Path("skills").iterdir()):
+              if directory.is_dir() and json.loads((directory/"clawhub.json").read_text(encoding="utf-8")).get("mcp_server"):
+                  bound.append(directory)
+
+          # The gate must never pass by matching nothing: today one Skill
+          # carries the field, and a refactor that dropped it from every
+          # manifest would silently disarm everything below.
+          if not bound:
+              print("::error::no skill declares mcp_server — these gates matched nothing, which is not a pass")
+              sys.exit(1)
+
+          # 1. Every pin in the repository agrees. The scan covers the bound
+          #    Skills, the plugin bundle, and mcp.json — the file that sat
+          #    eight minors behind everything else with no gate watching.
+          pins = {}
+          for path in pathlib.Path(".").rglob("*"):
+              if path.suffix not in (".md", ".json") or not path.is_file():
+                  continue
+              s = str(path)
+              if "node_modules" in s or "package-lock" in s or path.name == "CHANGELOG.md":
+                  continue
+              for m in PIN.finditer(path.read_text(encoding="utf-8", errors="replace")):
+                  pins.setdefault(m.group(1), []).append(s)
+          if len(pins) > 1:
+              for version, places in sorted(pins.items()):
+                  print(f"::error::@rotifer/mcp-server@{version} in: {sorted(set(places))[:6]}")
+              failed = True
+          else:
+              (version, places), = pins.items()
+              print(f"  pin {version} agrees across {len(set(places))} files")
+
+          for directory in bound:
+              skill = (directory/"SKILL.md").read_text(encoding="utf-8")
+              manifest = json.loads((directory/"clawhub.json").read_text(encoding="utf-8"))
+
+              # 2. The SKILL.md frontmatter version and the manifest agree —
+              #    2.3.1 shipped disagreeing because both were bumped by hand.
+              fm = re.search(r'version:\s*"([^"]+)"', skill.split("---", 2)[1])
+              if not fm or fm.group(1) != manifest["version"]:
+                  print(f"::error::{directory.name}: SKILL.md says {fm.group(1) if fm else 'nothing'}, manifest says {manifest['version']}")
+                  failed = True
+
+              # 3. The launch line is literally the plugin bundle's launch
+              #    line. The two spent months in different repositories
+              #    drifting in form (npx vs npx -y) while the pins happened to
+              #    match; same repo, same line, asserted.
+              plugin = pathlib.Path("plugin-source/content/root/evolve/SKILL.md").read_text(encoding="utf-8")
+              skill_lines = {l.strip() for l in skill.splitlines() if "--tools=" in l and "npx" in l}
+              plugin_lines = {l.strip() for l in plugin.splitlines() if "--tools=" in l and "npx" in l}
+              # A launch line is a line that IS the command — prose that
+              # quotes the command mid-sentence is compared by what it quotes,
+              # which the pin check above already covers.
+              bare = {l for l in skill_lines if l.startswith("npx")}
+              if not bare:
+                  print(f"::error::{directory.name}: no launch line found in SKILL.md")
+                  failed = True
+              elif not bare <= plugin_lines:
+                  print(f"::error::{directory.name}: launch line differs from the plugin bundle's: {sorted(bare - plugin_lines)}")
+                  failed = True
+
+              # 4. Disclosure parity: every surface that offers to change the
+              #    user's machine also says the user confirms it first.
+              readme = (directory/"README.md").read_text(encoding="utf-8")
+              for label, text in (("SKILL.md", skill), ("README.md", readme)):
+                  if re.search(r"replace|swap|install", text, re.I) and not re.search(r"approval|confirm|approved", text, re.I):
+                      print(f"::error::{directory.name}/{label} offers replacements without saying the user confirms them")
+                      failed = True
+
+          print(f"  gated: {[d.name for d in bound]}")
           sys.exit(1 if failed else 0)
           PY
 
@@ -171,7 +277,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        skill: [rotifer-guide, rotifer-agent, rotifer-arena, rotifer-gene]
+        skill: [rotifer-guide, rotifer-agent, rotifer-arena, rotifer-gene, rotifer-self-evolving-agent]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 

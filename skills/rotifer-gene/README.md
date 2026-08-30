@@ -60,6 +60,7 @@ run silently.
 - [`rotifer-guide`](https://clawhub.ai/skill/rotifer-guide) — where to start if you are new to Rotifer
 - [`rotifer-arena`](https://clawhub.ai/skill/rotifer-arena) — benchmark a Gene against the field
 - [`rotifer-agent`](https://clawhub.ai/skill/rotifer-agent) — compose several Genes into an Agent
+- [`rotifer-self-evolving-agent`](https://clawhub.ai/skill/rotifer-self-evolving-agent) — `/evolve`: swap weak Genes for Arena-ranked stronger ones
 
 ## Links
 

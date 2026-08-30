@@ -10,6 +10,7 @@ generated from `plugin-source/`.
 | [`rotifer-agent`](rotifer-agent/) | Composing an Agent from Genes — capability decomposition, Arena-ranked selection, Genome assembly |
 | [`rotifer-arena`](rotifer-arena/) | Benchmarking Genes against each other — import, compile, match, and an F(g)/V(g) report |
 | [`rotifer-gene`](rotifer-gene/) | The Gene manual — writing `express` and a phenotype schema, the four-layer security audit, and Wrapped → Hybrid → Native migration |
+| [`rotifer-self-evolving-agent`](rotifer-self-evolving-agent/) | `/evolve` — rank an Agent's Genes against the Arena and swap in stronger ones, with user approval; the one Skill here that launches an MCP runtime, so extra CI gates follow its `mcp_server` field |
 
 ## How these differ from `plugins/rotifer`
 
@@ -17,14 +18,14 @@ generated from `plugin-source/`.
 |---|---|---|
 | Where the content comes from | generated from `plugin-source/` | hand-authored; these files are the source |
 | Does `npm run sync:plugins` touch it? | yes, it owns those outputs | **no** |
-| Ships to | five hosts, inside one bundle | ClawHub, as three separate listings |
+| Ships to | five hosts, inside one bundle | ClawHub, one listing per directory — CI asserts this table matches the directory |
 | Version | one family version for the whole bundle | each `clawhub.json`, independently |
 | Released by | `release-root-plugin-family.yml` | `publish-clawhub-skills.yml` |
 
 The bundle's `assistant` Skill covers the same subject matter at a fraction of
 the length — it is a router that gets a reader oriented, while these are the
 manuals it orients them toward. Measured before this directory existed: no line
-of `assistant` appears verbatim in any of the three, and each side carries
+of `assistant` appears verbatim in any of them, and each side carries
 tables the other does not. They are deliberately different depths, so neither
 is generated from the other.
 

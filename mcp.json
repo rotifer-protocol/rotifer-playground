@@ -2,7 +2,7 @@
   "mcpServers": {
     "rotifer": {
       "command": "npx",
-      "args": ["@rotifer/mcp-server@0.9.1"]
+      "args": ["@rotifer/mcp-server@0.17.0"]
     }
   }
 }

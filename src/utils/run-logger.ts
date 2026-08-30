@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { ensurePrivateDir, tightenPrivateFile } from "./private-fs.js";
 import { recordGeneInvocation } from "../cloud/invocation.js";
+import { recordHeartbeat } from "../telemetry/heartbeat.js";
 
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB rotation
 const LOG_DIR = join(homedir(), ".rotifer", "run-logs");
@@ -25,6 +26,18 @@ interface GeneExecutionMeta {
 }
 
 export function logGeneExecution(meta: GeneExecutionMeta): void {
+  // Unconditional — unlike the recordGeneInvocation call below this one,
+  // which only fires when meta.geneDir names a Cloud-installed Gene. The
+  // heartbeat (ADR-329) doesn't need a resolvable Cloud identity: "this
+  // machine ran something today" is true whether meta.geneDir is set,
+  // unset, or points at a local, never-published Gene. Gating it on the
+  // same condition as the identity-carrying report would silently drop the
+  // heartbeat for exactly the callers (locally-authored Genes, composed
+  // agents without one obvious geneDir) that most need the anonymous signal
+  // to be counted at all. No try/catch needed here — recordHeartbeat()
+  // guarantees it never throws.
+  recordHeartbeat();
+
   try {
     ensurePrivateDir(LOG_DIR);
 

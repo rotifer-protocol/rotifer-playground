@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.22.1...v0.23.0) (2026-08-30)
+
+
+### Features
+
+* **invocation:** 给调用账本加渠道字段，区分 CLI 与各 MCP 宿主 ([#290](https://github.com/rotifer-protocol/rotifer-playground/issues/290)) ([a423637](https://github.com/rotifer-protocol/rotifer-playground/commit/a4236375017ea87343f0da55d15803cf7c1a39bd))
+* **skills:** the fifth Skill moves in, and its gates learn to follow a field ([#293](https://github.com/rotifer-protocol/rotifer-playground/issues/293)) ([b0a4d0f](https://github.com/rotifer-protocol/rotifer-playground/commit/b0a4d0f86cb0034d869d03e0033c70340a75564c))
+* **telemetry:** CLI 客户端——本地聚合、四层同意判定、首跑明示 ([#295](https://github.com/rotifer-protocol/rotifer-playground/issues/295)) ([79f877c](https://github.com/rotifer-protocol/rotifer-playground/commit/79f877ce8860b2bd0d183491e280c60f405a581f))
+* **telemetry:** 匿名使用心跳表——ADR-329 D1/D2 数据层 ([#294](https://github.com/rotifer-protocol/rotifer-playground/issues/294)) ([a7dd4b3](https://github.com/rotifer-protocol/rotifer-playground/commit/a7dd4b35e0e8d4610612b64250c67992119637c3))
+
+
+### Reverts
+
+* **skills:** rotifer-guide keeps its slug — the bare name is a package ([#299](https://github.com/rotifer-protocol/rotifer-playground/issues/299)) ([355a893](https://github.com/rotifer-protocol/rotifer-playground/commit/355a89364b8c73c2256e2f7d45912f386cc1b025))
+
 ## [0.22.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.22.0...v0.22.1) (2026-08-29)
 
 

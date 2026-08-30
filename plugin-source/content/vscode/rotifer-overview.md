@@ -1,5 +1,5 @@
 ---
-name: rotifer
+name: rotifer-overview
 description: Use the Rotifer Protocol to manage evolving AI agent capabilities. Browse, install, and compete Genes in a live Arena. Use when the user mentions rotifer, gene, arena, evolution, fitness, or wants self-improving agent tools.
 ---
 

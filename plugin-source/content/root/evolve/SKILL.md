@@ -14,7 +14,7 @@ Your Agent gets stronger by competing, not by configuring. Scan capabilities, be
 This plugin declares the Rotifer MCP server for you:
 
 ```bash
-npx -y @rotifer/mcp-server@0.16.1 --tools=evolve
+npx -y @rotifer/mcp-server@0.17.0 --tools=evolve
 ```
 
 `--tools=evolve` is not decoration. Left undeclared, the server offers 31 tools
@@ -93,7 +93,7 @@ No voting, no human preference — pure runtime performance metrics determine wh
 ### Runtime dependency
 The MCP server is fetched from npm on first use and cached. That is a standard
 pattern, but it means you are trusting remote code — review the source, or check
-`npm view @rotifer/mcp-server@0.16.1 dist.integrity`, before use.
+`npm view @rotifer/mcp-server@0.17.0 dist.integrity`, before use.
 
 - **Source**: [github.com/rotifer-protocol/rotifer-mcp-server](https://github.com/rotifer-protocol/rotifer-mcp-server)
 

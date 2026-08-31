@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import {
   autoPublishGate,
   needsCompileBeforePublish,
+  resolveWrapFidelity,
   skipHintFor,
   type AutoPublishGateInput,
 } from "../../src/publish/auto-publish.js";
@@ -99,6 +100,40 @@ describe("skipHintFor", () => {
 
   it("keeps the plain publish hint in CI", () => {
     expect(skipHintFor("non-interactive", "my-gene")).toContain("rotifer publish my-gene");
+  });
+});
+
+/**
+ * Regression for a real bug found by an independent cursor-agent pyramid test
+ * run (2026-08-31): `wrap`'s plain path re-wrapping an existing Native gene
+ * (no gene.ir.wasm) with the CLI's default `--fidelity Wrapped` offered to
+ * publish anyway — the offer used the flag's default instead of what was
+ * already on disk. Answering "yes" then failed inside publishSingleGene,
+ * which is not silent-publish (safe) but is a broken prompt: the gate should
+ * never have offered at all, per skipHintFor's needs-compile branch.
+ */
+describe("resolveWrapFidelity", () => {
+  it("prefers the on-disk phenotype's fidelity over the CLI flag's default — the exact repro", () => {
+    // An existing Native gene, re-wrapped only to change --domain: the CLI
+    // flag is left at its default "Wrapped" because the user never passed
+    // --fidelity, but the phenotype on disk still says Native.
+    const onDiskPhenotype = { fidelity: "Native" };
+    expect(resolveWrapFidelity(onDiskPhenotype, "Wrapped")).toBe("Native");
+  });
+
+  it("falls back to the CLI flag when there is no phenotype on disk yet", () => {
+    const freshPhenotype: { fidelity?: unknown } = {};
+    expect(resolveWrapFidelity(freshPhenotype, "Native")).toBe("Native");
+  });
+
+  it("composes with needsCompileBeforePublish to reproduce the fixed behaviour end to end", () => {
+    const onDiskPhenotype = { fidelity: "Native" };
+    const resolved = resolveWrapFidelity(onDiskPhenotype, "Wrapped");
+    // geneDir intentionally doesn't exist — needsCompileBeforePublish only
+    // checks for gene.ir.wasm's absence, which an empty/missing dir satisfies.
+    expect(needsCompileBeforePublish("/nonexistent/gene-dir", resolved)).toBe(true);
+    // The bug, inlined: passing the CLI flag straight through hid the gate.
+    expect(needsCompileBeforePublish("/nonexistent/gene-dir", "Wrapped")).toBe(false);
   });
 });
 

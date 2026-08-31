@@ -13,7 +13,7 @@ import { requireProjectRoot } from "../utils/project-root.js";
 import { parseSkillFrontmatter } from "./scan.js";
 import { suggestDomains } from "../utils/domain-suggest.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
-import { offerAutoPublish } from "../publish/auto-publish.js";
+import { offerAutoPublish, resolveWrapFidelity } from "../publish/auto-publish.js";
 
 const CLAWHUB_API = "https://clawhub.ai/api/skill";
 const CLAWHUB_DOWNLOAD = "https://wry-manatee-359.convex.site/api/v1/download";
@@ -344,7 +344,7 @@ export const wrapCommand = new Command("wrap")
       display.hint("  rotifer compile " + geneName + "       # validate phenotype");
       display.hint("  rotifer vg " + geneName + "            # security scan");
       display.hint("  rotifer arena submit " + geneName + "  # compete in Arena");
-      await offerAutoPublish({ geneName, geneDir, fidelity: phenotype.fidelity as string });
+      await offerAutoPublish({ geneName, geneDir, fidelity: resolveWrapFidelity(phenotype, options.fidelity) });
       return;
     }
 
@@ -418,7 +418,7 @@ export const wrapCommand = new Command("wrap")
       display.hint("  rotifer compile " + geneName + "       # validate phenotype");
       display.hint("  rotifer vg " + geneName + "            # security scan");
       display.hint("  rotifer arena submit " + geneName + "  # compete in Arena");
-      await offerAutoPublish({ geneName, geneDir, fidelity: options.fidelity });
+      await offerAutoPublish({ geneName, geneDir, fidelity: resolveWrapFidelity(phenotype, options.fidelity) });
       return;
     }
 
@@ -489,5 +489,11 @@ export const wrapCommand = new Command("wrap")
     display.hint("  rotifer compile " + geneName + " --wasm <file>  # Native fidelity (with WASM)");
     display.hint("  rotifer vg " + geneName + "               # security scan");
     display.hint("  rotifer arena submit " + geneName + "     # compete in Arena");
-    await offerAutoPublish({ geneName, geneDir, fidelity: options.fidelity });
+    // Not options.fidelity: when phenotype.json already existed on disk (a
+    // re-wrap — e.g. just to change --domain), its fidelity was left as-is
+    // above and can differ from the CLI flag's default. Offering to publish
+    // based on the flag let a Native gene missing gene.ir.wasm show the
+    // prompt, get a "yes", and only then fail inside publishSingleGene —
+    // found by an independent cursor-agent pyramid test run, 2026-08-31.
+    await offerAutoPublish({ geneName, geneDir, fidelity: resolveWrapFidelity(phenotype, options.fidelity) });
   });

@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import {
   autoPublishGate,
   needsCompileBeforePublish,
+  needsNetworkConfigBeforePublish,
   resolveWrapFidelity,
   skipHintFor,
   type AutoPublishGateInput,
@@ -24,6 +25,7 @@ const ALLOWED: AutoPublishGateInput = {
   interactive: true,
   loggedIn: true,
   needsWasm: false,
+  needsNetworkConfig: false,
 };
 
 describe("autoPublishGate", () => {
@@ -52,6 +54,13 @@ describe("autoPublishGate", () => {
     });
   });
 
+  it("does not offer a Hybrid gene with no allowedDomains — the default shape of a fresh wrap", () => {
+    expect(autoPublishGate({ ...ALLOWED, needsNetworkConfig: true })).toEqual({
+      offer: false,
+      reason: "needs-network-config",
+    });
+  });
+
   it("does not offer when signed out — publish would reject it anyway", () => {
     expect(autoPublishGate({ ...ALLOWED, loggedIn: false })).toEqual({
       offer: false,
@@ -74,6 +83,12 @@ describe("autoPublishGate", () => {
       "needs-compile",
     );
   });
+
+  it("reports needs-network-config ahead of not-logged-in — logging in would not help either", () => {
+    expect(
+      autoPublishGate({ ...ALLOWED, needsNetworkConfig: true, loggedIn: false }).reason,
+    ).toBe("needs-network-config");
+  });
 });
 
 /**
@@ -92,6 +107,18 @@ describe("skipHintFor", () => {
     const hint = skipHintFor("not-logged-in", "my-gene");
     expect(hint).toContain("rotifer login");
     expect(hint).toContain("rotifer publish my-gene");
+  });
+
+  it("sends a Hybrid gene missing allowedDomains to edit phenotype.json, not to compile", () => {
+    const hint = skipHintFor("needs-network-config", "my-gene", "/proj/genes/my-gene");
+    expect(hint).toContain("network.allowedDomains");
+    expect(hint).toContain("/proj/genes/my-gene/phenotype.json");
+    expect(hint).toContain("rotifer publish my-gene");
+    expect(hint).not.toContain("rotifer compile");
+  });
+
+  it("falls back to a bare relative path when geneDir is not given", () => {
+    expect(skipHintFor("needs-network-config", "my-gene")).toContain("my-gene/phenotype.json");
   });
 
   it("keeps the plain publish hint for an opt-out — turning off the prompt does not hide the command", () => {
@@ -161,5 +188,61 @@ describe("needsCompileBeforePublish", () => {
   it("is false for Wrapped and Hybrid, which publish without WASM", () => {
     expect(needsCompileBeforePublish(geneDir, "Wrapped")).toBe(false);
     expect(needsCompileBeforePublish(geneDir, "Hybrid")).toBe(false);
+  });
+});
+
+/**
+ * Regression for a second real bug found by the same independent cursor-agent
+ * pyramid test run (2026-08-31, the run that #312 came from an earlier pass
+ * of): `wrap --fidelity Hybrid` always writes `network.allowedDomains: []`
+ * with nothing prompting the user to fill it in, and publishSingleGene
+ * unconditionally rejects an empty list (src/commands/publish.ts:95-96). So
+ * every stock Hybrid wrap — not an edge case, the default shape — showed the
+ * Yes-default publish prompt, accepted Enter, and failed on the very next
+ * line with "Hybrid gene missing allowedDomains". Same shape as the Native
+ * bug: the gate offered something guaranteed to fail downstream.
+ */
+describe("needsNetworkConfigBeforePublish", () => {
+  let geneDir: string;
+
+  beforeEach(() => {
+    geneDir = join(tmpdir(), `rotifer-autopub-net-${randomUUID()}`);
+    mkdirSync(geneDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(geneDir, { recursive: true, force: true });
+  });
+
+  function writePhenotype(network: unknown): void {
+    writeFileSync(
+      join(geneDir, "phenotype.json"),
+      JSON.stringify({ fidelity: "Hybrid", network }),
+    );
+  }
+
+  it("is true for the exact shape a stock 'wrap --fidelity Hybrid' produces", () => {
+    writePhenotype({ allowedDomains: [], maxTimeoutMs: 30000, maxResponseBytes: 1048576, maxRequestsPerMin: 10 });
+    expect(needsNetworkConfigBeforePublish(geneDir, "Hybrid")).toBe(true);
+  });
+
+  it("is true when network is missing entirely", () => {
+    writeFileSync(join(geneDir, "phenotype.json"), JSON.stringify({ fidelity: "Hybrid" }));
+    expect(needsNetworkConfigBeforePublish(geneDir, "Hybrid")).toBe(true);
+  });
+
+  it("is false once at least one domain is declared", () => {
+    writePhenotype({ allowedDomains: ["api.example.com"] });
+    expect(needsNetworkConfigBeforePublish(geneDir, "Hybrid")).toBe(false);
+  });
+
+  it("is false for Wrapped and Native — this check is Hybrid-only", () => {
+    writePhenotype({ allowedDomains: [] });
+    expect(needsNetworkConfigBeforePublish(geneDir, "Wrapped")).toBe(false);
+    expect(needsNetworkConfigBeforePublish(geneDir, "Native")).toBe(false);
+  });
+
+  it("is false when phenotype.json does not exist — not this function's failure to report", () => {
+    expect(needsNetworkConfigBeforePublish(geneDir, "Hybrid")).toBe(false);
   });
 });

@@ -83,6 +83,33 @@ export function needsCompileBeforePublish(geneDir: string, fidelity: string): bo
 }
 
 /**
+ * Which fidelity the auto-publish gate should judge a wrap by.
+ *
+ * `wrap`'s plain path (no --from-skill/--from-clawhub) loads an existing
+ * phenotype.json when re-wrapping a gene — e.g. to change --domain — and
+ * leaves its `fidelity` untouched. The CLI's `--fidelity` flag still defaults
+ * to "Wrapped" regardless. Passing that default straight to the gate made an
+ * existing Native gene with no compiled gene.ir.wasm show the publish prompt,
+ * accept a "yes", and only then fail inside publishSingleGene — found by an
+ * independent cursor-agent pyramid test run, 2026-08-31, which is also why
+ * this is a pure function rather than a PTY-driven E2E test: reproducing it
+ * needs a real TTY, and this repo's CI matrix runs both ubuntu-latest and
+ * macos-14, whose `script` binaries take incompatible arguments — a
+ * behavioural test for a one-line data-selection bug was the wrong layer.
+ *
+ * The on-disk phenotype wins whenever one was actually loaded; the CLI flag
+ * is truth only when there was nothing on disk to read.
+ */
+export function resolveWrapFidelity(
+  phenotype: { fidelity?: unknown },
+  cliFidelity: string,
+): string {
+  return typeof phenotype.fidelity === "string" && phenotype.fidelity.length > 0
+    ? phenotype.fidelity
+    : cliFidelity;
+}
+
+/**
  * The next step a skipped offer points at.
  *
  * Exported as a pure function because most skip reasons are unreachable from a

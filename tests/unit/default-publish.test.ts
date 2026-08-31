@@ -150,4 +150,28 @@ describe("wrap wires the default-publish knob to real behaviour", () => {
     const wrap = readFileSync("src/commands/wrap.ts", "utf-8");
     expect(wrap).toContain("offerAutoPublish");
   });
+
+  /**
+   * Every offerAutoPublish call site must route its fidelity through
+   * resolveWrapFidelity — not options.fidelity (the CLI flag's default,
+   * "Wrapped") and not a bare phenotype.fidelity cast. This is the same class
+   * of blind spot as shouldAutoPublish having zero callers: a well-tested
+   * pure function (resolveWrapFidelity, tests/unit/auto-publish-gate.test.ts)
+   * proves nothing about wrap.ts's three call sites individually, and a
+   * spawned-CLI E2E test can't observe the difference either — a child
+   * process never has a TTY, so the offer never prints regardless of which
+   * fidelity it was computed from. This source-level check is what actually
+   * closes the gap; see resolveWrapFidelity's own doc comment for the bug it
+   * was written to fix.
+   */
+  it("every offerAutoPublish call site resolves fidelity through resolveWrapFidelity", async () => {
+    const { readFileSync } = await import("node:fs");
+    const wrap = readFileSync("src/commands/wrap.ts", "utf-8");
+    const calls = [...wrap.matchAll(/offerAutoPublish\(\{[^}]*\}\)/g)].map((m) => m[0]);
+
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    for (const call of calls) {
+      expect(call).toContain("resolveWrapFidelity(");
+    }
+  });
 });

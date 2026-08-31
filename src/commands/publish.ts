@@ -47,7 +47,12 @@ function formatCheckIcon(status: CheckItem["status"]): string {
   return c.error(icon.error);
 }
 
-async function publishSingleGene(
+/**
+ * Exported for `wrap`'s default-publish offer (ADR-247 R3, src/publish/auto-publish.ts).
+ * Shared rather than reimplemented so the security gate, badge upload, and
+ * manifest writes cannot drift between the two entry points.
+ */
+export async function publishSingleGene(
   geneName: string,
   geneDir: string,
   creds: CloudCredentials,

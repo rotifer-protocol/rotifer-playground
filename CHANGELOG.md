@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.23.0...v0.23.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **telemetry:** close agent-run.ts's flush gaps and stop a stalled endpoint from hanging the CLI ([#304](https://github.com/rotifer-protocol/rotifer-playground/issues/304)) ([d9f4342](https://github.com/rotifer-protocol/rotifer-playground/commit/d9f434232c8a113b030d0d64b4f3b8777f5c82a4))
+* **telemetry:** flush the heartbeat request before the CLI process ends ([#302](https://github.com/rotifer-protocol/rotifer-playground/issues/302)) ([03dc515](https://github.com/rotifer-protocol/rotifer-playground/commit/03dc515021a925066a8244dece1c9f3457c2f2bc))
+
 ## [0.23.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.22.1...v0.23.0) (2026-08-30)
 
 

@@ -72,8 +72,21 @@ function printFirstRunNotice(): void {
 /** Heartbeat reports still in flight. Emptied as each settles; see flushHeartbeat. */
 const inFlight = new Set<Promise<void>>();
 
-/** Longest a caller will wait for a heartbeat to settle before exiting anyway. */
-export const FLUSH_TIMEOUT_MS = 2000;
+/**
+ * Longest a caller will wait for a heartbeat to settle before exiting
+ * anyway. Was 2000ms; raised after measuring the real request against
+ * production (cloud.rotifer.dev) by hand — 10 samples, mixed sandboxed and
+ * direct, TLS handshake alone ranging ~0.4s–2.0s and total request time up
+ * to 2.57s, with 2s undershot in roughly half the samples. A timeout that
+ * short was not a safety margin, it was routinely firing on ordinary,
+ * successful requests — abandoning them mid-flight is functionally the
+ * same as the original bug this file was rewritten to fix, just with a
+ * different cause. 8000ms clears the observed worst case with headroom for
+ * a slower network without being so long that a genuinely stalled endpoint
+ * (the case this timeout exists for) hangs the process for a user-visible
+ * eternity.
+ */
+export const FLUSH_TIMEOUT_MS = 8000;
 
 /**
  * Wait for any in-flight heartbeat report to settle. Call this before

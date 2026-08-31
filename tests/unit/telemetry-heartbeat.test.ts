@@ -219,6 +219,40 @@ describe("flushHeartbeat", () => {
     expect(flushed).toBe(true);
   });
 
+  /**
+   * flushHeartbeat() giving up after the timeout (the test above) only
+   * stops the *caller* from waiting — found the hard way while writing
+   * this file's companion E2E test
+   * (tests/e2e/telemetry-heartbeat-delivery.test.ts): a request that never
+   * gets a response leaves its socket open as an active handle, and Node
+   * does not exit while one exists. Without aborting the fetch itself, a
+   * stalled telemetry endpoint would hang the whole CLI process for however
+   * long the OS's own TCP timeout takes — worse than the bug this file was
+   * rewritten to fix. This is what actually lets the process exit on
+   * schedule.
+   */
+  it("aborts the underlying fetch after FLUSH_TIMEOUT_MS, not just the caller's wait", async () => {
+    vi.useFakeTimers();
+    let capturedSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { recordHeartbeat, FLUSH_TIMEOUT_MS } = await import("../../src/telemetry/heartbeat.js");
+
+    recordHeartbeat();
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
+    expect(capturedSignal!.aborted).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(FLUSH_TIMEOUT_MS);
+    expect(capturedSignal!.aborted).toBe(true);
+
+    vi.useRealTimers();
+  });
+
   it("gives up after the timeout rather than hanging the run", async () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => { /* never settles */ })));
     const { recordHeartbeat, flushHeartbeat } = await import("../../src/telemetry/heartbeat.js");

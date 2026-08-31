@@ -132,6 +132,21 @@ export function recordHeartbeat(): void {
     const cloudConfig = loadCloudConfig();
     const url = `${cloudConfig.endpoint.replace(/\/+$/, "")}/rest/v1/rpc/record_heartbeat`;
 
+    // flushHeartbeat() giving up after FLUSH_TIMEOUT_MS only stops the
+    // *caller* from waiting — it does not by itself end this fetch. A
+    // request that never gets a response (the fake-timeout regression test
+    // in tests/e2e/telemetry-heartbeat-delivery.test.ts exercises exactly
+    // this) leaves its socket open as an active handle, and Node does not
+    // exit while one exists — so without this abort, a stalled telemetry
+    // endpoint would hang every `rotifer run` for however long the OS's own
+    // TCP timeout takes, which is far worse than the bug this file was
+    // rewritten to fix. Aborting on the same deadline is what actually lets
+    // the process exit on schedule instead of merely stopping user code
+    // from waiting on it.
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), FLUSH_TIMEOUT_MS);
+    abortTimer.unref?.();
+
     // No Authorization header: record_heartbeat is anon-callable by design
     // (migration 20260830010000) — that grant is the entire point of ADR-329.
     // Sending credentials here would be pointless (the RPC does not use them)
@@ -146,6 +161,7 @@ export function recordHeartbeat(): void {
         p_client_version: packageVersion(),
         p_invocation_delta: 1,
       }),
+      signal: controller.signal,
     })
       .then((res) => {
         if (!res.ok && process.env.ROTIFER_DEBUG) {
@@ -158,6 +174,7 @@ export function recordHeartbeat(): void {
         }
       })
       .finally(() => {
+        clearTimeout(abortTimer);
         inFlight.delete(settled);
       });
     inFlight.add(settled);

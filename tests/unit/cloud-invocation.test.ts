@@ -216,6 +216,38 @@ describe("flushInvocationReports", () => {
     await expect(flushInvocationReports(30)).resolves.toBeUndefined();
   });
 
+  /**
+   * flushInvocationReports() giving up after the timeout (the test above)
+   * only stops the *caller* from waiting — found via heartbeat.ts's
+   * identical fetch, sharing this exact shape (see
+   * tests/e2e/telemetry-heartbeat-delivery.test.ts). A request that never
+   * gets a response leaves its socket open as an active handle, and Node
+   * does not exit while one exists: without aborting the fetch itself, a
+   * stalled telemetry endpoint would hang the whole CLI process for
+   * however long the OS's own TCP timeout takes, not just FLUSH_TIMEOUT_MS.
+   */
+  it("aborts the underlying fetch after FLUSH_TIMEOUT_MS, not just the caller's wait", async () => {
+    vi.useFakeTimers();
+    let capturedSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { recordGeneInvocation, FLUSH_TIMEOUT_MS } = await import("../../src/cloud/invocation.js");
+
+    recordGeneInvocation(signedInGeneDir());
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
+    expect(capturedSignal!.aborted).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(FLUSH_TIMEOUT_MS);
+    expect(capturedSignal!.aborted).toBe(true);
+
+    vi.useRealTimers();
+  });
+
   it("stops tracking a report once it settles", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
     const { recordGeneInvocation, flushInvocationReports } = await import("../../src/cloud/invocation.js");

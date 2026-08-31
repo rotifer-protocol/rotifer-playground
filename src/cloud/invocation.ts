@@ -185,6 +185,20 @@ export function recordGeneInvocation(geneDir: string): InvocationReport {
   const rpc = channel === null ? "log_gene_invocation" : "log_gene_invocation_v2";
   const url = `${config.endpoint.replace(/\/+$/, "")}/rest/v1/rpc/${rpc}`;
 
+  // flushInvocationReports() giving up after FLUSH_TIMEOUT_MS only stops the
+  // *caller* from waiting — it does not by itself end this fetch. A request
+  // that never gets a response leaves its socket open as an active handle,
+  // and Node does not exit while one exists: without this abort, a stalled
+  // telemetry endpoint would hang every reporting command for however long
+  // the OS's own TCP timeout takes, not just FLUSH_TIMEOUT_MS (found via
+  // heartbeat.ts's identical fetch, sharing this exact shape — see its
+  // regression test in tests/e2e/telemetry-heartbeat-delivery.test.ts).
+  // Aborting on the same deadline is what actually lets the process exit on
+  // schedule instead of merely stopping user code from waiting on it.
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), FLUSH_TIMEOUT_MS);
+  abortTimer.unref?.();
+
   const settled = fetch(url, {
     method: "POST",
     headers: {
@@ -197,6 +211,7 @@ export function recordGeneInvocation(geneDir: string): InvocationReport {
         ? { p_gene_id: geneId, p_caller_agent_id: callerId }
         : { p_gene_id: geneId, p_caller_agent_id: callerId, p_client_channel: channel },
     ),
+    signal: controller.signal,
   })
     .then((res) => {
       if (!res.ok && process.env.ROTIFER_DEBUG) {
@@ -209,6 +224,7 @@ export function recordGeneInvocation(geneDir: string): InvocationReport {
       }
     })
     .finally(() => {
+      clearTimeout(abortTimer);
       inFlight.delete(settled);
     });
 

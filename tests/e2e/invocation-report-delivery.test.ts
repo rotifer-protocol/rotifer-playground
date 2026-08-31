@@ -220,16 +220,16 @@ describe("signed-in invocation report — real CLI process, real network, never 
       // Node.js fallback without it (l0-gate.ts's isExternallySourced) —
       // unrelated to what this test verifies, just what makes an
       // uncompiled fixture gene runnable at all.
-      const { exitCode, durationMs } = await runCli("run ir-gene --input '{}' --trust-unsigned", respondingCloud.url);
+      const { exitCode, output, durationMs } = await runCli("run ir-gene --input '{}' --trust-unsigned", respondingCloud.url);
 
-      expect(exitCode).toBe(0);
+      expect(exitCode, `CLI output:\n${output}`).toBe(0);
       // Well under FLUSH_TIMEOUT_MS — a responding endpoint should not need
       // to burn the full timeout budget, unlike the hanging-endpoint case
       // below.
       expect(durationMs).toBeLessThan(FLUSH_TIMEOUT_MS);
 
       const reports = respondingCloud.requests.filter((r) => r.path.includes("log_gene_invocation"));
-      expect(reports).toHaveLength(1);
+      expect(reports, `CLI output:\n${output}`).toHaveLength(1);
       expect(reports[0].path).toContain("log_gene_invocation_v2"); // channel is attributable ("cli"), so v2
       expect(reports[0].authorization).toBe("Bearer e2e-test-access-token");
       expect((reports[0].body as any).p_gene_id).toBe(CLOUD_ID);
@@ -254,11 +254,11 @@ describe("signed-in invocation report — real CLI process, real network, never 
     it("the failure path — process.exit(1) — still reports the invocation before the process ends", async () => {
       writeCloudInstalledGene(projectDir, "ir-fail-gene", "export function express() { throw new Error('boom'); }\n");
 
-      const { exitCode } = await runCli("run ir-fail-gene --input '{}' --trust-unsigned", respondingCloud.url);
+      const { exitCode, output } = await runCli("run ir-fail-gene --input '{}' --trust-unsigned", respondingCloud.url);
 
-      expect(exitCode).toBe(1);
+      expect(exitCode, `CLI output:\n${output}`).toBe(1);
       const reports = respondingCloud.requests.filter((r) => r.path.includes("log_gene_invocation"));
-      expect(reports).toHaveLength(1);
+      expect(reports, `CLI output:\n${output}`).toHaveLength(1);
     });
   });
 
@@ -275,10 +275,10 @@ describe("signed-in invocation report — real CLI process, real network, never 
     try {
       writeCloudInstalledGene(projectDir, "ir-hang-gene", "export function express(input) { return { ok: true, ...input }; }\n");
 
-      const { exitCode, killedByTestTimeout, durationMs } = await runCli("run ir-hang-gene --input '{}' --trust-unsigned", hangingCloud.url);
+      const { exitCode, killedByTestTimeout, output, durationMs } = await runCli("run ir-hang-gene --input '{}' --trust-unsigned", hangingCloud.url);
 
-      expect(killedByTestTimeout).toBe(false);
-      expect(exitCode).toBe(0);
+      expect(killedByTestTimeout, `CLI output:\n${output}`).toBe(false);
+      expect(exitCode, `CLI output:\n${output}`).toBe(0);
       expect(durationMs).toBeGreaterThanOrEqual(FLUSH_TIMEOUT_MS - 200);
       expect(durationMs).toBeLessThan(FLUSH_TIMEOUT_MS + 5000);
     } finally {

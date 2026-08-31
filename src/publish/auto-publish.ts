@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import * as display from "../utils/display.js";
@@ -32,6 +32,15 @@ import { publishSingleGene } from "../commands/publish.js";
  *   - A Native Gene without gene.ir.wasm is rejected downstream by
  *     publishSingleGene. Asking first and failing after is a worse experience
  *     than pointing at `rotifer compile`.
+ *   - A Hybrid Gene with an empty network.allowedDomains is rejected
+ *     downstream the same way — and `wrap` itself is the one that writes
+ *     that empty array (every plain `--fidelity Hybrid` wrap does, with
+ *     nothing prompting the domains to be filled in), so this is not an edge
+ *     case, it is the default shape of a freshly wrapped Hybrid Gene. Found
+ *     by the same independent cursor-agent run that covers all three
+ *     fidelities against a fake Cloud endpoint, 2026-08-31 — the Native check
+ *     above shipped in #312 from an earlier pass of that same run, and this
+ *     is the sibling bug it didn't happen to cover yet.
  *
  * Every skip prints the next step it skipped to, so the path back is always on
  * screen — the risk ADR-247 logged as "用户发现不到关闭路径", inverted.
@@ -41,6 +50,7 @@ export type AutoPublishSkipReason =
   | "disabled-by-config"
   | "non-interactive"
   | "needs-compile"
+  | "needs-network-config"
   | "not-logged-in";
 
 export interface AutoPublishGateInput {
@@ -52,6 +62,8 @@ export interface AutoPublishGateInput {
   loggedIn: boolean;
   /** Native fidelity with no compiled gene.ir.wasm on disk. */
   needsWasm: boolean;
+  /** Hybrid fidelity with no non-empty network.allowedDomains declared. */
+  needsNetworkConfig: boolean;
 }
 
 export interface AutoPublishGateResult {
@@ -65,13 +77,14 @@ export interface AutoPublishGateResult {
  * Ordered so the reported reason is the one the user can act on first. An
  * explicit opt-out wins over everything (never second-guess it); a build
  * environment is next because nothing else matters when nobody is watching;
- * an uncompilable Gene outranks being signed out, because logging in would not
- * make it publishable.
+ * a Gene that cannot be published as-is (missing WASM, missing network
+ * config) outranks being signed out, because logging in would not fix either.
  */
 export function autoPublishGate(input: AutoPublishGateInput): AutoPublishGateResult {
   if (!input.enabled) return { offer: false, reason: "disabled-by-config" };
   if (!input.interactive) return { offer: false, reason: "non-interactive" };
   if (input.needsWasm) return { offer: false, reason: "needs-compile" };
+  if (input.needsNetworkConfig) return { offer: false, reason: "needs-network-config" };
   if (!input.loggedIn) return { offer: false, reason: "not-logged-in" };
   return { offer: true };
 }
@@ -80,6 +93,29 @@ export function autoPublishGate(input: AutoPublishGateInput): AutoPublishGateRes
 export function needsCompileBeforePublish(geneDir: string, fidelity: string): boolean {
   if (fidelity !== "Native") return false;
   return !existsSync(join(geneDir, "gene.ir.wasm"));
+}
+
+/**
+ * True when publishing this Gene would be rejected for an empty (or absent)
+ * `network.allowedDomains` — the exact check in publish.ts's
+ * publishSingleGene, duplicated here rather than imported because that
+ * function only reports the failure after asking the user to confirm; this
+ * runs before the question is asked at all.
+ *
+ * A missing or unparseable phenotype.json is not this function's problem to
+ * report — `false` here just means "don't block on network config", and
+ * whatever is actually wrong with the file surfaces from publishSingleGene
+ * itself if the user says yes.
+ */
+export function needsNetworkConfigBeforePublish(geneDir: string, fidelity: string): boolean {
+  if (fidelity !== "Hybrid") return false;
+  try {
+    const phenotype = JSON.parse(readFileSync(join(geneDir, "phenotype.json"), "utf-8"));
+    const domains = phenotype?.network?.allowedDomains;
+    return !Array.isArray(domains) || domains.length === 0;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -117,9 +153,17 @@ export function resolveWrapFidelity(
  * shadows every reason below it. Testing the message through the gate would
  * quietly cover one branch and leave three unexercised.
  */
-export function skipHintFor(reason: AutoPublishSkipReason, geneName: string): string {
+export function skipHintFor(
+  reason: AutoPublishSkipReason,
+  geneName: string,
+  geneDir?: string,
+): string {
   if (reason === "needs-compile") {
     return `  rotifer compile ${geneName}       # required before publishing a Native gene`;
+  }
+  if (reason === "needs-network-config") {
+    const phenotypePath = geneDir ? join(geneDir, "phenotype.json") : `${geneName}/phenotype.json`;
+    return `  Add network.allowedDomains to ${phenotypePath}, then: rotifer publish ${geneName}`;
   }
   if (reason === "not-logged-in") {
     return `  rotifer login                    # then: rotifer publish ${geneName}`;
@@ -163,13 +207,14 @@ export async function offerAutoPublish(opts: {
     interactive: Boolean(process.stdin.isTTY) && !display.isJsonMode(),
     loggedIn: isLoggedIn(),
     needsWasm: needsCompileBeforePublish(geneDir, fidelity),
+    needsNetworkConfig: needsNetworkConfigBeforePublish(geneDir, fidelity),
   });
 
   // Printed for every skip, opt-out included: turning off the *prompt* is not
   // a request to hide that publishing exists, and this line is what `wrap`
   // already printed before the offer was wired in.
   if (!gate.offer) {
-    display.hint(skipHintFor(gate.reason!, geneName));
+    display.hint(skipHintFor(gate.reason!, geneName, geneDir));
     return false;
   }
 

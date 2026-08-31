@@ -7,6 +7,25 @@ import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { FLUSH_TIMEOUT_MS } from "../../src/cloud/invocation.js";
+import { isNativeAvailable } from "../../src/utils/binding.js";
+
+/**
+ * A Cloud-installed gene (has .cloud-manifest.json) run with --trust-unsigned
+ * needs the native addon: without it, l0-gate.ts refuses to run an
+ * externally-sourced gene at all — "native addon failed to load" — by design,
+ * the strict/safe direction (see l0-gate.ts's own comment on that refusal).
+ * This is not hypothetical here: this repo's own release-please branch omits
+ * the platform packages from package-lock.json until the tag they are
+ * published from exists (release.yml's sync-lock job; see
+ * project_playground_release_lock_window.md-class incidents), so `npm ci` on
+ * a Release PR genuinely has no native addon to load — confirmed by hand,
+ * 2026-08-31: same lockfile, same build, `rotifer run` on a Cloud-installed
+ * gene refuses with exactly that message, output otherwise empty. Every
+ * other native-addon-dependent suite in this repo already skips on this
+ * condition (tests/e2e/dogfooding-pipeline.test.ts's skipRuntime); this file
+ * predates knowing it needed the same guard.
+ */
+const hasNativeAddon = isNativeAvailable();
 
 /**
  * Black-box regression for the signed-in invocation report — the ledger
@@ -212,7 +231,7 @@ describe("signed-in invocation report — real CLI process, real network, never 
       respondingCloud.requests.length = 0;
     });
 
-    it("`rotifer run` on a Cloud-installed gene reports the invocation with the signed-in user's identity and Bearer token", async () => {
+    it.skipIf(!hasNativeAddon)("`rotifer run` on a Cloud-installed gene reports the invocation with the signed-in user's identity and Bearer token", async () => {
       writeCloudInstalledGene(projectDir, "ir-gene", "export function express(input) { return { ok: true, ...input }; }\n");
 
       // --trust-unsigned: a Cloud-installed gene (has .cloud-manifest.json)
@@ -251,7 +270,7 @@ describe("signed-in invocation report — real CLI process, real network, never 
       expect(respondingCloud.requests.filter((r) => r.path.includes("log_gene_invocation"))).toHaveLength(0);
     });
 
-    it("the failure path — process.exit(1) — still reports the invocation before the process ends", async () => {
+    it.skipIf(!hasNativeAddon)("the failure path — process.exit(1) — still reports the invocation before the process ends", async () => {
       writeCloudInstalledGene(projectDir, "ir-fail-gene", "export function express() { throw new Error('boom'); }\n");
 
       const { exitCode, output } = await runCli("run ir-fail-gene --input '{}' --trust-unsigned", respondingCloud.url);
@@ -270,7 +289,7 @@ describe("signed-in invocation report — real CLI process, real network, never 
    * for why wall-clock time (not "did it arrive") is the assertion that
    * actually distinguishes the fixed code from the unfixed.
    */
-  it("a stalled invocation-report endpoint does not hang the process past FLUSH_TIMEOUT_MS", async () => {
+  it.skipIf(!hasNativeAddon)("a stalled invocation-report endpoint does not hang the process past FLUSH_TIMEOUT_MS", async () => {
     const hangingCloud = startHangingCloud();
     try {
       writeCloudInstalledGene(projectDir, "ir-hang-gene", "export function express(input) { return { ok: true, ...input }; }\n");

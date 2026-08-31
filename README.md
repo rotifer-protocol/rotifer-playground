@@ -9,7 +9,7 @@
 
 Development environment for the **Rotifer Protocol** — **WASM-Native, Polyglot by Design**: build genes in TypeScript / Rust / AssemblyScript / Go / C, compete in Arenas, share via Cloud, and simulate agent evolution.
 
-> **Status:** v0.23.x — Rotifer Cloud gains an anonymous usage signal, separate from and much smaller than the accountable invocation report signed-in users already opt into: no identity, on by default, answering only "was any machine active, from which channel, how many times" — a per-`(machine, day, channel)` counter, with no code, no call content, and no IP address ever stored. Every field it sends, and every way to turn it off (`rotifer telemetry off`, `ROTIFER_TELEMETRY=0`, or the cross-tool `DO_NOT_TRACK=1` — all honoured before a byte leaves the machine), is documented field-by-field in [TELEMETRY.md](TELEMETRY.md). The channel it reports — `cli` or `mcp:<host>` — is the same field the signed-in invocation report now carries too, so both signals agree on where a Gene call came from. Separately, five ClawHub Skills that used to be split across two repositories and two publish pipelines now live under one `skills/` directory, with publish gates keyed on the runtime manifest instead of a hardcoded list. See [CHANGELOG.md](CHANGELOG.md) for full release history. Automatic peer discovery, internet-wide reach, and L4 Collective Immunity are later milestones — see [Implementation Status](#implementation-status) below.
+> **Status:** v0.24.x — `rotifer wrap` now offers to publish the gene it just created, and the answer defaults to yes: a registry only helps people find genes that reached it, and the upload is the step most often skipped. It asks rather than uploads, and only when there is someone to answer — no terminal (CI, a pipe, a script) means no prompt and no upload, so a build that wraps genes does not start filling the registry on its own; signed out or uncompiled, it points at the command that would fix that instead. `rotifer config set default-publish false` turns the prompt off for good, and publishing this way runs the same gates as `rotifer publish`, V(g) security scan included — see [Publishing by default](#publishing-by-default). The anonymous usage signal introduced in v0.23.x is unchanged: no identity, on by default, answering only "was any machine active, from which channel, how many times", with every field and every way to turn it off (`rotifer telemetry off`, `ROTIFER_TELEMETRY=0`, or the cross-tool `DO_NOT_TRACK=1`) documented in [TELEMETRY.md](TELEMETRY.md). See [CHANGELOG.md](CHANGELOG.md) for full release history. Automatic peer discovery, internet-wide reach, and L4 Collective Immunity are later milestones — see [Implementation Status](#implementation-status) below.
 
 ---
 
@@ -166,7 +166,7 @@ Run `rotifer --help` for the grouped command list. The commands below cover the 
 | `rotifer init [workspace-name]` | Initialize a new Agent workspace with Genesis genes |
 | `rotifer hello [--template <id>]` | Create and run a preset agent from curated templates inside a Rotifer Agent workspace |
 | `rotifer scan [path]` | Scan for candidate genes and local skills |
-| `rotifer wrap <gene-name>` | Wrap a function or SKILL.md as a gene |
+| `rotifer wrap <gene-name>` | Wrap a function or SKILL.md as a gene (offers to publish, default yes — see [Publishing by default](#publishing-by-default)) |
 | `rotifer test [gene-name]` | Test a gene (WASM sandbox preferred, `--compliance` for structural checks) |
 | `rotifer compile [gene-name]` | Compile gene to Rotifer IR (auto TS→WASM) |
 | `rotifer run <gene-name>` | Execute a single local gene directly |
@@ -192,6 +192,35 @@ Run `rotifer --help` for the grouped command list. The commands below cover the 
 | `rotifer self-update` | Check for updates and upgrade Rotifer packages |
 | `rotifer config` | Manage global Rotifer configuration |
 | `rotifer whoami` | Show current authentication status |
+
+---
+
+## Publishing by default
+
+`rotifer wrap` asks whether to publish the gene it just created, and the answer
+defaults to yes — pressing Enter uploads it to Rotifer Cloud:
+
+```
+Publishing is on by default — turn it off with 'rotifer config set default-publish false'
+Publish 'my-search' to Rotifer Cloud? [Y/n]
+```
+
+Answering `n` keeps the gene local; `rotifer publish my-search` uploads it later.
+The default exists because a registry only helps people find genes that reached
+it, and the step most often skipped is the upload.
+
+It asks rather than uploads, and it only asks when there is someone to answer:
+
+| Situation | What happens |
+|---|---|
+| `rotifer config set default-publish false` (or `ROTIFER_AUTO_PUBLISH=0`) | Never asks. `rotifer publish` still works. |
+| No terminal — CI, a pipe, a script | Never asks and never publishes, so a build that wraps genes does not upload them. |
+| Signed out | Never asks; points at `rotifer login`. |
+| `Native` gene with no `gene.ir.wasm` | Never asks; points at `rotifer compile`, which publishing would require anyway. |
+
+Publishing this way runs the same gates as `rotifer publish`: V(g) security scan,
+IR integrity, phenotype schema, secret scan, and dependency audit. A gene that
+fails them is not uploaded, and `wrap` still reports the gene as created.
 
 ---
 

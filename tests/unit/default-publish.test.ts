@@ -133,14 +133,21 @@ describe("publish command synthesisMethod defaults", () => {
   });
 });
 
-describe("wrap command does NOT auto-publish hint behavior", () => {
-  it("wrap command next-steps include publish hint", () => {
-    const nextSteps = [
-      "rotifer compile <gene>",
-      "rotifer vg <gene>",
-      "rotifer arena submit <gene>",
-      "rotifer publish <gene>",
-    ];
-    expect(nextSteps).toContain("rotifer publish <gene>");
+/**
+ * What used to be here asserted on a string array the test itself had just
+ * built, so it passed without `wrap` existing at all. It stood in for §3.4
+ * coverage while `shouldAutoPublish()` had no production caller — see
+ * src/publish/auto-publish.ts. Real coverage now lives in
+ * tests/unit/auto-publish-gate.test.ts (every skip branch) and
+ * tests/e2e/wrap-auto-publish.test.ts (the real CLI, non-interactive).
+ */
+describe("wrap wires the default-publish knob to real behaviour", () => {
+  it("shouldAutoPublish has a production caller", async () => {
+    const { readFileSync } = await import("node:fs");
+    const gate = readFileSync("src/publish/auto-publish.ts", "utf-8");
+    expect(gate).toContain("shouldAutoPublish()");
+
+    const wrap = readFileSync("src/commands/wrap.ts", "utf-8");
+    expect(wrap).toContain("offerAutoPublish");
   });
 });

@@ -13,6 +13,7 @@ import { requireProjectRoot } from "../utils/project-root.js";
 import { parseSkillFrontmatter } from "./scan.js";
 import { suggestDomains } from "../utils/domain-suggest.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
+import { offerAutoPublish } from "../publish/auto-publish.js";
 
 const CLAWHUB_API = "https://clawhub.ai/api/skill";
 const CLAWHUB_DOWNLOAD = "https://wry-manatee-359.convex.site/api/v1/download";
@@ -343,7 +344,7 @@ export const wrapCommand = new Command("wrap")
       display.hint("  rotifer compile " + geneName + "       # validate phenotype");
       display.hint("  rotifer vg " + geneName + "            # security scan");
       display.hint("  rotifer arena submit " + geneName + "  # compete in Arena");
-      display.hint("  rotifer publish " + geneName + "       # upload to Rotifer Cloud");
+      await offerAutoPublish({ geneName, geneDir, fidelity: phenotype.fidelity as string });
       return;
     }
 
@@ -417,7 +418,7 @@ export const wrapCommand = new Command("wrap")
       display.hint("  rotifer compile " + geneName + "       # validate phenotype");
       display.hint("  rotifer vg " + geneName + "            # security scan");
       display.hint("  rotifer arena submit " + geneName + "  # compete in Arena");
-      display.hint("  rotifer publish " + geneName + "       # upload to Rotifer Cloud");
+      await offerAutoPublish({ geneName, geneDir, fidelity: options.fidelity });
       return;
     }
 
@@ -488,4 +489,5 @@ export const wrapCommand = new Command("wrap")
     display.hint("  rotifer compile " + geneName + " --wasm <file>  # Native fidelity (with WASM)");
     display.hint("  rotifer vg " + geneName + "               # security scan");
     display.hint("  rotifer arena submit " + geneName + "     # compete in Arena");
+    await offerAutoPublish({ geneName, geneDir, fidelity: options.fidelity });
   });

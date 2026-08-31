@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.23.2...v0.24.0) (2026-08-31)
+
+
+### Features
+
+* **wrap:** offer to publish by default, and only when someone can answer ([#310](https://github.com/rotifer-protocol/rotifer-playground/issues/310)) ([a5c8c6a](https://github.com/rotifer-protocol/rotifer-playground/commit/a5c8c6a9717ef9950402145f3a2bef806a6fd957))
+
+
+### Bug Fixes
+
+* **wrap:** don't offer to publish a Hybrid gene missing allowedDomains ([#313](https://github.com/rotifer-protocol/rotifer-playground/issues/313)) ([f7fe64e](https://github.com/rotifer-protocol/rotifer-playground/commit/f7fe64ec9ac261f362c6ae8026795adb4dd81f38))
+* **wrap:** resolve auto-publish fidelity from disk, not the CLI flag default ([#312](https://github.com/rotifer-protocol/rotifer-playground/issues/312)) ([47bae98](https://github.com/rotifer-protocol/rotifer-playground/commit/47bae985bf1aaca5084d65ef7322265c7d4b57b5))
+
 ## [0.23.2](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.23.1...v0.23.2) (2026-08-31)
 
 

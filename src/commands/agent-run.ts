@@ -12,6 +12,7 @@ import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
 import { createGatewayFetch, type GatewayFetchOptions, type GatewayResponse } from "../runtime/network-gateway.js";
 import { DomainFailoverEngine, type GeneExecutionResult } from "../runtime/domain-failover.js";
 import { flushInvocationReports } from "../cloud/invocation.js";
+import { flushHeartbeat } from "../telemetry/heartbeat.js";
 import { logGeneExecution } from "../utils/run-logger.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 
@@ -199,6 +200,7 @@ export const agentRunCommand = new Command("run")
             });
             printPipelineLog(pipelineLog);
             await flushInvocationReports();
+            await flushHeartbeat();
             process.exit(1);
           }
         } catch (err: any) {
@@ -220,6 +222,7 @@ export const agentRunCommand = new Command("run")
           });
           printPipelineLog(pipelineLog);
           await flushInvocationReports();
+          await flushHeartbeat();
           process.exit(1);
         }
       } else {
@@ -242,6 +245,7 @@ export const agentRunCommand = new Command("run")
           });
           printPipelineLog(pipelineLog);
           await flushInvocationReports();
+          await flushHeartbeat();
           process.exit(1);
         }
 
@@ -259,6 +263,7 @@ export const agentRunCommand = new Command("run")
             display.error(`${step} Gene '${geneName}' does not export express()`);
             printPipelineLog(pipelineLog);
             await flushInvocationReports();
+            await flushHeartbeat();
             process.exit(1);
           }
 
@@ -285,6 +290,7 @@ export const agentRunCommand = new Command("run")
             display.error(`${step} L0 gate blocked '${geneName}': ${violation}`);
             printPipelineLog(pipelineLog);
             await flushInvocationReports();
+            await flushHeartbeat();
             process.exit(1);
           }
 
@@ -342,6 +348,7 @@ export const agentRunCommand = new Command("run")
           });
           printPipelineLog(pipelineLog);
           await flushInvocationReports();
+          await flushHeartbeat();
           process.exit(1);
         }
       }
@@ -365,6 +372,12 @@ export const agentRunCommand = new Command("run")
     console.log(JSON.stringify(current, null, 2));
 
     printProtocolInsights(agent.genome, genesDir, totalElapsed);
+
+    // Every gene in the pipeline succeeded, so this falls all the way through
+    // without ever calling process.exit() — the same shape run.ts's success
+    // path had, which turned out not to drain the pending heartbeat request
+    // on its own (see heartbeat.ts's top comment). Flush explicitly here too.
+    await flushHeartbeat();
   });
 
 function printPipelineLog(log: Array<{
@@ -499,9 +512,16 @@ async function executeTryPool(
   console.log(JSON.stringify(outputs, null, 2));
 
   if (hasAnyFailed) {
-    void flushInvocationReports().finally(() => process.exit(1));
+    void Promise.allSettled([flushInvocationReports(), flushHeartbeat()]).finally(() => process.exit(1));
     return undefined as never;
   }
+
+  // Success: every domain's active gene ran through buildGeneExecutor, which
+  // calls logGeneExecution (and therefore recordHeartbeat) per gene. This
+  // falls through without process.exit(), the same shape that dropped the
+  // heartbeat in run.ts's success path — flush explicitly rather than trust
+  // the event loop to drain it.
+  await flushHeartbeat();
 }
 
 async function buildGeneExecutor(

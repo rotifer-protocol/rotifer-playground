@@ -1,6 +1,6 @@
 {
   "name": "@rotifer/playground",
-  "version": "0.23.0",
+  "version": "0.23.1",
   "description": "Rotifer Protocol Playground — local development environment for gene development, Arena competition, and protocol simulation",
   "license": "Apache-2.0",
   "author": "Rotifer Protocol Contributors",
@@ -87,10 +87,10 @@
   },
   "optionalDependencies": {
     "@rolldown/binding-linux-x64-gnu": "1.1.1",
-    "@rotifer/playground-darwin-arm64": "0.23.0",
-    "@rotifer/playground-darwin-x64": "0.23.0",
-    "@rotifer/playground-linux-x64-gnu": "0.23.0",
-    "@rotifer/playground-win32-x64-msvc": "0.23.0"
+    "@rotifer/playground-darwin-arm64": "0.23.1",
+    "@rotifer/playground-darwin-x64": "0.23.1",
+    "@rotifer/playground-linux-x64-gnu": "0.23.1",
+    "@rotifer/playground-win32-x64-msvc": "0.23.1"
   },
   "engines": {
     "node": ">=22.18.0"

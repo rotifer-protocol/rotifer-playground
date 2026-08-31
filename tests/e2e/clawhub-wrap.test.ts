@@ -58,12 +58,40 @@ describe("rotifer wrap --from-clawhub", () => {
   });
 });
 
-describe("ClawHub migration output structure", () => {
-  const GENE_DIR = join(TMP, "genes", "clawhub-test-gene");
+/**
+ * Real ClawHub, real network — the layer that actually would have caught the
+ * 307 regression (2026-08-31: ClawHub's download endpoint moved from 302 to
+ * 307, httpsGet() only followed 301/302, every --from-clawhub wrap failed
+ * with a generic E0011 that gave no hint the real cause was an unrecognized
+ * redirect status). This suite previously never ran a real download at all —
+ * both assertions below read `if (!existsSync(...)) return`, which is
+ * indistinguishable from "passed" in a CI summary and is exactly how a dead
+ * code path stays dead: the fixture has to actually attempt the thing it
+ * claims to verify, or a real regression here goes unnoticed the same way
+ * this one did.
+ *
+ * "grilling" (@wufei-png) is a small, stable, real ClawHub listing — same
+ * one used to hand-verify the fix this suite is regression-testing for.
+ */
+describe("ClawHub migration output structure (real download)", () => {
+  const GENE_DIR = join(TMP, "genes", "clawhub-real-gene");
+  let wrapOutput = "";
+
+  beforeAll(() => {
+    // Not guaranteed to run after the first describe block's beforeAll —
+    // sibling describes' beforeAll ordering isn't reliable across the two
+    // blocks in this file — so this makes its own project directory rather
+    // than depending on initProject() having already run.
+    if (!existsSync(join(TMP, "rotifer.json"))) initProject();
+    wrapOutput = run("wrap clawhub-real-gene --from-clawhub grilling");
+  }, 30_000); // real network: metadata fetch + zip download + unzip, matches run()'s own execSync timeout
+
+  it("wrap succeeds against the live ClawHub endpoint", () => {
+    expect(wrapOutput, wrapOutput).toContain("Grilling");
+    expect(existsSync(join(GENE_DIR, "phenotype.json")), wrapOutput).toBe(true);
+  });
 
   it("phenotype.json contains source: clawhub when migrated", () => {
-    if (!existsSync(join(GENE_DIR, "phenotype.json"))) return;
-
     const phenotype = JSON.parse(readFileSync(join(GENE_DIR, "phenotype.json"), "utf-8"));
     expect(phenotype.source).toBe("clawhub");
     expect(phenotype.clawhub).toBeDefined();
@@ -74,8 +102,6 @@ describe("ClawHub migration output structure", () => {
   });
 
   it(".gene-manifest.json contains fromClawhub field", () => {
-    if (!existsSync(join(GENE_DIR, ".gene-manifest.json"))) return;
-
     const manifest = JSON.parse(readFileSync(join(GENE_DIR, ".gene-manifest.json"), "utf-8"));
     expect(manifest.fromClawhub).toBeDefined();
     expect(manifest.clawhubVersion).toBeDefined();

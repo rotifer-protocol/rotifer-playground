@@ -30,7 +30,20 @@ interface ClawHubSkillInfo {
 function httpsGet(url: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     https.get(url, (res) => {
-      if (res.statusCode === 301 || res.statusCode === 302) {
+      // 307/308 preserve the request method, same as 301/302 for a GET — all
+      // four just mean "follow Location". ClawHub's download endpoint moved
+      // from 302 to 307 at some point without this ever being noticed: the
+      // response body of an unfollowed redirect is an HTML/JSON page, and
+      // piping that straight into `unzip -o` fails with a generic error that
+      // gives no hint the real problem was a status code this function
+      // didn't recognize (confirmed against the live endpoint, 2026-08-31).
+      if (
+        res.statusCode === 301 ||
+        res.statusCode === 302 ||
+        res.statusCode === 307 ||
+        res.statusCode === 308
+      ) {
+        res.resume(); // drain/discard the redirect body so its socket can be released
         return httpsGet(res.headers.location!).then(resolve, reject);
       }
       if (res.statusCode !== 200) {

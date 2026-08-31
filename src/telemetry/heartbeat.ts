@@ -7,9 +7,21 @@
  * — it costs nothing to lose one. It is not §33.4 input; a dropped
  * heartbeat is not a hole in an audited ledger, it is one machine's "active
  * today" signal that will show up again tomorrow if the machine is still in
- * use. That is why this file, unlike cloud/invocation.ts, does not track
- * in-flight requests for a caller to await before process.exit() — the
- * reliability engineering that report needs would be pure overhead here.
+ * use.
+ *
+ * This file used to not track in-flight requests at all, on the theory that
+ * "Node drains the pending request before the event loop empties" (the same
+ * assumption cloud/invocation.ts's success path relies on) made it
+ * unnecessary here. A real end-to-end run against production — `rotifer run`
+ * on a freshly-provisioned machine, 2026-08-30 — showed that assumption does
+ * not hold for this fetch: the CLI printed the first-run notice (proof the
+ * request was sent) and exited 0, and the row never arrived. A manual POST
+ * with the same body against the same machine_id landed immediately, which
+ * rules out the RPC, the grant, and the endpoint — the only thing different
+ * was that the CLI process existed for a few hundred more milliseconds. So
+ * this now tracks in-flight requests the same way cloud/invocation.ts does,
+ * and every call site that can exit soon after calling recordHeartbeat()
+ * must await flushHeartbeat() first, exactly like flushInvocationReports().
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -57,12 +69,37 @@ function printFirstRunNotice(): void {
   );
 }
 
+/** Heartbeat reports still in flight. Emptied as each settles; see flushHeartbeat. */
+const inFlight = new Set<Promise<void>>();
+
+/** Longest a caller will wait for a heartbeat to settle before exiting anyway. */
+export const FLUSH_TIMEOUT_MS = 2000;
+
+/**
+ * Wait for any in-flight heartbeat report to settle. Call this before
+ * `process.exit()` — and before returning from a command that is about to let
+ * the process exit on its own, since that path turned out not to be safe
+ * either (see this file's top comment). A run must never hang on telemetry,
+ * so it gives up after timeoutMs and resolves regardless.
+ */
+export async function flushHeartbeat(timeoutMs: number = FLUSH_TIMEOUT_MS): Promise<void> {
+  if (inFlight.size === 0) return;
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+    timer.unref?.();
+  });
+  await Promise.race([Promise.allSettled([...inFlight]).then(() => undefined), deadline]);
+  if (timer) clearTimeout(timer);
+}
+
 /**
  * Reports one Gene invocation's worth of activity for this machine, today,
  * on the given channel. Fire-and-forget; every failure mode is silence,
  * same contract as recordGeneInvocation. Safe to call unconditionally from
  * every call site that already calls recordGeneInvocation — this function
- * does its own consent and test-run checks.
+ * does its own consent and test-run checks. The request it sends is tracked
+ * in `inFlight` until it settles — see flushHeartbeat.
  */
 export function recordHeartbeat(): void {
   // The whole body is one try/catch, deliberately wider than the network
@@ -100,7 +137,7 @@ export function recordHeartbeat(): void {
     // Sending credentials here would be pointless (the RPC does not use them)
     // and would defeat the "no identity" promise for a user who happens to be
     // signed in but has not opted into the signed-in invocation report.
-    fetch(url, {
+    const settled: Promise<void> = fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: cloudConfig.anonKey },
       body: JSON.stringify({
@@ -119,7 +156,11 @@ export function recordHeartbeat(): void {
         if (process.env.ROTIFER_DEBUG) {
           process.stderr.write(`[rotifer] record_heartbeat error: ${(err as Error)?.message ?? err}\n`);
         }
+      })
+      .finally(() => {
+        inFlight.delete(settled);
       });
+    inFlight.add(settled);
   } catch (err: unknown) {
     if (process.env.ROTIFER_DEBUG) {
       process.stderr.write(`[rotifer] record_heartbeat setup error: ${(err as Error)?.message ?? err}\n`);

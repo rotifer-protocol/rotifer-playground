@@ -6,7 +6,7 @@ import { getProjectRoot, loadConfig } from "../utils/config.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { flushInvocationReports, recordGeneInvocation } from "../cloud/invocation.js";
-import { recordHeartbeat } from "../telemetry/heartbeat.js";
+import { recordHeartbeat, flushHeartbeat } from "../telemetry/heartbeat.js";
 import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
 
 export const runCommand = new Command("run")
@@ -118,14 +118,22 @@ export const runCommand = new Command("run")
               console.log(JSON.stringify(execResult.output, null, 2));
             } else {
               display.error("Execution failed: " + (execResult.errorMessage || "unknown"));
-              // The report above is fire-and-forget; process.exit would kill it
-              // in flight (that is exactly how the first real end-to-end run
-              // produced no row at all). Let it settle first.
+              // Both reports above are fire-and-forget; process.exit would kill
+              // them in flight (that is exactly how the first real end-to-end
+              // run produced no invocation row, and how a later production run
+              // produced no heartbeat row either — see heartbeat.ts's top
+              // comment). Let them settle first.
               await flushInvocationReports();
+              await flushHeartbeat();
               process.exit(1);
               return;
             }
             display.kv("Duration", `${execResult.durationMs}ms`);
+            // Success does not call process.exit(), but "the event loop stays
+            // open until the fetch settles" turned out not to hold for the
+            // heartbeat request either (heartbeat.ts's top comment) — flush
+            // explicitly rather than trust that assumption a second time.
+            await flushHeartbeat();
             return;
           }
         } catch { /* fall through to Node.js */ }
@@ -178,6 +186,7 @@ export const runCommand = new Command("run")
             display.error("No exported express/default/main function found in index.ts");
             display.hint("Gene must export an 'express' function: export function express(input) { ... }");
             await flushInvocationReports();
+            await flushHeartbeat();
             process.exit(1);
             return;
           }
@@ -200,6 +209,10 @@ export const runCommand = new Command("run")
           console.log();
           display.success("Output:");
           console.log(JSON.stringify(output, null, 2));
+          // See the WASM branch above: success falls through without
+          // process.exit(), but that alone does not guarantee the heartbeat
+          // fetch settles before Node's event loop empties — flush explicitly.
+          await flushHeartbeat();
         } catch (err: any) {
           display.error("Execution failed: " + err.message);
           display.hint("Use --verbose for full stack trace.");
@@ -207,6 +220,7 @@ export const runCommand = new Command("run")
             console.error(err.stack);
           }
           await flushInvocationReports();
+          await flushHeartbeat();
           process.exit(1);
         }
       } else {

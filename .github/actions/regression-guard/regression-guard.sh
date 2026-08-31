@@ -75,8 +75,21 @@ if [ "${deleted_tests}" -gt "${added_tests}" ]; then
   FAIL=1
 fi
 
+# Anchored on the paren so `it.skip(`/`test.skip(`/`describe.skip(` — an
+# *unconditional* skip, always a coverage loss — is caught regardless of
+# which of the three it's called on, while `it.skipIf(condition)` is not:
+# that's a *conditional* skip tied to a genuine runtime precondition (a
+# missing native addon, an unavailable external tool), and it is already an
+# established pattern in this repo (tests/e2e/dogfooding-pipeline.test.ts and
+# seven other files predate this guard). The three now-removed bare
+# alternatives (`it\.skip`, `test\.skip`, `describe\.skip`, no required
+# trailing paren) were redundant with this one anyway — anything they matched
+# with a paren, this pattern already catches — and without the paren they
+# matched `it.skipIf(` too, as a false positive: "it.skip" is a literal
+# substring of "it.skipIf". Confirmed against #316, the PR this comment
+# shipped with: three legitimate skipIf additions, zero real skips.
 SKIP_HITS="$(git diff "${MERGE_BASE}" HEAD -- 'tests/**' '*.test.ts' '*.test.tsx' '*.spec.ts' '*.spec.tsx' '*.e2e.ts' 2>/dev/null \
-  | grep -E '^\+.*(\.(skip|todo|only)\(|it\.skip|test\.skip|describe\.skip)' || true)"
+  | grep -E '^\+.*\.(skip|todo|only)\(' || true)"
 if [ -n "${SKIP_HITS}" ]; then
   echo "::error::Regression Guard: new test skip/todo/only detected — weakens regression protection:"
   echo "${SKIP_HITS}" | head -20

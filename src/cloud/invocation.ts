@@ -51,8 +51,16 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** Reports still in flight. Emptied as each settles; see flushInvocationReports. */
 const inFlight = new Set<Promise<void>>();
 
-/** Longest a caller will wait for reports to settle before exiting anyway. */
-export const FLUSH_TIMEOUT_MS = 2000;
+/**
+ * Longest a caller will wait for reports to settle before exiting anyway.
+ * Kept identical to heartbeat.ts's FLUSH_TIMEOUT_MS (this fetch has the
+ * identical shape, hits the same endpoint, and got the identical
+ * measurement — see that file's comment for the 10-sample real-request
+ * timing this value is based on: TLS handshake alone ranging ~0.4s–2.0s,
+ * total request time up to 2.57s, with the previous 2000ms undershot in
+ * roughly half the samples).
+ */
+export const FLUSH_TIMEOUT_MS = 8000;
 
 /**
  * Wait for any in-flight invocation reports to settle. Call this before

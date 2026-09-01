@@ -8,6 +8,15 @@ interface AnalyticsEvent {
   responseTimeMs?: number;
   blocked?: boolean;
   blockReason?: string;
+  /**
+   * Who called the chat endpoint — "user" for a real site visitor,
+   * "golden-qa" for the documentation QA suite that runs in CI (a daily
+   * scheduled run plus every docs change). Both hit this exact production
+   * endpoint and both land in chat_analytics, so without this field the ops
+   * dashboard cannot tell product usage from scheduled test traffic.
+   * Resolved from the request header — see source-tag.ts.
+   */
+  source: "user" | "golden-qa";
 }
 
 export async function recordAnalytics(event: AnalyticsEvent): Promise<void> {
@@ -18,7 +27,7 @@ export async function recordAnalytics(event: AnalyticsEvent): Promise<void> {
 
     const client = createClient(ragUrl, ragKey);
 
-    await client.from("chat_analytics").insert({
+    const { error } = await client.from("chat_analytics").insert({
       question_hash: event.questionHash,
       cache_hit: event.cacheHit,
       top_sources: event.sources.slice(0, 3),
@@ -27,7 +36,17 @@ export async function recordAnalytics(event: AnalyticsEvent): Promise<void> {
       blocked: event.blocked || false,
       block_reason: event.blockReason || null,
       category: classifyQuestion(event.sources),
+      source: event.source,
     });
+
+    // supabase-js resolves with { error } rather than throwing, so the catch
+    // below never sees an insert failure — the write just vanished. That is
+    // how a schema mismatch (e.g. this function deployed ahead of the
+    // migration that adds a column it writes) silently stops recording ALL
+    // chat traffic, not just the new field, with nothing in the logs.
+    if (error) {
+      console.error("[analytics] Insert rejected:", error.message);
+    }
   } catch (err) {
     console.error("[analytics] Failed to record:", err);
   }

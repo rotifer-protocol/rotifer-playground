@@ -7,6 +7,7 @@ import { recordAnalytics, recordSecurityEvent } from "./analytics.ts";
 import { filterContent } from "./content-filter.ts";
 import { selectContextDocs, isUserLangFor, normalizePath } from "./rank.ts";
 import { consumeUpstreamStream, isCompleteGeneration } from "./upstream-stream.ts";
+import { resolveAnalyticsSource } from "./source-tag.ts";
 
 const RAG_URL = Deno.env.get("RAG_SUPABASE_URL")!;
 const RAG_ANON_KEY = Deno.env.get("RAG_SUPABASE_ANON_KEY")!;
@@ -94,6 +95,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const analyticsSource = resolveAnalyticsSource(req);
 
   const startTime = Date.now();
 
@@ -158,6 +160,7 @@ Deno.serve(async (req: Request) => {
         blocked: true,
         blockReason: contentCheck.category,
         responseTimeMs: Date.now() - startTime,
+        source: analyticsSource,
       });
       return new Response(
         JSON.stringify({ error: errMsg("content_blocked", locale) }),
@@ -172,6 +175,7 @@ Deno.serve(async (req: Request) => {
         cacheHit: true,
         sources: cached.sources,
         responseTimeMs: Date.now() - startTime,
+        source: analyticsSource,
       });
       return new Response(JSON.stringify(cached.response), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -360,6 +364,7 @@ ${context || "No relevant documentation found."}`;
             sources: sources.map((s: { source: string }) => s.source),
             responseLength: fullResponse.length,
             responseTimeMs: Date.now() - startTime,
+            source: analyticsSource,
           });
 
           const mainClient = createClient(MAIN_URL, MAIN_SERVICE_KEY);

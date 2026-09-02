@@ -19,6 +19,7 @@ import {
 import { compileOutputValidator, isRunSuccessful } from "../utils/arena-success.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { applyFidelityDiscount, estimateBaseFitness, type DiscountedFitness } from "../utils/fidelity-discount.js";
+import { computeBaseFitness } from "../utils/fitness-formula.js";
 import { scan } from "../scanner/index.js";
 import type { Severity } from "../scanner/types.js";
 
@@ -37,16 +38,18 @@ const FITNESS_ROBUSTNESS_PLACEHOLDER = 0.5;
  * Whether F(g) is computed from measurements alone.
  *
  * False today, and deliberately a constant rather than a runtime check: two of
- * the five inputs are the placeholders above, and the denominator still divides
- * by efficiency scores instead of multiplying by them, so the result is capped
- * at 1.000 and increases with latency (ADR-318 D2, superseding ADR-215 P1's
- * claim that the direction was equivalent).
+ * the five inputs are the placeholders above. The direction defect is gone —
+ * the efficiency scores now multiply, so F(g) falls as latency and cost rise
+ * (ADR-318 D2, superseding ADR-215 P1's claim that dividing was equivalent) —
+ * but D2's other half is not: L and Cost are still measured against the fixed
+ * 1000ms / 10000-fuel constants rather than the season median of the gene's own
+ * domain and fidelity, so the number is not yet comparable across bindings.
  *
  * While this is false, ADR-318 D4 requires every submission to be recorded as
  * `estimated` no matter how thoroughly the sandbox ran it. Flip it in the same
- * change that lands D2's formula and D4's real C_util / R_rob — not before, and
- * not separately: a `sandbox` label on a capped number is the exact claim the
- * Arena's tiers exist to prevent.
+ * change that lands D2's reference scale and D4's real C_util / R_rob — not
+ * before, and not separately: a `sandbox` label on a number scaled by a
+ * guessed constant is the exact claim the Arena's tiers exist to prevent.
  */
 const hasCompleteFitnessInputs = false;
 
@@ -289,22 +292,22 @@ export const arenaSubmitCommand = new Command("submit")
       }
       const successRate = successes / total;
       const avgLatency = results.reduce((s, r) => s + r.latencyMs, 0) / total;
-      const latencyScore = 1.0 / (1.0 + avgLatency / 1000.0);
       const avgCost = results.reduce((s, r) => s + r.resourceCost, 0) / total;
-      const resourceEfficiency = 1.0 / (1.0 + avgCost / 10000.0);
 
-      // F(g) = [S_r · log(1+C_util) · (1+R_rob)] / [L · Resource_Cost]  (Spec §5.1)
+      // F(g) = S_r · ln(1+C_util) · (1+R_rob) · L_score · Cost_score  (ADR-318 D2)
+      // The efficiency terms multiply; see utils/fitness-formula.ts for why
+      // dividing by them inverted the penalty into a reward.
       // C_util and R_rob need fuzzing and property-based testing to measure;
       // ADR-318 D4 defines both, and v0.9.3 #6 carries the implementation.
       // Until then they are constants, which is why hasCompleteFitnessInputs
       // is false and every score here is recorded as an estimate.
-      const coverage = FITNESS_COVERAGE_PLACEHOLDER;
-      const robustness = FITNESS_ROBUSTNESS_PLACEHOLDER;
-      const numerator = successRate * Math.log1p(coverage) * (1 + robustness);
-      // Spec uses raw L × Resource_Cost (linear penalty); implementation uses sigmoid
-      // normalization 1/(1+x/k) to prevent extreme values from zeroing F(g) (ADR-215 P1)
-      const denominator = Math.max(latencyScore, 0.001) * Math.max(resourceEfficiency, 0.001);
-      const baseValue = Math.min(denominator > 0 ? numerator / denominator : 0, 1.0);
+      const { value: baseValue, latencyScore, resourceEfficiency } = computeBaseFitness({
+        successRate,
+        avgLatencyMs: avgLatency,
+        avgResourceCost: avgCost,
+        coverage: FITNESS_COVERAGE_PLACEHOLDER,
+        robustness: FITNESS_ROBUSTNESS_PLACEHOLDER,
+      });
       discounted = applyFidelityDiscount(baseValue, declaredFidelity);
 
       // V(g) = Test_Pass_Rate / Security_Leak_Risk  (Spec §5.1, ADR-215 P0)
@@ -393,13 +396,32 @@ export const arenaSubmitCommand = new Command("submit")
 
     const tau = 0.3;
     const vMin = 0.7;
-    const doesPassAdmission = fitness.value >= tau && fitness.safetyScore >= vMin;
 
-    if (!doesPassAdmission) {
+    // V(g) always gates. F(g) does not, while `hasCompleteFitnessInputs` is
+    // false: τ is a threshold on the D2 range, and this F(g) is not on it yet.
+    // Two of its five inputs are placeholders, and the efficiency terms are
+    // scaled by the provisional constants in utils/fitness-formula.ts — against
+    // which the bundled Native corpus scores ~0.003, so comparing to τ = 0.3
+    // would reject every gene ever measured. Rejecting on a number the same run
+    // files as `estimated` and excludes from ranking is not an admission
+    // decision, it is an artifact of an uncalibrated scale. Restore the τ gate
+    // in the change that lands D2's reference scale and D4's real C_util/R_rob.
+    const doesPassSafety = fitness.safetyScore >= vMin;
+    const doesPassFitness = fitness.value >= tau;
+
+    if (!doesPassSafety) {
       display.error(
-        `Gene does not meet admission threshold (F(g)=${fitness.value.toFixed(3)} < τ=${tau} or V(g)=${fitness.safetyScore.toFixed(3)} < V_min=${vMin})`
+        `Gene does not meet admission threshold (V(g)=${fitness.safetyScore.toFixed(3)} < V_min=${vMin})`
       );
-      display.hint("Improve gene quality or security, then try again.");
+      display.hint("Improve gene security, then try again.");
+      process.exit(1);
+    }
+
+    if (!doesPassFitness && hasCompleteFitnessInputs) {
+      display.error(
+        `Gene does not meet admission threshold (F(g)=${fitness.value.toFixed(3)} < τ=${tau})`
+      );
+      display.hint("Improve gene quality, then try again.");
       process.exit(1);
     }
 
@@ -415,7 +437,7 @@ export const arenaSubmitCommand = new Command("submit")
     display.keyValue("V(g)", fitness.safetyScore.toFixed(4));
     display.keyValue("Success Rate", `${(fitness.successRate * 100).toFixed(1)}%`);
     display.keyValue("Latency Score", fitness.latencyScore.toFixed(4));
-    display.keyValue("Admission", "PASSED");
+    display.keyValue("Admission", doesPassFitness ? "PASSED" : "PASSED (V(g) only)");
     if (didRunInSandbox) {
       display.keyValue("Execution", `Sandbox verified (${SANDBOX_RUNS} runs)`);
     } else {
@@ -427,10 +449,18 @@ export const arenaSubmitCommand = new Command("submit")
     // sandbox that is in doubt.
     if (didRunInSandbox && !hasCompleteFitnessInputs) {
       display.hint(
-        "The Gene ran and its output was checked, but F(g) still uses placeholder values for C_util and R_rob " +
-        "and a denominator that caps the result at 1.000 (ADR-318 D2/D4). Until that lands the score is filed " +
-        "as an estimate and does not rank — the run itself, its latency and its cost are still recorded."
+        "The Gene ran and its output was checked, but F(g) still uses placeholder values for C_util and R_rob, " +
+        "and measures latency and cost against fixed constants rather than this domain's season median " +
+        "(ADR-318 D2/D4). Until that lands the score is filed as an estimate and does not rank — the run " +
+        "itself, its latency and its cost are still recorded."
       );
+      if (!doesPassFitness) {
+        display.warn(
+          `F(g)=${fitness.value.toFixed(4)} is below τ=${tau}, and did not block this submission: the ` +
+          "efficiency terms are scaled by provisional constants that every measured Gene scores far under. " +
+          "V(g) is what gated here. The τ gate returns with the calibrated scale."
+        );
+      }
     }
     if (options.cloud) {
       try {

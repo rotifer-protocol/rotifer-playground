@@ -1,7 +1,8 @@
 //! Fitness scoring and admission gate per Rotifer spec §5.
 //!
-//! v0.5.5: Multiplicative model — F(g) = [S_r · ln(1+C_util) · (1+R_rob)] / [L · Cost]
+//! v0.5.5: Multiplicative model — F(g) = S_r · ln(1+C_util) · (1+R_rob) · L_score · Cost_score
 //! Any single zero-valued factor drives the entire score to zero.
+//! Bounded by its own factors — (0, 2·ln 2] — so no cap is applied.
 //! Admission thresholds: τ = 0.3, V_min = 0.7.
 
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,7 @@ pub const FORMULA_VERSION: u32 = 2;
 /// Composite fitness score for a gene, combining performance and safety.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FitnessScore {
-    /// Overall fitness value (unbounded positive; higher is better).
+    /// Overall fitness value in (0, 2·ln 2] ≈ (0, 1.386]; higher is better.
     pub value: f64,
     /// Safety sub-score in \[0, 1\]; must meet V_min for admission.
     pub safety_score: f64,
@@ -67,12 +68,14 @@ pub struct EvaluationResult {
 
 /// Compute a [`FitnessScore`] from a batch of evaluation results.
 ///
-/// Uses the spec-aligned multiplicative formula:
+/// Uses the spec-aligned multiplicative formula (ADR-318 D2):
 /// ```text
-/// F(g) = [S_r · ln(1 + C_util) · (1 + R_rob)] / [L · Resource_Cost]
+/// F(g) = S_r · ln(1 + C_util) · (1 + R_rob) · L_score · Cost_score
 /// ```
-/// where each factor is derived from evaluation metrics. If success_rate is
-/// zero the entire fitness collapses to zero (no mutual compensation).
+/// where `L_score` and `Cost_score` are the normalized, already-inverted
+/// efficiency scores below — they multiply rather than divide, which is what
+/// makes a slower or costlier gene score lower. If success_rate is zero the
+/// entire fitness collapses to zero (no mutual compensation).
 pub fn compute_fitness(results: &[EvaluationResult]) -> FitnessScore {
     if results.is_empty() {
         return FitnessScore {
@@ -121,20 +124,21 @@ pub fn compute_fitness(results: &[EvaluationResult]) -> FitnessScore {
         0.5
     };
 
-    // Multiplicative formula: F(g) = [S_r · ln(1+C) · (1+R)] / [L · Cost]
-    let l = latency_score.max(0.001);
-    let cost = resource_efficiency.max(0.001);
-    let numerator = success_rate * coverage.ln_1p().max(0.001) * (1.0 + robustness);
-    let denominator = l * cost;
-    let value = if denominator > 0.0 {
-        numerator / denominator
-    } else {
-        0.0
-    };
+    // Multiplicative formula: F(g) = S_r · ln(1+C) · (1+R) · L_score · Cost_score
+    //
+    // The efficiency scores multiply. Dividing by them, as this did until
+    // ADR-318 D2, inverted the penalty into a reward: because both are already
+    // inverted (lower latency → score nearer 1), dividing made F(g) *rise* with
+    // latency, and everything past ~1s pinned at the 1.0 cap below. The
+    // `latency_penalized_below_fast_gene` tests hold the direction.
+    let quality = success_rate * coverage.ln_1p().max(0.001) * (1.0 + robustness);
+    let value = quality * latency_score * resource_efficiency;
 
-    // Normalize to [0, 1] range for admission gate compatibility.
-    // The raw multiplicative value can exceed 1.0; we cap it.
-    let normalized_value = value.min(1.0);
+    // No cap. `min(1.0)` was there because dividing by the efficiency scores
+    // made the value unbounded; multiplying by them bounds it by its own
+    // factors — (0, 2·ln 2] ≈ (0, 1.386] — and ADR-318 D2 drops the cap for
+    // exactly that reason: it erased every difference above 1.0, which is how
+    // six leaderboard genes came to tie at a perfect 1.000.
 
     let safety_score = if successes == total {
         1.0
@@ -143,7 +147,7 @@ pub fn compute_fitness(results: &[EvaluationResult]) -> FitnessScore {
     };
 
     FitnessScore {
-        value: normalized_value,
+        value,
         safety_score,
         components: FitnessComponents {
             success_rate,
@@ -228,6 +232,80 @@ mod tests {
         let score = compute_fitness(&results);
         assert!((score.components.success_rate - 0.6).abs() < f64::EPSILON);
         assert!((score.safety_score - 0.54).abs() < f64::EPSILON);
+    }
+
+    /// The direction of the latency and cost terms.
+    ///
+    /// Until ADR-318 D2 the normalized efficiency scores sat in the
+    /// *denominator*, so F(g) climbed with latency and every gene slower than a
+    /// second pinned at the 1.0 cap. Arena ranking was selecting against
+    /// performance. These fail if the penalty flips back into a reward.
+    #[test]
+    fn latency_penalized_below_fast_gene() {
+        let fast = compute_fitness(&[eval(true, 5, 1.0)]).value;
+        let slow = compute_fitness(&[eval(true, 100, 1.0)]).value;
+        let slower = compute_fitness(&[eval(true, 1000, 1.0)]).value;
+        let slowest = compute_fitness(&[eval(true, 8370, 1.0)]).value;
+        assert!(fast > slow, "5ms ({fast}) must outscore 100ms ({slow})");
+        assert!(slow > slower, "100ms ({slow}) must outscore 1000ms ({slower})");
+        assert!(slower > slowest, "1000ms ({slower}) must outscore 8370ms ({slowest})");
+    }
+
+    #[test]
+    fn latency_penalized_monotonically_across_range() {
+        let ladder = [0u64, 1, 5, 12, 50, 100, 500, 1000, 3000, 8370, 60_000];
+        let scores: Vec<f64> = ladder
+            .iter()
+            .map(|&ms| compute_fitness(&[eval(true, ms, 1.0)]).value)
+            .collect();
+        for w in scores.windows(2) {
+            assert!(w[1] < w[0], "F(g) must fall as latency rises, got {w:?}");
+        }
+    }
+
+    #[test]
+    fn slow_gene_does_not_pin_at_cap() {
+        let slow = compute_fitness(&[eval(true, 8370, 1.0)]);
+        assert!(slow.value < 1.0, "a 8.4s gene must not score a perfect 1.0");
+        let fast = compute_fitness(&[eval(true, 100, 1.0)]);
+        assert!(slow.value < fast.value / 2.0);
+    }
+
+    #[test]
+    fn resource_cost_penalized_below_cheap_gene() {
+        let cheap = compute_fitness(&[eval(true, 100, 100.0)]).value;
+        let costly = compute_fitness(&[eval(true, 100, 10_000.0)]).value;
+        let costliest = compute_fitness(&[eval(true, 100, 1_000_000.0)]).value;
+        assert!(cheap > costly, "cheap ({cheap}) must outscore costly ({costly})");
+        assert!(costly > costliest);
+    }
+
+    #[test]
+    fn no_cap_and_bounded_by_its_own_factors() {
+        let best = compute_fitness(&[EvaluationResult {
+            success: true,
+            latency_ms: 0,
+            resource_cost: 0.0,
+            coverage: Some(1.0),
+            robustness: Some(1.0),
+        }]);
+        // ADR-318 D2 range: (0, 2·ln 2] ≈ (0, 1.386], no min(1.0).
+        assert!((best.value - 2.0 * std::f64::consts::LN_2).abs() < 1e-12);
+        assert!(best.value > 1.0, "the cap must be gone, got {}", best.value);
+    }
+
+    #[test]
+    fn near_perfect_genes_stay_distinguishable() {
+        let mk = |latency_ms| EvaluationResult {
+            success: true,
+            latency_ms,
+            resource_cost: 0.0,
+            coverage: Some(1.0),
+            robustness: Some(1.0),
+        };
+        let a = compute_fitness(&[mk(1)]).value;
+        let b = compute_fitness(&[mk(2)]).value;
+        assert!(a > b, "the cap used to tie these at 1.000: {a} vs {b}");
     }
 
     #[test]

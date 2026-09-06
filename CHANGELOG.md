@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.24.0...v0.25.0) (2026-09-06)
+
+
+### Features
+
+* **chat:** record where each request came from, so analytics can separate real usage from CI ([#320](https://github.com/rotifer-protocol/rotifer-playground/issues/320)) ([095cbff](https://github.com/rotifer-protocol/rotifer-playground/commit/095cbff9c3e9d5ede8c313dcb90b1cba9c3bea83))
+* **quality:** admin_audit_log — append-only audit trail for rotifer-admin ([#323](https://github.com/rotifer-protocol/rotifer-playground/issues/323)) ([82bcfb9](https://github.com/rotifer-protocol/rotifer-playground/commit/82bcfb930cb26560b39a22537c5b0f37deea535f))
+
+
+### Bug Fixes
+
+* **db:** make the migration chain build the profiles column production actually has ([#321](https://github.com/rotifer-protocol/rotifer-playground/issues/321)) ([65641f0](https://github.com/rotifer-protocol/rotifer-playground/commit/65641f046ccc05b3065b4450ff017fd560af28c0))
+* **deps:** resolve fast-uri to 3.1.7, clearing four high-severity advisories ([#327](https://github.com/rotifer-protocol/rotifer-playground/issues/327)) ([aa4427d](https://github.com/rotifer-protocol/rotifer-playground/commit/aa4427d4a855c0c9ced7da582e70ad4d9bd094c4))
+* **deps:** update wasmtime 47.0.3 -&gt; 47.0.4, closing a high-severity sandbox escape ([#322](https://github.com/rotifer-protocol/rotifer-playground/issues/322)) ([cb6bcba](https://github.com/rotifer-protocol/rotifer-playground/commit/cb6bcbadd58358c24d2d21f72efdca79713c7b25))
+* **fitness:** multiply the efficiency scores into F(g) instead of dividing by them ([#324](https://github.com/rotifer-protocol/rotifer-playground/issues/324)) ([d1e454e](https://github.com/rotifer-protocol/rotifer-playground/commit/d1e454e85d7251bf9320566710b407b1dceb291f))
+* **self-update:** compare each package against its own installed version ([#326](https://github.com/rotifer-protocol/rotifer-playground/issues/326)) ([4ccc857](https://github.com/rotifer-protocol/rotifer-playground/commit/4ccc857a5befad738ea7628d805ca8f2fed6df58))
+* **wrap:** follow ClawHub's 307 redirect, and don't hang doing it ([#318](https://github.com/rotifer-protocol/rotifer-playground/issues/318)) ([b197b0a](https://github.com/rotifer-protocol/rotifer-playground/commit/b197b0af3e6c8623985a39207b4403f0de867254))
+
 ## [0.24.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.23.2...v0.24.0) (2026-08-31)
 
 

@@ -19,7 +19,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const MIGRATIONS_DIR = join(import.meta.dirname, "../../supabase/migrations");
-const RAG_MIGRATIONS_DIR = join(import.meta.dirname, "../../../rotifer-dev/supabase/migrations");
+const RAG_MIGRATIONS_DIR = join(import.meta.dirname, "../../../rotifer-dev/supabase-rag/supabase/migrations");
 const HAS_RAG_DIR = existsSync(RAG_MIGRATIONS_DIR);
 
 function readMigration(dir: string, filename: string): string {

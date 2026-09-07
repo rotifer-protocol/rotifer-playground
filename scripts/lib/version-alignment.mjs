@@ -89,8 +89,26 @@ export function readRotiferCoreDependencyVersion(cargoTomlText) {
  * versions (v0.9, v0.9.1, v1.0), which are a separate numbering line from the
  * npm releases and are meant to differ. Only the `Status:` line is compared.
  */
-export function readReadmeStatusVersion(readmeText) {
-  const match = readmeText.match(/^>\s*\*\*Status:\*\*\s*v(\d+)\.(\d+)/m);
+/**
+ * Every README that carries a Status paragraph, and the label each one uses.
+ *
+ * README.zh.md is in this list because it was not, and drifted for three months:
+ * on 2026-09-06 the English Status line read v0.25.x while the Chinese one still
+ * described v0.9.0's Open Mesh work — sixteen minors and every release since
+ * 2026-06-23. The check existed the whole time and passed the whole time,
+ * because it only ever read one of the two files.
+ *
+ * Adding a translation means adding it here. A file listed but absent is an
+ * error rather than a skip: a check that quietly stops covering a file when the
+ * file moves is the failure this list exists to prevent.
+ */
+export const README_STATUS_FILES = [
+  { path: "README.md", label: "**Status:**", pattern: /^>\s*\*\*Status:\*\*\s*v(\d+)\.(\d+)/m },
+  { path: "README.zh.md", label: "**状态：**", pattern: /^>\s*\*\*状态：\*\*\s*v(\d+)\.(\d+)/m },
+];
+
+export function readReadmeStatusVersion(readmeText, pattern = README_STATUS_FILES[0].pattern) {
+  const match = readmeText.match(pattern);
   return match ? { major: Number(match[1]), minor: Number(match[2]), raw: match[0] } : null;
 }
 
@@ -129,35 +147,70 @@ export function verifyReadmeStatusFreshness(rootDir = REPO_ROOT) {
   const npmVersion = readJson(join(rootDir, "package.json")).version;
   const [major, minor] = npmVersion.split(".").map(Number);
 
-  const status = readReadmeStatusVersion(readText(join(rootDir, "README.md")));
+  const found = [];
 
-  if (!status) {
-    errors.push(
-      "README.md: no `> **Status:** vX.Y` line found. It is the paragraph npm shows " +
-        "under the title; if it moved or lost its version, re-point this check at it " +
-        "rather than deleting the check.",
-    );
-    return { ok: false, errors };
+  for (const file of README_STATUS_FILES) {
+    let text;
+    try {
+      text = readText(join(rootDir, file.path));
+    } catch {
+      errors.push(
+        `${file.path}: listed in README_STATUS_FILES but not found. If the translation was ` +
+          "retired, remove it from that list too — a file that silently drops out of this " +
+          "check is how README.zh.md went stale for three months.",
+      );
+      continue;
+    }
+
+    const status = readReadmeStatusVersion(text, file.pattern);
+
+    if (!status) {
+      errors.push(
+        `${file.path}: no \`> ${file.label} vX.Y\` line found. It is the paragraph npm shows ` +
+          "under the title; if it moved or lost its version, re-point this check at it " +
+          "rather than deleting the check.",
+      );
+      continue;
+    }
+
+    found.push({ file, status });
+
+    const isBehind =
+      status.major < major || (status.major === major && status.minor < minor);
+
+    if (isBehind) {
+      errors.push(
+        `${file.path}: the Status line describes v${status.major}.${status.minor}.x but the ` +
+          `released version is ${npmVersion}. A minor bump means the phase moved — rewrite ` +
+          "the paragraph to say what is true now, then set the version to " +
+          `v${major}.${minor}.x (or v${major}.${minor + 1}.x if you are writing it for the ` +
+          "release being prepared). Do not bump the number alone: a fresh version on stale " +
+          "prose reads as current and is not.",
+      );
+    } else if (!describesThisOrNextRelease(status, major, minor)) {
+      errors.push(
+        `${file.path}: the Status line describes v${status.major}.${status.minor}.x, but the ` +
+          `released version is ${npmVersion} and the furthest this repo can be preparing is ` +
+          `v${major}.${minor + 1}.x. A Status line beyond the next release describes ` +
+          "something nobody can install.",
+      );
+    }
   }
 
-  const isBehind =
-    status.major < major || (status.major === major && status.minor < minor);
-
-  if (isBehind) {
+  // The translations must agree with each other, not merely each be recent
+  // enough on its own. Without this, rewriting one language and bumping the
+  // other's number to match would pass — and the range this check allows
+  // (this release or the next) is wide enough for two files to sit on
+  // different sides of it and both look fine.
+  const versions = new Set(found.map(({ status }) => `${status.major}.${status.minor}`));
+  if (versions.size > 1) {
     errors.push(
-      `README.md: the Status line describes v${status.major}.${status.minor}.x but the ` +
-        `released version is ${npmVersion}. A minor bump means the phase moved — rewrite ` +
-        "the paragraph to say what is true now, then set the version to " +
-        `v${major}.${minor}.x (or v${major}.${minor + 1}.x if you are writing it for the ` +
-        "release being prepared). Do not bump the number alone: a fresh version on stale " +
-        "prose reads as current and is not.",
-    );
-  } else if (!describesThisOrNextRelease(status, major, minor)) {
-    errors.push(
-      `README.md: the Status line describes v${status.major}.${status.minor}.x, but the ` +
-        `released version is ${npmVersion} and the furthest this repo can be preparing is ` +
-        `v${major}.${minor + 1}.x. A Status line beyond the next release describes ` +
-        "something nobody can install.",
+      "README Status lines disagree: " +
+        found
+          .map(({ file, status }) => `${file.path} says v${status.major}.${status.minor}.x`)
+          .join(", ") +
+        ". Every translation describes the same release, so they name the same version. " +
+        "Update the one that was left behind — including its prose, not just its number.",
     );
   }
 

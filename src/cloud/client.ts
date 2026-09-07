@@ -9,7 +9,8 @@ import type {
   FitnessReport,
   ContributionMetrics,
 } from "./types.js";
-import { DEFAULT_CLOUD_ENDPOINT, CLOUD_CONFIG_FILE } from "./types.js";
+import { DEFAULT_CLOUD_ENDPOINT,
+  resolveAnonKey, CLOUD_CONFIG_FILE } from "./types.js";
 import { loadCredentials, refreshTokenIfNeeded } from "./auth.js";
 import { parseGeneRef } from "./gene-ref.js";
 
@@ -22,14 +23,19 @@ export function loadCloudConfig(): CloudConfig {
   const configPath = join(ROTIFER_HOME, CLOUD_CONFIG_FILE);
   if (existsSync(configPath)) {
     try {
-      return JSON.parse(readFileSync(configPath, "utf-8")) as CloudConfig;
+      const fromFile = JSON.parse(readFileSync(configPath, "utf-8")) as CloudConfig;
+      return {
+        ...fromFile,
+        endpoint: fromFile.endpoint || DEFAULT_CLOUD_ENDPOINT,
+        anonKey: resolveAnonKey(fromFile.anonKey, process.env.ROTIFER_CLOUD_ANON_KEY),
+      };
     } catch {
       // fall through to defaults
     }
   }
   return {
     endpoint: DEFAULT_CLOUD_ENDPOINT,
-    anonKey: process.env.ROTIFER_CLOUD_ANON_KEY || "",
+    anonKey: resolveAnonKey(undefined, process.env.ROTIFER_CLOUD_ANON_KEY),
   };
 }
 

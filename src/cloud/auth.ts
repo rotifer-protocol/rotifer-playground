@@ -7,6 +7,7 @@ import {
   CREDENTIALS_FILE,
   CLOUD_CONFIG_FILE,
   DEFAULT_CLOUD_ENDPOINT,
+  resolveAnonKey,
 } from "./types.js";
 import { ensurePrivateDir, tightenPrivateFile } from "../utils/private-fs.js";
 
@@ -27,14 +28,19 @@ function loadCloudConfigForAuth(): CloudConfig {
   const configPath = join(ROTIFER_HOME, CLOUD_CONFIG_FILE);
   if (existsSync(configPath)) {
     try {
-      return JSON.parse(readFileSync(configPath, "utf-8")) as CloudConfig;
+      const fromFile = JSON.parse(readFileSync(configPath, "utf-8")) as CloudConfig;
+      return {
+        ...fromFile,
+        endpoint: fromFile.endpoint || DEFAULT_CLOUD_ENDPOINT,
+        anonKey: resolveAnonKey(fromFile.anonKey, process.env.ROTIFER_CLOUD_ANON_KEY),
+      };
     } catch {
       /* fall through */
     }
   }
   return {
     endpoint: DEFAULT_CLOUD_ENDPOINT,
-    anonKey: process.env.ROTIFER_CLOUD_ANON_KEY || "",
+    anonKey: resolveAnonKey(undefined, process.env.ROTIFER_CLOUD_ANON_KEY),
   };
 }
 

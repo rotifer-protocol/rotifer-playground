@@ -68,10 +68,16 @@ describe("rotifer reputation command", () => {
     expect(result.stdout).toMatch(/failed|error|fetch/i);
   });
 
-  it("--leaderboard attempts cloud fetch (fails without endpoint)", () => {
+  // Used to assert this failed "without endpoint". It no longer does: the CLI
+  // now ships a publishable key, so the leaderboard works on a fresh install
+  // with nothing configured — that was the point of shipping one. Assert the
+  // reachable behaviour instead: it renders a leaderboard, or reports a
+  // network problem, but never an authentication one.
+  it("--leaderboard reaches the cloud without any configuration", () => {
     const result = run("reputation --leaderboard");
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stdout).toMatch(/failed|error|fetch/i);
+    expect(result.stdout).not.toMatch(/No API key found/i);
+    expect(result.stdout).not.toMatch(/Legacy API keys are disabled/i);
+    expect(result.stdout).toMatch(/leaderboard|reputation|rank|unreachable|network|timed out/i);
   });
 
   it("--top flag is accepted alongside --leaderboard", () => {

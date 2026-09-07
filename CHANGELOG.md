@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.25.0...v0.25.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* **chat:** read the privileged key from a name we control ([#333](https://github.com/rotifer-protocol/rotifer-playground/issues/333)) ([694a45a](https://github.com/rotifer-protocol/rotifer-playground/commit/694a45a552709ea4653f34f0fad170dc26d932e7))
+* **cloud:** ship a working key so cloud commands work on a fresh install ([#336](https://github.com/rotifer-protocol/rotifer-playground/issues/336)) ([4d97729](https://github.com/rotifer-protocol/rotifer-playground/commit/4d9772973ea96a8f2412c113466b78e5952d6d59))
+
 ## [0.25.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.24.0...v0.25.0) (2026-09-06)
 
 

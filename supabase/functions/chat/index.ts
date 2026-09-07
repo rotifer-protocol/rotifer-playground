@@ -12,7 +12,20 @@ import { resolveAnalyticsSource } from "./source-tag.ts";
 const RAG_URL = Deno.env.get("RAG_SUPABASE_URL")!;
 const RAG_ANON_KEY = Deno.env.get("RAG_SUPABASE_ANON_KEY")!;
 const MAIN_URL = Deno.env.get("SUPABASE_URL")!;
-const MAIN_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+// Privileged key for the main project. Prefer MAIN_SECRET_KEY — a secret we
+// set ourselves — over SUPABASE_SERVICE_ROLE_KEY, which the platform injects
+// with the legacy JWT-based service_role key. That legacy key stops working
+// once the project's legacy API keys are disabled, and because the injected
+// name is reserved we cannot simply point it at a new value: the only way
+// off it is to read a name of our own.
+//
+// The fallback is deliberate and temporary: it keeps this function working
+// both before MAIN_SECRET_KEY exists and after the legacy key is gone, so
+// deploying the code and setting the secret can happen in either order
+// without a window where writes fail. Drop the fallback once the legacy keys
+// are disabled.
+const MAIN_SERVICE_KEY = Deno.env.get("MAIN_SECRET_KEY") ??
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const LLM_API_KEY = Deno.env.get("LLM_API_KEY")!;
 const LLM_MODEL = Deno.env.get("LLM_MODEL") || "deepseek-v4-flash";
 const LLM_BASE_URL = Deno.env.get("LLM_BASE_URL") || "https://api.deepseek.com";

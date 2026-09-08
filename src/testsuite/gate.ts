@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import { loadTestSuite } from "./load.js";
 import { runT1 } from "./run.js";
 import type { GeneRunner, RunOutcome } from "./run.js";
@@ -46,12 +47,6 @@ export interface GateInput {
 }
 
 export function evaluatePublishGate(input: GateInput): GateVerdict {
-  // Wrapped genes execute in their native language and have no IR to drive; a
-  // T1 run here would report on a sandbox that is not how the gene is used.
-  if (input.fidelity === "Wrapped") {
-    return { status: "not-applicable", reason: "Wrapped genes are not executed through the IR sandbox" };
-  }
-
   const load = loadTestSuite(input.geneDir);
 
   if (load.status === "absent") {
@@ -133,4 +128,61 @@ export function outcomeFromSandbox(r: {
   return r.success
     ? { success: true, output: r.output, durationMs: r.durationMs }
     : { success: false, crashed: true, errorMessage: r.errorMessage ?? undefined };
+}
+
+/**
+ * Build a GeneRunner for a Wrapped gene, which has no IR and executes in its
+ * native language under Node.
+ *
+ * This exists because the gate skipping Wrapped was a hole, not a design. §47.5
+ * makes T1 a MUST for every DRAFT->PUBLISHED transition, not only Native ones,
+ * and 35 published Wrapped records went out under that exemption.
+ *
+ * It surfaced while deciding genesis-file-read's fidelity: it imports node:fs,
+ * so it can never compile to Native, and Wrapped is the honest label. Making
+ * that change while Wrapped was exempt would have relabelled a gene straight
+ * through the gap — the shape of thing this plan exists to stop. So the hole is
+ * closed first, and the relabel then costs what it should.
+ *
+ * Async because a dynamic import is: the module is loaded once here, and the
+ * returned runner is synchronous over the resolved export.
+ *
+ * The L0 gate is consulted BEFORE the import, not before express(): importing
+ * executes module top-level code, so a check afterwards checks nothing.
+ */
+export async function loadNodeRunner(
+  absSourcePath: string,
+  l0: { kind: string; detail?: string },
+): Promise<{ runner: GeneRunner } | { refusal: string }> {
+  if (l0.kind === "violation") {
+    return { refusal: `L0 gate blocked this gene: ${l0.detail ?? "no detail"}` };
+  }
+
+  let expressFn: (input: unknown) => unknown;
+  try {
+    const mod = await import(pathToFileURL(absSourcePath).href);
+    if (typeof mod.express !== "function") {
+      return { refusal: "gene does not export an express() function" };
+    }
+    expressFn = mod.express as (input: unknown) => unknown;
+  } catch (e) {
+    return { refusal: `could not load the gene module: ${(e as Error).message}` };
+  }
+
+  const runner: GeneRunner = (input) => {
+    const started = Date.now();
+    try {
+      const output = expressFn(input);
+      if (output === null || output === undefined) {
+        // Distinct from throwing, and worth its own message: a Gene that
+        // returns nothing has not refused, it has silently produced no answer.
+        return { success: false, crashed: true, errorMessage: "express() returned null/undefined" };
+      }
+      return { success: true, output, durationMs: Date.now() - started };
+    } catch (e) {
+      return { success: false, crashed: true, errorMessage: (e as Error).message };
+    }
+  };
+
+  return { runner };
 }

@@ -4,28 +4,52 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "path": { "type": "string", "description": "File path to read" },
-      "encoding": { "type": "string", "default": "utf-8", "enum": ["utf-8", "base64"] }
+      "path": {
+        "type": "string",
+        "description": "File path to read"
+      },
+      "encoding": {
+        "type": "string",
+        "default": "utf-8",
+        "enum": [
+          "utf-8",
+          "base64"
+        ]
+      }
     },
-    "required": ["path"]
+    "required": [
+      "path"
+    ]
   },
   "outputSchema": {
     "type": "object",
     "properties": {
-      "content": { "type": "string" },
-      "size": { "type": "integer" },
-      "encoding": { "type": "string" }
+      "content": {
+        "type": "string"
+      },
+      "size": {
+        "type": "integer"
+      },
+      "encoding": {
+        "type": "string"
+      }
     }
   },
   "dependencies": [],
   "version": "0.2.0",
   "author": "rotifer-genesis",
-  "fidelity": "Native",
+  "fidelity": "Wrapped",
   "transparency": "Open",
   "semanticRequirements": {
     "timeModel": "Sync",
     "concurrencyModel": "Stateless",
     "failureSemantics": "FAIL_FAST"
   },
-  "tags": ["file-io", "encoding", "base64", "local-files", "genesis"]
+  "tags": [
+    "file-io",
+    "encoding",
+    "base64",
+    "local-files",
+    "genesis"
+  ]
 }

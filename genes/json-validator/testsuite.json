@@ -1,0 +1,58 @@
+{
+  "testCases": [
+    {
+      "input": {
+        "data": { "name": "rotifer", "port": 8080 },
+        "schema": {
+          "type": "object",
+          "properties": { "name": { "type": "string" }, "port": { "type": "number" } },
+          "required": ["name"]
+        }
+      },
+      "expectedOutput": { "errorCount": 0, "errors": [], "valid": true }
+    },
+    {
+      "input": {
+        "data": { "port": "not-a-number" },
+        "schema": {
+          "type": "object",
+          "properties": { "port": { "type": "number" } },
+          "required": ["name"]
+        }
+      },
+      "expectedOutput": {
+        "errorCount": 2,
+        "errors": [
+          { "keyword": "required", "message": "Required property \"name\" is missing", "path": "$.name" },
+          { "keyword": "type", "message": "Expected number, got string", "path": "$.port" }
+        ],
+        "valid": false
+      }
+    },
+    {
+      "input": { "data": { "any": "thing" } },
+      "expectedOutput": {
+        "errorCount": 1,
+        "errors": [{ "keyword": "schema", "message": "Invalid schema provided", "path": "$" }],
+        "valid": false
+      }
+    },
+    {
+      "input": { "data": { "any": "thing" }, "schema": 42 },
+      "expectedOutput": {
+        "errorCount": 1,
+        "errors": [{ "keyword": "schema", "message": "Invalid schema provided", "path": "$" }],
+        "valid": false
+      }
+    },
+    {
+      "input": {},
+      "expectedOutput": {
+        "errorCount": 1,
+        "errors": [{ "keyword": "schema", "message": "Invalid schema provided", "path": "$" }],
+        "valid": false
+      }
+    }
+  ],
+  "config": { "fuzzIterations": 10, "seed": 1 }
+}

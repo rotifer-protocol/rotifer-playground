@@ -1,0 +1,31 @@
+{
+  "testCases": [
+    {
+      "input": {
+        "text": "Docs at https://rotifer.dev/docs and spec at https://rotifer.dev/spec"
+      },
+      "expectedOutput": {
+        "emails": [],
+        "totalFound": 2,
+        "uniqueDomains": ["rotifer.dev"],
+        "urls": [
+          { "domain": "rotifer.dev", "position": 8, "protocol": "https", "url": "https://rotifer.dev/docs" },
+          { "domain": "rotifer.dev", "position": 45, "protocol": "https", "url": "https://rotifer.dev/spec" }
+        ]
+      }
+    },
+    {
+      "input": { "includeEmails": false },
+      "expectedOutput": { "emails": [], "totalFound": 0, "uniqueDomains": [], "urls": [] }
+    },
+    {
+      "input": { "text": 42 },
+      "expectedOutput": { "emails": [], "totalFound": 0, "uniqueDomains": [], "urls": [] }
+    },
+    {
+      "input": {},
+      "expectedOutput": { "emails": [], "totalFound": 0, "uniqueDomains": [], "urls": [] }
+    }
+  ],
+  "config": { "fuzzIterations": 10, "seed": 1 }
+}

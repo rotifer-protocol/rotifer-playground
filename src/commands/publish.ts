@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import * as display from "../utils/display.js";
 import { c, icon } from "../utils/palette.js";
 import { loadConfig } from "../utils/config.js";
@@ -22,7 +22,8 @@ import {
 } from "../utils/detect-source-language.js";
 import { decideBadgeAction, uploadSafetyBadge } from "../cloud/badge.js";
 import type { ScanResult } from "../scanner/types.js";
-import { evaluatePublishGate, outcomeFromSandbox } from "../testsuite/gate.js";
+import { evaluatePublishGate, outcomeFromSandbox, loadNodeRunner } from "../testsuite/gate.js";
+import { evaluateL0 } from "../utils/l0-gate.js";
 import { tryLoadBinding } from "../utils/binding.js";
 import { FUEL_LADDER, constraintsForFuel } from "../utils/run-fuel-ladder.js";
 
@@ -147,14 +148,28 @@ export async function publishSingleGene(
   // Placed after the artifact and version checks and before anything reaches
   // the network: a Gene refused here has cost nothing but local time.
   {
-    const gateBinding = wasmBytes ? tryLoadBinding() : null;
+    const gateBinding = tryLoadBinding();
     const { irHash: _gateStrip, ...phenotypeForGate } = phenotype;
+
+    // A Wrapped gene has no IR, so T1 runs it the way it is actually used:
+    // under Node. Skipping it was a hole — §47.5's MUST is not conditional on
+    // fidelity, and 35 published Wrapped records went out under that exemption.
+    let nodeRunner: Awaited<ReturnType<typeof loadNodeRunner>> | null = null;
+    if (!wasmBytes) {
+      const srcName = ["index.ts", "index.js", "index.mjs"].find((f) => existsSync(join(geneDir, f)));
+      if (srcName) {
+        nodeRunner = await loadNodeRunner(resolve(geneDir, srcName), evaluateL0(gateBinding, phenotype));
+      }
+    }
+
     const verdict = evaluatePublishGate({
       geneDir,
       fidelity,
       phenotype,
       run:
-        wasmBytes && gateBinding
+        nodeRunner && "runner" in nodeRunner
+          ? nodeRunner.runner
+          : wasmBytes && gateBinding
           ? (input) => {
               try {
                 return outcomeFromSandbox(

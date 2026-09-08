@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import Ajv from "ajv";
@@ -18,6 +18,8 @@ import { createGatewayFetch } from "../runtime/network-gateway.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { loadTestSuite } from "../testsuite/load.js";
 import { runT1 } from "../testsuite/run.js";
+import { scaffoldTestSuite } from "../testsuite/scaffold.js";
+import { TESTSUITE_FILENAME } from "../testsuite/load.js";
 import type { RunOutcome } from "../testsuite/run.js";
 
 export const testCommand = new Command("test")
@@ -25,7 +27,9 @@ export const testCommand = new Command("test")
   .argument("[gene-name]", "gene name to test")
   .option("--verbose", "show detailed output", false)
   .option("--compliance", "run structural compliance checks", false)
-  .action(async (geneName: string | undefined, options: { verbose: boolean; compliance: boolean }) => {
+  .option("--scaffold", `generate a ${"testsuite.json"} skeleton from the phenotype and exit`, false)
+  .option("--json", "print T1 results as JSON (spec §47.2 TestResult)", false)
+  .action(async (geneName: string | undefined, options: { verbose: boolean; compliance: boolean; scaffold: boolean; json: boolean }) => {
     const root = requireProjectRoot();
     const config = loadConfig(root);
 
@@ -52,6 +56,34 @@ export const testCommand = new Command("test")
     }
 
     const phenotype = JSON.parse(readFileSync(phenotypePath, "utf-8"));
+
+    // --- --scaffold: write a §47.5-shaped starting point and stop ---
+    // Placed before the checks below because it produces a file rather than a
+    // verdict; running seven checks first would only bury the one line that
+    // matters. It refuses to overwrite: a suite the author has edited is worth
+    // more than anything generated here.
+    if (options.scaffold) {
+      const suitePath = join(geneDir, TESTSUITE_FILENAME);
+      if (existsSync(suitePath)) {
+        display.error(`${TESTSUITE_FILENAME} already exists — refusing to overwrite`);
+        display.hint("Delete it first if you really want to regenerate from the phenotype.");
+        process.exit(1);
+      }
+      const { suite, notes, warnings } = scaffoldTestSuite(phenotype);
+      writeFileSync(suitePath, JSON.stringify(suite, null, 2) + "\n");
+      display.success(`Wrote ${TESTSUITE_FILENAME} — ${suite.testCases.length} case(s)`);
+      notes.forEach((n, i) => display.info(`  [${i}] ${n.requirement}: ${n.rationale}`));
+      for (const w of warnings) display.warn("  " + w);
+      console.log();
+      display.info("These are a starting point, not a passing suite. Two things to do by hand:");
+      display.info("  • replace the positive case's input with one that means something for this Gene");
+      display.info("  • for each negative case, decide what correct handling looks like — if the Gene");
+      display.info("    answers illegal input rather than refusing it, declare that answer with");
+      display.info("    expectedOutput or expectedSchema, or the case will fail");
+      display.hint(`Then run: rotifer test ${geneName}`);
+      return;
+    }
+
     const ajv = new Ajv({ allErrors: true });
     let passed = 0;
     let failed = 0;
@@ -464,6 +496,9 @@ export const testCommand = new Command("test")
           display.error(`  ${r.testId}: ${r.failureReason}`);
           if (r.details) display.info("    " + r.details);
         }
+      }
+      if (options.json) {
+        console.log(JSON.stringify({ requirements: report.requirements, gatePassed: report.gatePassed, results: report.results }, null, 2));
       }
       const req = report.requirements;
       display.info(

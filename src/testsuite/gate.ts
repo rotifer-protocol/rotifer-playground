@@ -150,6 +150,27 @@ export function outcomeFromSandbox(r: {
  * The L0 gate is consulted BEFORE the import, not before express(): importing
  * executes module top-level code, so a check afterwards checks nothing.
  */
+/**
+ * The ADR-334 refusal envelope, as recognised on the Node path.
+ *
+ * Kept identical to `parse_error_envelope` in the Rust core, including the
+ * single-key rule: an object that merely *contains* the key alongside data is
+ * ordinary output. The two implementations exist because the two execution
+ * paths do not share code — `node-envelope-parity.test.ts` pins them to the
+ * same answers so they cannot drift apart silently.
+ */
+export function readErrorEnvelope(output: unknown): string | null {
+  if (typeof output !== "object" || output === null || Array.isArray(output)) return null;
+  const keys = Object.keys(output as Record<string, unknown>);
+  if (keys.length !== 1 || keys[0] !== "__rotifer_error") return null;
+  const body = (output as Record<string, unknown>).__rotifer_error;
+  const message =
+    typeof body === "object" && body !== null && typeof (body as Record<string, unknown>).message === "string"
+      ? ((body as Record<string, unknown>).message as string)
+      : "gene refused the input";
+  return `INVALID_INPUT: ${message}`;
+}
+
 export async function loadNodeRunner(
   absSourcePath: string,
   l0: { kind: string; detail?: string },
@@ -173,6 +194,17 @@ export async function loadNodeRunner(
     const started = Date.now();
     try {
       const output = expressFn(input);
+
+      // ADR-334: the WASM sandbox turns a lone `__rotifer_error` key into
+      // GeneResult::Error, and this path has to agree with it. It does not go
+      // through the Rust core at all, so without this the same Gene would be
+      // read as refusing when compiled and as answering when run under Node —
+      // and which one a Gene gets depends on its fidelity, not on its code.
+      const refusal = readErrorEnvelope(output);
+      if (refusal) {
+        return { success: false, errorMessage: refusal, durationMs: Date.now() - started };
+      }
+
       if (output === null || output === undefined) {
         // Distinct from throwing, and worth its own message: a Gene that
         // returns nothing has not refused, it has silently produced no answer.

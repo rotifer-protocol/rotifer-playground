@@ -1,0 +1,24 @@
+{
+  "testCases": [
+    {
+      "input": { "query": "rotifer protocol" },
+      "expectedSchema": {
+        "type": "object",
+        "required": ["answer", "source"],
+        "properties": {
+          "answer": { "type": "string", "pattern": "rotifer protocol" },
+          "source": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "input": { "query": 42 },
+      "expectedOutput": { "answer": "No query provided.", "source": "" }
+    },
+    {
+      "input": {},
+      "expectedOutput": { "answer": "No query provided.", "source": "" }
+    }
+  ],
+  "config": { "fuzzIterations": 10, "seed": 1 }
+}

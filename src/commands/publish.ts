@@ -22,6 +22,9 @@ import {
 } from "../utils/detect-source-language.js";
 import { decideBadgeAction, uploadSafetyBadge } from "../cloud/badge.js";
 import type { ScanResult } from "../scanner/types.js";
+import { evaluatePublishGate, outcomeFromSandbox } from "../testsuite/gate.js";
+import { tryLoadBinding } from "../utils/binding.js";
+import { FUEL_LADDER, constraintsForFuel } from "../utils/run-fuel-ladder.js";
 
 const VG_SCANNER_VERSION = "0.8.0";
 
@@ -137,6 +140,47 @@ export async function publishSingleGene(
       display.warn(
         `First publish of '${geneName}' uses version ${version} (no prior version chain). Consider starting from 0.x.y.`
       );
+    }
+  }
+
+  // --- spec §47.5 T1 publishing gate (ADR-333) ---
+  // Placed after the artifact and version checks and before anything reaches
+  // the network: a Gene refused here has cost nothing but local time.
+  {
+    const gateBinding = wasmBytes ? tryLoadBinding() : null;
+    const { irHash: _gateStrip, ...phenotypeForGate } = phenotype;
+    const verdict = evaluatePublishGate({
+      geneDir,
+      fidelity,
+      phenotype,
+      run:
+        wasmBytes && gateBinding
+          ? (input) => {
+              try {
+                return outcomeFromSandbox(
+                  gateBinding.executeGene(
+                    wasmBytes,
+                    JSON.stringify(input),
+                    JSON.stringify(phenotypeForGate),
+                    constraintsForFuel(FUEL_LADDER[0]),
+                  ),
+                );
+              } catch (e) {
+                return { success: false, crashed: true, errorMessage: (e as Error).message };
+              }
+            }
+          : null,
+    });
+
+    if (verdict.status === "blocked") {
+      if (!isQuiet) {
+        display.error(`T1 publishing gate: ${verdict.reason}`);
+        for (const line of verdict.guidance) console.log(line ? `  ${line}` : "");
+      }
+      return { name: geneName, status: "failed", error: `§47.5 T1 gate — ${verdict.reason}` };
+    }
+    if (!isQuiet && verdict.status === "passed") {
+      display.success(`  T1 publishing gate: ${verdict.details}`);
     }
   }
 

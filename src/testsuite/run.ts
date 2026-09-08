@@ -191,6 +191,11 @@ export function runNegative(
   const outcome = run(c.testCase.input, c.testCase.timeout);
 
   if (outcome.crashed) {
+    // ADR-333: a crash fails not because it is necessarily a bug, but because
+    // it is necessarily unusable. A trap reaching the caller carries no
+    // information — the caller cannot tell deliberate refusal from defect, so
+    // nothing downstream can act on it correctly. §47.5 asks for "correctly
+    // handle", and a signal the caller cannot handle is not handling completed.
     return fail(
       id,
       started,

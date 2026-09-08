@@ -44,6 +44,44 @@ describe("S-02: System command execution", () => {
   it("detects spawn", () => {
     expect(matchesRule("S-02", 'spawn("node", ["app.js"]);')).toBe(true);
   });
+
+  /**
+   * The call-site patterns used to be bare `\bexec\s*\(` and friends, which
+   * also matched `regex.exec(` — the standard way to iterate a global regex in
+   * JavaScript. On this repo's own gene corpus that produced a CRITICAL finding
+   * on 6 of the 7 genes it flagged, blocking `rotifer publish` for genes whose
+   * only offence was calling a regex. `grammar-checker` was one of them.
+   *
+   * The narrowing is safe because it does not touch the load-bearing half:
+   * system commands are unreachable in JS without child_process, and both
+   * import forms remain CRITICAL. A member call like `cp.exec(...)` can only
+   * get `cp` from a binding those two patterns already catch — the cases below
+   * assert exactly that, so the fix cannot be mistaken for switching S-02 off.
+   */
+  it("does not fire on regex.exec(), the false positive that blocked publishing", () => {
+    expect(matchesRule("S-02", "while ((match = regex.exec(text)) !== null) {")).toBe(false);
+  });
+
+  it("does not fire on other member calls named exec/spawn", () => {
+    expect(matchesRule("S-02", "const m = pattern.exec(input);")).toBe(false);
+    expect(matchesRule("S-02", "const w = pool.spawn(job);")).toBe(false);
+    expect(matchesRule("S-02", "db.execSync(query);")).toBe(false);
+  });
+
+  it("still fires on a bare call from a destructured child_process import", () => {
+    expect(matchesRule("S-02", 'exec("rm -rf /");')).toBe(true);
+    expect(matchesRule("S-02", 'spawnSync("sh", ["-c", cmd]);')).toBe(true);
+  });
+
+  it("still fires on a member call once the import that supplies it is present", () => {
+    // The realistic shape of the threat the narrowing could have let through.
+    // Line 1 alone is enough — which is the point.
+    const source = [
+      "const cp = require('child_process');",
+      "cp.exec(userInput);",
+    ].join("\n");
+    expect(matchesRule("S-02", source)).toBe(true);
+  });
 });
 
 describe("S-03: Code obfuscation", () => {

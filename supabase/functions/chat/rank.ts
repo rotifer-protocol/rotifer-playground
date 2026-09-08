@@ -49,7 +49,23 @@ export function isUserLangFor(locale: "en" | "zh", source: string): boolean {
   if (source.startsWith("blog/") || source.startsWith("zh/blog/")) {
     return zh ? source.startsWith("zh/blog/") : source.startsWith("blog/");
   }
-  if (source.startsWith(".papers-cache/")) {
+  // Both caches hold markdown fetched from other repositories, with the
+  // Chinese twin marked by a .zh.md suffix rather than a path segment.
+  //
+  // .changelog-cache/ was missing here at first, and the omission was silent:
+  // an unlisted prefix falls through to the final return, which asks whether
+  // the source sits under src/content/docs/ — false for a cache path in BOTH
+  // locales. So a cached changelog never earned the same-language boost in
+  // either language and lost every slot to same-language blog posts. The
+  // symptom was "mcp server 最新版本" still answering with a release blog's
+  // headline version after the mcp-server changelog was already indexed,
+  // while "@rotifer/mcp-server ... 什么版本" — literal enough to win on
+  // similarity alone — answered correctly. Adding an indexed source prefix
+  // means adding it here too.
+  if (
+    source.startsWith(".papers-cache/") ||
+    source.startsWith(".changelog-cache/")
+  ) {
     return zh ? source.endsWith(".zh.md") : !source.endsWith(".zh.md");
   }
   return source.startsWith(zh ? "src/content/docs/zh/" : "src/content/docs/docs/");

@@ -78,6 +78,33 @@ export function classify(
   });
 }
 
+/**
+ * Serialize for comparison with object keys in a stable order.
+ *
+ * `expectedOutput` was compared with plain JSON.stringify, which is key-order
+ * sensitive: a case declaring `{formatted, changed, language}` failed against a
+ * Gene returning `{changed, formatted, language}` — same object by every
+ * meaning JavaScript gives the word, unequal as text. That is a property of the
+ * serializer, not of the Gene, and every author writing an expectedOutput by
+ * hand would hit it. Found by hitting it.
+ *
+ * Array order is preserved: in an array it carries meaning.
+ */
+function canonical(value: unknown): string {
+  const walk = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === "object") {
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+        out[k] = walk((v as Record<string, unknown>)[k]);
+      }
+      return out;
+    }
+    return v;
+  };
+  return JSON.stringify(walk(value));
+}
+
 function fail(testId: string, started: number, reason: string, details?: string): TestResult {
   return {
     testId,
@@ -117,8 +144,8 @@ export function runPositive(
   }
 
   if ("expectedOutput" in c.testCase) {
-    const got = JSON.stringify(outcome.output);
-    const want = JSON.stringify(c.testCase.expectedOutput);
+    const got = canonical(outcome.output);
+    const want = canonical(c.testCase.expectedOutput);
     if (got !== want) {
       return fail(id, started, "output does not equal expectedOutput", `expected ${want}, got ${got}`);
     }
@@ -209,8 +236,8 @@ export function runNegative(
   }
 
   if ("expectedOutput" in c.testCase) {
-    const got = JSON.stringify(outcome.output);
-    const want = JSON.stringify(c.testCase.expectedOutput);
+    const got = canonical(outcome.output);
+    const want = canonical(c.testCase.expectedOutput);
     return got === want
       ? pass(id, started, "Gene handled illegal input exactly as the case declares")
       : fail(id, started, "output does not equal the declared expectedOutput", `expected ${want}, got ${got}`);

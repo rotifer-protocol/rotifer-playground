@@ -4,17 +4,39 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "code": { "type": "string", "description": "Source code to format" },
-      "language": { "type": "string", "description": "Programming language", "enum": ["typescript", "javascript", "json", "markdown", "rust"] }
+      "code": {
+        "type": "string",
+        "description": "Source code to format"
+      },
+      "language": {
+        "type": "string",
+        "description": "Programming language",
+        "enum": [
+          "typescript",
+          "javascript",
+          "json",
+          "markdown",
+          "rust"
+        ]
+      }
     },
-    "required": ["code", "language"]
+    "required": [
+      "code",
+      "language"
+    ]
   },
   "outputSchema": {
     "type": "object",
     "properties": {
-      "formatted": { "type": "string" },
-      "changed": { "type": "boolean" },
-      "language": { "type": "string" }
+      "formatted": {
+        "type": "string"
+      },
+      "changed": {
+        "type": "boolean"
+      },
+      "language": {
+        "type": "string"
+      }
     }
   },
   "dependencies": [],
@@ -27,5 +49,12 @@
     "concurrencyModel": "Stateless",
     "failureSemantics": "FAIL_FAST"
   },
-  "tags": ["formatter", "prettier", "typescript", "rust", "genesis"]
+  "tags": [
+    "formatter",
+    "prettier",
+    "typescript",
+    "rust",
+    "genesis"
+  ],
+  "irHash": "1250405b99303f13211fde6df73f75b19ea933b3b800b76711008eafa8933a9b"
 }

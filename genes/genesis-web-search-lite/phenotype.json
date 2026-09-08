@@ -4,15 +4,24 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "query": { "type": "string", "description": "Search query string" }
+      "query": {
+        "type": "string",
+        "description": "Search query string"
+      }
     },
-    "required": ["query"]
+    "required": [
+      "query"
+    ]
   },
   "outputSchema": {
     "type": "object",
     "properties": {
-      "answer": { "type": "string" },
-      "source": { "type": "string" }
+      "answer": {
+        "type": "string"
+      },
+      "source": {
+        "type": "string"
+      }
     }
   },
   "dependencies": [],
@@ -25,5 +34,12 @@
     "concurrencyModel": "Stateless",
     "failureSemantics": "SILENT_DEGRADE"
   },
-  "tags": ["web-search", "single-answer", "attribution", "lightweight", "async"]
+  "tags": [
+    "web-search",
+    "single-answer",
+    "attribution",
+    "lightweight",
+    "async"
+  ],
+  "irHash": "e1bae37cdb28cdce1c4a3631bcb9e58eb8009a01d3d8f4c6b7f1555d38fd040d"
 }

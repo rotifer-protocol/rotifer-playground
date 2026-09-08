@@ -81,6 +81,14 @@ export const testCommand = new Command("test")
       display.info("  • for each negative case, decide what correct handling looks like — if the Gene");
       display.info("    answers illegal input rather than refusing it, declare that answer with");
       display.info("    expectedOutput or expectedSchema, or the case will fail");
+      // ADR-334 D2: the channel has to reach the author or it repeats the
+      // history that produced it — ErrorCode.INVALID_INPUT sat defined and
+      // unused for six months, which is why 11 of 13 Genes had each invented
+      // their own way of coping with input they could not read.
+      display.info("");
+      display.info("  To refuse outright instead, return exactly { \"__rotifer_error\": { \"message\": \"…\" } }");
+      display.info("  and nothing else — the host turns that into INVALID_INPUT (ADR-334). A refusal");
+      display.info("  needs no expectedOutput: the case passes on the refusal itself.");
       display.hint(`Then run: rotifer test ${geneName}`);
       return;
     }

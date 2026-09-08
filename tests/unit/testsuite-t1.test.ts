@@ -221,6 +221,43 @@ describe("§47.5 T1 gate", () => {
   });
 });
 
+describe("expectedOutput compares by content, not by key order", () => {
+  it("matches an output whose keys are in a different order", () => {
+    // JSON.stringify is key-order sensitive, so a case declaring
+    // {formatted, changed, language} failed against a Gene returning
+    // {changed, formatted, language} — the same object by every meaning
+    // JavaScript gives the word. That is a property of the serializer, not of
+    // the Gene, and every author writing an expectedOutput by hand would hit
+    // it. Found by hitting it, on genesis-code-format.
+    const reordering: GeneRunner = () => ({ success: true, output: { b: 2, a: 1, score: 1 } });
+    const report = runT1(
+      suiteOf([
+        { input: LEGAL, expectedOutput: { score: 1, a: 1, b: 2 } },
+        { input: ILLEGAL },
+      ]),
+      { inputSchema: INPUT_SCHEMA, outputSchema: OUTPUT_SCHEMA, run: reordering },
+    );
+    expect(report.results[0].passed).toBe(true);
+  });
+
+  it("still distinguishes different content, and array order still counts", () => {
+    // The control. Sorting keys must not turn the comparison into "any object
+    // with the same field names", and reordering an array is a real difference.
+    const differing: GeneRunner = () => ({ success: true, output: { score: 2, items: [1, 2] } });
+    const wrongValue = runT1(
+      suiteOf([{ input: LEGAL, expectedOutput: { score: 1, items: [1, 2] } }, { input: ILLEGAL }]),
+      { inputSchema: INPUT_SCHEMA, outputSchema: OUTPUT_SCHEMA, run: differing },
+    );
+    expect(wrongValue.results[0].passed).toBe(false);
+
+    const wrongOrder = runT1(
+      suiteOf([{ input: LEGAL, expectedOutput: { score: 2, items: [2, 1] } }, { input: ILLEGAL }]),
+      { inputSchema: INPUT_SCHEMA, outputSchema: OUTPUT_SCHEMA, run: differing },
+    );
+    expect(wrongOrder.results[0].passed).toBe(false);
+  });
+});
+
 describe("a case the author wrote must pass, not merely be outnumbered", () => {
   it("blocks when one negative fails even though another passes", () => {
     // §47.5 sets a floor on coverage — "at least 1 negative" — not permission

@@ -1,0 +1,25 @@
+{
+  "testCases": [
+    {
+      "input": { "code": "{\"b\":2,\"a\":1}", "language": "json" },
+      "expectedOutput": {
+        "formatted": "{\n  \"b\": 2,\n  \"a\": 1\n}",
+        "changed": true,
+        "language": "json"
+      }
+    },
+    {
+      "input": { "code": 42, "language": "json" },
+      "expectedOutput": { "formatted": "", "changed": false, "language": "json" }
+    },
+    {
+      "input": { "language": "json" },
+      "expectedOutput": { "formatted": "", "changed": false, "language": "json" }
+    },
+    {
+      "input": {},
+      "expectedOutput": { "formatted": "", "changed": false, "language": "unknown" }
+    }
+  ],
+  "config": { "fuzzIterations": 10, "seed": 1 }
+}

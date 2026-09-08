@@ -63,7 +63,7 @@
     ]
   },
   "dependencies": [],
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "rotifer-team",
   "createdAt": 1771939246888,
   "fidelity": "Native",
@@ -76,5 +76,5 @@
     "spacing",
     "branding"
   ],
-  "irHash": "34643bfc96a933e4171563952b55254cc30f098a0bf8ff38f8de1f7ccfdd116d"
+  "irHash": "825c9edf25d8249d179111dd7762db1ed64164390c40a6d715816bd0e828c9f3"
 }

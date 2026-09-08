@@ -12,7 +12,11 @@ interface FormatterOutput {
 }
 
 export function express(input: FormatterInput): FormatterOutput {
-  const src = input.markdown || "";
+  // `||` guards falsy values, not wrong-typed truthy ones: a numeric markdown
+  // passed straight through and then string handling threw. The schema declares this
+  // field's type, so a value of another type is not a value at all — it gets
+  // the same treatment as a missing one.
+  const src = typeof input.markdown === "string" ? input.markdown : "";
   const marker = input.listMarker ?? "-";
   let changes = 0;
   const lines = src.split("\n");

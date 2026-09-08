@@ -1,0 +1,46 @@
+{
+  "testCases": [
+    {
+      "input": {
+        "markdown": "#  Title\n\nsome   text"
+      },
+      "expectedSchema": {
+        "type": "object",
+        "properties": {
+          "formatted": {
+            "type": "string",
+            "pattern": "Title"
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "markdown": 42
+      },
+      "expectedSchema": {
+        "type": "object",
+        "properties": {
+          "formatted": {
+            "const": ""
+          }
+        }
+      }
+    },
+    {
+      "input": {},
+      "expectedSchema": {
+        "type": "object",
+        "properties": {
+          "formatted": {
+            "const": ""
+          }
+        }
+      }
+    }
+  ],
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  }
+}

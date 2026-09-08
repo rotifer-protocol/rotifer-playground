@@ -1,0 +1,60 @@
+{
+  "testCases": [
+    {
+      "input": {
+        "text": "The cat sat on the mat. It was a warm day."
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "sentenceCount",
+          "wordCount"
+        ],
+        "properties": {
+          "sentenceCount": {
+            "type": "integer",
+            "minimum": 2
+          },
+          "wordCount": {
+            "type": "integer",
+            "minimum": 8
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "text": 42
+      },
+      "expectedSchema": {
+        "type": "object",
+        "properties": {
+          "sentenceCount": {
+            "const": 0
+          },
+          "wordCount": {
+            "const": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {},
+      "expectedSchema": {
+        "type": "object",
+        "properties": {
+          "sentenceCount": {
+            "const": 0
+          },
+          "wordCount": {
+            "const": 0
+          }
+        }
+      }
+    }
+  ],
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  }
+}

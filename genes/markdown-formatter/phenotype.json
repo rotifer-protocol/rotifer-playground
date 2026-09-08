@@ -4,19 +4,54 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "markdown": { "type": "string", "description": "Raw Markdown text to format" },
-      "lineWidth": { "type": "number", "description": "Maximum line width for wrapping", "default": 80 },
-      "listMarker": { "type": "string", "description": "List bullet character", "enum": ["-", "*", "+"], "default": "-" },
-      "headingStyle": { "type": "string", "description": "Heading style", "enum": ["atx", "setext"], "default": "atx" }
+      "markdown": {
+        "type": "string",
+        "description": "Raw Markdown text to format"
+      },
+      "lineWidth": {
+        "type": "number",
+        "description": "Maximum line width for wrapping",
+        "default": 80
+      },
+      "listMarker": {
+        "type": "string",
+        "description": "List bullet character",
+        "enum": [
+          "-",
+          "*",
+          "+"
+        ],
+        "default": "-"
+      },
+      "headingStyle": {
+        "type": "string",
+        "description": "Heading style",
+        "enum": [
+          "atx",
+          "setext"
+        ],
+        "default": "atx"
+      }
     },
-    "required": ["markdown"]
+    "required": [
+      "markdown"
+    ]
   },
   "outputSchema": {
     "type": "object",
     "properties": {
-      "formatted": { "type": "string", "description": "Formatted Markdown text" },
-      "changed": { "type": "boolean", "description": "Whether any formatting changes were made" },
-      "changeCount": { "type": "number", "description": "Number of formatting changes applied" }
+      "formatted": {
+        "type": "string",
+        "description": "Formatted Markdown text"
+      },
+      "changed": {
+        "type": "boolean",
+        "description": "Whether any formatting changes were made"
+      },
+      "changeCount": {
+        "type": "number",
+        "description": "Number of formatting changes applied"
+      }
     }
   },
   "dependencies": [],
@@ -29,5 +64,12 @@
     "concurrencyModel": "Stateless",
     "failureSemantics": "FAIL_FAST"
   },
-  "tags": ["markdown", "formatting", "headings", "lists", "wrapping"]
+  "tags": [
+    "markdown",
+    "formatting",
+    "headings",
+    "lists",
+    "wrapping"
+  ],
+  "irHash": "d0eb9808ec1536ad6d11da00f9c57435209e6efebd0a1fabf8e3948d351f9535"
 }

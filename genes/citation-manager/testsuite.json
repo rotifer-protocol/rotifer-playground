@@ -1,0 +1,90 @@
+{
+  "testCases": [
+    {
+      "input": {
+        "style": "apa",
+        "sources": [
+          {
+            "type": "book",
+            "authors": [
+              "Darwin, C."
+            ],
+            "title": "On the Origin of Species",
+            "year": 1859
+          }
+        ]
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "formatted",
+          "sourceCount",
+          "style"
+        ],
+        "properties": {
+          "sourceCount": {
+            "const": 1
+          },
+          "style": {
+            "const": "apa"
+          },
+          "bibliography": {
+            "type": "string",
+            "pattern": "Origin of Species"
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "style": "apa",
+        "sources": 42
+      },
+      "expectedSchema": {
+        "type": "object",
+        "properties": {
+          "sourceCount": {
+            "const": 0
+          },
+          "formatted": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "style": "apa"
+      },
+      "expectedSchema": {
+        "type": "object",
+        "properties": {
+          "sourceCount": {
+            "const": 0
+          },
+          "formatted": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {},
+      "expectedSchema": {
+        "type": "object",
+        "properties": {
+          "sourceCount": {
+            "const": 0
+          },
+          "formatted": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ],
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  }
+}

@@ -9,21 +9,56 @@
         "description": "English text to analyze for readability"
       }
     },
-    "required": ["text"]
+    "required": [
+      "text"
+    ]
   },
   "outputSchema": {
     "type": "object",
     "properties": {
-      "fleschKincaid": { "type": "number", "description": "Flesch-Kincaid reading ease score (0-100)" },
-      "gradeLevel": { "type": "number", "description": "US grade level" },
-      "avgSentenceLength": { "type": "number", "description": "Average words per sentence" },
-      "avgSyllablesPerWord": { "type": "number", "description": "Average syllables per word" },
-      "wordCount": { "type": "number", "description": "Total word count" },
-      "sentenceCount": { "type": "number", "description": "Total sentence count" },
-      "complexWordRatio": { "type": "number", "description": "Ratio of words with 3+ syllables" },
-      "verdict": { "type": "string", "description": "Readability verdict (e.g. Easy to read, College level)" }
+      "fleschKincaid": {
+        "type": "number",
+        "description": "Flesch-Kincaid reading ease score (0-100)"
+      },
+      "gradeLevel": {
+        "type": "number",
+        "description": "US grade level"
+      },
+      "avgSentenceLength": {
+        "type": "number",
+        "description": "Average words per sentence"
+      },
+      "avgSyllablesPerWord": {
+        "type": "number",
+        "description": "Average syllables per word"
+      },
+      "wordCount": {
+        "type": "number",
+        "description": "Total word count"
+      },
+      "sentenceCount": {
+        "type": "number",
+        "description": "Total sentence count"
+      },
+      "complexWordRatio": {
+        "type": "number",
+        "description": "Ratio of words with 3+ syllables"
+      },
+      "verdict": {
+        "type": "string",
+        "description": "Readability verdict (e.g. Easy to read, College level)"
+      }
     },
-    "required": ["fleschKincaid", "gradeLevel", "avgSentenceLength", "avgSyllablesPerWord", "wordCount", "sentenceCount", "complexWordRatio", "verdict"]
+    "required": [
+      "fleschKincaid",
+      "gradeLevel",
+      "avgSentenceLength",
+      "avgSyllablesPerWord",
+      "wordCount",
+      "sentenceCount",
+      "complexWordRatio",
+      "verdict"
+    ]
   },
   "dependencies": [],
   "version": "0.2.0",
@@ -32,5 +67,12 @@
   "fidelity": "Native",
   "transparency": "Open",
   "source": "skill",
-  "tags": ["readability", "flesch-kincaid", "grade-level", "accessibility", "editing"]
+  "tags": [
+    "readability",
+    "flesch-kincaid",
+    "grade-level",
+    "accessibility",
+    "editing"
+  ],
+  "irHash": "f5bbd6dfa8e27dbe6727d97717e7011a6f8bfcfbf3724ee2e5b8a82497d1bdf3"
 }

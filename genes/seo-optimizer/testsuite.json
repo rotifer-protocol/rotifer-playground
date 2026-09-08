@@ -1,0 +1,67 @@
+{
+  "testCases": [
+    {
+      "input": {
+        "content": "Rotifer Protocol makes agent logic portable across runtimes and hosts."
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "wordCount",
+          "score"
+        ],
+        "properties": {
+          "wordCount": {
+            "const": 10
+          },
+          "score": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "content": 42
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "wordCount",
+          "score"
+        ],
+        "properties": {
+          "wordCount": {
+            "const": 0
+          },
+          "score": {
+            "const": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {},
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "wordCount",
+          "score"
+        ],
+        "properties": {
+          "wordCount": {
+            "const": 0
+          },
+          "score": {
+            "const": 0
+          }
+        }
+      }
+    }
+  ],
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  }
+}

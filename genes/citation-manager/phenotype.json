@@ -9,36 +9,102 @@
         "items": {
           "type": "object",
           "properties": {
-            "type": { "type": "string", "enum": ["book", "article", "website", "conference"] },
-            "authors": { "type": "array", "items": { "type": "string" } },
-            "title": { "type": "string" },
-            "year": { "type": "number" },
-            "journal": { "type": "string" },
-            "volume": { "type": "number" },
-            "issue": { "type": "number" },
-            "pages": { "type": "string" },
-            "publisher": { "type": "string" },
-            "url": { "type": "string" },
-            "accessDate": { "type": "string" },
-            "conference": { "type": "string" },
-            "doi": { "type": "string" }
+            "type": {
+              "type": "string",
+              "enum": [
+                "book",
+                "article",
+                "website",
+                "conference"
+              ]
+            },
+            "authors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "title": {
+              "type": "string"
+            },
+            "year": {
+              "type": "number"
+            },
+            "journal": {
+              "type": "string"
+            },
+            "volume": {
+              "type": "number"
+            },
+            "issue": {
+              "type": "number"
+            },
+            "pages": {
+              "type": "string"
+            },
+            "publisher": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "accessDate": {
+              "type": "string"
+            },
+            "conference": {
+              "type": "string"
+            },
+            "doi": {
+              "type": "string"
+            }
           },
-          "required": ["type", "authors", "title", "year"]
+          "required": [
+            "type",
+            "authors",
+            "title",
+            "year"
+          ]
         }
       },
-      "style": { "type": "string", "enum": ["apa", "mla", "chicago"] }
+      "style": {
+        "type": "string",
+        "enum": [
+          "apa",
+          "mla",
+          "chicago"
+        ]
+      }
     },
-    "required": ["sources", "style"]
+    "required": [
+      "sources",
+      "style"
+    ]
   },
   "outputSchema": {
     "type": "object",
     "properties": {
-      "formatted": { "type": "array", "items": { "type": "string" } },
-      "bibliography": { "type": "string" },
-      "style": { "type": "string" },
-      "sourceCount": { "type": "number" }
+      "formatted": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "bibliography": {
+        "type": "string"
+      },
+      "style": {
+        "type": "string"
+      },
+      "sourceCount": {
+        "type": "number"
+      }
     },
-    "required": ["formatted", "bibliography", "style", "sourceCount"]
+    "required": [
+      "formatted",
+      "bibliography",
+      "style",
+      "sourceCount"
+    ]
   },
   "dependencies": [],
   "version": "0.2.0",
@@ -47,5 +113,12 @@
   "fidelity": "Native",
   "transparency": "Open",
   "source": "skill",
-  "tags": ["citations", "bibliography", "apa", "mla", "references"]
+  "tags": [
+    "citations",
+    "bibliography",
+    "apa",
+    "mla",
+    "references"
+  ],
+  "irHash": "b1aa88b8f59d61c97d78fae7e61635d66cc504e357d52f084087ee2ae4d1c86f"
 }

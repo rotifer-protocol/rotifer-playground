@@ -62,7 +62,11 @@ function extractKeyPhrases(text: string, topN: number): string[] {
 }
 
 export function express(input: SummarizerInput): SummarizerOutput {
-  const text = (input.text || "").trim();
+  // `||` guards falsy values, not wrong-typed truthy ones: a numeric text
+  // passed straight through and then .trim() threw. The schema declares this
+  // field's type, so a value of another type is not a value at all — it gets
+  // the same treatment as a missing one.
+  const text = (typeof input.text === "string" ? input.text : "").trim();
   const maxWords = input.maxWords ?? 100;
   const format = input.format ?? "paragraph";
 

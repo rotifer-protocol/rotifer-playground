@@ -18,6 +18,7 @@ import { createGatewayFetch } from "../runtime/network-gateway.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { loadTestSuite } from "../testsuite/load.js";
 import { runT1 } from "../testsuite/run.js";
+import { loadNodeRunner } from "../testsuite/gate.js";
 import { scaffoldTestSuite } from "../testsuite/scaffold.js";
 import { TESTSUITE_FILENAME } from "../testsuite/load.js";
 import type { RunOutcome } from "../testsuite/run.js";
@@ -88,6 +89,33 @@ export const testCommand = new Command("test")
     let passed = 0;
     let failed = 0;
     let skipped = 0;
+    // Shared by both T1 paths — WASM sandbox and Node — so the two cannot drift
+    // into reporting the same run differently.
+    const reportT1 = (report: ReturnType<typeof runT1>): void => {
+      for (const r of report.results) {
+        if (r.passed) {
+          passed++;
+          display.success(`  ${r.testId}: ${r.details ?? "passed"}`);
+        } else {
+          failed++;
+          display.error(`  ${r.testId}: ${r.failureReason}`);
+          if (r.details) display.info("    " + r.details);
+        }
+      }
+      if (options.json) {
+        console.log(JSON.stringify({ requirements: report.requirements, gatePassed: report.gatePassed, results: report.results }, null, 2));
+      }
+      const req = report.requirements;
+      display.info(
+        `  §47.5 requirements — positive: ${req.positive ? "met" : "NOT met"}, ` +
+        `negative: ${req.negative ? "met" : "NOT met"}, ` +
+        `property: ${req.property ? "met" : "NOT met"}`,
+      );
+      if (!report.gatePassed) {
+        display.hint("This Gene would not pass the §47.5 publishing gate once it is enforced.");
+      }
+    };
+
     const markSkipped = (message: string): void => {
       skipped++;
       display.warn(message);
@@ -451,11 +479,30 @@ export const testCommand = new Command("test")
       // yet and moving every existing Gene's verdict is itself a gate.
       display.warn("T1 TestSuite: no testsuite.json — §47.5 publishing gate not evaluated");
       display.hint("spec §47.5 requires ≥1 positive case, ≥1 negative case and a schema-legality property test before publishing");
+    } else if (!hasIrWasm && srcFile) {
+      // No IR, but there is source: this is how a Wrapped gene is actually run,
+      // so run it that way. Skipping here while the publish gate checks Wrapped
+      // would leave an author unable to see locally what publish is about to
+      // refuse — and the gate's whole exit is "run rotifer test".
+      display.info("T1 TestSuite (spec §47.5, via Node)");
+      const loaded = await loadNodeRunner(resolve(geneDir, srcFile), evaluateL0(binding, phenotype));
+      if ("refusal" in loaded) {
+        failed++;
+        display.error("  could not run the gene: " + loaded.refusal);
+      } else {
+        reportT1(
+          runT1(suiteLoad.suite, {
+            inputSchema: (phenotype.inputSchema as Record<string, unknown>) ?? null,
+            outputSchema: (phenotype.outputSchema as Record<string, unknown>) ?? null,
+            run: loaded.runner,
+          }),
+        );
+      }
     } else if (!hasIrWasm || !binding) {
-      // A suite exists but cannot be run. That is a skip, not a pass — unlike
-      // the absent case above, the author asked for this to be checked.
+      // A suite exists but nothing can run it. That is a skip, not a pass —
+      // unlike the absent case above, the author asked for this to be checked.
       skipped++;
-      display.warn("T1 TestSuite: found testsuite.json, but the Gene is not compiled — run 'rotifer compile " + geneName + "' first");
+      display.warn("T1 TestSuite: found testsuite.json, but the Gene has neither a compiled artifact nor source — run 'rotifer compile " + geneName + "' first");
     } else {
       display.info("T1 TestSuite (spec §47.5)");
       const irWasmForT1 = readFileSync(irWasmPath) as Buffer;

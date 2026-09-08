@@ -116,6 +116,7 @@ export function scaffoldTestSuite(phenotype: {
 
   const testCases: TestCase[] = [];
   const notes: ScaffoldNote[] = [];
+  const warnings: string[] = [];
 
   // Positive case. It asserts against outputSchema rather than a literal
   // expectedOutput: a generated literal would be whatever the Gene happens to
@@ -126,14 +127,36 @@ export function scaffoldTestSuite(phenotype: {
     input: legal,
     ...(outputSchema ? { expectedSchema: outputSchema } : {}),
   });
+
+  // The generator is best-effort: for nested or object-typed required fields it
+  // can emit something the schema rejects. Left unchecked that case is filed as
+  // a *negative* by classify(), and the suite ships with no positive case at
+  // all — measured on json-validator, whose `data` and `schema` fields the
+  // generator could not satisfy.
+  //
+  // Negative candidates were already verified illegal; not verifying the
+  // positive one was an asymmetry, and it failed in the direction that is
+  // harder to notice: the suite looks complete and the gate reports "positive
+  // NOT met" without saying the scaffold is why.
+  const isPositiveLegal = !isIllegal(legal);
+  if (!isPositiveLegal) {
+    warnings.push(
+      `the generated positive input does not satisfy this Gene's inputSchema, so it will be ` +
+        `classified as a negative case and the suite will have no positive case — ` +
+        `replace testCases[0].input with one your Gene actually accepts`,
+    );
+  }
   notes.push({
     requirement: "positive",
-    rationale: outputSchema
-      ? "generated from inputSchema; asserts the output conforms to outputSchema"
-      : "generated from inputSchema; the Gene declares no outputSchema, so replace this with an expectedOutput you mean",
+    rationale: !isPositiveLegal
+      ? "GENERATED INPUT IS NOT ACCEPTED BY inputSchema — replace it, see the warning below"
+      : outputSchema
+        ? "generated from inputSchema; asserts the output conforms to outputSchema"
+        : "generated from inputSchema; the Gene declares no outputSchema, so replace this with an expectedOutput you mean",
   });
 
-  const { inputs: illegal, warnings } = makeIllegalInputs(inputSchema, isIllegal);
+  const { inputs: illegal, warnings: negativeWarnings } = makeIllegalInputs(inputSchema, isIllegal);
+  warnings.push(...negativeWarnings);
   for (const c of illegal) {
     // No expectedOutput / expectedSchema on purpose. If the Gene answers
     // illegal input rather than refusing it — json-validator returning

@@ -108,6 +108,40 @@ describe("scaffold reports what it could not do", () => {
     expect(classified.every((c) => c.kind === "positive")).toBe(true);
   });
 
+  it("warns when the generated positive input is not one the Gene accepts", () => {
+    // Measured on json-validator: the generator could not satisfy its `data`
+    // and `schema` fields, so classify() filed the "positive" case as negative
+    // and the suite shipped with no positive case at all. Verifying negatives
+    // but not the positive was an asymmetry, and it failed in the direction
+    // that is harder to notice — the gate reports "positive NOT met" without
+    // saying the scaffold is why.
+    const STRICT = {
+      type: "object",
+      properties: { data: { type: "object" }, schema: { type: "object" } },
+      required: ["data", "schema"],
+    };
+    const { warnings, classified } = classifyScaffold({
+      inputSchema: STRICT,
+      outputSchema: OUTPUT_SCHEMA,
+    });
+    const { notes } = scaffoldTestSuite({ inputSchema: STRICT, outputSchema: OUTPUT_SCHEMA });
+    expect(classified[0].kind).toBe("negative");
+    expect(warnings.join(" ")).toMatch(/no positive case/);
+    expect(warnings.join(" ")).toMatch(/testCases\[0\]\.input/);
+    expect(notes[0].rationale).toMatch(/NOT ACCEPTED/);
+  });
+
+  it("stays quiet about the positive case when the generator did satisfy the schema", () => {
+    // Control: the warning must not fire on the ordinary path, or it becomes
+    // noise every author learns to skip.
+    const { warnings, classified } = classifyScaffold({
+      inputSchema: INPUT_SCHEMA,
+      outputSchema: OUTPUT_SCHEMA,
+    });
+    expect(classified[0].kind).toBe("positive");
+    expect(warnings.join(" ")).not.toMatch(/no positive case/);
+  });
+
   it("tells the author to supply an expectedOutput when the Gene declares no outputSchema", () => {
     const { notes, suite } = scaffoldTestSuite({ inputSchema: INPUT_SCHEMA });
     expect(suite.testCases[0].expectedSchema).toBeUndefined();

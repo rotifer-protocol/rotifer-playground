@@ -13,6 +13,7 @@ import { getGene, downloadGeneWasm, trackDownload } from "../cloud/client.js";
 import { refreshDomainCacheFromCloud } from "../utils/domain-suggest.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { snapshotGene } from "../utils/gene-snapshots.js";
+import { checkNativeArtifact } from "../utils/artifact-consistency.js";
 
 export const installCommand = new Command("install")
   .description("Install a gene from Rotifer Cloud")
@@ -94,6 +95,21 @@ export const installCommand = new Command("install")
         display.success(
           `WASM downloaded (${(wasmBytes.length / 1024).toFixed(1)}KB)`
         );
+      } else {
+        // There was no else branch here, so a Gene declaring Native with no
+        // artifact installed in silence and then reported "Fidelity: Native".
+        // Running it fails, and nothing had told the user why — leaving them to
+        // debug a setup that was never the problem.
+        const verdict = checkNativeArtifact({
+          geneName: gene.name,
+          fidelity: gene.phenotype?.fidelity as string | undefined,
+          hasArtifact: false,
+          hasSource: false,
+        });
+        if (verdict.status === "native-without-artifact") {
+          display.warn(verdict.message);
+          for (const line of verdict.hint) display.hint(line);
+        }
       }
 
       writeFileSync(

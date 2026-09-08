@@ -11,6 +11,7 @@ import { compileTypeScriptToWasm, findGeneSource } from "../utils/javy-compiler.
 import { contentHash, canonicalSerialize } from "../utils/content-hash.js";
 import { validateLlmNativePhenotype } from "../utils/phenotype-validator.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
+import { checkNativeArtifact } from "../utils/artifact-consistency.js";
 
 export const compileCommand = new Command("compile")
   .description("Compile a gene to Rotifer IR (WASM)")
@@ -185,6 +186,28 @@ export const compileCommand = new Command("compile")
     }
 
     if (!wasmBytes) {
+      // A phenotype declaring Native with nothing to compile is a
+      // contradiction, and this branch used to resolve it by writing
+      // `fidelity: "Wrapped"` into .compile-result.json — leaving two files in
+      // one directory disagreeing — and then reporting success. A green tick
+      // over a Gene that cannot run is worse than a red one: the user stops
+      // looking. Refuse instead, and say which of the two claims to fix.
+      const verdict = checkNativeArtifact({
+        geneName,
+        fidelity: phenotype.fidelity as string | undefined,
+        hasArtifact: false,
+        hasSource: false,
+      });
+      if (verdict.status === "native-without-artifact") {
+        display.error(verdict.message);
+        console.log();
+        display.hint("Either provide what Native requires:");
+        display.hint(`  • write the gene in TypeScript (genes/${geneName}/index.ts), or`);
+        display.hint(`  • rotifer compile ${geneName} --wasm <path>`);
+        display.hint('Or correct the declaration: set "fidelity" to "Wrapped" in phenotype.json.');
+        process.exit(1);
+      }
+
       display.warn("No .wasm or source file found — producing Wrapped fidelity result");
       display.hint("To compile to Native fidelity:");
       display.hint("  • Write a gene in TypeScript and rotifer will compile it automatically");

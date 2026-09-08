@@ -414,11 +414,14 @@ export const testCommand = new Command("test")
     } else if (suiteLoad.status === "absent") {
       // Stage 1 sets no gate — §47.5 enforcement is a separate deliverable, and
       // failing every Gene here before authors have a way to write a suite would
-      // just teach people to ignore the runner.
-      skipped++;
+      // just teach people to ignore the runner. Informational on purpose: it
+      // does not touch passed/failed/skipped either, because no Gene has a suite
+      // yet and moving every existing Gene's verdict is itself a gate.
       display.warn("T1 TestSuite: no testsuite.json — §47.5 publishing gate not evaluated");
       display.hint("spec §47.5 requires ≥1 positive case, ≥1 negative case and a schema-legality property test before publishing");
     } else if (!hasIrWasm || !binding) {
+      // A suite exists but cannot be run. That is a skip, not a pass — unlike
+      // the absent case above, the author asked for this to be checked.
       skipped++;
       display.warn("T1 TestSuite: found testsuite.json, but the Gene is not compiled — run 'rotifer compile " + geneName + "' first");
     } else {

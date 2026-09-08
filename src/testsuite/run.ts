@@ -62,8 +62,8 @@ export function classify(
         reason: "gene declares no inputSchema, so no input can be illegal",
       };
     }
-    const ok = inputValidator(testCase.input);
-    if (ok) {
+    const isLegalInput = inputValidator(testCase.input);
+    if (isLegalInput) {
       return { index, kind: "positive" as const, testCase, reason: "input conforms to inputSchema" };
     }
     const complaint = (inputValidator.errors ?? [])
@@ -333,16 +333,16 @@ export function runT1(
   const property = runProperty(suite, opts.inputSchema, opts.run, outputValidator);
   results.push(property);
 
-  const positivePassed = classified.some(
+  const hasPassingPositive = classified.some(
     (c, i) => c.kind === "positive" && results[i].passed,
   );
-  const negativePassed = classified.some(
+  const hasPassingNegative = classified.some(
     (c, i) => c.kind === "negative" && results[i].passed,
   );
 
   const requirements = {
-    positive: positivePassed,
-    negative: negativePassed,
+    positive: hasPassingPositive,
+    negative: hasPassingNegative,
     property: property.passed,
   };
 

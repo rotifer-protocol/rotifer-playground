@@ -351,11 +351,22 @@ export function runT1(
     property: property.passed,
   };
 
+  // §47.5 sets a floor on coverage — "at least 1 positive", "at least 1
+  // negative" — not permission to ship failing assertions. A suite with three
+  // negatives where two fail still satisfies the letter of the requirement, and
+  // that is how a case an author wrote, and a Gene does not honour, could reach
+  // the registry. Every declared case has to pass as well.
+  const hasFailingCase = results.some((r) => !r.passed);
+
   return {
     results,
     classified,
     requirements,
-    gatePassed: requirements.positive && requirements.negative && requirements.property,
+    gatePassed:
+      requirements.positive &&
+      requirements.negative &&
+      requirements.property &&
+      !hasFailingCase,
   };
 }
 

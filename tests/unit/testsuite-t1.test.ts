@@ -221,6 +221,35 @@ describe("§47.5 T1 gate", () => {
   });
 });
 
+describe("a case the author wrote must pass, not merely be outnumbered", () => {
+  it("blocks when one negative fails even though another passes", () => {
+    // §47.5 sets a floor on coverage — "at least 1 negative" — not permission
+    // to ship failing assertions. Caught on design-tokens: removing the fix
+    // turned one negative red while `negative: met` stayed true on the strength
+    // of a second one, so the gate would have published a Gene against an
+    // assertion its author had written and it did not honour.
+    const onlyHandlesOne: GeneRunner = (input) => {
+      const t = (input as Record<string, unknown>).text;
+      if (typeof t === "string") return { success: true, output: { score: 1 } };
+      if (t === 42) return { success: true, output: { score: 0 } };
+      // Handles one illegal shape as declared and gets the other wrong — not by
+      // refusing, which would pass, but by answering something the author did
+      // not sign off on.
+      return { success: true, output: { score: 9 } };
+    };
+    const report = runT1(
+      suiteOf([
+        { input: LEGAL },
+        { input: ILLEGAL, expectedOutput: { score: 0 } },
+        { input: { text: true }, expectedOutput: { score: 0 } },
+      ]),
+      { inputSchema: INPUT_SCHEMA, outputSchema: OUTPUT_SCHEMA, run: onlyHandlesOne },
+    );
+    expect(report.requirements.negative).toBe(true);
+    expect(report.gatePassed).toBe(false);
+  });
+});
+
 describe("§47.4 schema-legality property test", () => {
   it("runs 10 iterations by default, as §47.5 specifies", () => {
     let calls = 0;

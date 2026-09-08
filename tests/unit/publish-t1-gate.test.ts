@@ -84,9 +84,25 @@ describe("§47.5 T1 publishing gate", () => {
     expect((v as { guidance: string[] }).guidance.join(" ")).toMatch(/not been run is not evidence/);
   });
 
-  it("skips Wrapped genes, which do not execute through the IR sandbox", () => {
-    const v = evaluatePublishGate({ geneDir: dir, fidelity: "Wrapped", phenotype: PHENOTYPE, run: null });
-    expect(v.status).toBe("not-applicable");
+  it("gates Wrapped genes too — §47.5's MUST is not conditional on fidelity", () => {
+    // This was an exemption until 2026-09-07, and 35 published Wrapped records
+    // went out under it. It surfaced while deciding genesis-file-read's
+    // fidelity: it imports node:fs so it can never be Native, and relabelling
+    // it Wrapped while Wrapped was exempt would have moved a gene through the
+    // gap rather than through the gate.
+    writeSuite(GOOD_SUITE);
+    const passing = evaluatePublishGate({ geneDir: dir, fidelity: "Wrapped", phenotype: PHENOTYPE, run: refuses });
+    expect(passing.status).toBe("passed");
+
+    const noSuite = evaluatePublishGate({ geneDir: `${dir}-absent`, fidelity: "Wrapped", phenotype: PHENOTYPE, run: refuses });
+    expect(noSuite.status).toBe("blocked");
+  });
+
+  it("blocks a Wrapped gene that fails T1, exactly as a Native one", () => {
+    writeSuite(GOOD_SUITE);
+    const accepts: GeneRunner = () => ({ success: true, output: { score: 1 } });
+    const v = evaluatePublishGate({ geneDir: dir, fidelity: "Wrapped", phenotype: PHENOTYPE, run: accepts });
+    expect(v.status).toBe("blocked");
   });
 
   it("blocks the ADR-333 case the criterion exists for: silent acceptance", () => {
@@ -208,5 +224,27 @@ describe("publish actually reaches the gate", () => {
     expect(result.status).toBe("failed");
     expect(result.error).toMatch(/§47\.5 T1 gate/);
     expect(result.error).toMatch(/no testsuite\.json/);
+  });
+
+  it("refuses a Wrapped gene with no TestSuite, through the same seam", () => {
+    // The Native case above passed while Wrapped was exempt, so it could not
+    // have caught the hole. This is the case that would have stayed green while
+    // 35 Wrapped records published unchecked.
+    writeFileSync(
+      join(dir, "phenotype.json"),
+      JSON.stringify({ name: "wrapped-gated", version: "0.1.0", fidelity: "Wrapped", ...PHENOTYPE }),
+    );
+    writeFileSync(join(dir, "index.ts"), "export function express(i) { return { score: 1 }; }\n");
+
+    return publishSingleGene(
+      "wrapped-gated",
+      dir,
+      CREDS,
+      { skipSecurity: true, skipArena: true, skipVg: true },
+      true,
+    ).then((result) => {
+      expect(result.status).toBe("failed");
+      expect(result.error).toMatch(/§47\.5 T1 gate/);
+    });
   });
 });

@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.25.1...v0.26.0) (2026-09-09)
+
+
+### Features
+
+* **publish:** enforce the spec §47.5 T1 gate, per ADR-333 ([#344](https://github.com/rotifer-protocol/rotifer-playground/issues/344)) ([29d60da](https://github.com/rotifer-protocol/rotifer-playground/commit/29d60da7f9f9d756b67a9848dd2a7989d97f9aea))
+* **runtime:** give Genes a way to refuse — the INVALID_INPUT channel (ADR-334) ([#354](https://github.com/rotifer-protocol/rotifer-playground/issues/354)) ([a851341](https://github.com/rotifer-protocol/rotifer-playground/commit/a851341d333213694e0bb67f72bce4faa30709f6))
+* **testsuite:** implement spec §47.5 T1 — TestSuite format and runner ([#342](https://github.com/rotifer-protocol/rotifer-playground/issues/342)) ([1175add](https://github.com/rotifer-protocol/rotifer-playground/commit/1175add63013ed21671cf4123b4c1e81d20ed678))
+* **testsuite:** scaffold a §47.5-shaped suite, and emit TestResult as JSON ([#343](https://github.com/rotifer-protocol/rotifer-playground/issues/343)) ([c7cf66e](https://github.com/rotifer-protocol/rotifer-playground/commit/c7cf66e98374529188f84fe80f58e725f59e41f3))
+
+
+### Bug Fixes
+
+* **chat:** give .changelog-cache/ a language rule in retrieval ranking ([#350](https://github.com/rotifer-protocol/rotifer-playground/issues/350)) ([de9d3ba](https://github.com/rotifer-protocol/rotifer-playground/commit/de9d3ba6499d50ffd1e5bcf0eddfe3dcd29fd6e4))
+* **cli:** stop install and compile from staying quiet about Native-without-artifact ([#355](https://github.com/rotifer-protocol/rotifer-playground/issues/355)) ([2fa8724](https://github.com/rotifer-protocol/rotifer-playground/commit/2fa87245d0e755faad2868c995754eca1896ae11))
+* **deps:** resolve 7 npm audit findings (6 moderate, 1 high) ([#357](https://github.com/rotifer-protocol/rotifer-playground/issues/357)) ([7228cc1](https://github.com/rotifer-protocol/rotifer-playground/commit/7228cc15ccfce9f072aa6d52148e963cdb78887f))
+* **design-tokens:** stop emitting hsl(NaN); and require every declared case to pass ([#347](https://github.com/rotifer-protocol/rotifer-playground/issues/347)) ([5585cda](https://github.com/rotifer-protocol/rotifer-playground/commit/5585cda3b264e63e6bb5f40524bf5b72a9dea6fc))
+* **genes:** guard six genes against wrong-typed truthy input ([#351](https://github.com/rotifer-protocol/rotifer-playground/issues/351)) ([80ebfb8](https://github.com/rotifer-protocol/rotifer-playground/commit/80ebfb86b516ffbf7c3a1d8bab8384f5095cedc2))
+* **genesis-code-format:** guard code and language; compare expectedOutput by content ([#352](https://github.com/rotifer-protocol/rotifer-playground/issues/352)) ([758d581](https://github.com/rotifer-protocol/rotifer-playground/commit/758d5812719cdce6c75f5ff150644f516f69851c))
+* **genesis-file-read:** reject a non-string path; and let `rotifer test` run Wrapped suites ([#349](https://github.com/rotifer-protocol/rotifer-playground/issues/349)) ([af18d3f](https://github.com/rotifer-protocol/rotifer-playground/commit/af18d3f24535e7792345a94c294879af3a43e1a8))
+* **genesis-web-search:** refuse a missing query instead of searching for "undefined" ([#348](https://github.com/rotifer-protocol/rotifer-playground/issues/348)) ([a4620f7](https://github.com/rotifer-protocol/rotifer-playground/commit/a4620f7eb7fdfe31ca88423b5825fc8a1ee4b6e7))
+* **genes:** prove the Native-artifact publish gate, and prepare two legacy genes for republish ([#339](https://github.com/rotifer-protocol/rotifer-playground/issues/339)) ([bcb8b40](https://github.com/rotifer-protocol/rotifer-playground/commit/bcb8b4016d9fb4c2d7f4215992991c6de4346411))
+* **publish:** the T1 gate now covers Wrapped genes; genesis-file-read is Wrapped ([#346](https://github.com/rotifer-protocol/rotifer-playground/issues/346)) ([4d1bc0e](https://github.com/rotifer-protocol/rotifer-playground/commit/4d1bc0e2f2cbf6bb1314cef9296c6932db73bb4e))
+* **testsuite:** verify the scaffold's positive case is one the Gene accepts ([#345](https://github.com/rotifer-protocol/rotifer-playground/issues/345)) ([cf61f42](https://github.com/rotifer-protocol/rotifer-playground/commit/cf61f42966a345cd9bdb3823fe8c5b945292c5f4))
+
 ## [0.25.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.25.0...v0.25.1) (2026-09-07)
 
 

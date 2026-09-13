@@ -55,7 +55,11 @@ function countNesting(code: string, lang: string): number {
 }
 
 export function express(input: ComplexityInput): ComplexityOutput {
-  const code = input.code || "";
+  // `||` guards falsy values, not wrong-typed truthy ones: a numeric code
+  // passed straight through and then string handling threw. The schema declares this
+  // field's type, so a value of another type is not a value at all — it gets
+  // the same treatment as a missing one.
+  const code = typeof input.code === "string" ? input.code : "";
   const lang = (input.language || "javascript").toLowerCase();
   const threshold = input.threshold ?? 10;
 

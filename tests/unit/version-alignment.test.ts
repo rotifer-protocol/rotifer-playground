@@ -163,12 +163,24 @@ describe("verifyRustVersionAlignment", () => {
  * a separate numbering line that is *meant* to differ — gets deleted.
  */
 describe("README Status freshness", () => {
-  function withReadme(readme: string, npmVersion: string) {
+  /** Writes both Status files. `zh` defaults to a translation naming the same
+   *  version as `readme`, since that is the state the check demands; tests that
+   *  care about divergence pass it explicitly. */
+  function withReadme(readme: string, npmVersion: string, zh?: string | null) {
     const root = mkdtempSync(join(tmpdir(), "rotifer-readme-status-"));
     tempRoots.push(root);
     writeFile(join(root, "package.json"), JSON.stringify({ version: npmVersion }));
     writeFile(join(root, "README.md"), readme);
+    if (zh !== null) {
+      writeFile(join(root, "README.zh.md"), zh ?? mirrorInChinese(readme));
+    }
     return root;
+  }
+
+  /** The Chinese Status line for whatever version the English one names. */
+  function mirrorInChinese(readme: string) {
+    const version = readme.match(/v(\d+)\.(\d+)/);
+    return `> **状态：** v${version?.[1] ?? 0}.${version?.[2] ?? 0}.x——与英文版同一个版本的中文说明。`;
   }
 
   const CURRENT = "> **Status:** v0.19.x — Arena integrity, on top of v0.9's Open Mesh.";
@@ -256,5 +268,68 @@ describe("README Status freshness", () => {
     const result = verifyReadmeStatusFreshness(withReadme("> **Note:** moved.", "0.19.2"));
     expect(result.ok).toBe(false);
     expect(result.errors[0]).toContain("re-point this check at it");
+  });
+});
+
+/**
+ * README.zh.md drifted for three months — English at v0.25.x, Chinese still
+ * describing v0.9.0's Open Mesh — while this very check passed on every run,
+ * because it read one file and there were two. Found on 2026-09-06, by reading
+ * the file rather than by anything reporting it.
+ *
+ * Each test below is a failure mode that was, until then, invisible.
+ */
+describe("README Status freshness — every translation, not just English", () => {
+  function withBoth(en: string, zh: string | null, npmVersion: string) {
+    const root = mkdtempSync(join(tmpdir(), "rotifer-readme-status-zh-"));
+    tempRoots.push(root);
+    writeFile(join(root, "package.json"), JSON.stringify({ version: npmVersion }));
+    writeFile(join(root, "README.md"), en);
+    if (zh !== null) writeFile(join(root, "README.zh.md"), zh);
+    return root;
+  }
+
+  const EN = "> **Status:** v0.25.x — the fitness formula correction.";
+  const ZH = "> **状态：** v0.25.x——适应度公式修正。";
+
+  it("passes when both translations name the released minor", () => {
+    expect(verifyReadmeStatusFreshness(withBoth(EN, ZH, "0.25.0")).ok).toBe(true);
+  });
+
+  it("fails on the drift that actually shipped: English current, Chinese sixteen minors behind", () => {
+    const stale = "> **状态：** v0.9.0——Open Mesh + 经济基座。";
+    const result = verifyReadmeStatusFreshness(withBoth(EN, stale, "0.25.0"));
+    expect(result.ok).toBe(false);
+    expect(result.errors.join("\n")).toContain("README.zh.md");
+    expect(result.errors.join("\n")).toContain("v0.9.x");
+  });
+
+  it("fails when the translations disagree even though each is within range on its own", () => {
+    // 0.25 released, so both "this release" (0.25) and "the next" (0.26) pass
+    // the per-file rule. Only comparing the files catches this.
+    const next = "> **Status:** v0.26.x — being prepared.";
+    const result = verifyReadmeStatusFreshness(withBoth(next, ZH, "0.25.0"));
+    expect(result.ok).toBe(false);
+    expect(result.errors.join("\n")).toContain("disagree");
+  });
+
+  it("fails when a translation loses its Status line rather than reporting nothing to check", () => {
+    const result = verifyReadmeStatusFreshness(withBoth(EN, "> 状态段被改写成了别的东西。", "0.25.0"));
+    expect(result.ok).toBe(false);
+    expect(result.errors.join("\n")).toContain("README.zh.md");
+  });
+
+  it("fails when a listed translation is missing, instead of silently covering one less file", () => {
+    const result = verifyReadmeStatusFreshness(withBoth(EN, null, "0.25.0"));
+    expect(result.ok).toBe(false);
+    expect(result.errors.join("\n")).toContain("README_STATUS_FILES");
+  });
+
+  it("names every file it checks, so a file cannot drop out of coverage unnoticed", async () => {
+    const { README_STATUS_FILES } = await import("../../scripts/lib/version-alignment.mjs");
+    expect(README_STATUS_FILES.map((f: { path: string }) => f.path)).toEqual([
+      "README.md",
+      "README.zh.md",
+    ]);
   });
 });

@@ -4,11 +4,24 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "text": { "type": "string", "description": "Text content to extract URLs from" },
-      "includeEmails": { "type": "boolean", "description": "Also extract email addresses", "default": false },
-      "deduplicate": { "type": "boolean", "description": "Remove duplicate URLs", "default": true }
+      "text": {
+        "type": "string",
+        "description": "Text content to extract URLs from"
+      },
+      "includeEmails": {
+        "type": "boolean",
+        "description": "Also extract email addresses",
+        "default": false
+      },
+      "deduplicate": {
+        "type": "boolean",
+        "description": "Remove duplicate URLs",
+        "default": true
+      }
     },
-    "required": ["text"]
+    "required": [
+      "text"
+    ]
   },
   "outputSchema": {
     "type": "object",
@@ -18,25 +31,46 @@
         "items": {
           "type": "object",
           "properties": {
-            "url": { "type": "string" },
-            "protocol": { "type": "string", "description": "http, https, ftp, etc." },
-            "domain": { "type": "string" },
-            "position": { "type": "number", "description": "Character offset in source text" }
+            "url": {
+              "type": "string"
+            },
+            "protocol": {
+              "type": "string",
+              "description": "http, https, ftp, etc."
+            },
+            "domain": {
+              "type": "string"
+            },
+            "position": {
+              "type": "number",
+              "description": "Character offset in source text"
+            }
           }
         },
         "description": "Extracted URLs with metadata"
       },
       "emails": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Extracted email addresses (if includeEmails is true)"
       },
-      "totalFound": { "type": "number", "description": "Total URLs found" },
-      "uniqueDomains": { "type": "array", "items": { "type": "string" }, "description": "List of unique domains" }
+      "totalFound": {
+        "type": "number",
+        "description": "Total URLs found"
+      },
+      "uniqueDomains": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "List of unique domains"
+      }
     }
   },
   "dependencies": [],
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "rotifer-genesis",
   "fidelity": "Native",
   "transparency": "Open",
@@ -45,5 +79,12 @@
     "concurrencyModel": "Stateless",
     "failureSemantics": "FAIL_FAST"
   },
-  "tags": ["urls", "extraction", "email", "parsing", "text-mining"]
+  "tags": [
+    "urls",
+    "extraction",
+    "email",
+    "parsing",
+    "text-mining"
+  ],
+  "irHash": "6ac241edf64e7823c724da615487acb391b1080b36e7c5df6efd94c113c39c58"
 }

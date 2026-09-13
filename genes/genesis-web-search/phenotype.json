@@ -4,10 +4,20 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "query": { "type": "string", "description": "Search query string" },
-      "maxResults": { "type": "integer", "default": 5, "minimum": 1, "maximum": 20 }
+      "query": {
+        "type": "string",
+        "description": "Search query string"
+      },
+      "maxResults": {
+        "type": "integer",
+        "default": 5,
+        "minimum": 1,
+        "maximum": 20
+      }
     },
-    "required": ["query"]
+    "required": [
+      "query"
+    ]
   },
   "outputSchema": {
     "type": "object",
@@ -17,14 +27,24 @@
         "items": {
           "type": "object",
           "properties": {
-            "title": { "type": "string" },
-            "url": { "type": "string" },
-            "snippet": { "type": "string" }
+            "title": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "snippet": {
+              "type": "string"
+            }
           }
         }
       },
-      "totalResults": { "type": "integer" },
-      "searchTime": { "type": "number" }
+      "totalResults": {
+        "type": "integer"
+      },
+      "searchTime": {
+        "type": "number"
+      }
     }
   },
   "dependencies": [],
@@ -38,5 +58,12 @@
     "concurrencyModel": "Stateless",
     "failureSemantics": "Retry"
   },
-  "tags": ["web-search", "results", "snippets", "async", "retrieval"]
+  "tags": [
+    "web-search",
+    "results",
+    "snippets",
+    "async",
+    "retrieval"
+  ],
+  "irHash": "9af9ccc90df36c586661876203b87f182c9fac65ebcfdec22c1e0d683be19b49"
 }

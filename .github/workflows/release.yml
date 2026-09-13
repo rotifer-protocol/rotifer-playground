@@ -178,7 +178,40 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Wait for the platform packages to be resolvable
+        run: |
+          # "published" and "resolvable by npm" are not the same instant, and the
+          # gap is long enough to break this job. On 2026-09-06 (v0.25.0) it was
+          # 74 seconds: publish-native finished at 16:11:50, the step below ran
+          # at 16:12:07, and darwin-arm64 and linux-x64-gnu did not appear on the
+          # registry until 16:13:04. npm does not error on a dependency it cannot
+          # resolve — it drops the entry from the lock — so the release failed one
+          # step later, as `npm ci` reporting a generic out-of-sync lock, with
+          # nothing naming propagation as the cause. Four platform packages were
+          # left published at the new version with no main package to use them.
+          VERSION="${{ steps.version.outputs.version }}"
+          PKGS="$(node -p "Object.keys(require('./package.json').optionalDependencies || {}).filter((n) => n.startsWith('@rotifer/playground-')).join(' ')")"
+          if [ -z "$PKGS" ]; then
+            echo "::error::no @rotifer/playground-* optionalDependencies found to wait for" >&2
+            exit 1
+          fi
+          for pkg in $PKGS; do
+            for attempt in $(seq 1 30); do
+              if npm view "$pkg@$VERSION" version --prefer-online >/dev/null 2>&1; then
+                echo "$pkg@$VERSION resolvable (attempt $attempt)"
+                break
+              fi
+              if [ "$attempt" -eq 30 ]; then
+                echo "::error::$pkg@$VERSION was published by publish-native but is still not resolvable after 5 minutes" >&2
+                exit 1
+              fi
+              sleep 10
+            done
+          done
+
       - name: Install dependencies (sync lock to the platform packages published above)
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           # release-please bumps the platform optionalDependencies but cannot
           # regenerate package-lock.json (the resolved/integrity fields need the
@@ -186,6 +219,30 @@ jobs:
           # first — otherwise the strict `npm ci` rejects it ("lock's X@old does not
           # satisfy X@new"). The sync-lock job below re-points main's committed lock.
           npm install --package-lock-only
+
+          # Check what the sync actually produced before handing it to npm ci.
+          # A package npm could not resolve is omitted from the lock rather than
+          # reported, so without this the next line fails with a generic
+          # out-of-sync message that names the symptom and not the cause.
+          node -e '
+            const lock = require("./package-lock.json");
+            const pkg = require("./package.json");
+            const version = process.env.RELEASE_VERSION;
+            const want = Object.keys(pkg.optionalDependencies || {}).filter((n) =>
+              n.startsWith("@rotifer/playground-"),
+            );
+            const wrong = want.filter((n) => lock.packages?.[`node_modules/${n}`]?.version !== version);
+            if (wrong.length > 0) {
+              console.error(
+                `::error::package-lock.json is missing ${wrong.join(", ")} at ${version} after ` +
+                  "npm install --package-lock-only. npm omits a dependency it cannot resolve, so " +
+                  "this usually means the registry has not caught up with publish-native yet.",
+              );
+              process.exit(1);
+            }
+            console.log(`package-lock.json carries all ${want.length} platform packages at ${version}`);
+          '
+
           npm ci
 
       - name: Build

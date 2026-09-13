@@ -144,7 +144,13 @@ describe("E2E: Genesis gene execution", () => {
       expect(phenotype.inputSchema).toBeTruthy();
       expect(phenotype.outputSchema).toBeTruthy();
       expect(phenotype.version).toBe("0.2.0");
-      expect(phenotype.fidelity).toBe("Native");
+      // Not all of them are Native, and asserting so hid a real defect until
+      // 2026-09-07: genesis-file-read imports node:fs, which WASM cannot
+      // provide, so `rotifer compile` fails outright and the Native label it
+      // published under was never satisfiable. Wrapped is what it is.
+      // See tests/e2e/three-act-demo.test.ts for the check that carries the
+      // meaning — whether the declared fidelity matches what the code reaches for.
+      expect(["Native", "Wrapped", "Hybrid"]).toContain(phenotype.fidelity);
     }
   });
 });

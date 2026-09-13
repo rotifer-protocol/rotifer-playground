@@ -1,0 +1,43 @@
+{
+  "testCases": [
+    {
+      "input": { "primaryHue": 120, "mode": "dark", "density": "compact", "borderRadius": "sharp" },
+      "expectedSchema": {
+        "type": "object",
+        "required": ["css", "tokens"],
+        "properties": {
+          "css": { "type": "string", "pattern": "hsl\\(120, " }
+        }
+      }
+    },
+    {
+      "input": { "primaryHue": "not-a-number" },
+      "expectedSchema": {
+        "type": "object",
+        "required": ["css"],
+        "properties": {
+          "css": { "type": "string", "pattern": "hsl\\(220, ", "not": { "pattern": "NaN" } }
+        }
+      }
+    },
+    {
+      "input": { "mode": 42 },
+      "expectedSchema": {
+        "type": "object",
+        "required": ["css"],
+        "properties": { "css": { "type": "string", "not": { "pattern": "NaN" } } }
+      }
+    },
+    {
+      "input": {},
+      "expectedSchema": {
+        "type": "object",
+        "required": ["css"],
+        "properties": {
+          "css": { "type": "string", "pattern": "hsl\\(220, ", "not": { "pattern": "NaN" } }
+        }
+      }
+    }
+  ],
+  "config": { "fuzzIterations": 10, "seed": 1 }
+}

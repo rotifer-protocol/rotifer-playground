@@ -12,13 +12,19 @@ function getUserConfigFile(): string {
 
 export interface UserConfig {
   "update-check"?: boolean;
+  /** Pre-multi-package rollback target; still written for @rotifer/playground
+   *  so an older CLI and `rotifer config get last-version` keep working. */
   "last-version"?: string;
+  /** Per-package rollback targets, written by `rotifer self-update`. */
+  "last-versions"?: Record<string, string>;
   "default-publish"?: boolean;
 }
 
 const DEFAULTS: Required<UserConfig> = {
   "update-check": true,
   "last-version": "",
+  // Not exposed through `rotifer config` (see VALID_KEYS) — self-update owns it.
+  "last-versions": {},
   "default-publish": true,
 };
 

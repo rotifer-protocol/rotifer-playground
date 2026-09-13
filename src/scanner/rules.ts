@@ -16,12 +16,22 @@ export const SCAN_RULES: ScanRule[] = [
     description: "System command execution",
     severity: "CRITICAL",
     patterns: [
+      // Capability acquisition. These two are the load-bearing half: system
+      // commands are unreachable in JS without child_process, so anything that
+      // obtains it is caught here however it later calls out.
       /require\s*\(\s*['"]child_process['"]\s*\)/,
       /from\s+['"]child_process['"]/,
-      /\bexec\s*\(/,
-      /\bexecSync\s*\(/,
-      /\bspawn\s*\(/,
-      /\bspawnSync\s*\(/,
+      // Call sites — defence in depth for the destructured-import form
+      // (`const { exec } = ...` followed by a bare `exec(...)`). The lookbehind
+      // excludes member calls: `\bexec\s*\(` also matched `regex.exec(`, and
+      // `.exec()` is how you iterate a global regex in JavaScript. On this repo's
+      // own gene corpus that misfired on 6 of the 7 genes it flagged — CRITICAL,
+      // blocking publish, for calling a regex. A member call can only reach
+      // child_process through a binding the two patterns above already catch.
+      /(?<![.\w$])exec\s*\(/,
+      /(?<![.\w$])execSync\s*\(/,
+      /(?<![.\w$])spawn\s*\(/,
+      /(?<![.\w$])spawnSync\s*\(/,
     ],
   },
   {

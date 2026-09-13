@@ -14,7 +14,9 @@
         "default": false
       }
     },
-    "required": ["text"]
+    "required": [
+      "text"
+    ]
   },
   "outputSchema": {
     "type": "object",
@@ -24,12 +26,25 @@
         "items": {
           "type": "object",
           "properties": {
-            "rule": { "type": "string" },
-            "message": { "type": "string" },
-            "position": { "type": "number" },
-            "suggestion": { "type": "string" }
+            "rule": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "position": {
+              "type": "number"
+            },
+            "suggestion": {
+              "type": "string"
+            }
           },
-          "required": ["rule", "message", "position", "suggestion"]
+          "required": [
+            "rule",
+            "message",
+            "position",
+            "suggestion"
+          ]
         }
       },
       "score": {
@@ -40,14 +55,25 @@
         "type": "string"
       }
     },
-    "required": ["issues", "score", "summary"]
+    "required": [
+      "issues",
+      "score",
+      "summary"
+    ]
   },
   "dependencies": [],
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "rotifer-team",
   "createdAt": 1771939397858,
   "fidelity": "Native",
-  "transparency": "Open",
+  "transparency": "OPEN",
   "source": "skill",
-  "tags": ["grammar", "spelling", "editing", "english", "lint"]
+  "tags": [
+    "grammar",
+    "spelling",
+    "editing",
+    "english",
+    "lint"
+  ],
+  "irHash": "ffc83c7bc30b783e1b188e292fcbfa38c437e0d8728a517e2dc14281e020b53a"
 }

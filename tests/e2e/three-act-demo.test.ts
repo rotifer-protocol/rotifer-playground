@@ -76,16 +76,35 @@ describe("Three-Act Demo E2E (ADR-11)", () => {
       }
     });
 
-    it("all genesis genes have Native fidelity", () => {
+    it("every genesis gene declares a fidelity its implementation can actually meet", () => {
+      // This asserted `fidelity === "Native"` for all of them until 2026-09-07,
+      // and that assumption was wrong about one: genesis-file-read imports
+      // node:fs, which WASM has no equivalent for, so `rotifer compile` fails
+      // outright — it can never be Native, and the published record claiming
+      // otherwise is why nobody could install and run it.
+      //
+      // The check that carries meaning is not "which label" but "does the label
+      // match the code": a gene reaching for the host must not claim Native.
+      const HOST_APIS = /from\s+["']node:|require\(\s*["']node:/;
+
       for (const name of GENESIS_GENES) {
         const src = join(genesSourceDir, name);
         if (!existsSync(src)) continue;
         copyDirRecursive(src, join(projectDir, "genes", name));
 
-        const pheno = JSON.parse(
-          readFileSync(join(projectDir, "genes", name, "phenotype.json"), "utf-8")
-        );
-        expect(pheno.fidelity).toBe("Native");
+        const geneDir = join(projectDir, "genes", name);
+        const pheno = JSON.parse(readFileSync(join(geneDir, "phenotype.json"), "utf-8"));
+        const sourceFile = ["index.ts", "index.js"]
+          .map((f) => join(geneDir, f))
+          .find((f) => existsSync(f));
+        const usesHost = sourceFile ? HOST_APIS.test(readFileSync(sourceFile, "utf-8")) : false;
+
+        if (usesHost) {
+          expect(pheno.fidelity, `${name} reaches for a node: builtin, so it cannot be Native`)
+            .not.toBe("Native");
+        } else {
+          expect(pheno.fidelity, `${name} is pure and should compile to Native`).toBe("Native");
+        }
       }
     });
 

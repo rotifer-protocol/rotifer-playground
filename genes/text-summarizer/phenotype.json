@@ -61,5 +61,12 @@
     "concurrencyModel": "Stateless",
     "failureSemantics": "FAIL_FAST"
   },
-  "tags": ["summarization", "compression", "key-phrases", "nlp", "extractive"]
+  "tags": [
+    "summarization",
+    "compression",
+    "key-phrases",
+    "nlp",
+    "extractive"
+  ],
+  "irHash": "3f964931b4c48fa74833e6b99a5d9bbbcccaca1abb750bc4bc0c1366a9d0ace8"
 }

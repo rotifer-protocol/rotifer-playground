@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.25.1...v0.26.0) (2026-09-09)
+
+
+### Features
+
+* **publish:** enforce the spec §47.5 T1 gate, per ADR-333 ([#344](https://github.com/rotifer-protocol/rotifer-playground/issues/344)) ([29d60da](https://github.com/rotifer-protocol/rotifer-playground/commit/29d60da7f9f9d756b67a9848dd2a7989d97f9aea))
+* **runtime:** give Genes a way to refuse — the INVALID_INPUT channel (ADR-334) ([#354](https://github.com/rotifer-protocol/rotifer-playground/issues/354)) ([a851341](https://github.com/rotifer-protocol/rotifer-playground/commit/a851341d333213694e0bb67f72bce4faa30709f6))
+* **testsuite:** implement spec §47.5 T1 — TestSuite format and runner ([#342](https://github.com/rotifer-protocol/rotifer-playground/issues/342)) ([1175add](https://github.com/rotifer-protocol/rotifer-playground/commit/1175add63013ed21671cf4123b4c1e81d20ed678))
+* **testsuite:** scaffold a §47.5-shaped suite, and emit TestResult as JSON ([#343](https://github.com/rotifer-protocol/rotifer-playground/issues/343)) ([c7cf66e](https://github.com/rotifer-protocol/rotifer-playground/commit/c7cf66e98374529188f84fe80f58e725f59e41f3))
+
+
+### Bug Fixes
+
+* **chat:** give .changelog-cache/ a language rule in retrieval ranking ([#350](https://github.com/rotifer-protocol/rotifer-playground/issues/350)) ([de9d3ba](https://github.com/rotifer-protocol/rotifer-playground/commit/de9d3ba6499d50ffd1e5bcf0eddfe3dcd29fd6e4))
+* **cli:** stop install and compile from staying quiet about Native-without-artifact ([#355](https://github.com/rotifer-protocol/rotifer-playground/issues/355)) ([2fa8724](https://github.com/rotifer-protocol/rotifer-playground/commit/2fa87245d0e755faad2868c995754eca1896ae11))
+* **deps:** resolve 7 npm audit findings (6 moderate, 1 high) ([#357](https://github.com/rotifer-protocol/rotifer-playground/issues/357)) ([7228cc1](https://github.com/rotifer-protocol/rotifer-playground/commit/7228cc15ccfce9f072aa6d52148e963cdb78887f))
+* **design-tokens:** stop emitting hsl(NaN); and require every declared case to pass ([#347](https://github.com/rotifer-protocol/rotifer-playground/issues/347)) ([5585cda](https://github.com/rotifer-protocol/rotifer-playground/commit/5585cda3b264e63e6bb5f40524bf5b72a9dea6fc))
+* **genes:** guard six genes against wrong-typed truthy input ([#351](https://github.com/rotifer-protocol/rotifer-playground/issues/351)) ([80ebfb8](https://github.com/rotifer-protocol/rotifer-playground/commit/80ebfb86b516ffbf7c3a1d8bab8384f5095cedc2))
+* **genesis-code-format:** guard code and language; compare expectedOutput by content ([#352](https://github.com/rotifer-protocol/rotifer-playground/issues/352)) ([758d581](https://github.com/rotifer-protocol/rotifer-playground/commit/758d5812719cdce6c75f5ff150644f516f69851c))
+* **genesis-file-read:** reject a non-string path; and let `rotifer test` run Wrapped suites ([#349](https://github.com/rotifer-protocol/rotifer-playground/issues/349)) ([af18d3f](https://github.com/rotifer-protocol/rotifer-playground/commit/af18d3f24535e7792345a94c294879af3a43e1a8))
+* **genesis-web-search:** refuse a missing query instead of searching for "undefined" ([#348](https://github.com/rotifer-protocol/rotifer-playground/issues/348)) ([a4620f7](https://github.com/rotifer-protocol/rotifer-playground/commit/a4620f7eb7fdfe31ca88423b5825fc8a1ee4b6e7))
+* **genes:** prove the Native-artifact publish gate, and prepare two legacy genes for republish ([#339](https://github.com/rotifer-protocol/rotifer-playground/issues/339)) ([bcb8b40](https://github.com/rotifer-protocol/rotifer-playground/commit/bcb8b4016d9fb4c2d7f4215992991c6de4346411))
+* **publish:** the T1 gate now covers Wrapped genes; genesis-file-read is Wrapped ([#346](https://github.com/rotifer-protocol/rotifer-playground/issues/346)) ([4d1bc0e](https://github.com/rotifer-protocol/rotifer-playground/commit/4d1bc0e2f2cbf6bb1314cef9296c6932db73bb4e))
+* **testsuite:** verify the scaffold's positive case is one the Gene accepts ([#345](https://github.com/rotifer-protocol/rotifer-playground/issues/345)) ([cf61f42](https://github.com/rotifer-protocol/rotifer-playground/commit/cf61f42966a345cd9bdb3823fe8c5b945292c5f4))
+
+## [0.25.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.25.0...v0.25.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* **chat:** read the privileged key from a name we control ([#333](https://github.com/rotifer-protocol/rotifer-playground/issues/333)) ([694a45a](https://github.com/rotifer-protocol/rotifer-playground/commit/694a45a552709ea4653f34f0fad170dc26d932e7))
+* **cloud:** ship a working key so cloud commands work on a fresh install ([#336](https://github.com/rotifer-protocol/rotifer-playground/issues/336)) ([4d97729](https://github.com/rotifer-protocol/rotifer-playground/commit/4d9772973ea96a8f2412c113466b78e5952d6d59))
+
+## [0.25.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.24.0...v0.25.0) (2026-09-06)
+
+
+### Features
+
+* **chat:** record where each request came from, so analytics can separate real usage from CI ([#320](https://github.com/rotifer-protocol/rotifer-playground/issues/320)) ([095cbff](https://github.com/rotifer-protocol/rotifer-playground/commit/095cbff9c3e9d5ede8c313dcb90b1cba9c3bea83))
+* **quality:** admin_audit_log — append-only audit trail for rotifer-admin ([#323](https://github.com/rotifer-protocol/rotifer-playground/issues/323)) ([82bcfb9](https://github.com/rotifer-protocol/rotifer-playground/commit/82bcfb930cb26560b39a22537c5b0f37deea535f))
+
+
+### Bug Fixes
+
+* **db:** make the migration chain build the profiles column production actually has ([#321](https://github.com/rotifer-protocol/rotifer-playground/issues/321)) ([65641f0](https://github.com/rotifer-protocol/rotifer-playground/commit/65641f046ccc05b3065b4450ff017fd560af28c0))
+* **deps:** resolve fast-uri to 3.1.7, clearing four high-severity advisories ([#327](https://github.com/rotifer-protocol/rotifer-playground/issues/327)) ([aa4427d](https://github.com/rotifer-protocol/rotifer-playground/commit/aa4427d4a855c0c9ced7da582e70ad4d9bd094c4))
+* **deps:** update wasmtime 47.0.3 -&gt; 47.0.4, closing a high-severity sandbox escape ([#322](https://github.com/rotifer-protocol/rotifer-playground/issues/322)) ([cb6bcba](https://github.com/rotifer-protocol/rotifer-playground/commit/cb6bcbadd58358c24d2d21f72efdca79713c7b25))
+* **fitness:** multiply the efficiency scores into F(g) instead of dividing by them ([#324](https://github.com/rotifer-protocol/rotifer-playground/issues/324)) ([d1e454e](https://github.com/rotifer-protocol/rotifer-playground/commit/d1e454e85d7251bf9320566710b407b1dceb291f))
+* **self-update:** compare each package against its own installed version ([#326](https://github.com/rotifer-protocol/rotifer-playground/issues/326)) ([4ccc857](https://github.com/rotifer-protocol/rotifer-playground/commit/4ccc857a5befad738ea7628d805ca8f2fed6df58))
+* **wrap:** follow ClawHub's 307 redirect, and don't hang doing it ([#318](https://github.com/rotifer-protocol/rotifer-playground/issues/318)) ([b197b0a](https://github.com/rotifer-protocol/rotifer-playground/commit/b197b0af3e6c8623985a39207b4403f0de867254))
+
 ## [0.24.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.23.2...v0.24.0) (2026-08-31)
 
 

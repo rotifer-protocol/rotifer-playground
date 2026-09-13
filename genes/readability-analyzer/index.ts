@@ -58,7 +58,11 @@ function getVerdict(score: number): string {
  * Pure algorithmic implementation with no external dependencies.
  */
 export function express(input: ReadabilityInput): ReadabilityOutput {
-  const text = (input.text || "").trim();
+  // `||` guards falsy values, not wrong-typed truthy ones: a numeric text
+  // passed straight through and then .trim() threw. The schema declares this
+  // field's type, so a value of another type is not a value at all — it gets
+  // the same treatment as a missing one.
+  const text = (typeof input.text === "string" ? input.text : "").trim();
   if (!text) {
     return {
       fleschKincaid: 0,

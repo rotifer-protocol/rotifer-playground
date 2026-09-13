@@ -1,8 +1,20 @@
 [extend]
 useDefault = true
 
+# Global allowlist must precede [[rules]]: in TOML, a table that follows an
+# array-of-tables is parsed as a member of that array's last element, so an
+# [allowlist] placed after the rules would silently become a rule-scoped
+# allowlist instead of a global one.
 [allowlist]
 description = "Known-safe public keys and historical test fixtures"
+# Supabase publishable keys are public by design: they ship in the rotifer.ai
+# page source and in this CLI, and access is enforced by Row Level Security,
+# not by the key being secret. Matched by prefix rather than by file path on
+# purpose — allowlisting a whole file would also hide a real secret key or a
+# service_role JWT dropped into it later, which is what this scan exists for.
+regexes = [
+  '''sb_publishable_[A-Za-z0-9_-]+''',
+]
 paths = [
   '''^rotifer-vscode/package\.json$''',
   '''^tests/unit/gene-health-scanner\.test\.ts$''',
@@ -10,3 +22,19 @@ paths = [
   '''^scripts/republish-native\.mjs$''',
   '''^scripts/republish-native-curl\.sh$''',
 ]
+
+# Supabase's privileged key formats are unambiguous by prefix, so match them
+# directly. Verified against this repo: the built-in generic-api-key rule does
+# not fire on `sb_secret_` values, so without these a service key committed
+# here would pass the scan.
+[[rules]]
+id = "supabase-secret-key"
+description = "Supabase secret API key (full database access, bypasses RLS)"
+regex = '''sb_secret_[A-Za-z0-9_-]{20,}'''
+keywords = ["sb_secret_"]
+
+[[rules]]
+id = "supabase-legacy-service-role-jwt"
+description = "Supabase legacy service_role JWT (bypasses RLS)"
+regex = '''eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]*(c2VydmljZV9yb2xl|InNlcnZpY2Vfcm9sZS)[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{20,}'''
+keywords = ["eyJ"]

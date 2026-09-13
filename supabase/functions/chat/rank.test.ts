@@ -20,6 +20,11 @@ Deno.test("normalizePath collapses bilingual twins onto one key", () => {
     normalizePath(".papers-cache/rotifer-philosophy-whitepaper.zh.md"),
     normalizePath(".papers-cache/rotifer-philosophy-whitepaper.md"),
   );
+  // package changelogs (same filename-suffix pairing)
+  assertEquals(
+    normalizePath(".changelog-cache/rotifer-mcp-server-changelog.zh.md"),
+    normalizePath(".changelog-cache/rotifer-mcp-server-changelog.md"),
+  );
 });
 
 Deno.test("isUserLangFor recognises each source family's language encoding", () => {
@@ -32,6 +37,19 @@ Deno.test("isUserLangFor recognises each source family's language encoding", () 
   assertEquals(isUserLangFor("en", ".papers-cache/rotifer-ir-specification.md"), true);
   assertEquals(isUserLangFor("en", ".papers-cache/rotifer-ir-specification.zh.md"), false);
   assertEquals(isUserLangFor("zh", ".papers-cache/rotifer-ir-specification.zh.md"), true);
+  // package changelogs (filename suffix, same as papers)
+  //
+  // Regression guard: this prefix was absent from isUserLangFor when the
+  // mcp-server changelog was first indexed. An unlisted prefix is not
+  // "unknown" — it falls through to the docs test and reads as false in BOTH
+  // locales, so the chunk never earns the same-language boost and loses its
+  // slot to same-language blogs. "mcp server 最新版本" went on answering with
+  // a release blog's headline version while the correct answer sat in the
+  // index unreachable.
+  assertEquals(isUserLangFor("en", ".changelog-cache/rotifer-mcp-server-changelog.md"), true);
+  assertEquals(isUserLangFor("en", ".changelog-cache/rotifer-mcp-server-changelog.zh.md"), false);
+  assertEquals(isUserLangFor("zh", ".changelog-cache/rotifer-mcp-server-changelog.zh.md"), true);
+  assertEquals(isUserLangFor("zh", ".changelog-cache/rotifer-mcp-server-changelog.md"), false);
   // docs
   assertEquals(isUserLangFor("zh", "src/content/docs/zh/docs/intro.md"), true);
   assertEquals(isUserLangFor("en", "src/content/docs/docs/intro.md"), true);

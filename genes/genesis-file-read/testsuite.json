@@ -1,0 +1,41 @@
+{
+  "testCases": [
+    {
+      "input": { "path": "package.json" },
+      "expectedSchema": {
+        "type": "object",
+        "required": ["content", "size", "encoding"],
+        "properties": {
+          "content": { "type": "string", "pattern": "@rotifer/playground" },
+          "size": { "type": "integer", "minimum": 1 },
+          "encoding": { "const": "utf-8" }
+        }
+      }
+    },
+    {
+      "input": { "path": 42 },
+      "expectedOutput": {
+        "content": "[error] INVALID_PATH: path must be a non-empty string",
+        "size": 0,
+        "encoding": "utf-8"
+      }
+    },
+    {
+      "input": { "encoding": "utf-8" },
+      "expectedOutput": {
+        "content": "[error] INVALID_PATH: path must be a non-empty string",
+        "size": 0,
+        "encoding": "utf-8"
+      }
+    },
+    {
+      "input": {},
+      "expectedOutput": {
+        "content": "[error] INVALID_PATH: path must be a non-empty string",
+        "size": 0,
+        "encoding": "utf-8"
+      }
+    }
+  ],
+  "config": { "fuzzIterations": 10, "seed": 1 }
+}

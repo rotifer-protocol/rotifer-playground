@@ -1,0 +1,82 @@
+{
+  "testCases": [
+    {
+      "input": {
+        "query": "rotifer protocol",
+        "maxResults": 2
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "results",
+          "totalResults"
+        ],
+        "properties": {
+          "totalResults": {
+            "const": 2
+          },
+          "results": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "properties": {
+                "title": {
+                  "pattern": "rotifer protocol"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "maxResults": 3
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "results",
+          "totalResults"
+        ],
+        "properties": {
+          "totalResults": {
+            "const": 0
+          },
+          "results": {
+            "type": "array",
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "query": 42
+      },
+      "expectedSchema": {
+        "type": "object",
+        "properties": {
+          "totalResults": {
+            "const": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {},
+      "expectedSchema": {
+        "type": "object",
+        "properties": {
+          "totalResults": {
+            "const": 0
+          }
+        }
+      }
+    }
+  ],
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  }
+}

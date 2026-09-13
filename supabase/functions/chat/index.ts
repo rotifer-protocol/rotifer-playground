@@ -11,8 +11,6 @@ import { resolveAnalyticsSource } from "./source-tag.ts";
 
 const RAG_URL = Deno.env.get("RAG_SUPABASE_URL")!;
 const RAG_ANON_KEY = Deno.env.get("RAG_SUPABASE_ANON_KEY")!;
-const MAIN_URL = Deno.env.get("SUPABASE_URL")!;
-const MAIN_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const LLM_API_KEY = Deno.env.get("LLM_API_KEY")!;
 const LLM_MODEL = Deno.env.get("LLM_MODEL") || "deepseek-v4-flash";
 const LLM_BASE_URL = Deno.env.get("LLM_BASE_URL") || "https://api.deepseek.com";
@@ -366,15 +364,6 @@ ${context || "No relevant documentation found."}`;
             responseTimeMs: Date.now() - startTime,
             source: analyticsSource,
           });
-
-          const mainClient = createClient(MAIN_URL, MAIN_SERVICE_KEY);
-          const genes = ["doc-retrieval", "answer-synthesizer", "source-linker", "grammar-checker"];
-          for (const gene of genes) {
-            await mainClient.rpc("log_gene_invocation", {
-              p_gene_id: gene,
-              p_caller_agent_id: `chat-widget:${clientIp.slice(0, 8)}`,
-            }).catch(() => {});
-          }
         } catch (err) {
           controller.enqueue(
             new TextEncoder().encode(

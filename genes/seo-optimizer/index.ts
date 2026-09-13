@@ -97,7 +97,11 @@ function fleschKincaid(text: string): number {
  * Checks keyword density, heading structure, meta tags, and readability.
  */
 export function express(input: SEOInput): SEOOutput {
-  const content = (input.content || "").trim();
+  // `||` guards falsy values, not wrong-typed truthy ones: a numeric content
+  // passed straight through and then .trim() threw. The schema declares this
+  // field's type, so a value of another type is not a value at all — it gets
+  // the same treatment as a missing one.
+  const content = (typeof input.content === "string" ? input.content : "").trim();
   const keyword = (input.targetKeyword || "").trim();
   const issues: SEOIssue[] = [];
 

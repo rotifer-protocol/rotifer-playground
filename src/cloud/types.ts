@@ -119,5 +119,47 @@ export interface ContributionMetrics {
 
 export const DEFAULT_CLOUD_ENDPOINT =
   process.env.ROTIFER_CLOUD_ENDPOINT || "https://cloud.rotifer.dev";
+
+/**
+ * Built-in key for the public Rotifer Cloud.
+ *
+ * This is a *publishable* key and is public by design: it ships in the
+ * rotifer.ai page source too, and access is enforced by Row Level Security,
+ * not by the key being secret. Shipping it means `rotifer search` works on a
+ * fresh install with nothing configured — which is what users expect, and what
+ * did not happen before: the CLI defaulted to an empty key and every cloud
+ * command failed with "No API key found in request".
+ *
+ * Self-hosted or regional deployments override it via `~/.rotifer/cloud.json`
+ * or ROTIFER_CLOUD_ANON_KEY, as documented in the cloud guide.
+ */
+export const DEFAULT_CLOUD_ANON_KEY = "sb_publishable_6aCznk-jn2QIQcN3QZobKg_3r9C-wzk";
+
+/**
+ * True for a legacy JWT-based anon/service_role key.
+ *
+ * Rotifer Cloud disabled those on 2026-09-07, so one left behind in a config
+ * file is not a preference to honour — it is a stale value that would make a
+ * working CLI report an authentication error. Detecting the shape lets us fall
+ * through to something that works instead.
+ */
+export function isLegacyJwtKey(key: string | undefined): boolean {
+  return typeof key === "string" && key.startsWith("eyJ");
+}
+
+/**
+ * Pick the key to send: an explicitly configured one wins, the built-in
+ * default covers everyone else, and stale legacy keys are skipped at every
+ * level rather than passed on to fail at the server.
+ */
+export function resolveAnonKey(
+  fromConfigFile: string | undefined,
+  fromEnv: string | undefined,
+): string {
+  for (const candidate of [fromConfigFile, fromEnv]) {
+    if (candidate && !isLegacyJwtKey(candidate)) return candidate;
+  }
+  return DEFAULT_CLOUD_ANON_KEY;
+}
 export const CREDENTIALS_FILE = "credentials.json";
 export const CLOUD_CONFIG_FILE = "cloud.json";

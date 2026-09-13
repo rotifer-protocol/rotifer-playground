@@ -78,6 +78,12 @@
     "concurrencyModel": "Stateless",
     "failureSemantics": "FailFast"
   },
-  "irHash": "f7152141480752af980c6bd64894574108933e3a8ade7fcb8c032467847ab281",
-  "tags": ["cyclomatic-complexity", "metrics", "refactoring", "static-analysis", "quality"]
+  "irHash": "a96d183ad8ad62c1e4c6c452bec92282176e97a2ba255443a6fa147ed44496ea",
+  "tags": [
+    "cyclomatic-complexity",
+    "metrics",
+    "refactoring",
+    "static-analysis",
+    "quality"
+  ]
 }

@@ -5,7 +5,7 @@ use wasmtime::*;
 use super::hybrid::{self, HybridConfig};
 use super::{ConstraintSet, Sandbox, SandboxError};
 use crate::types::gene::{Fidelity, Phenotype};
-use crate::types::{Context, ExecutionMetadata, GeneResult, HostMetering};
+use crate::types::{Context, ErrorCode, ExecutionMetadata, GeneResult, HostMetering};
 
 /// Source-level shapes of an async `express()`, mirroring the compile-time
 /// guard (E0025) in the CLI's Javy compiler.
@@ -1151,6 +1151,22 @@ impl WasmtimeSandbox {
             host_bytes_out: hy.host_bytes_out,
         });
 
+        // ADR-334: a Gene signals refusal by returning an object with exactly one
+        // key, `__rotifer_error`. spec §4.2 has defined ErrorCode::INVALID_INPUT
+        // ("Input does not conform to inputSchema") since the beginning and this
+        // is the first place that produces it — until now every construction of
+        // GeneResult from guest output was unconditionally Success, so a Gene
+        // had no way to refuse and could only crash or answer anyway. That is
+        // the root cause behind 11 of the 13 Genes repaired on 2026-09-07.
+        //
+        // "Exactly one key" is what makes misreading impossible: a normal output
+        // does not degenerate into a lone __rotifer_error object. Measured
+        // before choosing it — of 190 published Genes, zero declare any key
+        // beginning with `__`.
+        if let Some(err) = parse_error_envelope(&output) {
+            return Ok(err);
+        }
+
         Ok(GeneResult::Success {
             data: output,
             metadata: ExecutionMetadata {
@@ -1214,8 +1230,96 @@ impl Sandbox for WasmtimeSandbox {
     }
 }
 
+
+/// Recognise the ADR-334 refusal envelope in a Gene's output.
+///
+/// Returns `Some(GeneResult::Error)` only when `output` is an object whose sole
+/// key is `__rotifer_error`. Anything else — including an object that merely
+/// *contains* that key alongside real data — is ordinary output, so a Gene
+/// cannot refuse by accident and a caller cannot be tricked by a stray field.
+///
+/// `code` is fixed at INVALID_INPUT: this envelope exists for the case spec
+/// §4.2 names, and letting the guest choose an arbitrary ErrorCode would let it
+/// claim SANDBOX_VIOLATION or PERMISSION_DENIED about itself.
+fn parse_error_envelope(output: &serde_json::Value) -> Option<GeneResult> {
+    let obj = output.as_object()?;
+    if obj.len() != 1 {
+        return None;
+    }
+    let body = obj.get("__rotifer_error")?;
+
+    let message = body
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("gene refused the input")
+        .to_string();
+
+    Some(GeneResult::Error {
+        code: ErrorCode::InvalidInput,
+        // Refusing malformed input is deterministic: the same input will be
+        // refused again, so retrying is never the right response.
+        retryable: false,
+        message,
+        details: body.get("details").cloned(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
+
+    // ADR-334 refusal envelope. The controls matter more than the happy path:
+    // a Gene must not be able to refuse by accident, and a caller must not be
+    // able to be tricked into reading refusal out of ordinary output.
+    #[test]
+    fn error_envelope_recognised_only_when_it_is_the_whole_output() {
+        let refuse = serde_json::json!({
+            "__rotifer_error": { "message": "text must be a string" }
+        });
+        match parse_error_envelope(&refuse) {
+            Some(GeneResult::Error { code, message, retryable, .. }) => {
+                assert_eq!(code, ErrorCode::InvalidInput);
+                assert_eq!(message, "text must be a string");
+                // Refusing malformed input is deterministic — retrying cannot help.
+                assert!(!retryable);
+            }
+            other => panic!("expected an InvalidInput error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ordinary_output_is_never_read_as_refusal() {
+        // Control 1: a Gene that merely *mentions* the key alongside real data
+        // is producing output, not refusing. Without the single-key rule this
+        // would let a stray field silently turn a result into an error.
+        let with_data = serde_json::json!({
+            "__rotifer_error": { "message": "x" },
+            "score": 1
+        });
+        assert!(parse_error_envelope(&with_data).is_none());
+
+        // Control 2: the shapes a Gene actually returns.
+        for shape in [
+            serde_json::json!({ "score": 1 }),
+            serde_json::json!({}),
+            serde_json::json!([1, 2, 3]),
+            serde_json::json!("a string"),
+            serde_json::json!(null),
+        ] {
+            assert!(parse_error_envelope(&shape).is_none(), "misread {shape:?}");
+        }
+    }
+
+    #[test]
+    fn a_refusal_without_a_message_still_refuses() {
+        // The envelope is a signal first and a diagnostic second; a Gene that
+        // omits the message should not fall back to being treated as success.
+        let bare = serde_json::json!({ "__rotifer_error": {} });
+        assert!(matches!(
+            parse_error_envelope(&bare),
+            Some(GeneResult::Error { code: ErrorCode::InvalidInput, .. })
+        ));
+    }
+
     use super::*;
     use crate::sandbox::Sandbox;
     use crate::types::PermissionSet;

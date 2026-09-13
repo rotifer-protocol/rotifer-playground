@@ -125,7 +125,7 @@
     ]
   },
   "dependencies": [],
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "rotifer-team",
   "createdAt": 1771939405686,
   "fidelity": "Native",
@@ -137,5 +137,6 @@
     "headings",
     "meta",
     "readability"
-  ]
+  ],
+  "irHash": "87a2f9908bcc3b22a3b3f564d55f4352b0c61fc8da97c6259b8c5a3b47f884f7"
 }

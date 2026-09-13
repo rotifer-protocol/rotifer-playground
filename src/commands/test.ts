@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import Ajv from "ajv";
@@ -16,13 +16,21 @@ import {
 } from "../utils/run-fuel-ladder.js";
 import { createGatewayFetch } from "../runtime/network-gateway.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
+import { loadTestSuite } from "../testsuite/load.js";
+import { runT1 } from "../testsuite/run.js";
+import { loadNodeRunner } from "../testsuite/gate.js";
+import { scaffoldTestSuite } from "../testsuite/scaffold.js";
+import { TESTSUITE_FILENAME } from "../testsuite/load.js";
+import type { RunOutcome } from "../testsuite/run.js";
 
 export const testCommand = new Command("test")
   .description("Test a gene in sandbox")
   .argument("[gene-name]", "gene name to test")
   .option("--verbose", "show detailed output", false)
   .option("--compliance", "run structural compliance checks", false)
-  .action(async (geneName: string | undefined, options: { verbose: boolean; compliance: boolean }) => {
+  .option("--scaffold", `generate a ${"testsuite.json"} skeleton from the phenotype and exit`, false)
+  .option("--json", "print T1 results as JSON (spec §47.2 TestResult)", false)
+  .action(async (geneName: string | undefined, options: { verbose: boolean; compliance: boolean; scaffold: boolean; json: boolean }) => {
     const root = requireProjectRoot();
     const config = loadConfig(root);
 
@@ -49,10 +57,73 @@ export const testCommand = new Command("test")
     }
 
     const phenotype = JSON.parse(readFileSync(phenotypePath, "utf-8"));
+
+    // --- --scaffold: write a §47.5-shaped starting point and stop ---
+    // Placed before the checks below because it produces a file rather than a
+    // verdict; running seven checks first would only bury the one line that
+    // matters. It refuses to overwrite: a suite the author has edited is worth
+    // more than anything generated here.
+    if (options.scaffold) {
+      const suitePath = join(geneDir, TESTSUITE_FILENAME);
+      if (existsSync(suitePath)) {
+        display.error(`${TESTSUITE_FILENAME} already exists — refusing to overwrite`);
+        display.hint("Delete it first if you really want to regenerate from the phenotype.");
+        process.exit(1);
+      }
+      const { suite, notes, warnings } = scaffoldTestSuite(phenotype);
+      writeFileSync(suitePath, JSON.stringify(suite, null, 2) + "\n");
+      display.success(`Wrote ${TESTSUITE_FILENAME} — ${suite.testCases.length} case(s)`);
+      notes.forEach((n, i) => display.info(`  [${i}] ${n.requirement}: ${n.rationale}`));
+      for (const w of warnings) display.warn("  " + w);
+      console.log();
+      display.info("These are a starting point, not a passing suite. Two things to do by hand:");
+      display.info("  • replace the positive case's input with one that means something for this Gene");
+      display.info("  • for each negative case, decide what correct handling looks like — if the Gene");
+      display.info("    answers illegal input rather than refusing it, declare that answer with");
+      display.info("    expectedOutput or expectedSchema, or the case will fail");
+      // ADR-334 D2: the channel has to reach the author or it repeats the
+      // history that produced it — ErrorCode.INVALID_INPUT sat defined and
+      // unused for six months, which is why 11 of 13 Genes had each invented
+      // their own way of coping with input they could not read.
+      display.info("");
+      display.info("  To refuse outright instead, return exactly { \"__rotifer_error\": { \"message\": \"…\" } }");
+      display.info("  and nothing else — the host turns that into INVALID_INPUT (ADR-334). A refusal");
+      display.info("  needs no expectedOutput: the case passes on the refusal itself.");
+      display.hint(`Then run: rotifer test ${geneName}`);
+      return;
+    }
+
     const ajv = new Ajv({ allErrors: true });
     let passed = 0;
     let failed = 0;
     let skipped = 0;
+    // Shared by both T1 paths — WASM sandbox and Node — so the two cannot drift
+    // into reporting the same run differently.
+    const reportT1 = (report: ReturnType<typeof runT1>): void => {
+      for (const r of report.results) {
+        if (r.passed) {
+          passed++;
+          display.success(`  ${r.testId}: ${r.details ?? "passed"}`);
+        } else {
+          failed++;
+          display.error(`  ${r.testId}: ${r.failureReason}`);
+          if (r.details) display.info("    " + r.details);
+        }
+      }
+      if (options.json) {
+        console.log(JSON.stringify({ requirements: report.requirements, gatePassed: report.gatePassed, results: report.results }, null, 2));
+      }
+      const req = report.requirements;
+      display.info(
+        `  §47.5 requirements — positive: ${req.positive ? "met" : "NOT met"}, ` +
+        `negative: ${req.negative ? "met" : "NOT met"}, ` +
+        `property: ${req.property ? "met" : "NOT met"}`,
+      );
+      if (!report.gatePassed) {
+        display.hint("This Gene would not pass the §47.5 publishing gate once it is enforced.");
+      }
+    };
+
     const markSkipped = (message: string): void => {
       skipped++;
       display.warn(message);
@@ -397,6 +468,104 @@ export const testCommand = new Command("test")
 
     // --- Summary ---
     console.log();
+    // --- §47.5 T1 TestSuite ---
+    // Separate from Tests 1-7 above, which are §47.3 scaffolding: generated
+    // inputs checked against the Gene's own schemas. Those never see a case the
+    // author wrote, so they cannot tell whether the Gene does the right thing —
+    // only that it does a well-shaped thing. §47.5 is the MUST that gates
+    // publishing, and this is where it gets evaluated.
+    const suiteLoad = loadTestSuite(geneDir);
+    if (suiteLoad.status === "invalid") {
+      failed++;
+      display.error("T1 TestSuite: testsuite.json is not valid");
+      for (const e of suiteLoad.errors) display.info("  " + e);
+    } else if (suiteLoad.status === "absent") {
+      // Stage 1 sets no gate — §47.5 enforcement is a separate deliverable, and
+      // failing every Gene here before authors have a way to write a suite would
+      // just teach people to ignore the runner. Informational on purpose: it
+      // does not touch passed/failed/skipped either, because no Gene has a suite
+      // yet and moving every existing Gene's verdict is itself a gate.
+      display.warn("T1 TestSuite: no testsuite.json — §47.5 publishing gate not evaluated");
+      display.hint("spec §47.5 requires ≥1 positive case, ≥1 negative case and a schema-legality property test before publishing");
+    } else if (!hasIrWasm && srcFile) {
+      // No IR, but there is source: this is how a Wrapped gene is actually run,
+      // so run it that way. Skipping here while the publish gate checks Wrapped
+      // would leave an author unable to see locally what publish is about to
+      // refuse — and the gate's whole exit is "run rotifer test".
+      display.info("T1 TestSuite (spec §47.5, via Node)");
+      const loaded = await loadNodeRunner(resolve(geneDir, srcFile), evaluateL0(binding, phenotype));
+      if ("refusal" in loaded) {
+        failed++;
+        display.error("  could not run the gene: " + loaded.refusal);
+      } else {
+        reportT1(
+          runT1(suiteLoad.suite, {
+            inputSchema: (phenotype.inputSchema as Record<string, unknown>) ?? null,
+            outputSchema: (phenotype.outputSchema as Record<string, unknown>) ?? null,
+            run: loaded.runner,
+          }),
+        );
+      }
+    } else if (!hasIrWasm || !binding) {
+      // A suite exists but nothing can run it. That is a skip, not a pass —
+      // unlike the absent case above, the author asked for this to be checked.
+      skipped++;
+      display.warn("T1 TestSuite: found testsuite.json, but the Gene has neither a compiled artifact nor source — run 'rotifer compile " + geneName + "' first");
+    } else {
+      display.info("T1 TestSuite (spec §47.5)");
+      const irWasmForT1 = readFileSync(irWasmPath) as Buffer;
+      const { irHash: _t1strip, ...phenotypeForT1 } = phenotype;
+      const runOne = (input: unknown): RunOutcome => {
+        try {
+          const r = binding.executeGene(
+            irWasmForT1,
+            JSON.stringify(input),
+            JSON.stringify(phenotypeForT1),
+            constraintsForFuel(FUEL_LADDER[0]),
+          );
+          if (r.success) return { success: true, output: r.output, durationMs: r.durationMs };
+          // Everything the sandbox reports as a failure is a crash unless it is
+          // a resource ceiling: a Gene has no way to "return an error" through
+          // this boundary, so a thrown validation error and a TypeError arrive
+          // identically. Treating both as crashed is the conservative reading of
+          // "correctly handle" — a Gene that means to reject declares the shape
+          // it rejects with instead (see runNegative).
+          return { success: false, crashed: true, errorMessage: r.errorMessage ?? undefined };
+        } catch (e) {
+          return { success: false, crashed: true, errorMessage: (e as Error).message };
+        }
+      };
+
+      const report = runT1(suiteLoad.suite, {
+        inputSchema: (phenotype.inputSchema as Record<string, unknown>) ?? null,
+        outputSchema: (phenotype.outputSchema as Record<string, unknown>) ?? null,
+        run: runOne,
+      });
+
+      for (const r of report.results) {
+        if (r.passed) {
+          passed++;
+          display.success(`  ${r.testId}: ${r.details ?? "passed"}`);
+        } else {
+          failed++;
+          display.error(`  ${r.testId}: ${r.failureReason}`);
+          if (r.details) display.info("    " + r.details);
+        }
+      }
+      if (options.json) {
+        console.log(JSON.stringify({ requirements: report.requirements, gatePassed: report.gatePassed, results: report.results }, null, 2));
+      }
+      const req = report.requirements;
+      display.info(
+        `  §47.5 requirements — positive: ${req.positive ? "met" : "NOT met"}, ` +
+        `negative: ${req.negative ? "met" : "NOT met"}, ` +
+        `property: ${req.property ? "met" : "NOT met"}`,
+      );
+      if (!report.gatePassed) {
+        display.hint("This Gene would not pass the §47.5 publishing gate once it is enforced.");
+      }
+    }
+
     const total = passed + failed + skipped;
     if (failed === 0 && skipped === 0) {
       display.success(`All ${total} tests passed`);

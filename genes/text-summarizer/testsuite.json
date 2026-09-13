@@ -1,0 +1,80 @@
+{
+  "testCases": [
+    {
+      "input": {
+        "text": "Rotifer is a protocol. It makes logic portable. Genes are the unit."
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "summary",
+          "wordCount",
+          "keyPhrases"
+        ],
+        "properties": {
+          "wordCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "keyPhrases": {
+            "type": "array",
+            "minItems": 1,
+            "contains": {
+              "const": "rotifer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "text": 42
+      },
+      "expectedSchema": {
+        "type": "object",
+        "properties": {
+          "wordCount": {
+            "const": 0
+          },
+          "summary": {
+            "const": ""
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "summarize": true
+      },
+      "expectedSchema": {
+        "type": "object",
+        "properties": {
+          "wordCount": {
+            "const": 0
+          },
+          "summary": {
+            "const": ""
+          }
+        }
+      }
+    },
+    {
+      "input": {},
+      "expectedSchema": {
+        "type": "object",
+        "properties": {
+          "wordCount": {
+            "const": 0
+          },
+          "summary": {
+            "const": ""
+          }
+        }
+      }
+    }
+  ],
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  }
+}

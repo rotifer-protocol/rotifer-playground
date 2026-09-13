@@ -1,0 +1,102 @@
+{
+  "testCases": [
+    {
+      "input": {
+        "code": "function f(a){ if(a){ return 1; } return 0; }",
+        "language": "javascript"
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "cyclomaticComplexity",
+          "functionCount",
+          "rating"
+        ],
+        "properties": {
+          "functionCount": {
+            "const": 1
+          },
+          "cyclomaticComplexity": {
+            "type": "integer",
+            "minimum": 2
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "code": 42,
+        "language": "javascript"
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "linesOfCode",
+          "maxNestingDepth",
+          "rating"
+        ],
+        "properties": {
+          "linesOfCode": {
+            "const": 0
+          },
+          "maxNestingDepth": {
+            "const": 0
+          },
+          "rating": {
+            "const": "low"
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "language": "javascript"
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "linesOfCode",
+          "maxNestingDepth",
+          "rating"
+        ],
+        "properties": {
+          "linesOfCode": {
+            "const": 0
+          },
+          "maxNestingDepth": {
+            "const": 0
+          },
+          "rating": {
+            "const": "low"
+          }
+        }
+      }
+    },
+    {
+      "input": {},
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "linesOfCode",
+          "maxNestingDepth",
+          "rating"
+        ],
+        "properties": {
+          "linesOfCode": {
+            "const": 0
+          },
+          "maxNestingDepth": {
+            "const": 0
+          },
+          "rating": {
+            "const": "low"
+          }
+        }
+      }
+    }
+  ],
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  }
+}

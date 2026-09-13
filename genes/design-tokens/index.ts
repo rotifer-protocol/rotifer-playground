@@ -108,8 +108,21 @@ function generateShadows(dark: boolean): Record<string, string> {
  * Pure HSL math and scale calculations — no external dependencies.
  */
 export function express(input: DesignTokenInput): DesignTokenOutput {
-  const hue = input.primaryHue ?? 220;
-  const dark = (input.mode ?? "dark") === "dark";
+  // `??` only guards null and undefined. A primaryHue of the wrong type sailed
+  // past it into Math.round() and came out NaN, so the Gene emitted a
+  // stylesheet reading `hsl(NaN, 5%, 5%)` — valid JSON, conforming to
+  // outputSchema, and broken for every consumer. Falling back to the documented
+  // default is what the caller already gets for a missing field; an unusable
+  // value should not be treated as more authoritative than a missing one.
+  const rawHue: unknown = input.primaryHue;
+  const hue =
+    typeof rawHue === "number" && Number.isFinite(rawHue)
+      ? ((rawHue % 360) + 360) % 360
+      : 220;
+
+  // Same reasoning: the schema declares mode as an enum, so a value outside it
+  // is not a choice between light and dark, it is no choice at all.
+  const dark = input.mode === "light" ? false : true;
   const density = input.density ?? "normal";
   const radius = input.borderRadius ?? "rounded";
 

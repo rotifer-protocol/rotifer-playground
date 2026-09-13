@@ -4,15 +4,25 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "answer": { "type": "string", "description": "The synthesized answer (passed through)" },
+      "answer": {
+        "type": "string",
+        "description": "The synthesized answer (passed through)"
+      },
       "sources": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Source file paths from answer-synthesizer"
       },
-      "confidence": { "type": "number" }
+      "confidence": {
+        "type": "number"
+      }
     },
-    "required": ["answer", "sources"]
+    "required": [
+      "answer",
+      "sources"
+    ]
   },
   "outputSchema": {
     "type": "object",
@@ -26,21 +36,40 @@
         "items": {
           "type": "object",
           "properties": {
-            "title": { "type": "string" },
-            "url": { "type": "string" }
+            "title": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
           },
-          "required": ["title", "url"]
+          "required": [
+            "title",
+            "url"
+          ]
         }
       },
-      "confidence": { "type": "number" }
+      "confidence": {
+        "type": "number"
+      }
     },
-    "required": ["text", "links"]
+    "required": [
+      "text",
+      "links"
+    ]
   },
   "dependencies": [],
   "version": "0.2.0",
   "author": "rotifer-team",
   "createdAt": 1772236800000,
   "fidelity": "Native",
-  "transparency": "Open",
-  "tags": ["sources", "links", "documentation", "mapping", "rag-pipeline"]
+  "transparency": "OPEN",
+  "tags": [
+    "sources",
+    "links",
+    "documentation",
+    "mapping",
+    "rag-pipeline"
+  ],
+  "irHash": "3b5744afd3205d00986d5b4827f6dae64fe38ceca85d0f4529b6493eed7d8667"
 }

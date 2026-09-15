@@ -354,7 +354,8 @@ jobs:
         if: github.ref == 'refs/heads/main' && env.QUALITY_SUPABASE_URL != ''
         env:
           QUALITY_SUPABASE_URL: ${{ secrets.QUALITY_SUPABASE_URL }}
-          QUALITY_SUPABASE_KEY: ${{ secrets.QUALITY_SUPABASE_SERVICE_KEY }}
+          QUALITY_SUPABASE_ANON_KEY: ${{ vars.QUALITY_SUPABASE_ANON_KEY }}
+          QUALITY_CI_REPORTER_TOKEN: ${{ secrets.QUALITY_CI_REPORTER_TOKEN }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
           # `npm audit` exits non-zero when vulnerabilities exist; `|| echo '{}'`
@@ -376,8 +377,8 @@ jobs:
           [ -z "$FINDINGS" ] && FINDINGS='[]'
 
           if curl --fail-with-body -sS -X POST "${QUALITY_SUPABASE_URL}/rest/v1/security_scan_results" \
-            -H "apikey: ${QUALITY_SUPABASE_KEY}" \
-            -H "Authorization: Bearer ${QUALITY_SUPABASE_KEY}" \
+            -H "apikey: ${QUALITY_SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${QUALITY_CI_REPORTER_TOKEN}" \
             -H "Content-Type: application/json" \
             -H "Prefer: return=minimal" \
             -d "{\"version\":\"v${VERSION}\",\"component\":\"cli\",\"scan_type\":\"npm_audit\",\"grade\":\"${GRADE}\",\"severity_counts\":{\"critical\":${CRITICAL},\"high\":${HIGH},\"moderate\":${MODERATE},\"low\":${LOW}},\"findings\":${FINDINGS},\"source\":\"ci\",\"ci_run_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}"; then
@@ -387,8 +388,8 @@ jobs:
           fi
 
           curl -s -X POST "${QUALITY_SUPABASE_URL}/rest/v1/dependency_audit_logs" \
-            -H "apikey: ${QUALITY_SUPABASE_KEY}" \
-            -H "Authorization: Bearer ${QUALITY_SUPABASE_KEY}" \
+            -H "apikey: ${QUALITY_SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${QUALITY_CI_REPORTER_TOKEN}" \
             -H "Content-Type: application/json" \
             -H "Prefer: return=minimal" \
             -d "{\"component\":\"cli\",\"audit_tool\":\"npm_audit\",\"total_deps\":${TOTAL},\"vulnerabilities\":{\"critical\":${CRITICAL},\"high\":${HIGH},\"moderate\":${MODERATE},\"low\":${LOW}},\"ci_run_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
@@ -521,7 +522,8 @@ jobs:
         if: env.QUALITY_SUPABASE_URL != ''
         env:
           QUALITY_SUPABASE_URL: ${{ secrets.QUALITY_SUPABASE_URL }}
-          QUALITY_SUPABASE_KEY: ${{ secrets.QUALITY_SUPABASE_SERVICE_KEY }}
+          QUALITY_SUPABASE_ANON_KEY: ${{ vars.QUALITY_SUPABASE_ANON_KEY }}
+          QUALITY_CI_REPORTER_TOKEN: ${{ secrets.QUALITY_CI_REPORTER_TOKEN }}
         run: |
           if [ ! -f test-results.json ]; then
             echo "No test results file found, skipping report"
@@ -541,8 +543,8 @@ jobs:
           fi
 
           curl -s -X POST "${QUALITY_SUPABASE_URL}/rest/v1/release_test_reports" \
-            -H "apikey: ${QUALITY_SUPABASE_KEY}" \
-            -H "Authorization: Bearer ${QUALITY_SUPABASE_KEY}" \
+            -H "apikey: ${QUALITY_SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${QUALITY_CI_REPORTER_TOKEN}" \
             -H "Content-Type: application/json" \
             -H "Prefer: return=minimal" \
             -d "{

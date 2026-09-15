@@ -190,9 +190,10 @@ jobs:
         working-directory: rotifer-vscode
         env:
           QUALITY_SUPABASE_URL: ${{ secrets.QUALITY_SUPABASE_URL }}
-          QUALITY_SUPABASE_KEY: ${{ secrets.QUALITY_SUPABASE_SERVICE_KEY }}
+          QUALITY_SUPABASE_ANON_KEY: ${{ vars.QUALITY_SUPABASE_ANON_KEY }}
+          QUALITY_CI_REPORTER_TOKEN: ${{ secrets.QUALITY_CI_REPORTER_TOKEN }}
         run: |
-          if [ -z "$QUALITY_SUPABASE_URL" ] || [ -z "$QUALITY_SUPABASE_KEY" ]; then
+          if [ -z "$QUALITY_SUPABASE_URL" ] || [ -z "$QUALITY_SUPABASE_ANON_KEY" ] || [ -z "$QUALITY_CI_REPORTER_TOKEN" ]; then
             echo "Quality Observatory secrets not configured, skipping report"
             exit 0
           fi
@@ -228,8 +229,8 @@ jobs:
           DURATION=$(node -p "Math.round(JSON.parse(require('fs').readFileSync('test-results.json','utf8')).testResults?.reduce((s,r) => s + (r.endTime - r.startTime), 0) || 0)")
 
           if curl --fail-with-body -sS -X POST "${QUALITY_SUPABASE_URL}/rest/v1/release_test_reports" \
-            -H "apikey: ${QUALITY_SUPABASE_KEY}" \
-            -H "Authorization: Bearer ${QUALITY_SUPABASE_KEY}" \
+            -H "apikey: ${QUALITY_SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${QUALITY_CI_REPORTER_TOKEN}" \
             -H "Content-Type: application/json" \
             -H "Prefer: return=minimal" \
             -d "{

@@ -23,6 +23,7 @@
 | `20260411093000_fix_release_line_version_backfill.sql` | 修正回填策略，优先精确版本匹配 | 2026-05-18 | `20260518081601` |
 | `20260706120000_release_manifests.sql` | 创建 `release_manifests` 表 | 2026-09-14（文件写好后一直未被真正推送——rotifer-admin 安全加固 #5/#8 在此表上加 SELECT 策略时以 `42P01 relation does not exist` 当场证实；补建语句并入下一行的迁移一并跑通） | N/A（owner 经 Studio SQL Editor 手动执行，非 CLI/MCP） |
 | `20260902210000_ci_reporter_and_quality_reader_roles.sql` | rotifer-admin 安全审计 2026-09-02 #5/#8：新增 `ci_reporter`（INSERT-only 3 表）、`quality_reader`（SELECT-only 4 表）两个最小权限角色 | 2026-09-14 | N/A（owner 经 Studio SQL Editor 手动执行，非 CLI/MCP） |
+| `20260915100000_revoke_anon_read_quality_tables.sql` | 撤销四张表的 `anon`/`authenticated` 读策略，闭环 #8——rotifer-admin 已全部切到 `quality_reader` 代理读取（PR #142） | 2026-09-15 | N/A（owner 经 Studio SQL Editor 手动执行，非 CLI/MCP）；实测：匿名 key 对四张表的 SELECT 均从有数据变为 `[]` |
 
 ---
 

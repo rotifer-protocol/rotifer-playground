@@ -21,6 +21,8 @@
 | `20260410193000_add_admin_to_quality_observatory.sql` | 扩展 `release_test_reports.component` CHECK 约束，加入 `admin` 组件 | 2026-05-18 | `20260518081514` |
 | `20260411091500_add_release_line_version_to_quality_observatory.sql` | 为 QO 三张表加 `release_line_version` 列 + 索引 + 历史数据回填 | 2026-05-18 | `20260518081546` |
 | `20260411093000_fix_release_line_version_backfill.sql` | 修正回填策略，优先精确版本匹配 | 2026-05-18 | `20260518081601` |
+| `20260706120000_release_manifests.sql` | 创建 `release_manifests` 表 | 2026-09-14（文件写好后一直未被真正推送——rotifer-admin 安全加固 #5/#8 在此表上加 SELECT 策略时以 `42P01 relation does not exist` 当场证实；补建语句并入下一行的迁移一并跑通） | N/A（owner 经 Studio SQL Editor 手动执行，非 CLI/MCP） |
+| `20260902210000_ci_reporter_and_quality_reader_roles.sql` | rotifer-admin 安全审计 2026-09-02 #5/#8：新增 `ci_reporter`（INSERT-only 3 表）、`quality_reader`（SELECT-only 4 表）两个最小权限角色 | 2026-09-14 | N/A（owner 经 Studio SQL Editor 手动执行，非 CLI/MCP） |
 
 ---
 

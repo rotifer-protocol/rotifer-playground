@@ -262,14 +262,14 @@ bash demo.sh
 
 | URAA 层级 | 规范名称 | 完成度 | 已可用 | 规划中 |
 |-----------|---------|--------|--------|--------|
-| **L0** | 内核层 | **~35%** | `L0Gate` 预执行检查（域、资源、网络、文件系统）；审计日志 | 伦理边界、状态锚定、信任根 |
-| **L1** | 合成层 | **~95%** | WASM 沙箱（wasmtime）、IR 编译器、Javy TS→WASM、NAPI 桥接 | 完整 WASI 能力协商 |
+| **L0** | 内核层 | **~40%** | `L0Gate` 预执行检查（域、资源上限、文件系统），覆盖全部执行路径，含基因组内的每一步与 Node.js 降级路径；审计日志 | 逐基因权限策略、网络检查、伦理边界、状态锚定、信任根 |
+| **L1** | 合成层 | **~70%** | WASM 沙箱（wasmtime）、IR 编译器、Javy TS→WASM、NAPI 桥接 | `Synthesizer` 接口、完整 WASI 能力协商 |
 | **L2** | 校准层 | **~40%** | Schema 验证、沙箱测试、`--compliance` 检查 | 静态分析、受控试运行 |
-| **L3** | 竞争与交换层 | **~60%** | Arena 排名、F(g) 乘法模型、R(g) 声誉、Cloud Registry | P2P HLT 广播（仅 stub）、热加载、退役 |
+| **L3** | 竞争与交换层 | **~85%** | Arena 排名、F(g) 乘法模型、R(g) 声誉、Cloud Registry、实验性 P2P 节点（局域网基因公告，默认关闭） | 自动节点发现、跨公网 P2P、热加载、退役 |
 | **L4** | 集体免疫层 | **0%** | — | 威胁广播、紧急回滚、跨节点共识 |
 | **代数** | 组合代数 | **~90%** | Rust 五算子全实现；CLI 支持 Seq/Par/Cond/Try | DataFlowGraph |
 
-**关键限制：** L4 依赖 L3 的 P2P 网络（当前为 stub）。完整 L4 目标版本为 v0.9+。
+**关键限制：** L4 依赖成熟的 L3 P2P 网络。P2P 现已可运行，但仍属实验性、默认关闭，尚缺自动节点发现与跨公网连接。完整 L4 目标为 v1.x。
 
 ---
 
@@ -280,9 +280,9 @@ bash demo.sh
 | 深度 | 组件 | 备注 |
 |------|------|------|
 | **完整** | Phenotype、AlgebraExpr、Fitness F(g)、Arena | 核心基因生命周期 |
-| **可用** | WASM Sandbox、L0 Gate、Reputation R(g) | L0 ~35%，持续扩展 |
+| **可用** | WASM Sandbox、L0 Gate、Reputation R(g)、P2P HLT（局域网，实验性） | L0 ~40%，持续扩展 |
 | **简化** | Agent Lifecycle、Gene Lifecycle、RotiferBinding | MVP 子集 |
-| **占位/规划** | P2P HLT、Formal Verification、Cross-Binding Consistency、ZK Proofs、L4 Immunity | 路线图条目 |
+| **占位/规划** | 跨公网 P2P HLT、Formal Verification、Cross-Binding Consistency、ZK Proofs、L4 Immunity | 路线图条目 |
 
 基于实现反馈的变更通过 ADR 流程提出。
 
@@ -292,9 +292,9 @@ bash demo.sh
 
 详细发布历史请参见 [CHANGELOG.md](CHANGELOG.md)。接下来的里程碑：
 
-- **v0.9** — 经济体系设计
-- **v0.9.1** — P2P 网络（元数据发现）
+- **下一步** — 自动节点发现与跨公网 P2P 连接
 - **v1.0** — 稳定版：L0-L3 完整、经济体系上线、安全审计
+- **v1.x** — L4 集体免疫
 
 ---
 

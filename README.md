@@ -293,10 +293,10 @@ bash demo.sh
 
 | URAA Layer | Spec Name | Status | What Works | What's Planned |
 |------------|-----------|--------|------------|----------------|
-| **L0** | Kernel | **~35%** | `L0Gate` pre-execution checks (domain, resource, network, filesystem); Audit log | EthicalBoundary, State Anchoring, Trust Anchor |
-| **L1** | Synthesis | **~95%** | WASM sandbox, IR compiler, TS→WASM compilation, native bridge | Full WASI capability negotiation |
+| **L0** | Kernel | **~40%** | `L0Gate` pre-execution checks (domain, resource limits, filesystem) on every execution path, including genome steps and the Node.js fallback; audit log | Per-gene permission policy, network check, EthicalBoundary, State Anchoring, Trust Anchor |
+| **L1** | Synthesis | **~70%** | WASM sandbox, IR compiler, TS→WASM compilation, native bridge | `Synthesizer` interface, full WASI capability negotiation |
 | **L2** | Calibration | **~40%** | Schema validation, sandbox testing, `--compliance` checks | Static analysis, controlled field trial |
-| **L3** | Competition | **~60%** | Arena ranking, F(g) multiplicative model, R(g) reputation, Cloud Registry | P2P HLT broadcasting (planned), hot-loading, retirement |
+| **L3** | Competition | **~85%** | Arena ranking, F(g) multiplicative model, R(g) reputation, Cloud Registry, experimental P2P node (LAN gene announcements, off by default) | Automatic peer discovery, internet-wide P2P, hot-loading, retirement |
 | **L4** | Collective Immunity | **0%** | — | Threat broadcasting, emergency rollback, cross-node consensus |
 | **Algebra** | Composition | **~90%** | All 5 operators in Rust; CLI supports Seq/Par/Cond/Try | DataFlowGraph |
 
@@ -311,9 +311,9 @@ Targets **Rotifer Protocol Specification** (Frozen). See [Implementation Status]
 | Depth | Components | Notes |
 |-------|------------|-------|
 | **Full** | Phenotype, AlgebraExpr, Fitness F(g), Arena | Core gene lifecycle |
-| **Functional** | WASM Sandbox, L0 Gate, Reputation R(g) | L0 at ~35%, expanding |
+| **Functional** | WASM Sandbox, L0 Gate, Reputation R(g), P2P HLT (LAN, experimental) | L0 at ~40%, expanding |
 | **Simplified** | Agent Lifecycle, Gene Lifecycle, RotiferBinding | MVP subset |
-| **Planned** | P2P HLT, Formal Verification, Cross-Binding Consistency, ZK Proofs, L4 Immunity | Roadmap items |
+| **Planned** | Internet-wide P2P HLT, Formal Verification, Cross-Binding Consistency, ZK Proofs, L4 Immunity | Roadmap items |
 
 Changes driven by implementation feedback are proposed through the ADR process.
 
@@ -323,9 +323,9 @@ Changes driven by implementation feedback are proposed through the ADR process.
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release history. Upcoming milestones:
 
-- **v0.9** — economic framework design
-- **v0.9.1** — P2P network (metadata discovery)
+- **Next** — automatic peer discovery and internet-wide P2P reach
 - **v1.0** — Stable release: L0-L3 complete, economic system, security audit
+- **v1.x** — L4 Collective Immunity
 
 ---
 

@@ -1,12 +1,12 @@
 ---
 name: rotifer-gene
 description: The Gene manual for Rotifer Protocol — write a Gene's express function and phenotype schema, run the four-layer security audit before publishing, and migrate a Gene's fidelity from Wrapped to Hybrid or Native. Invoke explicitly when building, auditing, or upgrading a Rotifer Gene. Do NOT use for general code review, dependency auditing, or framework migration — every procedure here operates on Rotifer Genes, their phenotype schemas, and the Rotifer CLI, and nothing else.
-version: 1.0.0
+version: 1.0.1
 license: Apache-2.0
-compatibility: Requires the Rotifer CLI (npx @rotifer/playground) for the commands shown. Publishing and Arena submission also need network access and an account.
+compatibility: Requires the Rotifer CLI at a pinned version (npx --yes @rotifer/playground@0.26.0) for the commands shown. Publishing and Arena submission also need network access and an account.
 metadata:
   author: rotifer-protocol
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Working on a Gene

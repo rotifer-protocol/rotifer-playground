@@ -19,7 +19,7 @@ Decompose user intent into capability units, select Genes from the ecosystem, co
 This Skill requires the Rotifer CLI:
 
 ```bash
-npx @rotifer/playground --version
+npx --yes @rotifer/playground@0.26.0 --version
 rotifer doctor
 ```
 
@@ -34,7 +34,7 @@ Or use the MCP Server for IDE integration:
   "mcpServers": {
     "rotifer": {
       "command": "npx",
-      "args": ["@rotifer/mcp-server"]
+      "args": ["@rotifer/mcp-server@0.17.0"]
     }
   }
 }

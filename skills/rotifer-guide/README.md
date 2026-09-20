@@ -51,10 +51,10 @@ permissions are for: the CLI acting, not this Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI (`@rotifer/playground`), fetched from npm if not installed. |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.26.0`; fetched from npm at that exact version if it is not already installed. |
 | **Reads** | Genes and Agent definitions in the current project. |
 | **Writes** | Genes into the project's `genes/`, Agent definitions into `.rotifer/agents/`. Nothing outside the project. |
-| **Sends** | Registry and Arena queries to the public Rotifer API. Your code is not uploaded unless you run `rotifer publish` yourself. |
+| **Sends** | Registry and Arena queries to the public Rotifer API. Two paths send more than a query, and both are opt-in: the Web Studio scaffold path (`/api/playground/generate`, `scan`, `publish`) transmits the description you write and the generated Gene source to rotifer.ai, and `rotifer publish` transmits a Gene's source and makes it public. The CLI scaffold path is entirely local and produces the same result — prefer it for anything you would not post publicly. Nothing else in your project is read or uploaded. |
 
 Commands that install, publish or overwrite are proposed for your approval
 first, never run silently. Full detail in [SKILL.md](SKILL.md).

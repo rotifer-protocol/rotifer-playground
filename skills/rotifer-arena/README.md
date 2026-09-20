@@ -20,7 +20,7 @@ Compare Rotifer Genes and produce a report you can act on:
 | "Build a Rotifer Gene benchmark for this domain" | Scaffolds the scenario, creates the Genes, runs evaluation |
 
 **Setup it does need**: a Rotifer workspace (`rotifer.json`), the CLI
-(`npm i -g @rotifer/playground`), and — for Native Genes — the TS→WASM toolchain
+(`npm i -g @rotifer/playground@0.26.0`), and — for Native Genes — the TS→WASM toolchain
 that `rotifer doctor` checks.
 
 Every evaluation produces a structured Markdown report with:

@@ -16,12 +16,24 @@ Three manuals, loaded on demand rather than all at once:
 ## Quick Start
 
 ```bash
-npx @rotifer/playground init my-gene --domain content.grammar --fidelity Native
+npx --yes @rotifer/playground@0.26.0 init my-gene --domain content.grammar --fidelity Native
 # write express() in genes/my-gene/index.ts
-npx @rotifer/playground test my-gene --verbose
-npx @rotifer/playground compile my-gene
-npx @rotifer/playground test my-gene --compliance
+npx --yes @rotifer/playground@0.26.0 test my-gene --verbose
+npx --yes @rotifer/playground@0.26.0 compile my-gene
+npx --yes @rotifer/playground@0.26.0 test my-gene --compliance
 ```
+
+Every command names an exact CLI version on purpose: an unversioned `npx` resolves to whatever the
+registry serves at that moment, so what you run would not be what was reviewed. Stronger still,
+install the CLI into the project and run the local binary:
+
+```bash
+npm install --save-dev --save-exact @rotifer/playground@0.26.0
+npm exec -- rotifer test my-gene --verbose
+```
+
+Commit the lockfile and use `npm ci` in automation. Before moving the pin to a newer release, review
+what changed and record what you are accepting: `npm view @rotifer/playground@<version> dist.integrity`.
 
 Read `modules/audit.md` before your first `publish`. It is the difference between
 finding a leaked credential on your own disk and finding it in a public registry.
@@ -47,7 +59,7 @@ permissions are for: the CLI acting, not this Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI (`@rotifer/playground`), fetched from npm if not installed. |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.26.0`; fetched from npm at that exact version if it is not already installed. |
 | **Reads** | Genes in the current project — source, `phenotype.json`, and the local manifests. |
 | **Writes** | Genes into the project's `genes/`, compiled IR beside them. Nothing outside the project. |
 | **Sends** | Nothing, until you publish. `publish`, `arena submit --cloud` and `login` reach the network; `init`, `test` and `compile` are local. |

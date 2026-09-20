@@ -3,7 +3,7 @@
   "display_name": "Rotifer Self-Evolving Agent",
   "description": "Benchmarks your Agent's installed capabilities against live Arena rankings and shows you which ones a stronger Gene would replace. Also composes and runs local Agents from those Genes. Runs only when you invoke /evolve; every replacement waits for your approval and can be rolled back, and writes are limited to the current project's Gene and Agent directories, a local run log, and an update cache. The ranking is what is automatic \u2014 Rotifer Protocol's F(g) fitness function, no opinions, pure performance data.",
   "tagline": "Your Agent gets stronger by competing, not by configuring",
-  "version": "2.4.7",
+  "version": "2.4.8",
   "author": "rotifer-protocol",
   "license": "Apache-2.0",
   "category": "developer-tools",

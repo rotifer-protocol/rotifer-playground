@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.2](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.26.1...v0.26.2) (2026-09-21)
+
+
+### Bug Fixes
+
+* **ci:** make the mutation job measure something again ([#366](https://github.com/rotifer-protocol/rotifer-playground/issues/366)) ([bbefcd7](https://github.com/rotifer-protocol/rotifer-playground/commit/bbefcd7eb5971b5da34b76b2d4866f60b074459f))
+
 ## [0.26.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.26.0...v0.26.1) (2026-09-21)
 
 

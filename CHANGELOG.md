@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.26.0...v0.26.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* **ci:** stop uploading to Quality Observatory with the service_role key ([#359](https://github.com/rotifer-protocol/rotifer-playground/issues/359)) ([7c3bd6e](https://github.com/rotifer-protocol/rotifer-playground/commit/7c3bd6e43ccb29c3c54ed44d6144c7e07ba52965))
+* **deps:** resolve rustls TLS-boundary vuln, event-listener unsoundness, yanked gimli ([#361](https://github.com/rotifer-protocol/rotifer-playground/issues/361)) ([2394580](https://github.com/rotifer-protocol/rotifer-playground/commit/2394580cde48c14c458b95d8f03c8e16450cbe92))
+* **migration:** revoke the anon SELECT policies on quality tables ([#360](https://github.com/rotifer-protocol/rotifer-playground/issues/360)) ([c048b0e](https://github.com/rotifer-protocol/rotifer-playground/commit/c048b0e997810d38f7480d8bc00a07089edf037c))
+* **test:** follow the RAG migrations to supabase-rag/ after the split ([#331](https://github.com/rotifer-protocol/rotifer-playground/issues/331)) ([973efc5](https://github.com/rotifer-protocol/rotifer-playground/commit/973efc5876bc06d6337b53a90e8b145aaeb2c1b9))
+
 ## [0.26.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.25.1...v0.26.0) (2026-09-09)
 
 

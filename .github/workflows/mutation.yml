@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  # For the failure alarm below, which files the report as an issue.
+  issues: write
 
 jobs:
   stryker:
@@ -19,6 +21,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: TEMP force a failure to exercise the alarm (removed before merge)
+        run: exit 1
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
@@ -50,6 +55,43 @@ jobs:
 
       - name: Run Stryker (security & auth modules only)
         run: npm run test:mutation
+
+      # This job is not a required check and runs after the release, so a
+      # failure here changes nothing a human is looking at. It failed on every
+      # tag from 2026-08-30 to 2026-09-21 and measured nothing on any of them;
+      # it was found by accident, three weeks late. The alarm is the fix for
+      # that, not the build step above: whatever breaks it next, the failure
+      # now files itself where the weekly issue sweep will see it.
+      #
+      # One open issue at a time — later failures comment on it rather than
+      # opening a second, so a gate that stays broken does not bury the sweep.
+      - name: File a failed run as an issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh label create mutation-gate \
+            --description "The mutation gate stopped measuring" \
+            --color B60205 --force
+          BODY=$(printf '%s\n' \
+            "The mutation gate failed on \`$REF\`." \
+            "" \
+            "Run: $RUN_URL" \
+            "" \
+            "A failure here does not always mean the score dropped. One failing test in Stryker's dry run aborts the pass before a single mutant is tried, and that reads the same way — so check whether the run reached a score at all before touching the threshold." \
+            "" \
+            "Filed automatically by the mutation workflow.")
+          EXISTING=$(gh issue list --label mutation-gate --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "commented on #$EXISTING"
+          else
+            gh issue create --title "Mutation gate is not measuring" \
+              --label mutation-gate --body "$BODY"
+          fi
 
       - name: Upload mutation report
         if: always()

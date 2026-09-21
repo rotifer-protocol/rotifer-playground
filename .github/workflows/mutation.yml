@@ -39,6 +39,15 @@ jobs:
           echo "@stryker-mutator/core resolved to $RESOLVED"
           test -n "$RESOLVED"
 
+      # Nothing in the mutation scope shells out to `dist/` any more — the
+      # suites that do are excluded in vitest.stryker.config.ts — but a test
+      # that spawns the CLI without a build fails in the dry run, and one
+      # failing dry-run test aborts the pass before a single mutant is tried.
+      # That reads as a mutation-score failure when nothing was measured, and
+      # it is how this job came to measure nothing from 2026-08-30 (#309)
+      # onward. `npm test` in CI builds first; this keeps the two in step.
+      - run: npm run build
+
       - name: Run Stryker (security & auth modules only)
         run: npm run test:mutation
 

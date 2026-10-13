@@ -3,7 +3,7 @@
   "display_name": "Rotifer Arena",
   "description": "One-click Gene comparison and evaluation. Import from ClawHub Skills, local files, or build from scratch — automatically compile, match opponents, run Arena battles, and generate a full Markdown report with fitness scores.",
   "tagline": "Objective, quantifiable capability evaluation for AI agents",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "author": "rotifer-protocol",
   "license": "Apache-2.0",
   "category": "developer-tools",

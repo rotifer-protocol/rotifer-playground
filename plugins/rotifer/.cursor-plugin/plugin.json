@@ -29,10 +29,10 @@
       "command": "npx",
       "args": [
         "-y",
-        "@rotifer/mcp-server@0.17.0",
+        "@rotifer/mcp-server@0.19.2",
         "--tools=evolve"
       ]
     }
   },
-  "version": "0.9.6"
+  "version": "0.9.7"
 }

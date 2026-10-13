@@ -18,7 +18,7 @@ description: >-
 Before using this Skill, ensure the Rotifer CLI is available:
 
 ```bash
-npx --yes @rotifer/playground@0.26.0 --version
+npx --yes @rotifer/playground@0.26.1 --version
 ```
 
 If you prefer MCP integration instead of CLI, add this to your MCP config:
@@ -28,7 +28,7 @@ If you prefer MCP integration instead of CLI, add this to your MCP config:
   "mcpServers": {
     "rotifer": {
       "command": "npx",
-      "args": ["@rotifer/mcp-server@0.17.0"]
+      "args": ["@rotifer/mcp-server@0.19.2"]
     }
   }
 }
@@ -41,7 +41,7 @@ step, not per file. Stronger than pinning the `npx` call: install the CLI into t
 the local binary.
 
 ```bash
-npm install --save-dev --save-exact @rotifer/playground@0.26.0
+npm install --save-dev --save-exact @rotifer/playground@0.26.1
 npm exec -- rotifer --version
 ```
 
@@ -89,7 +89,7 @@ Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.26.0`; fetched from npm at that exact version if it is not already installed. |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.26.1`; fetched from npm at that exact version if it is not already installed. |
 | **Reads** | Genes and Agent definitions in the current project workspace. |
 | **Writes** | Only what the commands below write — Genes into the project's `genes/`, Agent definitions into `.rotifer/agents/`. Nothing outside the project. |
 | **Sends** | Cloud registry and Arena queries, to the public Rotifer API. Your code is not uploaded unless you run `rotifer publish` yourself. |
@@ -104,12 +104,12 @@ first, never run silently.
 ### Phase 1: Environment Check
 
 ```bash
-npx --yes @rotifer/playground@0.26.0 --version
+npx --yes @rotifer/playground@0.26.1 --version
 rotifer doctor
 rotifer list
 ```
 
-If the CLI is missing: `npm i -g @rotifer/playground@0.26.0`, which installs the `rotifer` binary at that exact version.
+If the CLI is missing: `npm i -g @rotifer/playground@0.26.1`, which installs the `rotifer` binary at that exact version.
 
 `rotifer doctor` checks the TypeScript→WASM toolchain (esbuild / javy). Run it
 first: without that toolchain `rotifer compile` fails at the WASM step, and the

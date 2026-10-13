@@ -18,13 +18,10 @@ use std::sync::Mutex;
 // P2P node bridge (libp2p) — exposes the real Node to the CLI (§3.1 phase 1).
 // Kept at the crate root, not a submodule: the cdylib linker strips an
 // unreferenced submodule's napi registration ctor, so the class must live here.
-use rotifer_core::p2p::messages::{decode_announcement, encode_announcement};
+use rotifer_core::p2p::messages::{encode_announcement, ANNOUNCEMENTS_TOPIC};
 use rotifer_core::p2p::node::Node as CoreNode;
 use rotifer_core::p2p::{GeneAnnouncement, NetworkConfig};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-/// Canonical GossipSub topic for gene announcements (RFC §6.2).
-const ANNOUNCEMENTS_TOPIC: &str = "/rotifer/announcements";
 
 /// A gene announcement received from a peer, surfaced to the CLI. `source` is
 /// the GossipSub-authenticated publisher PeerId (cannot be forged, §8.3).
@@ -102,24 +99,22 @@ impl P2pNode {
         self.inner.discovered_peers()
     }
 
-    /// Gene announcements received from peers on the announcements topic,
-    /// decoded for display. Skips any message that fails to decode.
+    /// Gene announcements received from peers on the announcements topic that
+    /// pass the core acceptance checks (decodes, publisher matches the
+    /// authenticated source, timestamp inside the anti-replay window).
     #[napi]
     pub fn received_announcements(&self) -> Vec<ReceivedGeneAnnouncement> {
         self.inner
-            .received_messages()
+            .received_announcements()
             .into_iter()
-            .filter(|m| m.topic == ANNOUNCEMENTS_TOPIC)
-            .filter_map(|m| {
-                decode_announcement(&m.data).ok().map(|a| ReceivedGeneAnnouncement {
-                    gene_id: a.gene_id,
-                    name: a.name,
-                    domain: a.domain,
-                    version: a.version,
-                    fidelity: a.fidelity,
-                    publisher: a.publisher.0,
-                    source: m.source,
-                })
+            .map(|(a, source)| ReceivedGeneAnnouncement {
+                gene_id: a.gene_id,
+                name: a.name,
+                domain: a.domain,
+                version: a.version,
+                fidelity: a.fidelity,
+                publisher: a.publisher.0,
+                source,
             })
             .collect()
     }

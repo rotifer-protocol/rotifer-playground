@@ -39,7 +39,8 @@ export const agentRunCommand = new Command("run")
   .option("--input <json>", "input JSON for the pipeline", '{"name":"world"}')
   .option("--verbose", "show intermediate results", false)
   .option("--no-sandbox", "force Node.js execution (skip WASM sandbox)")
-  .action(async (agentName: string, options: { input: string; verbose: boolean; sandbox: boolean }) => {
+  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed genes", false)
+  .action(async (agentName: string, options: { input: string; verbose: boolean; sandbox: boolean; trustUnsigned: boolean }) => {
     const root = requireProjectRoot();
     const config = loadConfig(root);
 
@@ -95,7 +96,7 @@ export const agentRunCommand = new Command("run")
 
     // TryPool: domain-based failover with fitness tracking
     if (compositionType === "TryPool") {
-      await executeTryPool(agent, genesDir, binding, l0Binding, input, root, options.verbose);
+      await executeTryPool(agent, genesDir, binding, l0Binding, input, root, options.verbose, options.trustUnsigned);
       return;
     }
 
@@ -251,25 +252,28 @@ export const agentRunCommand = new Command("run")
 
         const stepStart = performance.now();
         try {
-          const absPath = resolve(geneDir, srcFile);
-          const mod = await import(pathToFileURL(absPath).href);
+          const phenotypeData = existsSync(phenotypePath)
+            ? JSON.parse(readFileSync(phenotypePath, "utf-8"))
+            : {};
 
-          if (typeof mod.express !== "function") {
+          // Both checks run before import(): loading the module already
+          // executes its top-level code, so a refusal issued after the import
+          // would come too late to mean anything.
+          const refusal = refuseNodeExecution(geneDir, options.trustUnsigned);
+          if (refusal) {
             pipelineLog.push({
-              gene: geneName, status: "error", engine: "node",
+              gene: geneName, status: "error", engine: "none",
               durationMs: performance.now() - stepStart, inputPreview, outputPreview: "",
-              error: "does not export express()",
+              error: refusal,
             });
-            display.error(`${step} Gene '${geneName}' does not export express()`);
+            display.error(`${step} ${refusal}`);
+            display.hint(TRUST_UNSIGNED_HINT);
+            display.hint("Or compile the gene first: rotifer compile " + geneName);
             printPipelineLog(pipelineLog);
             await flushInvocationReports();
             await flushHeartbeat();
             process.exit(1);
           }
-
-          const phenotypeData = existsSync(phenotypePath)
-            ? JSON.parse(readFileSync(phenotypePath, "utf-8"))
-            : {};
 
           const l0 = evaluateL0(l0Binding, phenotypeData);
           const violation =
@@ -288,6 +292,22 @@ export const agentRunCommand = new Command("run")
               error: `L0 gate blocked: ${violation}`,
             });
             display.error(`${step} L0 gate blocked '${geneName}': ${violation}`);
+            printPipelineLog(pipelineLog);
+            await flushInvocationReports();
+            await flushHeartbeat();
+            process.exit(1);
+          }
+
+          const absPath = resolve(geneDir, srcFile);
+          const mod = await import(pathToFileURL(absPath).href);
+
+          if (typeof mod.express !== "function") {
+            pipelineLog.push({
+              gene: geneName, status: "error", engine: "node",
+              durationMs: performance.now() - stepStart, inputPreview, outputPreview: "",
+              error: "does not export express()",
+            });
+            display.error(`${step} Gene '${geneName}' does not export express()`);
             printPipelineLog(pipelineLog);
             await flushInvocationReports();
             await flushHeartbeat();
@@ -420,6 +440,7 @@ async function executeTryPool(
   input: unknown,
   root: string,
   isVerbose: boolean,
+  isTrustUnsigned: boolean,
 ): Promise<void> {
   const engine = new DomainFailoverEngine();
   const startTime = performance.now();
@@ -435,7 +456,7 @@ async function executeTryPool(
     const hasWasm = existsSync(irWasmPath);
 
     const executor = await buildGeneExecutor(
-      geneName, geneDir, irWasmPath, hasWasm, phenotype, binding, l0Binding
+      geneName, geneDir, irWasmPath, hasWasm, phenotype, binding, l0Binding, isTrustUnsigned
     );
     engine.registerGene(geneName, domain, executor);
   }
@@ -524,6 +545,23 @@ async function executeTryPool(
   await flushHeartbeat();
 }
 
+const TRUST_UNSIGNED_HINT = "Use --trust-unsigned to explicitly allow unsandboxed execution.";
+
+/**
+ * The same consent `rotifer run` asks for. A Cloud-installed gene is someone
+ * else's code; on the Node.js path it runs with the host's full privileges, so
+ * it runs only when the user says so. Without this, `agent run` was a side
+ * door: a gene `run` refused would run as soon as it was put in a pipeline.
+ *
+ * Returns the refusal message, or null when execution may proceed. This is
+ * separate from the L0 gate and does not replace it — --trust-unsigned is
+ * consent to run unsandboxed, not a waiver of L0.
+ */
+function refuseNodeExecution(geneDir: string, isTrustUnsigned: boolean): string | null {
+  if (isTrustUnsigned || !isExternallySourced(geneDir)) return null;
+  return "Cloud-installed genes cannot run via Node.js without sandbox.";
+}
+
 async function buildGeneExecutor(
   geneName: string,
   geneDir: string,
@@ -532,6 +570,7 @@ async function buildGeneExecutor(
   phenotype: Record<string, unknown>,
   binding: NativeBinding | null,
   l0Binding: NativeBinding | null,
+  isTrustUnsigned: boolean,
 ): Promise<(input: unknown) => Promise<GeneExecutionResult>> {
   if (hasWasm && binding) {
     const wasmBytes = readFileSync(irWasmPath) as Buffer;
@@ -581,6 +620,16 @@ async function buildGeneExecutor(
   // 走到这里说明没有可用的 WASM 路径，接下来是 Node.js 执行——它没有沙箱，
   // 所以门控必须在这里拦。TryPool 语义下拦截表现为「该基因失败」而非终止进程，
   // 这样 failover 会照常换下一个基因。
+  const refusal = refuseNodeExecution(geneDir, isTrustUnsigned);
+  if (refusal) {
+    return async (): Promise<GeneExecutionResult> => ({
+      success: false,
+      error: `${refusal} ${TRUST_UNSIGNED_HINT}`,
+      engine: "none",
+      durationMs: 0,
+    });
+  }
+
   const l0 = evaluateL0(l0Binding, phenotype);
   const blocked =
     l0.kind === "violation"

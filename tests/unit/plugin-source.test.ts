@@ -301,6 +301,51 @@ describe("plugin source sync pipeline", () => {
     }
   });
 
+  it("counts and names its skills the way each host will find them", () => {
+    const root = createFixture();
+    const outputs = buildOutputs(root);
+    const text = (path: string) => {
+      const entry = outputs.find((e) => e.pathFromRoot === path);
+      expect(entry, `${path} is not a generated output`).toBeDefined();
+      return "content" in entry! ? entry.content : JSON.stringify(entry!.data);
+    };
+
+    // Two hosts, two counts, both true. The folder hosts read
+    // skills/<name>/SKILL.md; dsh-skill-filesystem also reads a loose .md
+    // under skills/, so the single-file rotifer-overview card is a fourth
+    // skill there and nowhere else. The manifests said "three" and the dsh
+    // patch "four" for weeks without anyone able to say which was wrong.
+    const skillFiles = outputs.filter(
+      (e) => e.pathFromRoot.startsWith("plugins/rotifer/skills/") && e.pathFromRoot.endsWith(".md"),
+    );
+    const folders = skillFiles.filter((e) => e.pathFromRoot.endsWith("/SKILL.md"));
+    const words = ["zero", "one", "two", "three", "four", "five", "six"];
+
+    for (const manifest of [
+      "plugins/rotifer/package.json",
+      "plugins/rotifer/openclaw.plugin.json",
+      "plugins/rotifer/.claude-plugin/plugin.json",
+      "plugins/rotifer/.cursor-plugin/plugin.json",
+      "plugins/rotifer/.codebuddy-plugin/plugin.json",
+    ]) {
+      expect(text(manifest), manifest).toContain(`${words[folders.length]} Skills`);
+    }
+    expect(text("plugins/rotifer/cordis.patch.yml")).toContain(
+      `The ${words[skillFiles.length]} Rotifer skills`,
+    );
+
+    // The README is hand-written, so it is the one place a rename does not
+    // reach: #298 renamed the card to rotifer-overview and the table kept
+    // offering `rotifer` for another six weeks.
+    const shipped = skillFiles
+      .map((e) => ("content" in e ? e.content : "").match(/^name:\s*(\S+)\s*$/m)?.[1])
+      .sort();
+    const readme = readFileSync(join(repoRoot, "plugins/rotifer/README.md"), "utf8");
+    const table = readme.slice(readme.indexOf("**Skills**"), readme.indexOf("**Rule**"));
+    const listed = [...table.matchAll(/^\| `([^`]+)` \|/gm)].map((m) => m[1]).sort();
+    expect(listed).toEqual(shipped);
+  });
+
   it("bundles no skill under a name another artifact already publishes", () => {
     const root = createFixture();
     const outputs = buildOutputs(root);

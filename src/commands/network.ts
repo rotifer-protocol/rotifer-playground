@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { ensurePrivateDir, tightenPrivateFile } from "../utils/private-fs.js";
-import { loadP2pNode, type ReceivedAnnouncement } from "../utils/binding.js";
+import { geneIdV2, loadP2pNode, type ReceivedAnnouncement } from "../utils/binding.js";
 import {
   controlRequest,
   isDaemonRunning,
@@ -285,8 +285,17 @@ export const networkCommand = new Command("network")
           return;
         }
 
+        // The wire carries the content-derived v2 ID, never the directory name.
+        const idResult = geneIdV2(join(process.cwd(), "genes"), geneName);
+        if (!("id" in idResult)) {
+          display.error(`Gene '${geneName}' has no v2 gene ID`, idResult.reason);
+          display.hint("See docs/gene-id-v2.md §5 for what makes an ID computable.");
+          process.exitCode = 1;
+          return;
+        }
+
         const result = await controlRequest("POST", "/announce", {
-          geneId: geneName,
+          geneId: idResult.id,
           name: pheno.name ?? geneName,
           domain: pheno.domain ?? "",
           version: pheno.version ?? "0.0.0",
@@ -302,5 +311,6 @@ export const networkCommand = new Command("network")
           return;
         }
         display.success(`Announced '${geneName}' to the network`);
+        display.kv("Gene ID (v2)", idResult.id);
       })
   );

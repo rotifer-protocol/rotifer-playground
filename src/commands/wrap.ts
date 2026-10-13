@@ -1,8 +1,9 @@
 import { Command } from "commander";
 import { writeFileSync, existsSync, readFileSync, mkdirSync, copyFileSync, readdirSync, statSync } from "node:fs";
-import { join, resolve, relative } from "node:path";
+import { join, resolve, relative, dirname, basename } from "node:path";
 import { createInterface } from "node:readline";
 import { contentHash } from "../utils/content-hash.js";
+import { geneIdV2 } from "../utils/binding.js";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import https from "node:https";
@@ -347,7 +348,8 @@ export const wrapCommand = new Command("wrap")
 
       const fileCount = countFiles(geneDir);
       display.success(`ClawHub skill '${info.displayName}' → Gene '${geneName}'`);
-      display.keyValue("Gene ID", c.warn(geneId));
+      display.keyValue("Content Hash", c.warn(geneId));
+      showGeneIdV2(geneDir);
       display.keyValue("Domain", resolvedDomain);
       display.keyValue("Fidelity", phenotype.fidelity as string);
       display.keyValue("Files", `${fileCount} migrated`);
@@ -423,7 +425,8 @@ export const wrapCommand = new Command("wrap")
         ) + "\n"
       );
       display.success(`Skill '${parsed.name}' wrapped as gene '${geneName}'`);
-      display.keyValue("Gene ID", c.warn(geneId));
+      display.keyValue("Content Hash", c.warn(geneId));
+      showGeneIdV2(geneDir);
       display.keyValue("Domain", domain);
       display.keyValue("Fidelity", options.fidelity);
       console.log();
@@ -492,7 +495,8 @@ export const wrapCommand = new Command("wrap")
     );
 
     display.success(`Gene '${geneName}' wrapped successfully`);
-    display.keyValue("Gene ID", c.warn(geneId));
+    display.keyValue("Content Hash", c.warn(geneId));
+    showGeneIdV2(geneDir);
     display.keyValue("Domain", domain);
     display.keyValue("Fidelity", options.fidelity);
 
@@ -510,3 +514,10 @@ export const wrapCommand = new Command("wrap")
     // found by an independent cursor-agent pyramid test run, 2026-08-31.
     await offerAutoPublish({ geneName, geneDir, fidelity: resolveWrapFidelity(phenotype, options.fidelity) });
   });
+
+/** Print the gene's v2 ID, or why it has none (docs/gene-id-v2.md). */
+function showGeneIdV2(geneDir: string): void {
+  const r = geneIdV2(dirname(geneDir), basename(geneDir));
+  if ("id" in r) display.keyValue("Gene ID (v2)", c.warn(r.id));
+  else display.keyValue("Gene ID (v2)", `not computable — ${r.reason}`);
+}

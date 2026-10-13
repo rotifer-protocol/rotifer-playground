@@ -130,6 +130,11 @@ impl P2pNode {
         version: String,
         fidelity: String,
     ) -> Result<()> {
+        // The wire carries only content-derived v2 IDs (docs/gene-id-v2.md);
+        // refuse a directory name or UUID before it reaches the network.
+        if !rotifer_core::gene_id::is_valid(&gene_id) {
+            return Err(Error::from_reason(format!("not a v2 gene ID: {gene_id:?}")));
+        }
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -755,6 +760,15 @@ impl PlaygroundBinding {
             }
         }
     }
+}
+
+/// Gene ID v2 of the gene `name` under `genes_root` (docs/gene-id-v2.md),
+/// resolving local dependencies to their sibling genes' IDs. Throws with the
+/// reason when the ID is not computable.
+#[napi]
+pub fn gene_id_v2(genes_root: String, name: String) -> Result<String> {
+    rotifer_core::gene_id::gene_id_in_workspace(std::path::Path::new(&genes_root), &name)
+        .map_err(|e| Error::from_reason(e.to_string()))
 }
 
 fn gene_to_view(gene: &Gene) -> GeneView {

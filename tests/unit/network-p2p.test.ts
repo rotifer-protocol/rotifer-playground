@@ -15,6 +15,7 @@ vi.mock("../../src/utils/display.js", () => ({
 vi.mock("../../src/utils/binding.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/utils/binding.js")>()),
   loadP2pNode: vi.fn(),
+  geneIdV2: vi.fn(),
 }));
 // Mock the daemon boundary so the command logic is tested without a real
 // daemon / native addon (the real control round-trip is covered by manual runs).
@@ -26,7 +27,9 @@ vi.mock("../../src/utils/p2p-daemon.js", () => ({
 }));
 
 import { networkCommand } from "../../src/commands/network.js";
-import { loadP2pNode } from "../../src/utils/binding.js";
+import { geneIdV2, loadP2pNode } from "../../src/utils/binding.js";
+
+const V2_ID = `v2:${"ab".repeat(32)}`;
 import {
   controlRequest,
   isDaemonRunning,
@@ -121,14 +124,19 @@ describe("network received", () => {
 });
 
 describe("network announce", () => {
-  it("relays the gene's phenotype fields to the daemon", async () => {
+  beforeEach(() => {
+    vi.mocked(geneIdV2).mockReturnValue({ id: V2_ID });
+  });
+
+  it("relays the gene's v2 ID and phenotype fields to the daemon", async () => {
     vi.mocked(controlRequest).mockResolvedValue(ctrlOk({ ok: true }));
     await networkCommand.parseAsync(["announce", "test-gene"], { from: "user" });
+    expect(geneIdV2).toHaveBeenCalledWith(expect.stringMatching(/genes$/), "test-gene");
     expect(controlRequest).toHaveBeenCalledWith(
       "POST",
       "/announce",
       expect.objectContaining({
-        geneId: "test-gene",
+        geneId: V2_ID,
         name: "test-gene",
         domain: "test",
         version: "1.2.3",
@@ -144,6 +152,17 @@ describe("network announce", () => {
     expect(display.error).toHaveBeenCalledWith(
       expect.stringContaining("not found"),
       expect.anything()
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("refuses a gene with no v2 ID and never sends its directory name", async () => {
+    vi.mocked(geneIdV2).mockReturnValue({ reason: "gene.ir.wasm does not exist" });
+    await networkCommand.parseAsync(["announce", "test-gene"], { from: "user" });
+    expect(controlRequest).not.toHaveBeenCalled();
+    expect(display.error).toHaveBeenCalledWith(
+      expect.stringContaining("no v2 gene ID"),
+      "gene.ir.wasm does not exist"
     );
     expect(process.exitCode).toBe(1);
   });

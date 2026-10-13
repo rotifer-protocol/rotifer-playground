@@ -9,6 +9,7 @@
 //! - [`algebra`] — Gene composition operators: `Seq`, `Par`, `Cond`, `Try`, `Transform`.
 //! - [`fitness`] — Fitness scoring and admission gate per §5.
 //! - [`compiler`] — IR compiler pipeline: custom sections, injection, verification.
+//! - [`gene_id`] — Gene ID v2: content-derived gene identity (`docs/gene-id-v2.md`).
 //! - [`storage`] — Persistent gene, agent, and arena storage (SQLite).
 //! - [`agent`] — Agent lifecycle management.
 
@@ -19,6 +20,7 @@ pub mod arena;
 pub mod algebra;
 pub mod fitness;
 pub mod compiler;
+pub mod gene_id;
 pub mod storage;
 pub mod agent;
 pub mod reputation;

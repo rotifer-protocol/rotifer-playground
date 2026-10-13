@@ -184,6 +184,29 @@ export function loadP2pNode(
   return new Ctor(listenHost, listenPort, bootstrapPeers);
 }
 
+/** Outcome of computing a gene's v2 ID: the ID, or why it has none. */
+export type GeneIdV2Result = { id: string } | { reason: string };
+
+/**
+ * Gene ID v2 of the gene `name` under `genesRoot` (docs/gene-id-v2.md).
+ * Computed by the native addon — the single implementation — so it is
+ * unavailable in a pure-TS environment.
+ */
+export function geneIdV2(genesRoot: string, name: string): GeneIdV2Result {
+  const fn = loadRawModule()?.geneIdV2 as ((root: string, name: string) => string) | undefined;
+  if (typeof fn !== "function") return { reason: "native module not available" };
+  try {
+    return { id: fn(genesRoot, name) };
+  } catch (err) {
+    return { reason: (err as Error).message.replace(/^gene ID not computable: /, "") };
+  }
+}
+
+/** Whether the loaded native addon can compute v2 gene IDs (an older installed package cannot). */
+export function hasNativeGeneIdV2(): boolean {
+  return typeof loadRawModule()?.geneIdV2 === "function";
+}
+
 export function isNativeAvailable(): boolean {
   return tryLoadBinding() !== null;
 }

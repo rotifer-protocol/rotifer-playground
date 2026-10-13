@@ -3163,6 +3163,7 @@ dependencies = [
  "chrono",
  "hex",
  "libp2p",
+ "prost",
  "rmp-serde",
  "rusqlite",
  "serde",

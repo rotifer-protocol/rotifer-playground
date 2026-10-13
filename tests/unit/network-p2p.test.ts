@@ -95,12 +95,13 @@ describe("network received", () => {
       ctrlOk({
         announcements: [
           {
-            geneId: "g1",
+            geneId: V2_ID,
             name: "polymarket-scanner",
             domain: "finance",
             version: "0.3.0",
             fidelity: "Native",
-            publisher: "rt_pub",
+            irSpec: "0.2.0",
+            publisher: "12D3KooWabc",
             source: "12D3KooWabc",
           },
         ],
@@ -128,22 +129,16 @@ describe("network announce", () => {
     vi.mocked(geneIdV2).mockReturnValue({ id: V2_ID });
   });
 
-  it("relays the gene's v2 ID and phenotype fields to the daemon", async () => {
-    vi.mocked(controlRequest).mockResolvedValue(ctrlOk({ ok: true }));
+  it("checks the gene's v2 ID, then asks the daemon to announce it by name", async () => {
+    vi.mocked(controlRequest).mockResolvedValue(ctrlOk({ ok: true, geneId: V2_ID }));
     await networkCommand.parseAsync(["announce", "test-gene"], { from: "user" });
     expect(geneIdV2).toHaveBeenCalledWith(expect.stringMatching(/genes$/), "test-gene");
-    expect(controlRequest).toHaveBeenCalledWith(
-      "POST",
-      "/announce",
-      expect.objectContaining({
-        geneId: V2_ID,
-        name: "test-gene",
-        domain: "test",
-        version: "1.2.3",
-        fidelity: "Native",
-      })
-    );
+    expect(controlRequest).toHaveBeenCalledWith("POST", "/announce", {
+      genesRoot: expect.stringMatching(/genes$/),
+      name: "test-gene",
+    });
     expect(display.success).toHaveBeenCalled();
+    expect(kvArgs()).toContain(V2_ID);
   });
 
   it("errors (without a control request) when the gene is missing", async () => {

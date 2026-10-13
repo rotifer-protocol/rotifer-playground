@@ -138,8 +138,11 @@ export interface ReceivedAnnouncement {
   geneId: string;
   name: string;
   domain: string;
+  /** Display label claimed by the publisher — not part of the identity. */
   version: string;
   fidelity: string;
+  irSpec: string;
+  /** GossipSub-authenticated publisher PeerId. */
   publisher: string;
   source?: string;
 }
@@ -154,13 +157,8 @@ export interface P2pNodeHandle {
   listenAddrs(): string[];
   discoveredPeers(): string[];
   receivedAnnouncements(): ReceivedAnnouncement[];
-  announceGene(
-    geneId: string,
-    name: string,
-    domain: string,
-    version: string,
-    fidelity: string
-  ): void;
+  /** Announce the local gene `name` under `genesRoot`; returns its v2 ID. */
+  announceLocalGene(genesRoot: string, name: string): string;
   stop(): void;
 }
 

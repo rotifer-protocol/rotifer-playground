@@ -93,8 +93,10 @@ rotifer network peers     # lists A's PeerId within a second or two
 
 ### A4. Announce on A, receive on B
 
-`announce` needs a directory holding `genes/<name>/phenotype.json`. `rotifer
-init` scaffolds one (the example gene `hello-world`):
+`announce` needs a directory holding `genes/<name>/phenotype.json`, and the gene
+must have a content-derived [gene ID](gene-id-v2.md) — the network carries that
+ID, never the directory name. `rotifer init` scaffolds a gene that has one (the
+example gene `hello-world`):
 
 ```bash
 # on machine A
@@ -201,10 +203,22 @@ You should see the announcement, tagged with A's PeerId as the source:
 
 ```
 Received Gene Announcements
-  my-gene@1.2.3: my.domain · Native · from 12D3KooW…A
+  my-gene@1.2.3: my.domain · Native · v2:3f1c9a07e2b4… · from 12D3KooW…A
 ```
 
+The `v2:…` gene ID is derived from the gene's content. The name and version are
+labels the publisher claims; the publisher itself is the authenticated PeerId.
+
 ## Troubleshooting
+
+- **`announce` says the gene has no v2 gene ID.** The message names the reason:
+  a Native or Hybrid gene must be compiled first (`rotifer compile <name>`
+  writes `gene.ir.wasm`); a Wrapped gene whose directory holds more than one
+  candidate source file needs a `sources` list in `phenotype.json`. See
+  [gene-id-v2.md §5](gene-id-v2.md#5-not-computable).
+- **Every machine must speak the same wire format.** Releases up to 0.26.2 used a
+  JSON placeholder on a different topic; nodes on those versions and nodes on
+  wire format v1 do not see each other's announcements. Upgrade all machines.
 
 - **`peers` stays empty / nothing received.** Confirm all machines are on the
   same LAN and that you used A's `192.168.x.x` multiaddr (not `127.0.0.1`). On

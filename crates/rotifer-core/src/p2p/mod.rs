@@ -43,17 +43,25 @@ pub struct PeerAddr {
     pub last_seen: u64,
 }
 
-/// Gene metadata announcement broadcast via GossipSub.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Gene announcement broadcast via GossipSub — the frozen wire record
+/// (`proto/p2p-wire-v1.proto`). The publisher is not a field: it is the
+/// GossipSub-authenticated source of the message, which cannot be forged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GeneAnnouncement {
+    /// Content-derived v2 gene ID (`docs/gene-id-v2.md`).
     pub gene_id: String,
+    /// Display only, as claimed by the announcing node.
     pub name: String,
     pub domain: String,
-    pub version: String,
+    /// `Native` | `Wrapped` | `Hybrid`.
     pub fidelity: String,
-    pub publisher: PeerId,
-    pub reputation_score: f64,
-    pub timestamp: u64,
+    /// IR spec version of a compiled gene; empty for Wrapped.
+    pub ir_spec: String,
+    /// SemVer label — display only, as claimed by the announcing node. Not
+    /// part of the identity and not a basis for trust.
+    pub version: String,
+    /// Unix milliseconds.
+    pub timestamp_ms: u64,
 }
 
 /// Discovery query for finding genes by domain or keyword.
@@ -216,9 +224,8 @@ mod tests {
             domain: "test".into(),
             version: "0.1.0".into(),
             fidelity: "Native".into(),
-            publisher: PeerId("me".into()),
-            reputation_score: 0.5,
-            timestamp: 0,
+            ir_spec: "".into(),
+            timestamp_ms: 0,
         };
         assert!(net.announce(ann).is_err());
     }
@@ -236,9 +243,8 @@ mod tests {
             domain: "test".into(),
             version: "0.1.0".into(),
             fidelity: "Native".into(),
-            publisher: PeerId("me".into()),
-            reputation_score: 0.5,
-            timestamp: 0,
+            ir_spec: "".into(),
+            timestamp_ms: 0,
         };
         assert!(net.announce(ann).is_ok());
     }
@@ -294,15 +300,14 @@ mod tests {
             domain: "search.web".into(),
             version: "0.1.0".into(),
             fidelity: "Native".into(),
-            publisher: PeerId("peer-1".into()),
-            reputation_score: 0.85,
-            timestamp: 1000,
+            ir_spec: "".into(),
+            timestamp_ms: 1000,
         };
         let json = serde_json::to_string(&ann).unwrap();
         let decoded: GeneAnnouncement = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.gene_id, "id-123");
         assert_eq!(decoded.name, "my-gene");
-        assert_eq!(decoded.reputation_score, 0.85);
+        assert_eq!(decoded, ann);
     }
 
     #[test]

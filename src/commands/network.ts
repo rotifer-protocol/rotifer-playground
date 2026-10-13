@@ -240,11 +240,13 @@ export const networkCommand = new Command("network")
           return;
         }
         for (const a of anns) {
-          const from = (a.source ?? a.publisher).slice(0, 16);
-          display.kv(`${a.name}@${a.version}`, `${a.domain} · ${a.fidelity} · from ${from}…`);
+          const from = (a.publisher ?? a.source ?? "").slice(0, 16);
+          const label = a.version ? `${a.name}@${a.version}` : a.name;
+          display.kv(label, `${a.domain} · ${a.fidelity} · ${a.geneId.slice(0, 15)}… · from ${from}…`);
         }
         console.log();
         display.hint(`${anns.length} announcement(s) received`);
+        display.hint("Names and versions are labels claimed by the publisher; the gene ID is derived from the content.");
       })
   )
   .addCommand(
@@ -276,17 +278,10 @@ export const networkCommand = new Command("network")
           process.exitCode = 1;
           return;
         }
-        let pheno: { name?: string; domain?: string; version?: string; fidelity?: string };
-        try {
-          pheno = JSON.parse(readFileSync(phenotypePath, "utf-8"));
-        } catch (err) {
-          display.error("Failed to read phenotype.json", (err as Error).message);
-          process.exitCode = 1;
-          return;
-        }
 
         // The wire carries the content-derived v2 ID, never the directory name.
-        const idResult = geneIdV2(join(process.cwd(), "genes"), geneName);
+        const genesRoot = join(process.cwd(), "genes");
+        const idResult = geneIdV2(genesRoot, geneName);
         if (!("id" in idResult)) {
           display.error(`Gene '${geneName}' has no v2 gene ID`, idResult.reason);
           display.hint("See docs/gene-id-v2.md §5 for what makes an ID computable.");
@@ -294,13 +289,7 @@ export const networkCommand = new Command("network")
           return;
         }
 
-        const result = await controlRequest("POST", "/announce", {
-          geneId: idResult.id,
-          name: pheno.name ?? geneName,
-          domain: pheno.domain ?? "",
-          version: pheno.version ?? "0.0.0",
-          fidelity: pheno.fidelity ?? "Unknown",
-        });
+        const result = await controlRequest("POST", "/announce", { genesRoot, name: geneName });
         if (!result) {
           display.warn("P2P daemon is not running. Run 'rotifer network start' first.");
           return;

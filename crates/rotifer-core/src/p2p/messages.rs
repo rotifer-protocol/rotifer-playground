@@ -21,6 +21,38 @@ pub fn decode_announcement(bytes: &[u8]) -> Result<GeneAnnouncement, NetworkErro
     serde_json::from_slice(bytes).map_err(|e| NetworkError::Transport(e.to_string()))
 }
 
+/// Canonical GossipSub topic for gene announcements (RFC §6.2).
+pub const ANNOUNCEMENTS_TOPIC: &str = "/rotifer/announcements";
+
+/// Why a received announcement was dropped instead of surfaced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rejection {
+    /// The payload does not decode as a `GeneAnnouncement`.
+    Malformed,
+    /// The self-declared `publisher` field names someone other than the
+    /// GossipSub-authenticated source (impersonation attempt, §8.3).
+    PublisherMismatch,
+    /// The timestamp lies outside the anti-replay window (§6.4).
+    Stale,
+}
+
+/// Decide whether a received announcement payload is surfaced to the user.
+/// `source` is the GossipSub-authenticated publisher PeerId.
+pub fn accept_announcement(
+    data: &[u8],
+    source: Option<&str>,
+    now_secs: u64,
+) -> Result<GeneAnnouncement, Rejection> {
+    let ann = decode_announcement(data).map_err(|_| Rejection::Malformed)?;
+    if source != Some(ann.publisher.0.as_str()) {
+        return Err(Rejection::PublisherMismatch);
+    }
+    if !is_timestamp_fresh(ann.timestamp, now_secs) {
+        return Err(Rejection::Stale);
+    }
+    Ok(ann)
+}
+
 /// Maximum acceptable clock skew on incoming announcements (anti-replay).
 pub const MAX_TIMESTAMP_SKEW_SECS: u64 = 300; // 5 minutes
 
@@ -184,6 +216,35 @@ mod tests {
         // reject stale messages. Stage 1 only verifies the timestamp survives
         // round-trip so future logic can reject it.
         assert!(decoded.timestamp < now() - MAX_TIMESTAMP_SKEW_SECS);
+    }
+
+    // -----------------------------------------------------------------
+    // Receive-side acceptance: impersonation, replay window, malformed
+    // -----------------------------------------------------------------
+    #[test]
+    fn accept_announcement_checks_source_and_window() {
+        let ann = fixture();
+        let bytes = encode_announcement(&ann).unwrap();
+        let t = ann.timestamp;
+        assert!(accept_announcement(&bytes, Some("peer-001"), t).is_ok());
+        assert_eq!(
+            accept_announcement(&bytes, Some("peer-999"), t).unwrap_err(),
+            Rejection::PublisherMismatch
+        );
+        assert_eq!(
+            accept_announcement(&bytes, None, t).unwrap_err(),
+            Rejection::PublisherMismatch,
+            "an unauthenticated message cannot vouch for its publisher field"
+        );
+        assert_eq!(
+            accept_announcement(&bytes, Some("peer-001"), t + MAX_TIMESTAMP_SKEW_SECS + 1)
+                .unwrap_err(),
+            Rejection::Stale
+        );
+        assert_eq!(
+            accept_announcement(b"junk", Some("peer-001"), t).unwrap_err(),
+            Rejection::Malformed
+        );
     }
 
     // -----------------------------------------------------------------

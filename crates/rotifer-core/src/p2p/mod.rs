@@ -21,6 +21,10 @@ pub mod security;
 #[cfg(test)]
 mod spike;
 
+// Attacks on a real node over loopback (test-only, p2p-integration).
+#[cfg(test)]
+mod adversarial;
+
 /// Protocol identifier for gene discovery.
 pub const GENE_DISCOVERY_PROTOCOL: &str = "/rotifer/gene-discovery/1.0.0";
 

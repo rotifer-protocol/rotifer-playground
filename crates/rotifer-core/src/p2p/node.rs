@@ -92,6 +92,34 @@ const MAX_ESTABLISHED_OUTGOING: u32 = 256;
 /// Deny new connections once process memory exceeds this fraction of system RAM.
 const MAX_MEMORY_PERCENTAGE: f64 = 0.9;
 
+/// Upper bound on buffered inbound GossipSub messages. Each sender is
+/// rate-limited, but many identities together are not (Sybil), so the buffer
+/// itself must be bounded or it grows without limit; the oldest drop first.
+const MAX_RECEIVED_MESSAGES: usize = 1024;
+
+/// How long GossipSub remembers a message id to drop re-deliveries. It must
+/// span the whole anti-replay window (±`MAX_TIMESTAMP_SKEW_SECS`): the
+/// timestamp check rejects replays after the window, this cache rejects them
+/// inside it. libp2p's 60s default left a 1–5 minute replay gap.
+const GOSSIP_DUPLICATE_CACHE: Duration =
+    Duration::from_secs(2 * super::messages::MAX_TIMESTAMP_SKEW_SECS);
+
+fn gossipsub_config() -> gossipsub::Config {
+    gossipsub::ConfigBuilder::default()
+        .duplicate_cache_time(GOSSIP_DUPLICATE_CACHE)
+        .build()
+        .expect("gossipsub config is valid")
+}
+
+/// Append `msg`, evicting the oldest entries beyond `cap`.
+fn push_bounded(buf: &mut Vec<ReceivedMessage>, msg: ReceivedMessage, cap: usize) {
+    buf.push(msg);
+    if buf.len() > cap {
+        let excess = buf.len() - cap;
+        buf.drain(..excess);
+    }
+}
+
 #[derive(NetworkBehaviour)]
 struct NodeBehaviour {
     kademlia: kad::Behaviour<MemoryStore>,
@@ -314,6 +342,26 @@ impl Node {
     /// GossipSub messages received so far, each with its authenticated publisher.
     pub fn received_messages(&self) -> Vec<ReceivedMessage> {
         self.received.lock().map(|m| m.clone()).unwrap_or_default()
+    }
+
+    /// Gene announcements received on the announcements topic that pass
+    /// [`super::messages::accept_announcement`], each paired with its
+    /// authenticated source PeerId.
+    pub fn received_announcements(&self) -> Vec<(super::GeneAnnouncement, Option<String>)> {
+        use super::messages::{accept_announcement, ANNOUNCEMENTS_TOPIC};
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.received_messages()
+            .into_iter()
+            .filter(|m| m.topic == ANNOUNCEMENTS_TOPIC)
+            .filter_map(|m| {
+                accept_announcement(&m.data, m.source.as_deref(), now)
+                    .ok()
+                    .map(|a| (a, m.source))
+            })
+            .collect()
     }
 
     /// Number of inbound messages dropped by the per-peer rate limiter (§8.6).
@@ -644,9 +692,9 @@ fn build_swarm(
             kademlia.set_mode(Some(kad::Mode::Server));
             let gossipsub = gossipsub::Behaviour::new(
                 gossipsub::MessageAuthenticity::Signed(key.clone()),
-                gossipsub::Config::default(),
+                gossipsub_config(),
             )
-            .expect("default gossipsub config is valid");
+            .expect("gossipsub config is valid");
             let identify = identify::Behaviour::new(identify::Config::new(
                 IDENTIFY_PROTOCOL_VERSION.to_string(),
                 key.public(),
@@ -855,11 +903,15 @@ async fn run_event_loop(
                     let sender = PeerId(propagation_source.to_string());
                     if security.record_message(&sender).is_ok() {
                         if let Ok(mut msgs) = received.lock() {
-                            msgs.push(ReceivedMessage {
-                                topic: message.topic.to_string(),
-                                data: message.data,
-                                source: message.source.map(|p| p.to_string()),
-                            });
+                            push_bounded(
+                                &mut msgs,
+                                ReceivedMessage {
+                                    topic: message.topic.to_string(),
+                                    data: message.data,
+                                    source: message.source.map(|p| p.to_string()),
+                                },
+                                MAX_RECEIVED_MESSAGES,
+                            );
                         }
                     } else if let Ok(mut n) = rate_limited.lock() {
                         *n += 1;
@@ -1174,6 +1226,37 @@ mod tests {
             IDENTIFY_PROTOCOL_VERSION.starts_with("/rotifer/"),
             "identify protocol version must be /rotifer/-namespaced, got {IDENTIFY_PROTOCOL_VERSION}"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Replay inside the freshness window is de-duplicated by GossipSub
+    // -----------------------------------------------------------------
+    #[test]
+    fn gossip_duplicate_cache_spans_the_replay_window() {
+        let window = Duration::from_secs(2 * super::super::messages::MAX_TIMESTAMP_SKEW_SECS);
+        assert!(
+            gossipsub_config().duplicate_cache_time() >= window,
+            "a re-injected message still inside the timestamp window must hit the duplicate cache"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Inbound message buffer is bounded (many identities, each under the
+    // per-peer rate limit, must not grow memory without limit)
+    // -----------------------------------------------------------------
+    #[test]
+    fn received_buffer_is_bounded_and_drops_oldest() {
+        let mut buf = Vec::new();
+        for i in 0..10u8 {
+            push_bounded(
+                &mut buf,
+                ReceivedMessage { topic: "t".into(), data: vec![i], source: None },
+                4,
+            );
+        }
+        assert_eq!(buf.len(), 4);
+        assert_eq!(buf.first().unwrap().data, vec![6], "oldest entries are evicted first");
+        assert_eq!(buf.last().unwrap().data, vec![9]);
     }
 
     // -----------------------------------------------------------------

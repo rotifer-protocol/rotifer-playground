@@ -1,0 +1,483 @@
+{
+  "spec": "docs/gene-id-v2.md",
+  "generator": "scripts/gene-id-v2-reference.py write",
+  "vectors": [
+    {
+      "name": "jcs-numbers",
+      "kind": "jcs",
+      "value": [
+        0,
+        -0.0,
+        1,
+        -1,
+        1.5,
+        0.7,
+        100.0,
+        1e+21,
+        1e-07,
+        1e-06,
+        1.2345678901234568e+20,
+        5e-324,
+        1.7976931348623157e+308,
+        333333333.3333333,
+        9007199254740991
+      ],
+      "expected": "[0,0,1,-1,1.5,0.7,100,1e+21,1e-7,0.000001,123456789012345680000,5e-324,1.7976931348623157e+308,333333333.3333333,9007199254740991]"
+    },
+    {
+      "name": "jcs-keys-and-strings",
+      "kind": "jcs",
+      "value": {
+        "b": 1,
+        "a": "\u0000\t\"\\é€😀",
+        "10": true,
+        "2": null,
+        "__proto__": [],
+        "é": 0,
+        "😀": 1,
+        "ﬁ": 2
+      },
+      "expected": "{\"10\":true,\"2\":null,\"__proto__\":[],\"a\":\"\\u0000\\t\\\"\\\\é€😀\",\"b\":1,\"é\":0,\"😀\":1,\"ﬁ\":2}"
+    },
+    {
+      "name": "wrapped-convention-entry",
+      "kind": "gene",
+      "phenotype": {
+        "name": "writer",
+        "domain": "content.writing",
+        "fidelity": "Wrapped",
+        "version": "1.0.0",
+        "author": "alice",
+        "createdAt": 1760000000000,
+        "description": "A writing gene",
+        "tags": [
+          "a"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "temperature": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1.5,
+              "default": 0.7
+            },
+            "10": {
+              "type": "string"
+            },
+            "2": {
+              "type": "string"
+            },
+            "__proto__": {
+              "type": "string"
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 100000
+            }
+          }
+        },
+        "semanticRequirements": {
+          "tone": "neutral"
+        }
+      },
+      "files": {
+        "SKILL.md": "23205772697465720d0a52c3a973756dc3a920e29c8defb88f20e2809420e58699e4bd9ce58aa9e6898b0a"
+      },
+      "expected": {
+        "bodyDigest": "dd99b0a3829b737b56f896ca7411d00e5331407c125b27f0dfce1c9b3ca947f5",
+        "projection": "{\"constraints\":null,\"dependencies\":[],\"domain\":\"content.writing\",\"fidelity\":\"Wrapped\",\"inputSchema\":{\"properties\":{\"10\":{\"type\":\"string\"},\"2\":{\"type\":\"string\"},\"__proto__\":{\"type\":\"string\"},\"temperature\":{\"default\":0.7,\"maximum\":1.5,\"minimum\":0,\"type\":\"number\"}},\"type\":\"object\"},\"irSpec\":null,\"network\":null,\"outputSchema\":{\"properties\":{\"text\":{\"maxLength\":100000,\"type\":\"string\"}},\"type\":\"object\"},\"semanticRequirements\":{\"tone\":\"neutral\"}}",
+        "id": "v2:e81036eed992dcd386c07bdeeeed166ae172ff8648ebe64f5a52fbb6bd9bf5f1"
+      }
+    },
+    {
+      "name": "wrapped-metadata-changed",
+      "kind": "gene",
+      "phenotype": {
+        "name": "writer",
+        "domain": "content.writing",
+        "fidelity": "Wrapped",
+        "version": "9.9.9",
+        "author": "bob",
+        "createdAt": 1,
+        "description": "different",
+        "tags": [
+          "z"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "temperature": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1.5,
+              "default": 0.7
+            },
+            "10": {
+              "type": "string"
+            },
+            "2": {
+              "type": "string"
+            },
+            "__proto__": {
+              "type": "string"
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 100000
+            }
+          }
+        },
+        "semanticRequirements": {
+          "tone": "neutral"
+        }
+      },
+      "files": {
+        "SKILL.md": "23205772697465720d0a52c3a973756dc3a920e29c8defb88f20e2809420e58699e4bd9ce58aa9e6898b0a"
+      },
+      "note": "must equal wrapped-convention-entry: author / createdAt / version / description / tags are not in the ID",
+      "expected": {
+        "bodyDigest": "dd99b0a3829b737b56f896ca7411d00e5331407c125b27f0dfce1c9b3ca947f5",
+        "projection": "{\"constraints\":null,\"dependencies\":[],\"domain\":\"content.writing\",\"fidelity\":\"Wrapped\",\"inputSchema\":{\"properties\":{\"10\":{\"type\":\"string\"},\"2\":{\"type\":\"string\"},\"__proto__\":{\"type\":\"string\"},\"temperature\":{\"default\":0.7,\"maximum\":1.5,\"minimum\":0,\"type\":\"number\"}},\"type\":\"object\"},\"irSpec\":null,\"network\":null,\"outputSchema\":{\"properties\":{\"text\":{\"maxLength\":100000,\"type\":\"string\"}},\"type\":\"object\"},\"semanticRequirements\":{\"tone\":\"neutral\"}}",
+        "id": "v2:e81036eed992dcd386c07bdeeeed166ae172ff8648ebe64f5a52fbb6bd9bf5f1"
+      }
+    },
+    {
+      "name": "wrapped-declared-sources",
+      "kind": "gene",
+      "phenotype": {
+        "name": "writer",
+        "domain": "content.writing",
+        "fidelity": "Wrapped",
+        "version": "1.0.0",
+        "author": "alice",
+        "createdAt": 1760000000000,
+        "description": "A writing gene",
+        "tags": [
+          "a"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "temperature": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1.5,
+              "default": 0.7
+            },
+            "10": {
+              "type": "string"
+            },
+            "2": {
+              "type": "string"
+            },
+            "__proto__": {
+              "type": "string"
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 100000
+            }
+          }
+        },
+        "semanticRequirements": {
+          "tone": "neutral"
+        },
+        "sources": [
+          "prompts/b.md",
+          "a.md"
+        ]
+      },
+      "files": {
+        "prompts/b.md": "420a",
+        "a.md": "410a"
+      },
+      "expected": {
+        "bodyDigest": "cfb0eb12b0b47c982310be83533ae74df984ff1c21a04b52220ac0458044cfd3",
+        "projection": "{\"constraints\":null,\"dependencies\":[],\"domain\":\"content.writing\",\"fidelity\":\"Wrapped\",\"inputSchema\":{\"properties\":{\"10\":{\"type\":\"string\"},\"2\":{\"type\":\"string\"},\"__proto__\":{\"type\":\"string\"},\"temperature\":{\"default\":0.7,\"maximum\":1.5,\"minimum\":0,\"type\":\"number\"}},\"type\":\"object\"},\"irSpec\":null,\"network\":null,\"outputSchema\":{\"properties\":{\"text\":{\"maxLength\":100000,\"type\":\"string\"}},\"type\":\"object\"},\"semanticRequirements\":{\"tone\":\"neutral\"}}",
+        "id": "v2:2e98bd11ca34cf88e64abee4a3580d5e57b8e34999e9243e8b4f709716959e1f"
+      }
+    },
+    {
+      "name": "native-module",
+      "kind": "gene",
+      "phenotype": {
+        "name": "adder",
+        "domain": "math",
+        "fidelity": "Native",
+        "version": "0.1.0",
+        "author": "carol",
+        "createdAt": 5,
+        "inputSchema": {
+          "type": "object"
+        },
+        "outputSchema": {
+          "type": "number"
+        }
+      },
+      "irSpec": "0.2.0",
+      "constraints": {
+        "memory": {
+          "max_initial_pages": 16,
+          "max_grow_pages": 64,
+          "total_memory_limit": 5242880
+        },
+        "fuel": {
+          "max_fuel": 1000000,
+          "fuel_per_instruction": {
+            "arithmetic": 1,
+            "memory": 2,
+            "control": 1,
+            "host_call": 100
+          }
+        },
+        "output": {
+          "max_output_size": 1048576
+        },
+        "host_functions": [
+          "rotifer.log",
+          "rotifer.readContext",
+          "rotifer.remainingBudget",
+          "rotifer.logicalTimestamp"
+        ]
+      },
+      "wasm_hex": "0061736d010000000105016000017f0302010005030100010707010372756e000000030178790a06010400412a0b0b08010041000b026869",
+      "expected": {
+        "bodyDigest": "8a1bc9721388cf556c689d3b2f38449d7a68d8dd268b66fbfe9226796391f3cb",
+        "projection": "{\"constraints\":{\"fuel\":{\"fuel_per_instruction\":{\"arithmetic\":1,\"control\":1,\"host_call\":100,\"memory\":2},\"max_fuel\":1000000},\"host_functions\":[\"rotifer.log\",\"rotifer.readContext\",\"rotifer.remainingBudget\",\"rotifer.logicalTimestamp\"],\"memory\":{\"max_grow_pages\":64,\"max_initial_pages\":16,\"total_memory_limit\":5242880},\"output\":{\"max_output_size\":1048576}},\"dependencies\":[],\"domain\":\"math\",\"fidelity\":\"Native\",\"inputSchema\":{\"type\":\"object\"},\"irSpec\":\"0.2.0\",\"network\":null,\"outputSchema\":{\"type\":\"number\"},\"semanticRequirements\":null}",
+        "id": "v2:ec7953376b77d447c2759dfbe9c4eb02ef8e9e28613bd2ba8dd3c42181dee1bd"
+      }
+    },
+    {
+      "name": "native-module-without-custom-section",
+      "kind": "gene",
+      "phenotype": {
+        "name": "adder",
+        "domain": "math",
+        "fidelity": "Native",
+        "version": "0.1.0",
+        "author": "carol",
+        "createdAt": 5,
+        "inputSchema": {
+          "type": "object"
+        },
+        "outputSchema": {
+          "type": "number"
+        }
+      },
+      "irSpec": "0.2.0",
+      "constraints": {
+        "memory": {
+          "max_initial_pages": 16,
+          "max_grow_pages": 64,
+          "total_memory_limit": 5242880
+        },
+        "fuel": {
+          "max_fuel": 1000000,
+          "fuel_per_instruction": {
+            "arithmetic": 1,
+            "memory": 2,
+            "control": 1,
+            "host_call": 100
+          }
+        },
+        "output": {
+          "max_output_size": 1048576
+        },
+        "host_functions": [
+          "rotifer.log",
+          "rotifer.readContext",
+          "rotifer.remainingBudget",
+          "rotifer.logicalTimestamp"
+        ]
+      },
+      "wasm_hex": "0061736d010000000105016000017f0302010005030100010707010372756e00000a06010400412a0b0b08010041000b026869",
+      "note": "must equal native-module: custom sections are excluded",
+      "expected": {
+        "bodyDigest": "8a1bc9721388cf556c689d3b2f38449d7a68d8dd268b66fbfe9226796391f3cb",
+        "projection": "{\"constraints\":{\"fuel\":{\"fuel_per_instruction\":{\"arithmetic\":1,\"control\":1,\"host_call\":100,\"memory\":2},\"max_fuel\":1000000},\"host_functions\":[\"rotifer.log\",\"rotifer.readContext\",\"rotifer.remainingBudget\",\"rotifer.logicalTimestamp\"],\"memory\":{\"max_grow_pages\":64,\"max_initial_pages\":16,\"total_memory_limit\":5242880},\"output\":{\"max_output_size\":1048576}},\"dependencies\":[],\"domain\":\"math\",\"fidelity\":\"Native\",\"inputSchema\":{\"type\":\"object\"},\"irSpec\":\"0.2.0\",\"network\":null,\"outputSchema\":{\"type\":\"number\"},\"semanticRequirements\":null}",
+        "id": "v2:ec7953376b77d447c2759dfbe9c4eb02ef8e9e28613bd2ba8dd3c42181dee1bd"
+      }
+    },
+    {
+      "name": "native-module-different-data",
+      "kind": "gene",
+      "phenotype": {
+        "name": "adder",
+        "domain": "math",
+        "fidelity": "Native",
+        "version": "0.1.0",
+        "author": "carol",
+        "createdAt": 5,
+        "inputSchema": {
+          "type": "object"
+        },
+        "outputSchema": {
+          "type": "number"
+        }
+      },
+      "irSpec": "0.2.0",
+      "constraints": {
+        "memory": {
+          "max_initial_pages": 16,
+          "max_grow_pages": 64,
+          "total_memory_limit": 5242880
+        },
+        "fuel": {
+          "max_fuel": 1000000,
+          "fuel_per_instruction": {
+            "arithmetic": 1,
+            "memory": 2,
+            "control": 1,
+            "host_call": 100
+          }
+        },
+        "output": {
+          "max_output_size": 1048576
+        },
+        "host_functions": [
+          "rotifer.log",
+          "rotifer.readContext",
+          "rotifer.remainingBudget",
+          "rotifer.logicalTimestamp"
+        ]
+      },
+      "wasm_hex": "0061736d010000000105016000017f0302010005030100010707010372756e000000030178790a06010400412a0b0b08010041000b02686f",
+      "note": "must differ from native-module: the data section is covered",
+      "expected": {
+        "bodyDigest": "073b6b0e2a58ea1d4199c4a439c8a6b1ccd896fe866c82bba2966f6cf16457d2",
+        "projection": "{\"constraints\":{\"fuel\":{\"fuel_per_instruction\":{\"arithmetic\":1,\"control\":1,\"host_call\":100,\"memory\":2},\"max_fuel\":1000000},\"host_functions\":[\"rotifer.log\",\"rotifer.readContext\",\"rotifer.remainingBudget\",\"rotifer.logicalTimestamp\"],\"memory\":{\"max_grow_pages\":64,\"max_initial_pages\":16,\"total_memory_limit\":5242880},\"output\":{\"max_output_size\":1048576}},\"dependencies\":[],\"domain\":\"math\",\"fidelity\":\"Native\",\"inputSchema\":{\"type\":\"object\"},\"irSpec\":\"0.2.0\",\"network\":null,\"outputSchema\":{\"type\":\"number\"},\"semanticRequirements\":null}",
+        "id": "v2:1fa338887ebcc542f102377ab3f8e99c5f1d90a4e5d1f0798a46ccb34f174674"
+      }
+    },
+    {
+      "name": "hybrid-module",
+      "kind": "gene",
+      "phenotype": {
+        "name": "adder",
+        "domain": "math",
+        "fidelity": "Hybrid",
+        "version": "0.1.0",
+        "author": "carol",
+        "createdAt": 5,
+        "inputSchema": {
+          "type": "object"
+        },
+        "outputSchema": {
+          "type": "number"
+        },
+        "network": {
+          "allowedDomains": [
+            "api.example.com"
+          ],
+          "maxTimeoutMs": 5000,
+          "maxResponseBytes": 1048576,
+          "maxRequestsPerMin": 30
+        }
+      },
+      "irSpec": "0.2.0",
+      "constraints": {
+        "memory": {
+          "max_initial_pages": 16,
+          "max_grow_pages": 64,
+          "total_memory_limit": 5242880
+        },
+        "fuel": {
+          "max_fuel": 1000000,
+          "fuel_per_instruction": {
+            "arithmetic": 1,
+            "memory": 2,
+            "control": 1,
+            "host_call": 100
+          }
+        },
+        "output": {
+          "max_output_size": 1048576
+        },
+        "host_functions": [
+          "rotifer.log",
+          "rotifer.readContext",
+          "rotifer.remainingBudget",
+          "rotifer.logicalTimestamp"
+        ]
+      },
+      "wasm_hex": "0061736d010000000105016000017f0302010005030100010707010372756e000000030178790a06010400412a0b0b08010041000b026869",
+      "expected": {
+        "bodyDigest": "8a1bc9721388cf556c689d3b2f38449d7a68d8dd268b66fbfe9226796391f3cb",
+        "projection": "{\"constraints\":{\"fuel\":{\"fuel_per_instruction\":{\"arithmetic\":1,\"control\":1,\"host_call\":100,\"memory\":2},\"max_fuel\":1000000},\"host_functions\":[\"rotifer.log\",\"rotifer.readContext\",\"rotifer.remainingBudget\",\"rotifer.logicalTimestamp\"],\"memory\":{\"max_grow_pages\":64,\"max_initial_pages\":16,\"total_memory_limit\":5242880},\"output\":{\"max_output_size\":1048576}},\"dependencies\":[],\"domain\":\"math\",\"fidelity\":\"Hybrid\",\"inputSchema\":{\"type\":\"object\"},\"irSpec\":\"0.2.0\",\"network\":{\"allowedDomains\":[\"api.example.com\"],\"maxRequestsPerMin\":30,\"maxResponseBytes\":1048576,\"maxTimeoutMs\":5000},\"outputSchema\":{\"type\":\"number\"},\"semanticRequirements\":null}",
+        "id": "v2:0be3248fa0a610d7e7ee19bc8c4f7c63807a6e6baef3f5a89132ba6a6e5075cb"
+      }
+    },
+    {
+      "name": "native-with-dependencies",
+      "kind": "gene",
+      "phenotype": {
+        "name": "adder",
+        "domain": "math",
+        "fidelity": "Native",
+        "version": "0.1.0",
+        "author": "carol",
+        "createdAt": 5,
+        "inputSchema": {
+          "type": "object"
+        },
+        "outputSchema": {
+          "type": "number"
+        }
+      },
+      "irSpec": "0.2.0",
+      "constraints": {
+        "memory": {
+          "max_initial_pages": 16,
+          "max_grow_pages": 64,
+          "total_memory_limit": 5242880
+        },
+        "fuel": {
+          "max_fuel": 1000000,
+          "fuel_per_instruction": {
+            "arithmetic": 1,
+            "memory": 2,
+            "control": 1,
+            "host_call": 100
+          }
+        },
+        "output": {
+          "max_output_size": 1048576
+        },
+        "host_functions": [
+          "rotifer.log",
+          "rotifer.readContext",
+          "rotifer.remainingBudget",
+          "rotifer.logicalTimestamp"
+        ]
+      },
+      "wasm_hex": "0061736d010000000105016000017f0302010005030100010707010372756e000000030178790a06010400412a0b0b08010041000b026869",
+      "dependencyIds": [
+        "v2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "v2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "v2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ],
+      "note": "dependencies are de-duplicated and sorted",
+      "expected": {
+        "bodyDigest": "8a1bc9721388cf556c689d3b2f38449d7a68d8dd268b66fbfe9226796391f3cb",
+        "projection": "{\"constraints\":{\"fuel\":{\"fuel_per_instruction\":{\"arithmetic\":1,\"control\":1,\"host_call\":100,\"memory\":2},\"max_fuel\":1000000},\"host_functions\":[\"rotifer.log\",\"rotifer.readContext\",\"rotifer.remainingBudget\",\"rotifer.logicalTimestamp\"],\"memory\":{\"max_grow_pages\":64,\"max_initial_pages\":16,\"total_memory_limit\":5242880},\"output\":{\"max_output_size\":1048576}},\"dependencies\":[\"v2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"v2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"],\"domain\":\"math\",\"fidelity\":\"Native\",\"inputSchema\":{\"type\":\"object\"},\"irSpec\":\"0.2.0\",\"network\":null,\"outputSchema\":{\"type\":\"number\"},\"semanticRequirements\":null}",
+        "id": "v2:bcd662621daaa101784a78637ae49d5d5633b74a781d0364d9fef1c86c4cd579"
+      }
+    }
+  ]
+}

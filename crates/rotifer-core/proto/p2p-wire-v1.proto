@@ -1,0 +1,44 @@
+// Rotifer P2P wire format, version 1 — FROZEN.
+//
+// Carried on the GossipSub topic /rotifer/p2p/1/announcements. Once frozen,
+// existing field numbers, types and meanings never change; new fields may be
+// added, and receivers ignore fields they do not know.
+//
+// Authentication is GossipSub's own (MessageAuthenticity::Signed): the
+// signature covers the whole payload, and the authenticated source IS the
+// publisher. There is deliberately no publisher field and no second
+// signature here.
+//
+// The Rust types in src/p2p/messages.rs mirror this file by hand; tests pin
+// its sha256 and check golden encodings in tests/fixtures/p2p-wire-v1/.
+
+syntax = "proto3";
+
+package rotifer.p2p.wire.v1;
+
+message GossipMessage {
+  oneof body {
+    GeneAnnouncement announcement = 1;
+    // 2 is allocated to GeneRetraction, 3 to PublicationRecord. Neither is
+    // defined yet; receivers ignore message bodies they do not know.
+  }
+}
+
+message GeneAnnouncement {
+  // Content-derived gene ID: "v2:" + 64 lowercase hex (docs/gene-id-v2.md).
+  string gene_id = 1;
+  // Display name, as claimed by the announcing node. At most 128 bytes.
+  string name = 2;
+  // Non-empty, at most 128 bytes.
+  string domain = 3;
+  // "Native" | "Wrapped" | "Hybrid".
+  string fidelity = 4;
+  // IR spec version of a compiled gene; empty for Wrapped. At most 32 bytes.
+  string ir_spec = 5;
+  // SemVer label, display only, as claimed by the announcing node. Not part
+  // of the identity and not a basis for trust. At most 64 bytes.
+  string version = 6;
+  // Unix milliseconds. Receivers reject announcements more than 300 000 ms
+  // away from their own clock.
+  uint64 timestamp_ms = 7;
+}

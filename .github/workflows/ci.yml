@@ -315,9 +315,10 @@ jobs:
           # compiled into the binary (it only lingers in Cargo.lock as a disabled
           # optional dependency). -0118 has no fixed release. Tracked: move to libp2p
           # component crates to drop it from the lockfile entirely.
-          # NOTE: the wasmtime ignore (RUSTSEC-2026-0114) is gone — wasmtime is now on
-          # 47.0.3, which fixes both -0114 and -0222. Do not re-add an ignore for the
-          # WASM sandbox: upgrade instead, since it is the Gene isolation boundary.
+          # NOTE: there is no wasmtime ignore, and there should not be one. wasmtime is
+          # pinned to the first release that carries the fixes (see Cargo.toml); when a
+          # new advisory lands, upgrade — do not add an ignore for the WASM sandbox,
+          # since it is the Gene isolation boundary.
           cargo audit --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119
 
       - name: npm dependency audit

@@ -3,7 +3,7 @@ members = ["crates/rotifer-core", "crates/rotifer-napi"]
 resolver = "2"
 
 [workspace.package]
-version = "0.26.1"
+version = "0.26.2"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/rotifer-protocol/rotifer-playground"
@@ -15,7 +15,7 @@ sha2 = "0.10"
 thiserror = "2"
 anyhow = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
-wasmtime = "47.0.3"
+wasmtime = "48.0.5"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["full"] }

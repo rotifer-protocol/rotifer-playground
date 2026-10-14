@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.3](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.26.2...v0.26.3) (2026-10-14)
+
+
+### Bug Fixes
+
+* **deps:** patch today's RustSec and npm advisories ([#376](https://github.com/rotifer-protocol/rotifer-playground/issues/376)) ([69070a9](https://github.com/rotifer-protocol/rotifer-playground/commit/69070a978e1ef58b185b437d8a22ca6ca6172b23))
+* **p2p:** reject forged, stale and future-dated announcements; add an adversarial suite ([#373](https://github.com/rotifer-protocol/rotifer-playground/issues/373)) ([6991411](https://github.com/rotifer-protocol/rotifer-playground/commit/6991411c6a2d46a85afedd95cca4f35b32d0d562))
+
 ## [0.26.2](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.26.1...v0.26.2) (2026-10-13)
 
 

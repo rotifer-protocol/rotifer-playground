@@ -15,7 +15,9 @@
 # Override or disable either by that id from your own profile's cordis.patch.yml.
 
 - insert:
-    # The four Rotifer skills, from this package's own skills/ directory.
+    # The four Rotifer skills, from this package's own skills/ directory: the
+    # three skill folders plus the single-file rotifer-overview card, which this
+    # provider reads as a skill too (the other hosts read only the folders).
     # includeDefaultRoots: false keeps this provider to that directory alone —
     # it never rescans your project or user skill roots, so it cannot shadow a
     # skill you wrote. The skills are read-only package files; nothing watches

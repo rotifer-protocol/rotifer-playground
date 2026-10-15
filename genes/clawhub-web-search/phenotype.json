@@ -88,6 +88,7 @@
   "author": "rotifer-team",
   "createdAt": "2026-04-02T02:44:47.982Z",
   "fidelity": "Wrapped",
+  "sources": ["SKILL.md", "index.ts", "scripts/search.py"],
   "transparency": "Open",
   "source": "clawhub",
   "clawhub": {

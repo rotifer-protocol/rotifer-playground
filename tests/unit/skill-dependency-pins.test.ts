@@ -46,11 +46,11 @@ describe("published Skills pin the packages they tell you to run", () => {
         const text = readFileSync(file, "utf8");
         for (const line of text.split("\n")) {
           UNPINNED.lastIndex = 0;
-          // Two ways to satisfy this gate: pin the version, or say on the same line that it is not
-          // pinned. The second exists because one path genuinely cannot be pinned here — the MCP
-          // server's own `npx -y @rotifer/playground` fallback for `run-agent` lives in the server,
-          // not in these files. Describing it is allowed; describing it silently is not.
-          if (UNPINNED.test(line) && !/unpinned/i.test(line)) {
+          // Until server 0.19.2 one path genuinely could not be pinned here — the MCP server's own
+          // `npx -y @rotifer/playground` fallback for `run-agent` lived unpinned in the server, and
+          // a line was allowed to name it as long as it said "unpinned". The server pins that
+          // fallback now, so every command a Skill names carries a version, no exemption.
+          if (UNPINNED.test(line)) {
             offenders.push(`${file.replace(process.cwd() + "/", "")}: ${line.trim()}`);
           }
         }

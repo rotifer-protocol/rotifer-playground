@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.26.3...v0.27.0) (2026-10-19)
+
+
+### Features
+
+* **genes:** declare source files for three bundled Wrapped genes ([#383](https://github.com/rotifer-protocol/rotifer-playground/issues/383)) ([f1540c6](https://github.com/rotifer-protocol/rotifer-playground/commit/f1540c6d6c1199d55cbe1294b709852477cc2ce4))
+* **identity:** gene ID v2 — a content-derived gene identity (docs/gene-id-v2.md); `rotifer network announce` sends it and refuses genes that have none ([927048c](https://github.com/rotifer-protocol/rotifer-playground/commit/927048c4074127ec6ce45a468f20224f96f6bf1f))
+* **p2p:** freeze P2P wire format v1 — protobuf announcements on /rotifer/p2p/1/announcements, validated before forwarding. Not compatible with 0.26.x and earlier, which use JSON on /rotifer/announcements: upgrade every machine in a P2P setup ([927048c](https://github.com/rotifer-protocol/rotifer-playground/commit/927048c4074127ec6ce45a468f20224f96f6bf1f))
+
+
+### Bug Fixes
+
+* **deps:** bump rustls to 0.23.46 for today's RustSec advisories ([#384](https://github.com/rotifer-protocol/rotifer-playground/issues/384)) ([43a54b2](https://github.com/rotifer-protocol/rotifer-playground/commit/43a54b2336bfbdc5db1f2c01a2522c5bcb392e6f))
+* **deps:** bump wasmtime to 48.0.6 for today's RustSec advisories ([#385](https://github.com/rotifer-protocol/rotifer-playground/issues/385)) ([22d8e4e](https://github.com/rotifer-protocol/rotifer-playground/commit/22d8e4e3454d8b9bbc6d3aad1db10bea7f1cdb48))
+
 ## [0.26.3](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.26.2...v0.26.3) (2026-10-14)
 
 

@@ -74,6 +74,7 @@
   "author": "rotifer-team",
   "createdAt": 1771939395955,
   "fidelity": "Wrapped",
+  "sources": ["SKILL.md", "index.ts"],
   "transparency": "Open",
   "source": "skill",
   "tags": [

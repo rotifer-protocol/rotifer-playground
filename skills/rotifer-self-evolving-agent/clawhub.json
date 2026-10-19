@@ -19,7 +19,7 @@
   "mcp_server": {
     "command": "npx",
     "args": [
-      "@rotifer/mcp-server@0.19.2",
+      "@rotifer/mcp-server@0.19.3",
       "--tools=evolve"
     ]
   },

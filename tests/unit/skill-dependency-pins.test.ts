@@ -46,7 +46,7 @@ describe("published Skills pin the packages they tell you to run", () => {
         const text = readFileSync(file, "utf8");
         for (const line of text.split("\n")) {
           UNPINNED.lastIndex = 0;
-          // Until server 0.19.2 one path genuinely could not be pinned here — the MCP server's own
+          // Until server 0.19.3 one path genuinely could not be pinned here — the MCP server's own
           // `npx -y @rotifer/playground` fallback for `run-agent` lived unpinned in the server, and
           // a line was allowed to name it as long as it said "unpinned". The server pins that
           // fallback now, so every command a Skill names carries a version, no exemption.

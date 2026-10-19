@@ -22,7 +22,7 @@
         "command": "npx",
         "args": [
           "-y",
-          "@rotifer/mcp-server@0.19.2",
+          "@rotifer/mcp-server@0.19.3",
           "--tools=evolve"
         ]
       }

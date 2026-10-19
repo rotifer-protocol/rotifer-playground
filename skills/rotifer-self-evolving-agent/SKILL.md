@@ -2,12 +2,12 @@
 name: rotifer-self-evolving-agent
 description: Rank an Agent's Rotifer Genes against the Arena and swap in stronger ones. Invoked explicitly via /evolve — scan local capabilities, compare Genes, inspect fitness scores, and replace weak ones with user approval. Not for capabilities outside Rotifer.
 license: Apache-2.0
-compatibility: Requires network access and npx to run @rotifer/mcp-server@0.19.2 for Arena rankings and Gene metadata.
+compatibility: Requires network access and npx to run @rotifer/mcp-server@0.19.3 for Arena rankings and Gene metadata.
 metadata:
   author: rotifer-protocol
   version: "2.4.10"
   command: /evolve
-  mcp-package: "@rotifer/mcp-server@0.19.2"
+  mcp-package: "@rotifer/mcp-server@0.19.3"
 ---
 
 # Rotifer Self-Evolving Agent
@@ -19,7 +19,7 @@ Your Agent gets stronger by competing, not by configuring. Scan capabilities, be
 This skill is invoked with `/evolve` and uses the Rotifer MCP Server at runtime:
 
 ```bash
-npx -y @rotifer/mcp-server@0.19.2 --tools=evolve
+npx -y @rotifer/mcp-server@0.19.3 --tools=evolve
 ```
 
 `--tools=evolve` is not decoration. The server can expose 31 tools, including
@@ -106,7 +106,7 @@ Full technical details for a specific capability:
 /evolve run-agent <name>
 ```
 
-This **executes** the Agent's Genes — it is not a read-only command. Execution goes through the `rotifer` CLI (or an `npx -y @rotifer/playground@0.26.1` fallback) and stays inside the WASM sandbox. That fallback belongs to the server, not to this Skill; since server 0.19.2 it is pinned to `@rotifer/playground@0.26.1` (an exact version, asserted by the server's own tests). Install the CLI yourself at a version you have reviewed (`npm i -g @rotifer/playground@0.26.1`) and it never has to fetch anything. It also leaves two traces on disk: a line per Gene execution in `~/.rotifer/run-logs/<gene>.jsonl`, and a fitness state file next to the Agent definition. Both are local; neither is transmitted. **Never pass `no_sandbox`**: the server refuses it unless launched with `--allow=no-sandbox`, which this Skill does not do. Running a Gene as plain Node.js is something the user does themselves, with `rotifer agent run <name> --no-sandbox`.
+This **executes** the Agent's Genes — it is not a read-only command. Execution goes through the `rotifer` CLI (or an `npx -y @rotifer/playground@0.27.0` fallback) and stays inside the WASM sandbox. That fallback belongs to the server, not to this Skill; since server 0.19.3 it is pinned to `@rotifer/playground@0.27.0` (an exact version, asserted by the server's own tests). Install the CLI yourself at a version you have reviewed (`npm i -g @rotifer/playground@0.27.0`) and it never has to fetch anything. It also leaves two traces on disk: a line per Gene execution in `~/.rotifer/run-logs/<gene>.jsonl`, and a fitness state file next to the Agent definition. Both are local; neither is transmitted. **Never pass `no_sandbox`**: the server refuses it unless launched with `--allow=no-sandbox`, which this Skill does not do. Running a Gene as plain Node.js is something the user does themselves, with `rotifer agent run <name> --no-sandbox`.
 
 ## How it Works
 
@@ -141,14 +141,14 @@ No Gene is replaced without your confirmation.
 ## Security & Transparency
 
 ### Runtime dependency
-This Skill runs [`@rotifer/mcp-server@0.19.2`](https://www.npmjs.com/package/@rotifer/mcp-server/v/0.19.2) via `npx` at runtime. The package is **fetched from npm on first use** and cached locally. This is a standard MCP Skill pattern but means you are trusting remote code — review the source before use.
+This Skill runs [`@rotifer/mcp-server@0.19.3`](https://www.npmjs.com/package/@rotifer/mcp-server/v/0.19.3) via `npx` at runtime. The package is **fetched from npm on first use** and cached locally. This is a standard MCP Skill pattern but means you are trusting remote code — review the source before use.
 
-`/evolve run-agent` is a second such path: it invokes the `rotifer` CLI, and when that is not on `PATH` it falls back to `npx -y @rotifer/playground@0.26.1`. That fallback lives in the server rather than here; server versions before 0.19.2 left it unpinned, which is why this Skill requires 0.19.2. Installing the CLI at a version you have reviewed (`npm i -g @rotifer/playground@0.26.1`) means `run-agent` never fetches anything.
+`/evolve run-agent` is a second such path: it invokes the `rotifer` CLI, and when that is not on `PATH` it falls back to `npx -y @rotifer/playground@0.27.0`. That fallback lives in the server rather than here; server versions before 0.19.3 left it unpinned, which is why this Skill requires 0.19.3. Installing the CLI at a version you have reviewed (`npm i -g @rotifer/playground@0.27.0`) means `run-agent` never fetches anything.
 
-Pinning is the point of the `@0.19.2` above: an unversioned `npx` would resolve to whatever the registry serves at that moment, so the code you run would not be the code you reviewed. A lockfile is stronger than a pinned `npx` call — `npm install --save-dev --save-exact @rotifer/mcp-server@0.19.2`, commit the lockfile, and use `npm ci` in automation. Moving this pin is a deliberate, repository-wide step, not a per-file edit; review what changed first and record what you are accepting with the `npm view` command below.
+Pinning is the point of the `@0.19.3` above: an unversioned `npx` would resolve to whatever the registry serves at that moment, so the code you run would not be the code you reviewed. A lockfile is stronger than a pinned `npx` call — `npm install --save-dev --save-exact @rotifer/mcp-server@0.19.3`, commit the lockfile, and use `npm ci` in automation. Moving this pin is a deliberate, repository-wide step, not a per-file edit; review what changed first and record what you are accepting with the `npm view` command below.
 
 - **Source code**: [github.com/rotifer-protocol/rotifer-mcp-server](https://github.com/rotifer-protocol/rotifer-mcp-server)
-- **Verify**: `npm view @rotifer/mcp-server@0.19.2 dist.integrity`
+- **Verify**: `npm view @rotifer/mcp-server@0.19.3 dist.integrity`
 
 ### Network requests
 Gene, Arena and profile queries go to the Rotifer public API at `rotifer.dev` (hosted on Supabase). Beyond that the MCP server makes one version check per day against `registry.npmjs.org`, caching the answer in `~/.config/rotifer/update-check.json`; `npx` reaches the same registry when it fetches or refreshes a package.
@@ -188,13 +188,13 @@ The other 21 are not listed and are refused if called anyway, so what the assist
 
 The ten cover the whole surface, not just the tool list. The server also serves **resources** — read-only URIs returning the same data as tools of the same name — and those travel with the set: three of the seven (`rotifer://genes/{id}/stats`, `rotifer://developers/{name}`, `rotifer://leaderboard`) are dropped from the listing and refused if read directly, because their tools were not asked for. Until `0.16.1` they were readable whatever the tool set said. **Prompts** are not restricted, and are not meant to be: a prompt returns text and reaches nothing — no query, no file, no process.
 
-You can check rather than take our word for it: `npx -y @rotifer/mcp-server@0.19.2 --tools=evolve` and ask it to list its tools.
+You can check rather than take our word for it: `npx -y @rotifer/mcp-server@0.19.3 --tools=evolve` and ask it to list its tools.
 
 ### Permission justification
 - `network:outbound` — query Arena rankings, Gene metadata and fitness scores from the Rotifer public API, and fetch the MCP server package itself from npm.
 - `filesystem:read` — read the project's installed Genes and Agent definitions, which is what an upgrade recommendation is computed from.
 - `filesystem:write` — install and roll back Genes, write Agent definitions, and append the run log and update-check cache described above.
-- `process:exec` — `run-agent` executes through the `rotifer` CLI, or the server's `npx -y @rotifer/playground@0.26.1` fallback when the CLI is not installed.
+- `process:exec` — `run-agent` executes through the `rotifer` CLI, or the server's `npx -y @rotifer/playground@0.27.0` fallback when the CLI is not installed.
 
 Until version 2.4.3 this list said `network:outbound` and nothing else, while the Skill already read and wrote project files and shelled out to a CLI. The behaviour was described in the sections above but the declaration was narrower than the behaviour, which is the same defect as asking for ten tools and being able to reach thirty-one.
 

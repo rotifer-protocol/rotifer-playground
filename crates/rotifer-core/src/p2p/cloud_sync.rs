@@ -78,7 +78,6 @@ impl CloudSync {
 mod tests {
     // Strict-Test per ADR-264 §5 — applies to every test in this module.
     use super::*;
-    use crate::p2p::PeerId;
 
     fn ann(id: &str) -> GeneAnnouncement {
         GeneAnnouncement {
@@ -87,9 +86,8 @@ mod tests {
             domain: "d".into(),
             version: "0".into(),
             fidelity: "Native".into(),
-            publisher: PeerId("p".into()),
-            reputation_score: 0.0,
-            timestamp: 0,
+            ir_spec: "".into(),
+            timestamp_ms: 0,
         }
     }
 

@@ -39,6 +39,7 @@
   "version": "0.2.0",
   "author": "rotifer-genesis",
   "fidelity": "Wrapped",
+  "sources": ["index.ts", "package.json"],
   "transparency": "Open",
   "semanticRequirements": {
     "timeModel": "Sync",

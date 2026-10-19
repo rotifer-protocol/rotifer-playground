@@ -18,16 +18,14 @@ use std::sync::Mutex;
 // P2P node bridge (libp2p) — exposes the real Node to the CLI (§3.1 phase 1).
 // Kept at the crate root, not a submodule: the cdylib linker strips an
 // unreferenced submodule's napi registration ctor, so the class must live here.
-use rotifer_core::p2p::messages::{decode_announcement, encode_announcement};
+use rotifer_core::p2p::messages::{encode_announcement, local_announcement, ANNOUNCEMENTS_TOPIC};
 use rotifer_core::p2p::node::Node as CoreNode;
-use rotifer_core::p2p::{GeneAnnouncement, NetworkConfig};
+use rotifer_core::p2p::NetworkConfig;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Canonical GossipSub topic for gene announcements (RFC §6.2).
-const ANNOUNCEMENTS_TOPIC: &str = "/rotifer/announcements";
-
-/// A gene announcement received from a peer, surfaced to the CLI. `source` is
-/// the GossipSub-authenticated publisher PeerId (cannot be forged, §8.3).
+/// A gene announcement received from a peer, surfaced to the CLI. `publisher`
+/// is the GossipSub-authenticated source PeerId (cannot be forged, §8.3);
+/// `name` and `version` are display labels claimed by that publisher.
 #[napi(object)]
 pub struct ReceivedGeneAnnouncement {
     pub gene_id: String,
@@ -35,7 +33,9 @@ pub struct ReceivedGeneAnnouncement {
     pub domain: String,
     pub version: String,
     pub fidelity: String,
+    pub ir_spec: String,
     pub publisher: String,
+    /// Same as `publisher`; kept for callers written against the pre-v1 shape.
     pub source: Option<String>,
 }
 
@@ -102,61 +102,45 @@ impl P2pNode {
         self.inner.discovered_peers()
     }
 
-    /// Gene announcements received from peers on the announcements topic,
-    /// decoded for display. Skips any message that fails to decode.
+    /// Gene announcements accepted on the announcements topic (wire v1,
+    /// validated before forwarding), newest per `(gene_id, publisher)`.
     #[napi]
     pub fn received_announcements(&self) -> Vec<ReceivedGeneAnnouncement> {
         self.inner
-            .received_messages()
+            .received_announcements()
             .into_iter()
-            .filter(|m| m.topic == ANNOUNCEMENTS_TOPIC)
-            .filter_map(|m| {
-                decode_announcement(&m.data).ok().map(|a| ReceivedGeneAnnouncement {
-                    gene_id: a.gene_id,
-                    name: a.name,
-                    domain: a.domain,
-                    version: a.version,
-                    fidelity: a.fidelity,
-                    publisher: a.publisher.0,
-                    source: m.source,
-                })
+            .map(|(a, publisher)| ReceivedGeneAnnouncement {
+                gene_id: a.gene_id,
+                name: a.name,
+                domain: a.domain,
+                version: a.version,
+                fidelity: a.fidelity,
+                ir_spec: a.ir_spec,
+                source: Some(publisher.clone()),
+                publisher,
             })
             .collect()
     }
 
-    /// Announce a gene: build a `GeneAnnouncement` and publish it to the
-    /// canonical announcements topic. Requires the node to be started.
+    /// Announce the local gene `name` under `genes_root`: build its wire-v1
+    /// announcement (v2 ID, display fields, IR spec version) and publish it.
+    /// Returns the gene's v2 ID. Fails when the gene has no computable ID.
     #[napi]
-    pub fn announce_gene(
-        &self,
-        gene_id: String,
-        name: String,
-        domain: String,
-        version: String,
-        fidelity: String,
-    ) -> Result<()> {
-        let timestamp = SystemTime::now()
+    pub fn announce_local_gene(&self, genes_root: String, name: String) -> Result<String> {
+        let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
+            .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        let announcement = GeneAnnouncement {
-            gene_id,
-            name,
-            domain,
-            version,
-            fidelity,
-            publisher: self.inner.local_peer_id(),
-            reputation_score: 0.0,
-            timestamp,
-        };
-        let bytes = encode_announcement(&announcement)
-            .map_err(|e| Error::from_reason(format!("encode announcement: {e}")))?;
+        let announcement = local_announcement(std::path::Path::new(&genes_root), &name, now_ms)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let bytes = encode_announcement(&announcement);
         self.inner
             .subscribe(ANNOUNCEMENTS_TOPIC)
             .map_err(|e| Error::from_reason(format!("subscribe: {e}")))?;
         self.inner
             .publish(ANNOUNCEMENTS_TOPIC, &bytes)
-            .map_err(|e| Error::from_reason(format!("publish announcement: {e}")))
+            .map_err(|e| Error::from_reason(format!("publish announcement: {e}")))?;
+        Ok(announcement.gene_id)
     }
 
     /// Stop the swarm and release the listen port.
@@ -760,6 +744,15 @@ impl PlaygroundBinding {
             }
         }
     }
+}
+
+/// Gene ID v2 of the gene `name` under `genes_root` (docs/gene-id-v2.md),
+/// resolving local dependencies to their sibling genes' IDs. Throws with the
+/// reason when the ID is not computable.
+#[napi]
+pub fn gene_id_v2(genes_root: String, name: String) -> Result<String> {
+    rotifer_core::gene_id::gene_id_in_workspace(std::path::Path::new(&genes_root), &name)
+        .map_err(|e| Error::from_reason(e.to_string()))
 }
 
 fn gene_to_view(gene: &Gene) -> GeneView {

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 // Registry reads, the install itself and the native v2 ID are stubbed here; the
 // real counterpart is covered by tests/e2e/genome-*.test.ts (ROTIFER_E2E_REGISTRY=1).
@@ -27,16 +27,17 @@ import { installGeneFromCloud } from "../../src/commands/install.js";
 import { geneIdV2 } from "../../src/utils/binding.js";
 import { setOutputMode } from "../../src/utils/display.js";
 import type { CloudGene } from "../../src/cloud/types.js";
-import type { GenomeBlueprint } from "../../src/commands/genome.js";
+import { exportGenome, findAgent, jcs, type GenomeBlueprint } from "../../src/commands/genome.js";
 import {
   compositionPlan,
+  computeGenomeId,
   effectiveMinVg,
   importGenome,
   parseBlueprint,
   runGenomeImport,
   GenomeImportError,
 } from "../../src/commands/genome-import.js";
-import { captureOutput, fakeV2 } from "./genome-test-helpers.js";
+import { captureOutput, fakeV2, writeAgent } from "./genome-test-helpers.js";
 
 const NOW = new Date("2026-10-20T00:00:00.000Z");
 const IN = { type: "object", required: ["text"], properties: { text: { type: "string" } } };
@@ -446,7 +447,7 @@ describe("#30-c capability mode in import: thresholds and evidence", () => {
     const r = await importGenome(writeBlueprint(blueprint([row("alpha")], {}, { withCapabilities: true })), { now: NOW }, { root, genesDir: "genes" });
     expect(installs).toEqual(["id-alpha-2"]);
     expect(r.executionSnapshot).toMatchObject({ resolvedDeps: { alpha: row("alpha", "2.0.0").v2 }, status: "ACTIVE" });
-    expect(r.executionSnapshot!.genomeId).toMatch(/^[0-9a-f]{64}$/);
+    expect(r.executionSnapshot!.genomeId).toMatch(/^bp1:[0-9a-f]{64}$/);
   });
 });
 
@@ -874,9 +875,219 @@ describe("T-23: refuse what the executor or canonical JSON cannot honour (R3, R5
     const file = writeBlueprint(blueprint([row("alpha"), row("beta")]));
     const dry = await importGenome(file, { isPinned: true, isDryRun: true }, { root, genesDir: "genes" });
     expect(installs).toEqual([]);
-    expect(dry.genomeId).toMatch(/^[0-9a-f]{64}$/);
+    expect(dry.genomeId).toMatch(/^bp1:[0-9a-f]{64}$/);
     const real = await importGenome(file, { isPinned: true }, { root, genesDir: "genes" });
     expect(real.executionSnapshot!.genomeId).toBe(dry.genomeId);
     expect(real.genomeId).toBe(dry.genomeId);
   });
+});
+
+describe("T-21b: RFC draft 5 reader rules (B3, B5)", () => {
+  /** The text of a valid two-gene Blueprint after `mutate` edits it. */
+  const edited = (mutate: (bp: any) => void) => {
+    const bp: any = blueprint([row("alpha"), row("beta")], {}, { withCapabilities: true });
+    mutate(bp);
+    return JSON.stringify(bp);
+  };
+
+  it("B3: a Blueprint without composition is refused, for one gene and for several", () => {
+    for (const rows of [[row("alpha")], [row("alpha"), row("beta")]]) {
+      const bp: any = blueprint(rows);
+      delete bp.snapshot.composition;
+      expect(() => parseBlueprint(JSON.stringify(bp)), `${rows.length} gene(s)`).toThrow("no snapshot.composition");
+    }
+  });
+
+  it("B3: the import command exits 1 and creates no agent", async () => {
+    const bp: any = blueprint([row("alpha"), row("beta")]);
+    delete bp.snapshot.composition;
+    const { code, text } = await runImport(bp, { pinned: true });
+    expect(code).toBe(1);
+    expect(text).toContain("no snapshot.composition");
+    expect(installs).toEqual([]);
+    expect(agents()).toEqual([]);
+  });
+
+  const refused: Array<[string, (bp: any) => void, string]> = [
+    ["no protocolVersion", (bp) => { delete bp.protocolVersion; }, "protocolVersion must be"],
+    ["a protocolVersion that is a string", (bp) => { bp.protocolVersion = "0.9.2"; }, "protocolVersion must be"],
+    ["a protocolVersion part that is not an integer", (bp) => { bp.protocolVersion.minor = 9.5; }, "protocolVersion must be"],
+    ["a negative protocolVersion part", (bp) => { bp.protocolVersion.patch = -1; }, "protocolVersion must be"],
+    ["no supportedFeatures", (bp) => { delete bp.protocolVersion.supportedFeatures; }, "protocolVersion must be"],
+    ["a supportedFeatures entry that is not a string", (bp) => { bp.protocolVersion.supportedFeatures = [1]; }, "protocolVersion must be"],
+    ["no metadata", (bp) => { delete bp.metadata; }, "metadata.createdAt"],
+    ["no metadata.createdAt", (bp) => { delete bp.metadata.createdAt; }, "metadata.createdAt"],
+    ["a metadata.name that is not a string", (bp) => { bp.metadata.name = 7; }, "metadata.name must be a string"],
+    ["no snapshot.snapshotAt", (bp) => { delete bp.snapshot.snapshotAt; }, "snapshot.snapshotAt"],
+    ["a gene without optional", (bp) => { delete bp.snapshot.genes[0].optional; }, "needs optional: true or false"],
+    ["optional: \"yes\"", (bp) => { bp.snapshot.genes[1].optional = "yes"; }, "needs optional: true or false"],
+    ["a capability without inputSchemaCompat", (bp) => { delete bp.capabilities.alpha.inputSchemaCompat; }, "has no inputSchemaCompat"],
+    ["a capability without outputSchemaCompat", (bp) => { delete bp.capabilities.beta.outputSchemaCompat; }, "has no outputSchemaCompat"],
+    ["a capability without minFitness", (bp) => { delete bp.capabilities.alpha.minFitness; }, "minFitness must be a number"],
+    ["a bindingExtensions that is an array", (bp) => { bp.bindingExtensions = []; }, "bindingExtensions must be an object"],
+    ["a bindingExtensions value that is not an object", (bp) => { bp.bindingExtensions = { "other-binding": "on" }; }, "bindingExtensions['other-binding'] must be an object"],
+    ["an unknown parMerge outside a Par composition", (bp) => { bp.bindingExtensions = { "rotifer-playground": { parMerge: "zip" } }; }, "is not first, concat or merge"],
+    ["a Cond field with [ or ]", (bp) => {
+      bp.snapshot.composition = { Cond: { predicate: { field: "items[0]", operator: "EQ", value: 1 }, ifTrue: leaf(row("alpha")), ifFalse: leaf(row("beta")) } };
+    }, "top-level field name"],
+  ];
+  for (const [label, mutate, message] of refused) {
+    it(`B5: refuses ${label}`, () => {
+      expect(() => parseBlueprint(edited(mutate))).toThrow(message);
+    });
+  }
+
+  it("B5 controls: optional false, other bindings' unknown fields, any protocolVersion value and annotated metadata pass", () => {
+    expect(() =>
+      parseBlueprint(
+        edited((bp) => {
+          bp.protocolVersion = { major: 9, minor: 0, patch: 0, supportedFeatures: [] };
+          bp.metadata.description = "d";
+          bp.metadata.author = "a";
+          bp.bindingExtensions = { "other-binding": { anything: [1] }, "rotifer-playground": { futureKnob: true, minVg: 0.8 } };
+        }),
+      ),
+    ).not.toThrow();
+  });
+});
+
+describe("T-21b: genomeId is bp1: + SHA-256 of the canonical execution projection (B4)", () => {
+  const sha = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
+  const idOf = (bp: unknown) => parseBlueprint(JSON.stringify(bp)).genomeId;
+  const rs = () => [row("alpha"), row("beta")];
+  const parBp = (over: Partial<GenomeBlueprint> = {}) => {
+    const bp: any = blueprint(rs(), over);
+    bp.snapshot.composition = { Par: { left: leaf(rs()[0]), right: leaf(rs()[1]) } };
+    return bp;
+  };
+
+  it("jcs reproduces the RFC 8785 vectors the Rust gene-ID tests use", () => {
+    const fixture = JSON.parse(
+      readFileSync(join(__dirname, "../../crates/rotifer-core/tests/fixtures/gene-id-v2/vectors.json"), "utf-8"),
+    ) as { vectors: Array<{ kind: string; name: string; value: unknown; expected: string }> };
+    const vectors = fixture.vectors.filter((v) => v.kind === "jcs");
+    expect(vectors.length).toBe(2);
+    for (const v of vectors) expect(jcs(v.value), v.name).toBe(v.expected);
+  });
+
+  it("matches the projection written out by hand, for Gene, Seq, Par, Cond and TryCatch", () => {
+    const [a, b] = rs();
+    const single = blueprint([a]);
+    expect(idOf(single)).toBe(`bp1:${sha(`{"Gene":"${a.v2}"}`)}`);
+    expect(idOf(blueprint([a, b]))).toBe(`bp1:${sha(`{"Seq":[{"Gene":"${a.v2}"},{"Gene":"${b.v2}"}]}`)}`);
+    expect(idOf(parBp())).toBe(`bp1:${sha(`{"Par":{"left":{"Gene":"${a.v2}"},"merge":"first","right":{"Gene":"${b.v2}"}}}`)}`);
+    const cond: any = blueprint([a, b]);
+    cond.snapshot.composition = { Cond: { predicate: { field: "score", operator: "GTE", value: 10 }, ifTrue: leaf(a), ifFalse: leaf(b) } };
+    expect(idOf(cond)).toBe(
+      `bp1:${sha(`{"Cond":{"field":"score","ifFalse":{"Gene":"${b.v2}"},"ifTrue":{"Gene":"${a.v2}"},"operator":"GTE","value":10}}`)}`,
+    );
+    const tryBp: any = blueprint([a, b]);
+    tryBp.snapshot.composition = { TryCatch: { body: leaf(a), handler: leaf(b) } };
+    expect(idOf(tryBp)).toBe(`bp1:${sha(`{"TryCatch":{"body":{"Gene":"${a.v2}"},"handler":{"Gene":"${b.v2}"}}}`)}`);
+  });
+
+  it("is unchanged by everything the projection leaves out", () => {
+    const base = idOf(blueprint(rs(), {}, { withCapabilities: true }));
+    const variants: Array<[string, (bp: any) => void]> = [
+      ["role names", (bp) => {
+        bp.snapshot.genes.forEach((g: any, i: number) => (g.role = `role${i}`));
+        bp.snapshot.composition.Seq.steps.forEach((s: any, i: number) => (s.Gene.geneRef.role = `role${i}`));
+        delete bp.capabilities;
+        delete bp.resolutionHints;
+      }],
+      ["snapshotAt and metadata", (bp) => { bp.snapshot.snapshotAt = "2030-01-01T00:00:00Z"; bp.metadata = { name: "other", description: "d", createdAt: "x" }; }],
+      ["capabilities, hints and minVg", (bp) => { delete bp.capabilities; delete bp.resolutionHints; bp.bindingExtensions = { "rotifer-playground": { minVg: 0.9 } }; }],
+      ["protocolVersion and unknown fields", (bp) => { bp.protocolVersion = { major: 1, minor: 0, patch: 0, supportedFeatures: [] }; bp.future = { a: 1 }; bp.snapshot.later = 2; }],
+      ["extra members inside operator bodies and geneRefs", (bp) => {
+        bp.snapshot.composition.Seq.note = "ignored";
+        bp.snapshot.composition.Seq.steps[0].Gene.note = "ignored";
+        bp.snapshot.composition.Seq.steps[1].Gene.geneRef.label = "ignored";
+      }],
+      ["the order members are written in", (bp) => { bp.snapshot = { snapshotAt: bp.snapshot.snapshotAt, composition: bp.snapshot.composition, genes: bp.snapshot.genes }; }],
+    ];
+    for (const [label, mutate] of variants) {
+      const bp: any = blueprint(rs(), {}, { withCapabilities: true });
+      mutate(bp);
+      expect(idOf(bp), label).toBe(base);
+    }
+  });
+
+  it("an absent parMerge and an explicit \"first\" give the same ID; concat does not", () => {
+    const absent = idOf(parBp());
+    expect(idOf(parBp({ bindingExtensions: { "rotifer-playground": { parMerge: "first" } } }))).toBe(absent);
+    expect(idOf(parBp({ bindingExtensions: { "rotifer-playground": { parMerge: "concat" } } }))).not.toBe(absent);
+  });
+
+  it("changes with what runs: a gene ID, the gene order, the Cond value or operator", () => {
+    const [a, b] = rs();
+    const base = idOf(blueprint([a, b]));
+    expect(idOf(blueprint([a, row("gamma")]))).not.toBe(base);
+    expect(idOf(blueprint([b, a]))).not.toBe(base);
+    const cond = (operator: string, value: unknown) => {
+      const bp: any = blueprint([a, b]);
+      bp.snapshot.composition = { Cond: { predicate: { field: "score", operator, value }, ifTrue: leaf(a), ifFalse: leaf(b) } };
+      return idOf(bp);
+    };
+    expect(cond("GTE", 10)).not.toBe(cond("GTE", 11));
+    expect(cond("GTE", 10)).not.toBe(cond("GT", 10));
+    expect(cond("EQ", 10)).not.toBe(cond("EQ", "10"));
+  });
+
+  it("computeGenomeId is what the import reports", async () => {
+    const bp = blueprint(rs());
+    const result = await importGenome(writeBlueprint(bp), { isPinned: true, isDryRun: true }, { root, genesDir: "genes" });
+    expect(result.genomeId).toBe(computeGenomeId(bp));
+  });
+});
+
+describe("T-21b: export → import → export round trip, one per composition", () => {
+  /** A project whose genes are the Registry rows, as `install` leaves them. */
+  function sourceProject(rows: Row[]): string {
+    const src = join(root, "source-project");
+    for (const r of rows) {
+      const dir = join(src, "genes", r.name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "phenotype.json"), JSON.stringify(cloudGene(r).phenotype));
+      writeFileSync(join(dir, "fake-v2"), r.v2);
+      writeFileSync(join(dir, ".cloud-manifest.json"), JSON.stringify({ cloud_id: r.id, owner: r.owner, version: r.version }));
+    }
+    return src;
+  }
+
+  const cases: Array<[string, Row[], Record<string, unknown>, Record<string, unknown>]> = [
+    ["single Gene", [row("alpha")], { type: "Single" }, { type: "Single" }],
+    ["Seq", [row("alpha"), row("beta"), row("gamma")], { type: "Seq" }, { type: "Seq" }],
+    ["Par", [row("alpha"), row("beta"), row("gamma")], { type: "Par", merge: "concat" }, { type: "Par", branches: ["alpha", "beta", "gamma"], merge: "concat" }],
+    ["Cond", [row("alpha"), row("beta")], { type: "Cond", predicate: { field: "lang", op: "Contains", value: "en" } }, { type: "Cond", predicate: { field: "lang", op: "Contains", value: "en" } }],
+    ["Try", [row("alpha"), row("beta")], { type: "Try" }, { type: "Try" }],
+  ];
+
+  for (const [label, rows, composition, imported] of cases) {
+    it(`${label}: the file imports, and the imported agent exports to the same composition and genomeId`, async () => {
+      const src = sourceProject(rows);
+      const original = writeAgent(src, "original", rows.map((r) => r.name), composition);
+      const first = join(root, "first.rgenome");
+      exportGenome({ root: src, genesDir: "genes", agent: original, output: first });
+
+      const out = captureOutput();
+      let code: number;
+      try {
+        code = await runGenomeImport(first, { pinned: true }, { root, genesDir: "genes" });
+      } finally {
+        out.restore();
+      }
+      expect(code, out.text()).toBe(0);
+      const [agent] = agents();
+      expect(agent.genome).toEqual(rows.map((r) => r.name));
+      expect(agent.composition).toMatchObject(imported);
+
+      const second = join(root, "second.rgenome");
+      exportGenome({ root, genesDir: "genes", agent: findAgent(root, "original"), output: second });
+      const a = parseBlueprint(readFileSync(first, "utf-8"));
+      const b = parseBlueprint(readFileSync(second, "utf-8"));
+      expect(b.blueprint.snapshot.composition).toEqual(a.blueprint.snapshot.composition);
+      expect(b.blueprint.bindingExtensions).toEqual(a.blueprint.bindingExtensions);
+      expect(b.genomeId).toBe(a.genomeId);
+    });
+  }
 });

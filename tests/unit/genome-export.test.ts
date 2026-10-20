@@ -264,18 +264,28 @@ describe("#29-b compositions inside the executable subset", () => {
   });
 
   it("Cond maps each executor CompareOp to the §15.2 name and prefers value over equals", () => {
+    // buildBlueprint maps all eight; MATCHES is then refused before writing (T-21b, below).
     const pairs: Array<[string, string]> = [
       ["Eq", "EQ"], ["Neq", "NEQ"], ["Gt", "GT"], ["Gte", "GTE"],
       ["Lt", "LT"], ["Lte", "LTE"], ["Contains", "CONTAINS"], ["Matches", "MATCHES"],
     ];
     for (const [op, expected] of pairs) {
-      writeAgent(root, `cond-${op}`, ["a", "b"], { type: "Cond", predicate: { field: "score", op, value: 10, equals: 99 } });
-      const { bp } = exportAgent(`cond-${op}`);
-      expect((bp!.snapshot.composition as { Cond: { predicate: unknown } }).Cond.predicate).toEqual({
+      const agent = writeAgent(root, `cond-${op}`, ["a", "b"], { type: "Cond", predicate: { field: "score", op, value: "10", equals: 99 } });
+      const { blueprint: bp } = buildBlueprint({ root, genesDir: "genes", agent });
+      expect((bp.snapshot.composition as { Cond: { predicate: unknown } }).Cond.predicate).toEqual({
         field: "score",
         operator: expected,
-        value: 10,
+        value: "10",
       });
+    }
+  });
+
+  it("Cond with every operator agent run executes is written to the file", () => {
+    for (const [op, value] of [["Eq", 10], ["Neq", 10], ["Gt", 10], ["Gte", 10], ["Lt", 10], ["Lte", 10], ["Contains", "en"]] as const) {
+      writeAgent(root, `cond-file-${op}`, ["a", "b"], { type: "Cond", predicate: { field: "score", op, value } });
+      const { code, bp } = exportAgent(`cond-file-${op}`);
+      expect(code, op).toBe(0);
+      expect((bp!.snapshot.composition as { Cond: { predicate: { value: unknown } } }).Cond.predicate.value).toBe(value);
     }
   });
 
@@ -315,5 +325,49 @@ describe("#29-b compositions outside the executable subset fail", () => {
   it("buildBlueprint throws for an empty genome", () => {
     const agent = writeAgent(root, "empty", [], { type: "Seq" });
     expect(() => buildBlueprint({ root, genesDir: "genes", agent })).toThrow("has an empty genome");
+  });
+});
+
+describe("T-21b: export refuses what its own import would refuse, before writing", () => {
+  beforeEach(() => {
+    for (const g of ["a", "b"]) writeGene(root, g, { manifest: { owner: "o", version: "1.0.0" } });
+  });
+
+  const condCases: Array<[string, Record<string, unknown>, string]> = [
+    ["MATCHES", { field: "kind", op: "Matches", value: "^a" }, "MATCHES is not executed"],
+    ["CONTAINS with a number", { field: "kind", op: "Contains", value: 5 }, "CONTAINS needs a string value"],
+    ["a field path with '.'", { field: "a.b", op: "Eq", value: 1 }, "top-level field name"],
+    ["a field with '[' ']'", { field: "items[0]", op: "Eq", value: 1 }, "top-level field name"],
+    ["an integer beyond 2^53", { field: "n", op: "Eq", value: 2 ** 53 + 2 }, "integer outside the exactly representable range"],
+  ];
+  for (const [label, predicate, message] of condCases) {
+    it(`Cond ${label} → exit 1, nothing written`, () => {
+      writeAgent(root, "bad", ["a", "b"], { type: "Cond", predicate });
+      const { code, bp, text } = exportAgent("bad");
+      expect(code).toBe(1);
+      expect(bp).toBeNull();
+      expect(text).toContain("would not import");
+      expect(text).toContain(message);
+    });
+  }
+
+  it("a phenotype schema with a lone surrogate or an unsafe integer → exit 1, nothing written", () => {
+    writeGene(root, "c", { inputSchema: { type: "object", properties: { t: { type: "string", title: "bad \ud800" } } } });
+    writeGene(root, "d", { outputSchema: { type: "object", properties: { n: { type: "integer", maximum: 1e20 } } } });
+    for (const [gene, message] of [["c", "unpaired surrogate"], ["d", "integer outside the exactly representable range"]]) {
+      writeAgent(root, `bad-${gene}`, [gene], { type: "Single" });
+      const { code, bp, text } = exportAgent(`bad-${gene}`);
+      expect(code, gene).toBe(1);
+      expect(bp).toBeNull();
+      expect(text).toContain(message);
+    }
+  });
+
+  it("an unknown Par merge strategy → exit 1, nothing written", () => {
+    writeAgent(root, "bad-par", ["a", "b"], { type: "Par", merge: "zip" });
+    const { code, bp, text } = exportAgent("bad-par");
+    expect(code).toBe(1);
+    expect(bp).toBeNull();
+    expect(text).toContain("is not first, concat or merge");
   });
 });

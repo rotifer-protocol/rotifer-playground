@@ -187,7 +187,7 @@ Run `rotifer --help` for the grouped command list. The commands below cover the 
 | `rotifer agent create <agent-name>` | Create an Agent (`--composition Seq\|Par\|Cond\|Try\|TryPool`) |
 | `rotifer agent list` | List all agents |
 | `rotifer agent run <agent-name>` | Execute genome pipeline (WASM sandbox, `--no-sandbox` for Node.js) |
-| `rotifer genome export <agent>` | Export an agent's genome as a shareable Blueprint (`.rgenome`); aborts if the file would carry a credential |
+| `rotifer genome export <agent>` | Export an agent's genome as a shareable Blueprint (`.rgenome`); aborts if the file would carry a credential or could not be imported back |
 | `rotifer genome import <file>` | Rebuild an agent from a Blueprint: installs Native/Hybrid genes by exact version (`--pinned`) or picks Arena-verified substitutes that clear the F(g) and V(g) thresholds; `--dry-run` shows the plan |
 | `rotifer vg [path]` | V(g) security scan for gene/skill code |
 | `rotifer network` | P2P gene network commands (see `rotifer network --help`) |

@@ -154,6 +154,10 @@ export function compositionPlan(blueprint: GenomeBlueprint): CompositionPlan {
       if (!isObject(p) || typeof p.field !== "string" || typeof p.operator !== "string" || !("value" in p)) {
         throw outsideSubset("Cond predicate must be { field, operator, value }");
       }
+      // agent run substitutes "type" for an empty field and "primary" for a null
+      // value; accepting them would run a different branch than the one declared.
+      if (p.field === "") throw outsideSubset("Cond predicate needs a non-empty field");
+      if (p.value === null) throw outsideSubset("Cond predicate value must not be null");
       const op = OPS_FROM_SPEC[p.operator];
       if (!op) throw outsideSubset(`unknown CompareOp '${p.operator}'`);
       plan = {
@@ -280,7 +284,7 @@ export interface RoleResolution {
   name: string;
   version: string;
   fidelity: string;
-  /** v2 gene ID computed at admission (when excludeGeneIds had to be checked). */
+  /** v2 gene ID computed at admission; set for every capability pick. */
   candidateGeneId?: string;
   /** Same author and gene name as the hint, newer version. */
   selfHealUpgrade: boolean;
@@ -482,7 +486,7 @@ async function installAndVerify(
       );
     }
     // Exclusion was applied at admission; what was installed must be what was admitted.
-    if (!isLockMode && r.candidateGeneId && id.id !== r.candidateGeneId) {
+    if (!isLockMode && id.id !== r.candidateGeneId) {
       throw new GenomeImportError(
         `Role '${r.role}': installed ${r.owner}/${r.name}@${r.version} is ${id.id}, not the ${r.candidateGeneId} admitted`,
         "The Registry row changed between admission and install; nothing was imported.",

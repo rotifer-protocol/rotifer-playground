@@ -243,6 +243,20 @@ describe("parse and validate", () => {
     });
   }
 
+  // T-10 #3: agent run would replace these with its defaults ("type" / "primary"),
+  // so a Blueprint that says one thing would run another. Refuse them up front.
+  for (const [label, predicate] of [
+    ["an empty field", { field: "", operator: "EQ", value: "x" }],
+    ["a null value", { field: "kind", operator: "EQ", value: null }],
+  ] as const) {
+    it(`refuses a Cond predicate with ${label}`, () => {
+      const rs = [row("alpha"), row("beta")];
+      const bp = blueprint(rs);
+      bp.snapshot.composition = { Cond: { predicate, ifTrue: leaf(rs[0]), ifFalse: leaf(rs[1]) } } as never;
+      expect(() => parseBlueprint(JSON.stringify(bp))).toThrow(label === "an empty field" ? "non-empty field" : "value must not be null");
+    });
+  }
+
   it("refuses a leaf whose geneId does not match snapshot.genes", () => {
     const rs = [row("alpha"), row("beta")];
     const bp = blueprint(rs);
@@ -474,6 +488,31 @@ describe("excludeGeneIds: an excluded top candidate is passed over at admission"
     expect(code).toBe(1);
     expect(text).toContain("not the " + row("delta", "3.0.0").v2 + " admitted");
     expect(agents()).toEqual([]);
+  });
+});
+
+describe("T-10 #10: every capability pick is checked after install, exclusion list or not", () => {
+  it("installed content that differs from the admitted v2 fails the import without any excludeGeneIds", async () => {
+    vi.mocked(arenaLeaderboard).mockResolvedValue([leaderRow(row("delta", "3.0.0"))]);
+    vi.mocked(installGeneFromCloud).mockImplementationOnce(async (_ref: string, opts: { genesDir: string }) => {
+      const dir = join(opts.genesDir, "delta");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "phenotype.json"), "{}");
+      writeFileSync(join(dir, "fake-v2"), fakeV2("swapped after admission"));
+      return { gene: cloudGene(row("delta", "3.0.0")), geneDir: dir, didSnapshot: false };
+    });
+    const bp = blueprint([row("alpha")], {}, { withCapabilities: true });
+    expect(bp.capabilities!.alpha.excludeGeneIds).toBeUndefined();
+    const { code, text } = await runImport(bp, {});
+    expect(code).toBe(1);
+    expect(text).toContain("not the " + row("delta", "3.0.0").v2 + " admitted");
+    expect(agents()).toEqual([]);
+  });
+
+  it("the resolution records the admitted v2 for every capability pick", async () => {
+    vi.mocked(arenaLeaderboard).mockResolvedValue([leaderRow(row("delta", "3.0.0"))]);
+    const r = await importGenome(writeBlueprint(blueprint([row("alpha")], {}, { withCapabilities: true })), { isDryRun: true, now: NOW }, { root, genesDir: "genes" });
+    expect(r.roles[0]).toMatchObject({ mode: "capability", candidateGeneId: row("delta", "3.0.0").v2 });
   });
 });
 

@@ -1,9 +1,9 @@
 {
   "name": "rotifer-guide",
   "display_name": "Rotifer Guide",
-  "description": "Interactive onboarding for Rotifer Protocol — learn core concepts, scaffold your first Gene, diagnose issues, explore the ecosystem, and upgrade fidelity. Five sub-capabilities in one entry point.",
+  "description": "Entry point for Rotifer Protocol — onboarding to Rotifer Genes, scaffolding a Gene from a description, diagnosing a Gene's F(g) or compile failure, searching the Rotifer Gene registry, and upgrading a Gene's fidelity from Wrapped to Native. Invoke explicitly when starting with Rotifer, or when unsure which Rotifer capability to use. Do NOT use for general onboarding, tutorials, troubleshooting, or search — every capability here operates on Rotifer Genes and the Rotifer CLI, and nothing else.",
   "tagline": "From zero to your first Gene in five minutes",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "author": "rotifer-protocol",
   "license": "Apache-2.0",
   "category": "developer-tools",

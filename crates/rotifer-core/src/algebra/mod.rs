@@ -76,8 +76,8 @@ impl Predicate {
         match field_value {
             None => false,
             Some(actual) => match self.op {
-                CompareOp::Eq => actual == &self.value,
-                CompareOp::Neq => actual != &self.value,
+                CompareOp::Eq => json_eq(actual, &self.value),
+                CompareOp::Neq => !json_eq(actual, &self.value),
                 CompareOp::Gt => compare_numeric(actual, &self.value, |a, b| a > b),
                 CompareOp::Lt => compare_numeric(actual, &self.value, |a, b| a < b),
                 CompareOp::Gte => compare_numeric(actual, &self.value, |a, b| a >= b),
@@ -94,6 +94,43 @@ impl Predicate {
                 CompareOp::Matches => false, // regex matching deferred
             },
         }
+    }
+}
+
+/// JSON equality with numbers compared by mathematical value: `1 == 1.0`,
+/// recursively inside objects and arrays. JCS serializes both spellings the
+/// same way, so they are the same value for genomeId purposes and Cond must
+/// agree. Everything else compares as `serde_json::Value` does.
+fn json_eq(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => number_eq(x, y),
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| json_eq(p, q))
+        }
+        (Value::Object(x), Value::Object(y)) => {
+            x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| json_eq(v, w)))
+        }
+        _ => a == b,
+    }
+}
+
+/// Exact numeric equality. Integers compare as integers; an integer equals a
+/// float only if the float is exactly that integer — no f64 round trip, which
+/// would merge distinct integers above 2^53.
+fn number_eq(a: &serde_json::Number, b: &serde_json::Number) -> bool {
+    fn as_int(n: &serde_json::Number) -> Option<i128> {
+        n.as_i64().map(i128::from).or_else(|| n.as_u64().map(i128::from))
+    }
+    fn float_is_int(f: f64, i: i128) -> bool {
+        // Every f64 in this range is an exact integer when fract() is 0.
+        f.is_finite() && f.fract() == 0.0 && f.abs() < 2f64.powi(127) && f as i128 == i
+    }
+    match (as_int(a), as_int(b)) {
+        (Some(x), Some(y)) => x == y,
+        (Some(x), None) => b.as_f64().is_some_and(|f| float_is_int(f, x)),
+        (None, Some(y)) => a.as_f64().is_some_and(|f| float_is_int(f, y)),
+        (None, None) => a.as_f64() == b.as_f64(),
     }
 }
 
@@ -340,5 +377,72 @@ mod tests {
             deadline: None,
         };
         assert_eq!(expr.gene_count(), 4);
+    }
+
+
+    // ── Numbers compare by mathematical value (RFC red team round 4, F2) ──
+    //
+    // JCS writes 1 and 1.0 the same way, so two Blueprints differing only in
+    // that spelling get the same genomeId; Cond must not tell them apart.
+    // Equality therefore compares numbers by value, also inside objects and
+    // arrays, and exactly — not through an f64 round trip.
+
+    fn eq(field: serde_json::Value, value: serde_json::Value) -> bool {
+        Predicate { field: "x".into(), op: CompareOp::Eq, value }.evaluate(&serde_json::json!({ "x": field }))
+    }
+
+    fn neq(field: serde_json::Value, value: serde_json::Value) -> bool {
+        Predicate { field: "x".into(), op: CompareOp::Neq, value }.evaluate(&serde_json::json!({ "x": field }))
+    }
+
+    #[test]
+    fn predicate_eq_integer_equals_float_with_the_same_value() {
+        assert!(eq(serde_json::json!(1), serde_json::json!(1.0)));
+        assert!(eq(serde_json::json!(1.0), serde_json::json!(1)));
+        assert!(eq(serde_json::json!(-3), serde_json::json!(-3.0)));
+        assert!(eq(serde_json::json!(0), serde_json::json!(-0.0)));
+        assert!(!neq(serde_json::json!(1), serde_json::json!(1.0)));
+    }
+
+    #[test]
+    fn predicate_eq_numbers_inside_objects_by_value() {
+        let a = serde_json::json!({ "a": 1, "b": { "c": 2 } });
+        let b = serde_json::json!({ "b": { "c": 2.0 }, "a": 1.0 });
+        assert!(eq(a.clone(), b.clone()));
+        assert!(!neq(a, b));
+        // Different keys or values are still different.
+        assert!(!eq(serde_json::json!({ "a": 1 }), serde_json::json!({ "a": 1.5 })));
+        assert!(!eq(serde_json::json!({ "a": 1 }), serde_json::json!({ "a": 1, "b": 1 })));
+    }
+
+    #[test]
+    fn predicate_eq_numbers_inside_arrays_by_value() {
+        assert!(eq(serde_json::json!([1, 2.5, [3]]), serde_json::json!([1.0, 2.5, [3.0]])));
+        assert!(!eq(serde_json::json!([1, 2]), serde_json::json!([1.0, 3.0])));
+        assert!(!eq(serde_json::json!([1, 2]), serde_json::json!([1.0, 2.0, 3.0])));
+        assert!(neq(serde_json::json!([1, 2]), serde_json::json!([2.0, 1.0])), "order still matters");
+    }
+
+    #[test]
+    fn predicate_eq_numbers_exactly_not_through_f64() {
+        // 2^53 + 1 is not representable as f64; via as_f64 both sides would be 2^53.
+        assert!(!eq(serde_json::json!(9_007_199_254_740_993_u64), serde_json::json!(9_007_199_254_740_992.0)));
+        assert!(eq(serde_json::json!(9_007_199_254_740_993_u64), serde_json::json!(9_007_199_254_740_993_u64)));
+        assert!(!eq(serde_json::json!(1), serde_json::json!(1.5)));
+    }
+
+    #[test]
+    fn predicate_eq_does_not_cross_types() {
+        assert!(!eq(serde_json::json!("1"), serde_json::json!(1)));
+        assert!(!eq(serde_json::json!(true), serde_json::json!(1)));
+        assert!(!eq(serde_json::Value::Null, serde_json::json!(0)));
+    }
+
+    #[test]
+    fn predicate_ordering_already_compares_integer_and_float_by_value() {
+        let gte = Predicate { field: "x".into(), op: CompareOp::Gte, value: serde_json::json!(1.0) };
+        let lte = Predicate { field: "x".into(), op: CompareOp::Lte, value: serde_json::json!(1) };
+        assert!(gte.evaluate(&serde_json::json!({ "x": 1 })));
+        assert!(lte.evaluate(&serde_json::json!({ "x": 1.0 })));
     }
 }

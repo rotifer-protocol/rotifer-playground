@@ -28,6 +28,7 @@ describe("agent run: a failed Par / Cond / Try run does not report success", () 
         l0Check: () => ({ passed: true, violations: [], checksPerformed: 4 }),
         executeAlgebra,
       }),
+      geneIdV2: () => ({ reason: "not computed in this test" }),
     }));
   }
 

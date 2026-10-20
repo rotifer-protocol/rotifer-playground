@@ -678,14 +678,22 @@ impl PlaygroundBinding {
         struct GeneEntry {
             wasm: Vec<u8>,
             phenotype: rotifer_core::types::gene::Phenotype,
+            /// v2 gene ID of this gene, reported as `geneId` when it fails
+            /// inside a TryCatch (spec §15.2). Optional; ignored if malformed.
+            #[serde(default, rename = "v2Id")]
+            v2_id: Option<String>,
         }
 
         let raw_map: HashMap<String, GeneEntry> = serde_json::from_str(&gene_entries_json)
             .map_err(|e| Error::from_reason(format!("invalid gene entries JSON: {e}")))?;
 
         let mut gene_store: HashMap<rotifer_core::types::GeneId, Gene> = HashMap::new();
+        let mut gene_ids: HashMap<rotifer_core::types::GeneId, String> = HashMap::new();
         for (hex_id, entry) in raw_map {
             let id = hex_to_gene_id(&hex_id)?;
+            if let Some(v2) = entry.v2_id.filter(|v| rotifer_core::gene_id::is_valid(v)) {
+                gene_ids.insert(id, v2);
+            }
             gene_store.insert(id, Gene {
                 id,
                 phenotype: entry.phenotype,
@@ -715,7 +723,7 @@ impl PlaygroundBinding {
         };
 
         let start = std::time::Instant::now();
-        let executor = AlgebraExecutor::new(&sandbox, &gene_store);
+        let executor = AlgebraExecutor::new(&sandbox, &gene_store).with_gene_ids(gene_ids);
 
         match executor.execute(&expr, &context, input) {
             Ok(result) => {

@@ -520,9 +520,13 @@ function scanString(value: string, pointer: string, isHexExempt: boolean, out: C
   }
   if (hasBareBase64Key(value)) out.push({ pointer, layer: "value-pattern", rule: BARE_BASE64_RULE });
 
-  // Per whitespace-separated token, so ordinary prose does not add up to a hit.
-  // Hex tops out at 4.0 bits/char and never trips this — the hex rule above covers it.
-  for (const token of value.split(/\s+/)) {
+  // Per run of printable ASCII: credentials are printable ASCII, so whitespace
+  // and any other character end a token. Prose does not add up to a hit, and
+  // text without spaces — Chinese, or ASCII words joined by symbols like "≥" —
+  // is not one long high-entropy token; a key glued to such text is still
+  // judged on its own. Hex tops out at 4.0 bits/char and never trips this —
+  // the hex rule above covers it.
+  for (const token of value.match(/[\x21-\x7e]+/g) ?? []) {
     if (token.length > ENTROPY_MIN_LENGTH && shannonEntropy(token) > ENTROPY_THRESHOLD) {
       out.push({ pointer, layer: "entropy", rule: `High-entropy string (> ${ENTROPY_THRESHOLD} bits/char)` });
       break;

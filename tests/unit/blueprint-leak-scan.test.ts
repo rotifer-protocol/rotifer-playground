@@ -270,6 +270,56 @@ describe("#29-c reporting", () => {
   });
 });
 
+// ── Natural-language text and the entropy layer (T-19) ───────────────────
+// Real schemas: 73 description strings in 22 of 205 published versions were
+// flagged — 71 in Chinese (no spaces, many distinct characters), 2 with
+// non-ASCII symbols. Credentials are printable ASCII, so entropy is judged on
+// runs of printable ASCII only.
+
+describe("entropy layer: natural-language descriptions are not credentials", () => {
+  const ZH = "根据用户提供的合同文本识别风险条款并给出修改建议，输出结构化的审查结果与依据";
+  const ZH_MIXED = "支持PDF、DOCX与Markdown三种输入格式，自动识别标题层级并生成目录结构";
+  const SYMBOLS = "weight—kept≥0.5→rises≈linearly·until≤0.9±0.05×scale÷n↓drops∑total";
+
+  it("a Chinese description is not flagged", () => {
+    expect(shannonEntropy(ZH)).toBeGreaterThan(4.5);
+    expect(scanForCredentials({ description: ZH })).toEqual([]);
+  });
+
+  it("a Chinese description with English words inside is not flagged", () => {
+    expect(scanForCredentials({ description: ZH_MIXED })).toEqual([]);
+  });
+
+  it("prose with non-ASCII symbols is not flagged", () => {
+    expect(shannonEntropy(SYMBOLS)).toBeGreaterThan(4.5);
+    expect(scanForCredentials({ description: SYMBOLS })).toEqual([]);
+  });
+
+  it("export of a gene whose schema descriptions are Chinese succeeds", () => {
+    writeGene(root, "zh-gene", {
+      inputSchema: { type: "object", properties: { text: { type: "string", description: ZH } } },
+      outputSchema: { type: "object", properties: { result: { type: "string", description: ZH_MIXED } } },
+    });
+    writeAgent(root, "zh-agent", ["zh-gene"], { type: "Single" });
+    const { code, written } = exportAgent("zh-agent");
+    expect(code).toBe(0);
+    expect(written).toBe(true);
+  });
+
+  it("a high-entropy ASCII secret is still caught on its own, after a space, or glued to Chinese text", () => {
+    for (const text of [FAKE_HIGH_ENTROPY, `key ${FAKE_HIGH_ENTROPY}`, `密钥是${FAKE_HIGH_ENTROPY}请妥善保管`, `${ZH}${FAKE_HIGH_ENTROPY}`]) {
+      expect(scanForCredentials({ note: text })).toContainEqual(expect.objectContaining({ pointer: "/note", layer: "entropy" }));
+    }
+  });
+
+  it("the value-pattern rules still catch keys inside Chinese text", () => {
+    expect(scanForCredentials({ note: `私钥：${FAKE_HEX_KEY}` })).toContainEqual(
+      expect.objectContaining({ rule: "Bare 32-byte hex key" }),
+    );
+    expect(scanForCredentials({ note: `令牌${FAKE_AWS_KEY}已失效` })).toContainEqual(expect.objectContaining({ rule: "AWS key" }));
+  });
+});
+
 // ── Red-team findings on the RFC draft (T-10 #1, #8) ─────────────────────
 
 /** 32 bytes of obviously fake key material as a number array (all 0xde/0xad/0xbe/0xef). */

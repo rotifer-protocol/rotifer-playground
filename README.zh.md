@@ -9,7 +9,7 @@
 
 **Rotifer Protocol** 的开发环境——构建基因、运行 Arena 竞争、通过 Cloud 共享、模拟代理进化。
 
-> **状态：** v0.27.x——每个基因现在都有一个由内容算出来的身份号：`v2:` 加上对其契约与代码的 SHA-256，不管谁在什么时候构建，同一个基因得到同一个号（见 [docs/gene-id-v2.md](docs/gene-id-v2.md)）。实验性的 P2P 层用这个号发布基因公告，线格式已冻结为 protobuf；每条公告在转发前都先校验，消息里也没有可伪造的发布者字段——发布者就是经 libp2p 认证的那个节点。0.26.x 及更早版本的节点用的是旧的 JSON 格式，看不到 0.27 节点的公告，P2P 环境里的每台机器都要升级。发布基因仍强制执行规范 §47.5 T1：至少正确处理一条用例、通过 `__rotifer_error` 通道拒绝一条格式错误的输入（报告为 `INVALID_INPUT`），并让 10 组生成输入全部产出符合结构的输出。详细版本历史请参见 [CHANGELOG.md](CHANGELOG.md)。自动节点发现、跨公网连接与 L4 集体免疫是后续里程碑——详见下方[实现状态](#实现状态)。
+> **状态：** v0.28.x——Agent 的基因组现在可以在机器之间搬运了。`rotifer genome export` 先扫描凭证，再把基因组写成一份 Genome Blueprint（`.rgenome`：用了哪些基因、怎样组合、每个角色的能力查询）；`rotifer genome import` 从 Registry 把 Agent 重建出来，可以原样安装钉住的基因，也可以按角色挑选过了 Arena 准入门槛的候选。Blueprint 格式仍是草案，后续可能调整。目前 Registry 里还没有基因进入 Arena 的 `verified` 档，所以按能力挑选暂时都会退回钉住的基因，Wrapped 基因也还不能导入。`rotifer install` 现在会把下载到的内容与 Registry 记录的内容哈希比对，不一致时给出警告；`agent run` 可以在编译过的基因上执行 Par／Cond／Try 组合。每个基因仍有一个由内容算出的 `v2:` 身份号（见 [docs/gene-id-v2.md](docs/gene-id-v2.md)）；实验性的 P2P 层用这个号在已冻结的 protobuf 线格式上发布基因公告，0.26.x 及更早版本的节点看不到新节点的公告，P2P 环境里的每台机器都要升级。发布基因仍强制执行规范 §47.5 T1：至少正确处理一条用例、通过 `__rotifer_error` 通道拒绝一条格式错误的输入（报告为 `INVALID_INPUT`），并让 10 组生成输入全部产出符合结构的输出。详细版本历史请参见 [CHANGELOG.md](CHANGELOG.md)。自动节点发现、跨公网连接与 L4 集体免疫是后续里程碑——详见下方[实现状态](#实现状态)。
 
 ---
 

@@ -468,7 +468,7 @@ describe("excludeGeneIds: an excluded top candidate is passed over at admission"
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, "phenotype.json"), "{}");
       writeFileSync(join(dir, "fake-v2"), fakeV2("swapped after admission"));
-      return { gene: cloudGene(row("delta", "3.0.0")), geneDir: dir, didSnapshot: false };
+      return { gene: cloudGene(row("delta", "3.0.0")), geneDir: dir, didSnapshot: false, contentHashCheck: { status: "match" as const } };
     });
     const { code, text } = await runImport(excludingAlpha2(), {});
     expect(code).toBe(1);

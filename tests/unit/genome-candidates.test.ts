@@ -343,7 +343,7 @@ describe("schema compatibility rule (RFC §4.5, B2: exact equality after normali
         map: { type: "object", additionalProperties: { type: "string", ...note }, patternProperties: { "^x": { type: "number", ...note } } },
         cond: { if: { type: "string", ...note }, then: { minLength: 1, ...note }, else: { type: "number", ...note }, contains: { const: 1, ...note } },
       },
-      $defs: { d: { type: "string", ...note } },
+      // No $defs: every $-keyword but $comment is refused (round 4, F1).
       allOf: [{ type: "object", ...note }],
       oneOf: [{ type: "object", ...note }],
     });
@@ -380,5 +380,27 @@ describe("schema compatibility rule (RFC §4.5, B2: exact equality after normali
     const q = { ...IN, properties: { text: { type: "string", maxLength: null } } };
     const c = { ...IN, properties: { text: { type: "string", maxLength: Infinity } } };
     expect(schemaIncompatibility({ inputSchemaCompat: q, outputSchemaCompat: OUT }, { inputSchema: c, outputSchema: OUT })).toContain("canonical JSON");
+  });
+
+  it("refuses every $-keyword but $comment, even in identical schemas (red-team round 4, F1)", () => {
+    const withDynamicRef = { ...IN, properties: { text: { $dynamicRef: "#meta" } } };
+    expect(
+      schemaIncompatibility({ inputSchemaCompat: withDynamicRef, outputSchemaCompat: OUT }, { inputSchema: withDynamicRef, outputSchema: OUT }),
+    ).toContain("$-keyword other than $comment");
+    for (const key of ["$recursiveRef", "$id", "$anchor", "$schema", "$defs", "$vocabulary", "$future"]) {
+      const s = { ...OUT, properties: { summary: { type: "string", [key]: "x" } } };
+      expect(schemaIncompatibility({ inputSchemaCompat: IN, outputSchemaCompat: s }, { inputSchema: IN, outputSchema: s }), key).toContain(
+        "$-keyword other than $comment",
+      );
+    }
+    // A property or a value named with a leading $ counts too: anywhere means anywhere.
+    const named = { ...IN, properties: { $price: { type: "number" } } };
+    expect(schemaIncompatibility({ inputSchemaCompat: named, outputSchemaCompat: OUT }, { inputSchema: named, outputSchema: OUT })).toContain("$-keyword");
+  });
+
+  it("two schemas that differ only in $comment are equal", () => {
+    const a = { ...IN, $comment: "first", properties: { text: { type: "string", $comment: "a" } } };
+    const b = { ...IN, $comment: "second", properties: { text: { type: "string" } } };
+    expect(schemaIncompatibility({ inputSchemaCompat: a, outputSchemaCompat: OUT }, { inputSchema: b, outputSchema: OUT })).toBeNull();
   });
 });

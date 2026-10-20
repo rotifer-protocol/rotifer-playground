@@ -144,7 +144,10 @@ const DEFAULT_SOURCES: CandidateSources = { arenaLeaderboard, getGene, computeGe
 // input and output. normalise deletes the annotation keywords and nothing else,
 // and descends only into keywords whose value is itself a schema. Every other
 // member is compared verbatim. A schema without a `properties` object, or a
-// `$ref` member anywhere in either schema, makes the pair incompatible.
+// member whose name starts with `$` (other than `$comment`) anywhere in either
+// schema, makes the pair incompatible: $ref, $dynamicRef, $recursiveRef, $id,
+// $anchor, $schema and the like depend on base URIs and resources the Blueprint
+// does not fix ($defs is refused with them, since nothing can reference it).
 
 const ANNOTATIONS = new Set(["description", "title", "examples", "default", "$comment"]);
 /** Keywords whose member values are schemas (member names are kept). */
@@ -178,10 +181,11 @@ export function normaliseSchema(schema: unknown): unknown {
   return Object.fromEntries(entries);
 }
 
-function hasRefMember(node: unknown): boolean {
-  if (Array.isArray(node)) return node.some(hasRefMember);
+/** True if any member, at any depth, is named with a leading `$` other than `$comment`. */
+function hasDollarKeyword(node: unknown): boolean {
+  if (Array.isArray(node)) return node.some(hasDollarKeyword);
   if (!isPlainObject(node)) return false;
-  return Object.entries(node).some(([key, value]) => key === "$ref" || hasRefMember(value));
+  return Object.entries(node).some(([key, value]) => (key.startsWith("$") && key !== "$comment") || hasDollarKeyword(value));
 }
 
 function hasProperties(s: unknown): boolean {
@@ -208,7 +212,9 @@ export function schemaIncompatibility(
   for (const [side, q, c] of pairs) {
     if (!hasProperties(q)) return `the Blueprint's ${side} schema has no checkable properties`;
     if (!hasProperties(c)) return `the candidate declares no checkable ${side} schema`;
-    if (hasRefMember(q) || hasRefMember(c)) return `the ${side} schemas use $ref, which cannot be compared`;
+    if (hasDollarKeyword(q) || hasDollarKeyword(c)) {
+      return `the ${side} schemas use a $-keyword other than $comment ($ref, $id, $schema, ...), which cannot be compared`;
+    }
     const qc = canonicalSchema(q);
     const cc = canonicalSchema(c);
     if (qc === null || cc === null) return `the ${side} schemas hold a value canonical JSON cannot represent`;

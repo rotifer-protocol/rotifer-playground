@@ -222,11 +222,12 @@ SELECT skip(1, 'B.5.5: empty dependencies set → no NaN — requires fixture');
 -- while this suite reported green — the function was only ever asked whether it
 -- existed. ADR-319 stage 1 item 1.7. The fixture below is the same shape as
 -- supabase/tests/arena_total_calls_trigger.sql (auth.users -> profile trigger
--- -> gene), rolled back with the rest of the file. Publishing these fixture
--- Genes emits five `content_hash mismatch (non-blocking, see ADR-292)`
--- WARNINGs — expected: client and server canonicalize phenotype differently,
--- and migration 20260528021934 downgraded that arm to a warning. If ADR-292
--- ever restores the hard failure, this fixture needs real hashes.
+-- -> gene), rolled back with the rest of the file. The fixture's content_hash
+-- values are arbitrary: since migration 20261020120000 (ADR-341) the publish
+-- trigger no longer recomputes the hash, it only checks that no other
+-- published Gene holds it — so each fixture Gene needs a distinct hash, not a
+-- "real" one. (Before that, publishing them emitted five ignored
+-- `content_hash mismatch (non-blocking, see ADR-292)` WARNINGs.)
 --
 -- Spec rule numbering (§33.4) — the inline comments in migration
 -- 20260527020821 use a different numbering, so read the spec, not the code:

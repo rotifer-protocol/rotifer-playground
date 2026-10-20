@@ -11,6 +11,7 @@ vi.mock("../../src/cloud/client.js", async (importOriginal) => ({
   getGene: vi.fn(),
   listGeneVersions: vi.fn(),
   arenaLeaderboard: vi.fn(),
+  downloadGeneWasm: vi.fn(),
 }));
 vi.mock("../../src/commands/install.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/commands/install.js")>()),
@@ -21,7 +22,7 @@ vi.mock("../../src/utils/binding.js", async (importOriginal) => ({
   geneIdV2: vi.fn(),
 }));
 
-import { arenaLeaderboard, getGene, listGeneVersions, type LeaderboardRow } from "../../src/cloud/client.js";
+import { arenaLeaderboard, downloadGeneWasm, getGene, listGeneVersions, type LeaderboardRow } from "../../src/cloud/client.js";
 import { installGeneFromCloud } from "../../src/commands/install.js";
 import { geneIdV2 } from "../../src/utils/binding.js";
 import { setOutputMode } from "../../src/utils/display.js";
@@ -60,9 +61,9 @@ function cloudGene(r: Row): CloudGene {
     version: r.version,
     fidelity: r.fidelity,
     description: null,
-    phenotype: { domain: "text.x", fidelity: r.fidelity, inputSchema: IN, outputSchema: OUT },
+    phenotype: { name: r.name, version: r.version, domain: "text.x", fidelity: r.fidelity, inputSchema: IN, outputSchema: OUT },
     wasm_url: `https://example.test/${r.id}.wasm`,
-    wasm_size: 1,
+    wasm_size: 0,
     wasm_hash: null,
     content_hash: null,
     downloads: 0,
@@ -113,9 +114,19 @@ beforeEach(() => {
     writeFileSync(join(dir, "fake-v2"), r.v2);
     return { gene: cloudGene(r), geneDir: dir, didSnapshot: false };
   });
+  vi.mocked(downloadGeneWasm).mockResolvedValue(Buffer.from([0x00, 0x61, 0x73, 0x6d]));
+  // The v2 ID of an installed gene is the one remembered beside it; of a candidate
+  // being identified before install, the one its phenotype's name@version maps to.
   vi.mocked(geneIdV2).mockImplementation((genesRoot: string, name: string) => {
     const f = join(genesRoot, name, "fake-v2");
-    return existsSync(f) ? { id: readFileSync(f, "utf-8") } : { reason: "gene.ir.wasm does not exist" };
+    if (existsSync(f)) return { id: readFileSync(f, "utf-8") };
+    const ph = join(genesRoot, name, "phenotype.json");
+    if (existsSync(join(genesRoot, name, "gene.ir.wasm")) && existsSync(ph)) {
+      const { version } = JSON.parse(readFileSync(ph, "utf-8"));
+      const r = REGISTRY.find((x) => x.name === name && x.version === version);
+      if (r) return { id: r.v2 };
+    }
+    return { reason: "gene.ir.wasm does not exist" };
   });
 });
 
@@ -124,6 +135,7 @@ afterEach(() => {
   vi.mocked(getGene).mockReset();
   vi.mocked(listGeneVersions).mockReset();
   vi.mocked(arenaLeaderboard).mockReset();
+  vi.mocked(downloadGeneWasm).mockReset();
   vi.mocked(installGeneFromCloud).mockReset();
   vi.mocked(geneIdV2).mockReset();
   setOutputMode("human");
@@ -409,6 +421,59 @@ describe("#30-c capability mode in import: thresholds and evidence", () => {
     expect(installs).toEqual(["id-alpha-2"]);
     expect(r.executionSnapshot).toMatchObject({ resolvedDeps: { alpha: row("alpha", "2.0.0").v2 }, status: "ACTIVE" });
     expect(r.executionSnapshot!.genomeId).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("excludeGeneIds: an excluded top candidate is passed over at admission", () => {
+  function excludingAlpha2(): GenomeBlueprint {
+    const bp = blueprint([row("alpha")], {}, { withCapabilities: true });
+    bp.capabilities!.alpha.excludeGeneIds = [row("alpha", "2.0.0").v2];
+    return bp;
+  }
+
+  beforeEach(() => {
+    // alpha@2.0.0 scores highest but is excluded; delta (same author) is next.
+    vi.mocked(arenaLeaderboard).mockResolvedValue([
+      leaderRow(row("alpha", "2.0.0"), { fitness_value: 0.95 }),
+      leaderRow(row("delta", "3.0.0"), { fitness_value: 0.85 }),
+    ]);
+  });
+
+  it("selects the next best, records why the top one was refused, and installs only the chosen row", async () => {
+    const r = await importGenome(writeBlueprint(excludingAlpha2()), { now: NOW }, { root, genesDir: "genes" });
+    expect(r.roles[0]).toMatchObject({ mode: "capability", cloudId: "id-delta-1", candidateGeneId: row("delta", "3.0.0").v2 });
+    const refused = r.roles[0].candidates!.find((c) => c.cloudId === "id-alpha-2")!;
+    expect(refused.rejections.map((x) => x.code)).toEqual(["excluded"]);
+    expect(installs).toEqual(["id-delta-1"]);
+    expect(agents()[0].genome).toEqual(["delta"]);
+  });
+
+  it("the dry-run resolution table shows the exclusion as the rejection reason", async () => {
+    const { code, text } = await runImport(excludingAlpha2(), { dryRun: true });
+    expect(code).toBe(0);
+    expect(text).toContain("rejected alice/alpha@2.0.0");
+    expect(text).toContain("excludeGeneIds");
+    expect(installs).toEqual([]);
+  });
+
+  it("without the exclusion the top candidate is chosen (the control case)", async () => {
+    const bp = blueprint([row("alpha")], {}, { withCapabilities: true });
+    const r = await importGenome(writeBlueprint(bp), { isDryRun: true, now: NOW }, { root, genesDir: "genes" });
+    expect(r.roles[0].cloudId).toBe("id-alpha-2");
+  });
+
+  it("installed content that differs from what was admitted fails the import", async () => {
+    vi.mocked(installGeneFromCloud).mockImplementationOnce(async (_ref: string, opts: { genesDir: string }) => {
+      const dir = join(opts.genesDir, "delta");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "phenotype.json"), "{}");
+      writeFileSync(join(dir, "fake-v2"), fakeV2("swapped after admission"));
+      return { gene: cloudGene(row("delta", "3.0.0")), geneDir: dir, didSnapshot: false };
+    });
+    const { code, text } = await runImport(excludingAlpha2(), {});
+    expect(code).toBe(1);
+    expect(text).toContain("not the " + row("delta", "3.0.0").v2 + " admitted");
+    expect(agents()).toEqual([]);
   });
 });
 

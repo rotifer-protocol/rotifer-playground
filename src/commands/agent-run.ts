@@ -15,6 +15,7 @@ import { flushInvocationReports } from "../cloud/invocation.js";
 import { flushHeartbeat } from "../telemetry/heartbeat.js";
 import { logGeneExecution } from "../utils/run-logger.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
+import { toRustPhenotype } from "../utils/rust-phenotype.js";
 
 interface AgentInfo {
   id: string;
@@ -102,10 +103,11 @@ export const agentRunCommand = new Command("run")
 
     // For non-Seq compositions with WASM support, use executeAlgebra()
     if (compositionType !== "Single" && compositionType !== "Seq" && binding) {
-      const algebraResult = executeViaAlgebra(
+      const algebra = executeViaAlgebra(
         agent, genesDir, binding, input, compositionType, options.verbose
       );
-      if (algebraResult !== null) {
+      if (algebra.kind === "failed") return;
+      if (algebra.kind === "done") {
         const totalElapsed = performance.now() - startTime;
         console.log();
         display.success("Pipeline execution complete");
@@ -114,7 +116,7 @@ export const agentRunCommand = new Command("run")
         display.keyValue("Duration", `${totalElapsed.toFixed(1)}ms`);
         console.log();
         display.info("Final output:");
-        console.log(JSON.stringify(algebraResult, null, 2));
+        console.log(JSON.stringify(algebra.output, null, 2));
         return;
       }
       display.warn("Falling back to sequential execution (some genes not compiled)");
@@ -713,6 +715,13 @@ function geneNameToId(geneName: string): string {
   return createHash("sha256").update(geneName).digest("hex");
 }
 
+// "failed": the error is already reported and exit(1) is scheduled; the
+// caller must not print anything else.
+type AlgebraOutcome =
+  | { kind: "done"; output: unknown }
+  | { kind: "fallback" }
+  | { kind: "failed" };
+
 function executeViaAlgebra(
   agent: AgentInfo,
   genesDir: string,
@@ -720,9 +729,9 @@ function executeViaAlgebra(
   input: unknown,
   compositionType: string,
   isVerbose: boolean,
-): unknown | null {
+): AlgebraOutcome {
   const comp = agent.composition;
-  if (!comp) return null;
+  if (!comp) return { kind: "fallback" };
 
   const geneEntries: Record<string, { wasm: number[]; phenotype: Record<string, unknown> }> = {};
 
@@ -733,7 +742,7 @@ function executeViaAlgebra(
 
     if (!existsSync(irWasmPath)) {
       display.warn(`  Gene '${geneName}' not compiled — cannot use ${compositionType} via Rust executor`);
-      return null;
+      return { kind: "fallback" };
     }
 
     const wasmBytes = readFileSync(irWasmPath);
@@ -744,7 +753,10 @@ function executeViaAlgebra(
     const hexId = geneNameToId(geneName);
     geneEntries[hexId] = {
       wasm: Array.from(wasmBytes),
-      phenotype,
+      // Rust deserializes this into rotifer_core's Phenotype; phenotype.json
+      // keeps irHash / dependencies as hex strings or names and createdAt
+      // possibly as an ISO string, which Rust rejects.
+      phenotype: toRustPhenotype(phenotype, geneNameToId),
     };
   }
 
@@ -770,7 +782,7 @@ function executeViaAlgebra(
       break;
     }
     case "Cond": {
-      if (geneIds.length < 2) return null;
+      if (geneIds.length < 2) return { kind: "fallback" };
       const pred = comp?.predicate;
       algebraExpr = {
         Cond: {
@@ -787,7 +799,7 @@ function executeViaAlgebra(
       break;
     }
     case "Try": {
-      if (geneIds.length < 2) return null;
+      if (geneIds.length < 2) return { kind: "fallback" };
       algebraExpr = {
         Try: {
           primary: { Gene: hexToGeneIdArray(geneIds[0]) },
@@ -798,14 +810,19 @@ function executeViaAlgebra(
       break;
     }
     default:
-      return null;
+      return { kind: "fallback" };
   }
 
   try {
+    // Same sandbox limits as the Single / Seq path (execute_gene). Without
+    // them the binding falls back to ConstraintSet::default() (1M fuel),
+    // below what one compiled gene of ordinary size needs. A binding older
+    // than this argument ignores it.
     const result = binding.executeAlgebra(
       JSON.stringify(algebraExpr),
       JSON.stringify(geneEntries),
       JSON.stringify(input),
+      DEFAULT_SANDBOX_CONSTRAINTS_JSON,
     );
 
     if (result.success) {
@@ -816,7 +833,7 @@ function executeViaAlgebra(
         display.info(`  Steps executed: ${result.stepsExecuted}`);
         display.info(`  Output: ${JSON.stringify(result.output).slice(0, 200)}`);
       }
-      return result.output;
+      return { kind: "done", output: result.output };
     } else {
       display.rustStyleError({
         code: "E0053",
@@ -825,7 +842,7 @@ function executeViaAlgebra(
       });
       // Not an async scope here: defer the exit until the report settles.
       void flushInvocationReports().finally(() => process.exit(1));
-      return undefined as never;
+      return { kind: "failed" };
     }
   } catch (err: any) {
     display.rustStyleError({
@@ -834,7 +851,7 @@ function executeViaAlgebra(
       suggestion: "Ensure all genes are compiled and valid",
     });
     void flushInvocationReports().finally(() => process.exit(1));
-    return undefined as never;
+    return { kind: "failed" };
   }
 }
 

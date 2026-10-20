@@ -280,6 +280,8 @@ export interface RoleResolution {
   name: string;
   version: string;
   fidelity: string;
+  /** v2 gene ID computed at admission (when excludeGeneIds had to be checked). */
+  candidateGeneId?: string;
   /** Same author and gene name as the hint, newer version. */
   selfHealUpgrade: boolean;
   crossAuthor: boolean;
@@ -418,6 +420,7 @@ export async function resolveRole(role: string, ctx: ResolveContext): Promise<Ro
     name: best.name,
     version: best.version,
     fidelity: best.fidelity,
+    ...(best.geneId ? { candidateGeneId: best.geneId } : {}),
     selfHealUpgrade:
       !!hint && !isCrossAuthor && best.name === hint.name && best.version !== hint.version,
     crossAuthor: isCrossAuthor,
@@ -441,12 +444,11 @@ interface StagedGene {
 /**
  * Install every role into a staging directory, recompute each v2 gene ID, and
  * check it: lock-mode roles must reproduce the Blueprint's geneId exactly;
- * capability picks must not be excluded. Nothing touches genes/ until every
+ * capability picks must be the content that was admitted. Nothing touches genes/ until every
  * role has passed.
  */
 async function installAndVerify(
   resolutions: RoleResolution[],
-  blueprint: GenomeBlueprint,
   genesRoot: string,
   stagingRoot: string,
   isVerbose: boolean,
@@ -483,8 +485,12 @@ async function installAndVerify(
         "The gene's content differs from what the Blueprint was made from; nothing was imported.",
       );
     }
-    if (!isLockMode && blueprint.capabilities?.[r.role]?.excludeGeneIds?.includes(id.id)) {
-      throw new GenomeImportError(`Role '${r.role}': the selected gene ${id.id} is excluded by the Blueprint`);
+    // Exclusion was applied at admission; what was installed must be what was admitted.
+    if (!isLockMode && r.candidateGeneId && id.id !== r.candidateGeneId) {
+      throw new GenomeImportError(
+        `Role '${r.role}': installed ${r.owner}/${r.name}@${r.version} is ${id.id}, not the ${r.candidateGeneId} admitted`,
+        "The Registry row changed between admission and install; nothing was imported.",
+      );
     }
 
     if (existsSync(join(local, "phenotype.json"))) {
@@ -600,7 +606,7 @@ export async function importGenome(
   const schemaWarnings: string[] = [];
   let staged: StagedGene[];
   try {
-    staged = await installAndVerify(resolutions, blueprint, genesRoot, stagingRoot, !display.isJsonMode());
+    staged = await installAndVerify(resolutions, genesRoot, stagingRoot, !display.isJsonMode());
     for (const s of staged) {
       if (s.stagedDir) cpSync(s.stagedDir, join(genesRoot, s.name), { recursive: true });
     }

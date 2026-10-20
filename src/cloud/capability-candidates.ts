@@ -17,8 +17,14 @@
  * labelled that way in every output — it is not the `rotifer vg` grade and not
  * the full §5.1 V(g).
  */
-import { arenaLeaderboard, getGene, type LeaderboardRow } from "./client.js";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { arenaLeaderboard, downloadGeneWasm, getGene, type LeaderboardRow } from "./client.js";
 import type { CloudGene } from "./types.js";
+import { geneIdV2, type GeneIdV2Result } from "../utils/binding.js";
+import { validateGeneName } from "../utils/validate-gene-name.js";
 
 export type RejectionCode =
   | "not-verified"
@@ -29,7 +35,8 @@ export type RejectionCode =
   | "vg-below-threshold"
   | "stale-evidence"
   | "no-artifact"
-  | "schema-incompatible";
+  | "schema-incompatible"
+  | "excluded";
 
 export interface Rejection {
   code: RejectionCode;
@@ -54,6 +61,8 @@ export interface CandidateVerdict {
   name: string;
   version: string;
   fidelity: string;
+  /** v2 gene ID, computed only when the query has excludeGeneIds to check. */
+  geneId?: string;
   evidence: CandidateEvidence;
   admitted: boolean;
   rejections: Rejection[];
@@ -71,6 +80,7 @@ export interface CapabilityQueryLike {
   inputSchemaCompat: unknown;
   outputSchemaCompat: unknown;
   minFitness?: number;
+  excludeGeneIds?: string[];
 }
 
 export interface CandidateResolution {
@@ -91,9 +101,36 @@ export class EvidenceError extends Error {
 export interface CandidateSources {
   arenaLeaderboard: (o: { domain?: string; limit?: number }) => Promise<LeaderboardRow[]>;
   getGene: (id: string) => Promise<CloudGene>;
+  /** v2 gene ID of a Registry row's content — needed to apply excludeGeneIds before choosing. */
+  computeGeneId: (gene: CloudGene) => Promise<GeneIdV2Result>;
 }
 
-const DEFAULT_SOURCES: CandidateSources = { arenaLeaderboard, getGene };
+/**
+ * Compute a candidate's v2 gene ID from its Registry row without installing it:
+ * phenotype and WASM go to a throwaway directory, the WASM is checked against
+ * the row's size and SHA-256, and nothing is counted as a download.
+ */
+export async function computeGeneIdFromRegistry(gene: CloudGene): Promise<GeneIdV2Result> {
+  if (!gene.wasm_url) return { reason: "the Registry row has no WASM artifact" };
+  validateGeneName(gene.name);
+  const root = mkdtempSync(join(tmpdir(), "rotifer-candidate-"));
+  try {
+    const dir = join(root, gene.name);
+    mkdirSync(dir);
+    writeFileSync(join(dir, "phenotype.json"), JSON.stringify(gene.phenotype, null, 2) + "\n");
+    const wasm = await downloadGeneWasm(gene.wasm_url);
+    if (gene.wasm_size && wasm.length !== gene.wasm_size) return { reason: "WASM size does not match the Registry row" };
+    if (gene.wasm_hash && createHash("sha256").update(wasm).digest("hex") !== gene.wasm_hash) {
+      return { reason: "WASM hash does not match the Registry row" };
+    }
+    writeFileSync(join(dir, "gene.ir.wasm"), wasm);
+    return geneIdV2(root, gene.name);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const DEFAULT_SOURCES: CandidateSources = { arenaLeaderboard, getGene, computeGeneId: computeGeneIdFromRegistry };
 
 // ── Schema compatibility ─────────────────────────────────────
 //
@@ -233,12 +270,31 @@ export async function resolveCapabilityCandidates(
       throw new EvidenceError(`Registry row ${row.gene_id} (${row.gene_name}) returned an empty phenotype`);
     }
     const rejections = admissionRejections(row, gene, query, policy);
+
+    // excludeGeneIds names v2 IDs, so a candidate that passed everything else
+    // is identified by content before it can be chosen; an excluded one is
+    // rejected here and the next candidate gets its turn.
+    let geneId: string | undefined;
+    const excluded = query.excludeGeneIds ?? [];
+    if (excluded.length > 0 && rejections.length === 0) {
+      const id = await sources.computeGeneId(gene);
+      if ("id" in id) {
+        geneId = id.id;
+        if (excluded.includes(id.id)) {
+          rejections.push({ code: "excluded", detail: `v2 gene ID ${id.id} is in the Blueprint's excludeGeneIds` });
+        }
+      } else {
+        rejections.push({ code: "missing-evidence", detail: `v2 gene ID could not be computed to check excludeGeneIds: ${id.reason}` });
+      }
+    }
+
     candidates.push({
       cloudId: row.gene_id,
       owner: row.owner_username,
       name: row.gene_name,
       version: row.gene_version,
       fidelity: row.fidelity,
+      ...(geneId ? { geneId } : {}),
       evidence: {
         tier: row.tier,
         fitness_value: row.fitness_value,

@@ -59,7 +59,8 @@ export interface NativeBinding {
   executeAlgebra(
     algebraJson: string,
     geneEntriesJson: string,
-    inputJson: string
+    inputJson: string,
+    constraintsJson?: string
   ): AlgebraResultView;
 }
 

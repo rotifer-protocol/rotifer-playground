@@ -66,10 +66,23 @@ function gene(id: string, over: Partial<CloudGene> = {}): CloudGene {
   };
 }
 
-function sources(rows: LeaderboardRow[], genes: Record<string, CloudGene>): CandidateSources & { getGeneCalls: string[] } {
+/** v2 ID of a fake Registry row: derived from its id, overridable per test. */
+const v2Of = (id: string) => "v2:" + id.toLowerCase().padEnd(64, "0").slice(0, 64).replace(/[^0-9a-f]/g, "a");
+
+function sources(
+  rows: LeaderboardRow[],
+  genes: Record<string, CloudGene>,
+  geneIds: Record<string, { id: string } | { reason: string }> = {},
+): CandidateSources & { getGeneCalls: string[]; computeCalls: string[] } {
   const getGeneCalls: string[] = [];
+  const computeCalls: string[] = [];
   return {
     getGeneCalls,
+    computeCalls,
+    computeGeneId: async (g: CloudGene) => {
+      computeCalls.push(g.id);
+      return geneIds[g.id] ?? { id: v2Of(g.id) };
+    },
     arenaLeaderboard: async () => rows,
     getGene: async (id: string) => {
       getGeneCalls.push(id);
@@ -79,6 +92,7 @@ function sources(rows: LeaderboardRow[], genes: Record<string, CloudGene>): Cand
     },
   };
 }
+
 
 describe("#30-c capability admission — a high-fitness, low-safety candidate is refused", () => {
   // X: best fitness but low declared safety; Y: modest fitness, high safety;
@@ -173,6 +187,43 @@ describe("#30-c capability admission — a high-fitness, low-safety candidate is
   });
 });
 
+describe("excludeGeneIds is applied at admission", () => {
+  const rows = [row("best", { fitness_value: 0.95 }), row("next", { fitness_value: 0.85 }), row("low", { fitness_value: 0.5, safety_score: 0.2 })];
+  const genes = { best: gene("best"), next: gene("next"), low: gene("low") };
+
+  it("an excluded top scorer is rejected and the next best is chosen", async () => {
+    const src = sources(rows, genes);
+    const { candidates, admitted } = await resolveCapabilityCandidates({ ...QUERY, excludeGeneIds: [v2Of("best")] }, POLICY, src);
+    expect(admitted.map((c) => c.cloudId)).toEqual(["next"]);
+    const best = candidates.find((c) => c.cloudId === "best")!;
+    expect(best.rejections).toEqual([{ code: "excluded", detail: expect.stringContaining(v2Of("best")) }]);
+    expect(admitted[0].geneId).toBe(v2Of("next"));
+    // Only candidates that passed every other check are identified by content.
+    expect(src.computeCalls.sort()).toEqual(["best", "next"]);
+  });
+
+  it("without excludeGeneIds nothing is downloaded to compute IDs and the top scorer wins", async () => {
+    const src = sources(rows, genes);
+    const { admitted } = await resolveCapabilityCandidates(QUERY, POLICY, src);
+    expect(admitted[0].cloudId).toBe("best");
+    expect(admitted[0].geneId).toBeUndefined();
+    expect(src.computeCalls).toEqual([]);
+  });
+
+  it("an ID that cannot be computed counts as missing evidence, not as 'not excluded'", async () => {
+    const src = sources(rows, genes, { best: { reason: "WASM hash does not match the Registry row" } });
+    const { candidates, admitted } = await resolveCapabilityCandidates({ ...QUERY, excludeGeneIds: [v2Of("other")] }, POLICY, src);
+    expect(admitted.map((c) => c.cloudId)).toEqual(["next"]);
+    expect(candidates.find((c) => c.cloudId === "best")!.rejections[0]).toMatchObject({ code: "missing-evidence" });
+  });
+
+  it("every admissible candidate excluded → none admitted", async () => {
+    const src = sources(rows, genes);
+    const { admitted } = await resolveCapabilityCandidates({ ...QUERY, excludeGeneIds: [v2Of("best"), v2Of("next")] }, POLICY, src);
+    expect(admitted).toEqual([]);
+  });
+});
+
 describe("#30-c evidence that cannot be read is a failure, not a fallback", () => {
   it("leaderboard error → EvidenceError", async () => {
     const src: CandidateSources = {
@@ -180,6 +231,7 @@ describe("#30-c evidence that cannot be read is a failure, not a fallback", () =
         throw new Error("network down");
       },
       getGene: async () => gene("x"),
+      computeGeneId: async () => ({ reason: "unused" }),
     };
     await expect(resolveCapabilityCandidates(QUERY, POLICY, src)).rejects.toBeInstanceOf(EvidenceError);
   });

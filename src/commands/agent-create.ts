@@ -24,6 +24,10 @@ export interface CreateAgentParams {
   compositionType: string;
   parMerge?: string;
   strategy?: string;
+  /** Cond predicate to store; omitted → the default `{ field: "type", equals: "primary" }`. */
+  predicate?: { field: string; op?: string; value?: unknown };
+  /** Receives schema-compatibility warnings instead of printing them (for --json callers). */
+  onSchemaWarnings?: (warnings: string[]) => void;
 }
 
 export interface AgentRecord {
@@ -50,7 +54,9 @@ export function createAgentCore(params: CreateAgentParams): AgentRecord {
 
   if (genome.length >= 2) {
     const warnings = checkSchemaCompatibility(root, params.genesDir, genome);
-    if (warnings.length > 0) {
+    if (params.onSchemaWarnings) {
+      params.onSchemaWarnings(warnings);
+    } else if (warnings.length > 0) {
       display.warn("Schema compatibility warnings:");
       for (const w of warnings) {
         display.warn(`  ${w}`);
@@ -67,7 +73,7 @@ export function createAgentCore(params: CreateAgentParams): AgentRecord {
   } else if (compositionType === "Cond" && genome.length >= 2) {
     composition = {
       type: "Cond",
-      predicate: { field: "type", equals: "primary" },
+      predicate: params.predicate ?? { field: "type", equals: "primary" },
       thenBranch: genome[0],
       elseBranch: genome[1],
     };

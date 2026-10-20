@@ -111,7 +111,7 @@ beforeEach(() => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "phenotype.json"), JSON.stringify(cloudGene(r).phenotype));
     writeFileSync(join(dir, "fake-v2"), r.v2);
-    return { gene: cloudGene(r), geneDir: dir, didSnapshot: false };
+    return { gene: cloudGene(r), geneDir: dir, didSnapshot: false, contentHashCheck: { status: "match" as const } };
   });
   vi.mocked(geneIdV2).mockImplementation((genesRoot: string, name: string) => {
     const f = join(genesRoot, name, "fake-v2");

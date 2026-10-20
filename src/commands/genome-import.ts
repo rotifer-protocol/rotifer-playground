@@ -15,7 +15,7 @@ import {
   type CandidateEvidence,
   type CandidateVerdict,
 } from "../cloud/capability-candidates.js";
-import { installGeneFromCloud } from "./install.js";
+import { contentHashWarning, installGeneFromCloud, type ContentHashCheck } from "./install.js";
 import { createAgentCore, type AgentRecord } from "./agent-create.js";
 import {
   BINDING_NAME,
@@ -434,6 +434,8 @@ interface StagedGene {
   geneId: string;
   /** Directory under staging, or null when an identical local copy is reused. */
   stagedDir: string | null;
+  /** phenotype vs recorded content_hash; null when a local copy was reused. */
+  contentHashCheck: ContentHashCheck | null;
 }
 
 /**
@@ -458,13 +460,15 @@ async function installAndVerify(
     if (isLockMode && existsSync(join(local, "phenotype.json"))) {
       const localId = geneIdV2(genesRoot, r.name);
       if ("id" in localId && localId.id === r.originalGeneId) {
-        staged.push({ role: r.role, name: r.name, geneId: localId.id, stagedDir: null });
+        staged.push({ role: r.role, name: r.name, geneId: localId.id, stagedDir: null, contentHashCheck: null });
         continue;
       }
     }
 
     if (isVerbose) display.info(`Installing ${r.owner}/${r.name}@${r.version} (${r.cloudId})`);
-    const { gene } = await installGeneFromCloud(r.cloudId, { genesDir: stagingRoot });
+    const { gene, contentHashCheck } = await installGeneFromCloud(r.cloudId, { genesDir: stagingRoot });
+    const hashWarning = contentHashWarning(gene.name, contentHashCheck);
+    if (hashWarning && isVerbose) display.warn(hashWarning);
     if (gene.name !== r.name) {
       throw new GenomeImportError(`Registry row ${r.cloudId} is '${gene.name}', expected '${r.name}'`);
     }
@@ -491,10 +495,10 @@ async function installAndVerify(
           "Import into another workspace, or move the local gene aside first.",
         );
       }
-      staged.push({ role: r.role, name: r.name, geneId: id.id, stagedDir: null });
+      staged.push({ role: r.role, name: r.name, geneId: id.id, stagedDir: null, contentHashCheck });
       continue;
     }
-    staged.push({ role: r.role, name: r.name, geneId: id.id, stagedDir: join(stagingRoot, gene.name) });
+    staged.push({ role: r.role, name: r.name, geneId: id.id, stagedDir: join(stagingRoot, gene.name), contentHashCheck });
   }
   return staged;
 }
@@ -513,7 +517,7 @@ export interface ImportResult {
     resolvedAt: string;
     status: "ACTIVE";
   } | null;
-  roles: Array<RoleResolution & { geneId: string | null }>;
+  roles: Array<RoleResolution & { geneId: string | null; contentHashCheck?: ContentHashCheck | null }>;
   schemaWarnings: string[];
 }
 
@@ -628,7 +632,7 @@ export async function importGenome(
       resolvedAt,
       status: "ACTIVE",
     },
-    roles: resolutions.map((r, i) => ({ ...r, geneId: staged[i].geneId })),
+    roles: resolutions.map((r, i) => ({ ...r, geneId: staged[i].geneId, contentHashCheck: staged[i].contentHashCheck })),
     schemaWarnings,
   };
 }

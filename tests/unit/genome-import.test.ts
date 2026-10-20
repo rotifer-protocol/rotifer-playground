@@ -31,7 +31,6 @@ import type { GenomeBlueprint } from "../../src/commands/genome.js";
 import {
   compositionPlan,
   effectiveMinVg,
-  markUnreadableNumbers,
   importGenome,
   parseBlueprint,
   runGenomeImport,
@@ -677,7 +676,8 @@ describe("T-20: second-round red-team findings on import", () => {
     });
 
     it("ordinary numbers still parse", () => {
-      expect(() => parseBlueprint(withNumber((bp) => { bp.snapshot.composition.Cond.predicate.value = 1e300; }))).not.toThrow();
+      // 1e-300, not 1e300: integer-valued numbers beyond 2^53 are refused for another reason (T-22).
+      expect(() => parseBlueprint(withNumber((bp) => { bp.snapshot.composition.Cond.predicate.value = 1e-300; }))).not.toThrow();
     });
   });
 
@@ -771,15 +771,17 @@ describe("T-22: integers JSON.parse cannot hold exactly are refused", () => {
     expect(agents()).toEqual([]);
   });
 
-  it("without the source text a number is marked unreadable — refused, never guessed", () => {
-    expect(markUnreadableNumbers("v", 5, undefined)).not.toBe(5);
-    expect(markUnreadableNumbers("v", 5, {})).not.toBe(5);
-    expect(markUnreadableNumbers("v", 5, { source: "5" })).toBe(5);
-    expect(markUnreadableNumbers("v", "text", undefined)).toBe("text");
+  // CEO ruling: judge the parsed value, not its spelling. Any integer outside the
+  // safe range is refused however it is written — so 9007199254740993e0 and
+  // ...993.0 are caught, and 1e20 / 1.5e300 (integer-valued) are refused too.
+  it("float spellings of an out-of-range integer are refused, and so are large integer-valued floats", () => {
+    for (const literal of ["9007199254740993e0", "9007199254740993.0", "9007199254740993.5", "1e20", "1.5e300", "-1e20"]) {
+      expect(() => parseBlueprint(withNumber(literal, atCondValue)), literal).toThrow("integer outside the exactly representable range");
+    }
   });
 
-  it("safe integers and floats, however large, are not refused", () => {
-    for (const literal of ["9007199254740991", "-9007199254740991", "12", "0", "1.5e300", "1e20", "0.1", "9007199254740993.5"]) {
+  it("safe integers and fractional numbers are not refused", () => {
+    for (const literal of ["9007199254740991", "-9007199254740991", "12", "0", "0.1", "1.5e3", "-2.5", "1e-7"]) {
       expect(() => parseBlueprint(withNumber(literal, atCondValue)), literal).not.toThrow();
     }
   });

@@ -188,41 +188,22 @@ function checkMinVg(value: unknown, where: string): number {
 }
 
 /**
- * Stands in for a number JSON.parse could not read faithfully. Precision is lost
- * inside JSON.parse itself (9007199254740993 comes out as ...992), so the parsed
- * value cannot tell; the reviver sees each number's source text and swaps in
- * this marker, which is reported after the credential scan.
+ * The first number in the file that cannot be imported as written, with its
+ * pointer. Keys are already scanned. Judged on the parsed value, whatever the
+ * spelling: JSON.parse rounds an integer beyond 2^53 to a neighbour
+ * (9007199254740993, ...993e0 and ...993.0 all become ...992), and rounding is
+ * monotonic with 2^53 itself representable, so every such literal lands on an
+ * integer outside the safe range — which is what is refused. Integer-valued
+ * floats such as 1e20 are refused with them.
  */
-class UnreadableNumber {
-  constructor(readonly reason: "unsafe-integer" | "no-source-text") {}
-}
-
-/** Integer literal: digits only, optional minus — no fraction, no exponent. */
-const INTEGER_LITERAL = /^-?\d+$/;
-
-type SourceReviver = (key: string, value: unknown, context?: { source?: string }) => unknown;
-
-export function markUnreadableNumbers(_key: string, value: unknown, context?: { source?: string }): unknown {
-  if (typeof value !== "number") return value;
-  const source = context?.source;
-  // Without the source text precision cannot be checked; refuse rather than guess.
-  if (typeof source !== "string") return new UnreadableNumber("no-source-text");
-  if (INTEGER_LITERAL.test(source) && !Number.isSafeInteger(value)) return new UnreadableNumber("unsafe-integer");
-  return value;
-}
-
-/** The first number in the file that cannot be imported as written, with its pointer. Keys are already scanned. */
 function firstUnrepresentableNumber(node: unknown, pointer: string): { pointer: string; problem: string } | null {
-  if (node instanceof UnreadableNumber) {
-    return {
-      pointer,
-      problem:
-        node.reason === "unsafe-integer"
-          ? "an integer outside the exactly representable range"
-          : "a number whose precision this Node version cannot check",
-    };
+  if (typeof node === "number") {
+    if (!Number.isFinite(node)) return { pointer, problem: "a value that is not a finite number" };
+    if (Number.isInteger(node) && !Number.isSafeInteger(node)) {
+      return { pointer, problem: "an integer outside the exactly representable range" };
+    }
+    return null;
   }
-  if (typeof node === "number") return Number.isFinite(node) ? null : { pointer, problem: "a value that is not a finite number" };
   if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) {
       const hit = firstUnrepresentableNumber(node[i], `${pointer}/${i}`);
@@ -243,7 +224,7 @@ function firstUnrepresentableNumber(node: unknown, pointer: string): { pointer: 
 export function parseBlueprint(text: string): ParsedBlueprint {
   let raw: unknown;
   try {
-    raw = (JSON.parse as (text: string, reviver: SourceReviver) => unknown)(text, markUnreadableNumbers);
+    raw = JSON.parse(text);
   } catch (err) {
     // The parser's own message quotes the input around the error, which may be
     // a key; report only where it broke.

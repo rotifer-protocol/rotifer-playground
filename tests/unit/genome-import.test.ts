@@ -31,6 +31,7 @@ import type { GenomeBlueprint } from "../../src/commands/genome.js";
 import {
   compositionPlan,
   effectiveMinVg,
+  markUnreadableNumbers,
   importGenome,
   parseBlueprint,
   runGenomeImport,
@@ -726,5 +727,60 @@ describe("T-20: second-round red-team findings on import", () => {
         expect(() => parseBlueprint(JSON.stringify(bp))).not.toThrow();
       }
     });
+  });
+});
+
+describe("T-22: integers JSON.parse cannot hold exactly are refused", () => {
+  // 9007199254740993 is read as 9007199254740992 — a different value, decided before any check runs.
+  const withNumber = (literal: string, place: (bp: any) => void) => {
+    const rs = [row("alpha"), row("beta")];
+    const bp: any = blueprint(rs);
+    bp.snapshot.composition = { Cond: { predicate: { field: "score", operator: "EQ", value: 0 }, ifTrue: leaf(rs[0]), ifFalse: leaf(rs[1]) } };
+    place(bp);
+    return JSON.stringify(bp).replace(/"__N__"/g, literal);
+  };
+  const atCondValue = (bp: any) => { bp.snapshot.composition.Cond.predicate.value = "__N__"; };
+
+  it("a Cond value above 2^53 is refused, naming its position", () => {
+    expect(() => parseBlueprint(withNumber("9007199254740993", atCondValue))).toThrow(
+      "integer outside the exactly representable range at /snapshot/composition/Cond/predicate/value",
+    );
+  });
+
+  it("a negative one in a field nothing else checks is refused", () => {
+    expect(() => parseBlueprint(withNumber("-9007199254740993", (bp) => { bp.metadata.extra = { ids: [1, "__N__"] }; }))).toThrow(
+      "at /metadata/extra/ids/1",
+    );
+  });
+
+  it("2^53 itself is refused: it cannot be told apart from 2^53 + 1", () => {
+    expect(() => parseBlueprint(withNumber("9007199254740992", atCondValue))).toThrow("integer outside the exactly representable range");
+  });
+
+  it("the import command exits 1 and creates no agent", async () => {
+    const file = join(root, `${randomUUID()}.rgenome`);
+    writeFileSync(file, withNumber("9007199254740993", atCondValue));
+    const out = captureOutput();
+    let code: number;
+    try {
+      code = await runGenomeImport(file, { pinned: true }, { root, genesDir: "genes" });
+    } finally {
+      out.restore();
+    }
+    expect(code).toBe(1);
+    expect(agents()).toEqual([]);
+  });
+
+  it("without the source text a number is marked unreadable — refused, never guessed", () => {
+    expect(markUnreadableNumbers("v", 5, undefined)).not.toBe(5);
+    expect(markUnreadableNumbers("v", 5, {})).not.toBe(5);
+    expect(markUnreadableNumbers("v", 5, { source: "5" })).toBe(5);
+    expect(markUnreadableNumbers("v", "text", undefined)).toBe("text");
+  });
+
+  it("safe integers and floats, however large, are not refused", () => {
+    for (const literal of ["9007199254740991", "-9007199254740991", "12", "0", "1.5e300", "1e20", "0.1", "9007199254740993.5"]) {
+      expect(() => parseBlueprint(withNumber(literal, atCondValue)), literal).not.toThrow();
+    }
   });
 });

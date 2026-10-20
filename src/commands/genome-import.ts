@@ -187,19 +187,52 @@ function checkMinVg(value: unknown, where: string): number {
   return value;
 }
 
-/** Pointer of the first number that is not finite (Infinity, NaN), or null. Keys are already scanned. */
-function firstNonFiniteNumber(node: unknown, pointer: string): string | null {
-  if (typeof node === "number") return Number.isFinite(node) ? null : pointer;
+/**
+ * Stands in for a number JSON.parse could not read faithfully. Precision is lost
+ * inside JSON.parse itself (9007199254740993 comes out as ...992), so the parsed
+ * value cannot tell; the reviver sees each number's source text and swaps in
+ * this marker, which is reported after the credential scan.
+ */
+class UnreadableNumber {
+  constructor(readonly reason: "unsafe-integer" | "no-source-text") {}
+}
+
+/** Integer literal: digits only, optional minus — no fraction, no exponent. */
+const INTEGER_LITERAL = /^-?\d+$/;
+
+type SourceReviver = (key: string, value: unknown, context?: { source?: string }) => unknown;
+
+export function markUnreadableNumbers(_key: string, value: unknown, context?: { source?: string }): unknown {
+  if (typeof value !== "number") return value;
+  const source = context?.source;
+  // Without the source text precision cannot be checked; refuse rather than guess.
+  if (typeof source !== "string") return new UnreadableNumber("no-source-text");
+  if (INTEGER_LITERAL.test(source) && !Number.isSafeInteger(value)) return new UnreadableNumber("unsafe-integer");
+  return value;
+}
+
+/** The first number in the file that cannot be imported as written, with its pointer. Keys are already scanned. */
+function firstUnrepresentableNumber(node: unknown, pointer: string): { pointer: string; problem: string } | null {
+  if (node instanceof UnreadableNumber) {
+    return {
+      pointer,
+      problem:
+        node.reason === "unsafe-integer"
+          ? "an integer outside the exactly representable range"
+          : "a number whose precision this Node version cannot check",
+    };
+  }
+  if (typeof node === "number") return Number.isFinite(node) ? null : { pointer, problem: "a value that is not a finite number" };
   if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) {
-      const hit = firstNonFiniteNumber(node[i], `${pointer}/${i}`);
+      const hit = firstUnrepresentableNumber(node[i], `${pointer}/${i}`);
       if (hit !== null) return hit;
     }
     return null;
   }
   if (isObject(node)) {
     for (const [key, value] of Object.entries(node)) {
-      const hit = firstNonFiniteNumber(value, `${pointer}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`);
+      const hit = firstUnrepresentableNumber(value, `${pointer}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`);
       if (hit !== null) return hit;
     }
   }
@@ -210,7 +243,7 @@ function firstNonFiniteNumber(node: unknown, pointer: string): string | null {
 export function parseBlueprint(text: string): ParsedBlueprint {
   let raw: unknown;
   try {
-    raw = JSON.parse(text);
+    raw = (JSON.parse as (text: string, reviver: SourceReviver) => unknown)(text, markUnreadableNumbers);
   } catch (err) {
     // The parser's own message quotes the input around the error, which may be
     // a key; report only where it broke.
@@ -228,11 +261,15 @@ export function parseBlueprint(text: string): ParsedBlueprint {
     throw new GenomeImportError(`The Blueprint carries what looks like a credential, so it is not imported: ${where}`);
   }
 
-  // JSON.parse reads 1e400 as Infinity; saved again it becomes null, and agent
-  // run would then substitute a default. No number in a Blueprint may be non-finite.
-  const nonFinite = firstNonFiniteNumber(raw, "");
-  if (nonFinite !== null) {
-    throw new GenomeImportError(`The Blueprint has a value that is not a finite number at ${nonFinite || "/"}`);
+  // A number must import as written. JSON.parse reads 1e400 as Infinity (saved
+  // again it becomes null, and agent run substitutes a default) and rounds an
+  // integer beyond 2^53 to a neighbour — either can switch a Cond branch.
+  const unrepresentable = firstUnrepresentableNumber(raw, "");
+  if (unrepresentable !== null) {
+    throw new GenomeImportError(
+      `The Blueprint has ${unrepresentable.problem} at ${unrepresentable.pointer || "/"}`,
+      "Numbers must be finite, and integers within ±(2^53 − 1); write larger values as strings.",
+    );
   }
 
   const format = raw.blueprintFormat;

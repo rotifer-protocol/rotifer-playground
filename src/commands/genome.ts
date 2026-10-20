@@ -129,7 +129,7 @@ export function buildComposition(
       // Same defaults `agent run` applies to a missing predicate.
       const pred = comp.predicate ?? {};
       const op = pred.op || "Eq";
-      const operator = COMPARE_OPS[op];
+      const operator = Object.hasOwn(COMPARE_OPS, op) ? COMPARE_OPS[op] : undefined;
       if (!operator) {
         throw outsideSubset(type, `unknown predicate operator '${op}' (expected one of ${Object.keys(COMPARE_OPS).join(", ")})`);
       }

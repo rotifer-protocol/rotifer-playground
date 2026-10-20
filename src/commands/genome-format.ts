@@ -253,7 +253,7 @@ function holdsCredentialValue(value: unknown): boolean {
  * function" in a description is not mistaken for code.
  */
 const CODE_SHAPE =
-  /\breturn\b[^;\n]*;|=>|\bfunction\b\s*[\w$]*\s*\(|\b(?:eval|require|Function|setTimeout|setInterval|fetch)\s*\(|<script\b|^\s*import\s|\bmodule\.exports\b/;
+  /\breturn\b[^;\n]*;|=>|\bfunction\b\s*[\w$]*\s*\(|\b(?:eval|require|Function|setTimeout|setInterval|fetch)\s*\(|<script\b|^\s*import\s|\bmodule\.exports\b/m;
 const CODE_RULE = "Code in extension field";
 
 export interface ScanOptions {
@@ -438,9 +438,8 @@ export interface ParsedBlueprint {
   suggestedMinVg?: number;
 }
 
-const OPS_FROM_SPEC: Record<string, string> = Object.fromEntries(
-  Object.entries(COMPARE_OPS).map(([local, spec]) => [spec, local]),
-);
+// A Map, not an object: "toString" or "__proto__" must not find an inherited member.
+const OPS_FROM_SPEC: ReadonlyMap<string, string> = new Map(Object.entries(COMPARE_OPS).map(([local, spec]) => [spec, local]));
 
 function outsideSubset(why: string): GenomeImportError {
   return new GenomeImportError(
@@ -533,7 +532,7 @@ export function compositionPlan(blueprint: GenomeBlueprint): CompositionPlan {
       // value; accepting them would run a different branch than the one declared.
       if (p.field === "") throw outsideSubset("Cond predicate needs a non-empty field");
       if (p.value === null) throw outsideSubset("Cond predicate value must not be null");
-      const op = OPS_FROM_SPEC[p.operator];
+      const op = OPS_FROM_SPEC.get(p.operator);
       if (!op) throw outsideSubset(`unknown CompareOp '${p.operator}'`);
       // What the executor actually does (R3): MATCHES always evaluates to false,
       // CONTAINS only tests substrings, and field is looked up as one top-level key.
@@ -558,7 +557,7 @@ export function compositionPlan(blueprint: GenomeBlueprint): CompositionPlan {
       throw outsideSubset(`'${tag}' is not a §15.2 operator v0.9.2 supports`);
   }
 
-  if (plan.roles.join("\u0000") !== order.join("\u0000")) {
+  if (plan.roles.length !== order.length || plan.roles.some((role, i) => role !== order[i])) {
     throw outsideSubset("the composition must use every gene of snapshot.genes once, in order");
   }
   return plan;
@@ -566,7 +565,8 @@ export function compositionPlan(blueprint: GenomeBlueprint): CompositionPlan {
 
 /** The Par merge strategy (RFC §2.6, on the §7 list): applied as defined, or the Blueprint is refused. */
 function checkParMerge(value: unknown): string {
-  const merge = value ?? "first";
+  // Only an absent field means "first"; an explicit null is not one of the three.
+  const merge = value === undefined ? "first" : value;
   if (typeof merge !== "string" || !PAR_MERGES.has(merge)) {
     throw new GenomeImportError(`bindingExtensions["${BINDING_NAME}"].parMerge '${String(merge)}' is not first, concat or merge`);
   }

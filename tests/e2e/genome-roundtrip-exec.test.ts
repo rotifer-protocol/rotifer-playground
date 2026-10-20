@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { hasNativeGeneIdV2 } from "../../src/utils/binding.js";
 import { startRegistryProxy, type RegistryProxy } from "./genome-registry-proxy.js";
-import { GENES, REGISTRY_E2E, cliEnv, extractFinalOutput, runCli } from "./genome-registry-fixture.js";
+import { fileURLToPath } from "node:url";
+import { GENES, LOCAL_NATIVE_E2E, REGISTRY_E2E, cliEnv, extractFinalOutput, runCli } from "./genome-registry-fixture.js";
 
 /**
  * #30-g: the imported agent behaves like the original — same output for the
@@ -97,6 +98,64 @@ describe.runIf(REGISTRY_E2E && hasNativeGeneIdV2())("imported agents run like th
     await transplant("x-try", ["-g", GENES.textSummarizer.name, GENES.grammarChecker.name, "--composition", "Try"]);
     expect(await runAgent(dst, "x-try", TEXT_A)).toEqual(await runAgent(src, "x-try", TEXT_A));
   }, 300_000);
+
+  // F5 (red-team round 5): the failing path end to end — import → agent run →
+  // Rust executor → handler. The body is a real Registry gene given more work
+  // than the default 500M fuel allows. No published gene returns its input, so
+  // after import only the handler's WASM is swapped for a local probe that
+  // does; the agent, the body gene and its v2 ID stay exactly as imported.
+  it.runIf(LOCAL_NATIVE_E2E)("Try whose body runs out of fuel: the handler gets FUEL_EXHAUSTED naming the body's v2 ID", async () => {
+    const dstFuel = join(D, "dst-fuel");
+    expect((await runCli(["init", "dst-fuel", "--no-genesis"], D, env)).code).toBe(0);
+    expect((await runCli(["install", GENES.evolveLife.id], src, env)).code).toBe(0);
+    const created = await runCli(
+      ["agent", "create", "x-try-fuel", "-g", GENES.evolveLife.name, GENES.grammarChecker.name, "--composition", "Try"],
+      src,
+      env,
+    );
+    expect(created.code, created.out).toBe(0);
+    const file = join(D, "x-try-fuel.rgenome");
+    expect((await runCli(["genome", "export", "x-try-fuel", "-o", file], src, env)).code).toBe(0);
+    const pin = JSON.parse(readFileSync(file, "utf-8")).snapshot.genes[0];
+    expect(pin.role).toBe(GENES.evolveLife.name);
+    const imp = await runCli(["genome", "import", file, "--pinned"], dstFuel, env);
+    expect(imp.code, imp.out).toBe(0);
+
+    const probe = join(dstFuel, "genes", "echo-probe");
+    mkdirSync(probe, { recursive: true });
+    writeFileSync(
+      join(probe, "phenotype.json"),
+      JSON.stringify({
+        domain: "test.probe",
+        version: "0.1.0",
+        fidelity: "Wrapped",
+        transparency: "Open",
+        inputSchema: { type: "object", properties: {} },
+        outputSchema: { type: "object", properties: { received: {} } },
+      }),
+    );
+    writeFileSync(join(probe, "index.ts"), "export function express(input) { return { received: input }; }\n");
+    // The TS→WASM toolchain (esbuild, javy) is a dev dependency of this repo.
+    // javy-cli keeps its binary in the user's cache directory; link that into
+    // the test HOME so it uses the binary already there instead of downloading.
+    const bin = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
+    const cacheRoot = (home: string) =>
+      process.platform === "darwin" ? join(home, "Library", "Caches") : join(home, ".cache");
+    mkdirSync(cacheRoot(env.HOME), { recursive: true });
+    const realCache = join(cacheRoot(homedir()), "binarycache");
+    if (existsSync(realCache)) symlinkSync(realCache, join(cacheRoot(env.HOME), "binarycache"));
+    const compiled = await runCli(["compile", "echo-probe"], dstFuel, { ...env, PATH: `${bin}:${env.PATH}` });
+    expect(compiled.code, compiled.out).toBe(0);
+    copyFileSync(join(probe, "gene.ir.wasm"), join(dstFuel, "genes", GENES.grammarChecker.name, "gene.ir.wasm"));
+
+    const input = { width: 512, height: 512, generations: 10000, preset: "random", seed: 1 };
+    const run = await runCli(["agent", "run", "x-try-fuel", "--input", JSON.stringify(input)], dstFuel, env);
+    expect(run.code, run.out).toBe(0);
+    const got = extractFinalOutput(run.out) as { received: { error: Record<string, unknown>; original_input: unknown } };
+    expect(got.received.error.errorCode).toBe("FUEL_EXHAUSTED");
+    expect(got.received.error.geneId).toBe(pin.geneId);
+    expect(got.received.original_input).toEqual(input);
+  }, 600_000);
 
   it("wrote nothing to the Registry", () => {
     expect(proxy.blockedWrites).toEqual([]);

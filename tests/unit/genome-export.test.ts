@@ -387,3 +387,31 @@ describe("T-25: export refuses an operator named after an Object.prototype membe
     });
   }
 });
+
+describe("T-26: genes named after Object.prototype members on export", () => {
+  // Export keys capabilities and hints by gene name with plain assignment, which
+  // is safe only because validateGeneName runs first: of these names it lets
+  // through just "constructor", and assigning that creates an own key. This pins
+  // both halves, so loosening the name rule cannot silently drop a role.
+  for (const name of ["toString", "__proto__", "hasOwnProperty"]) {
+    it(`gene '${name}' is refused by the gene-name rule, and nothing is written`, () => {
+      writeGene(root, name, { domain: "text.x", manifest: { owner: "o", version: "1.0.0" } });
+      writeAgent(root, "agent-x", [name], { type: "Single" });
+      const { code, bp, text } = exportAgent("agent-x");
+      expect(code).toBe(1);
+      expect(bp).toBeNull();
+      expect(text).toContain(`Gene name "${name}" does not match required pattern`);
+    });
+  }
+
+  it("gene 'constructor' keeps its own capability and hint entries", () => {
+    writeGene(root, "constructor", { domain: "text.x", manifest: { owner: "o", version: "1.0.0" } });
+    writeAgent(root, "agent-c", ["constructor"], { type: "Single" });
+    const { code, bp, text } = exportAgent("agent-c");
+    expect(code, text).toBe(0);
+    expect(Object.hasOwn(bp!.capabilities!, "constructor")).toBe(true);
+    expect(bp!.capabilities!.constructor.domain).toBe("text.x");
+    expect(Object.hasOwn(bp!.resolutionHints!, "constructor")).toBe(true);
+    expect(bp!.resolutionHints!.constructor.owner).toBe("o");
+  });
+});

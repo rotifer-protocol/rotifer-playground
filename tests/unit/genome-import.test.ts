@@ -1146,3 +1146,40 @@ describe("T-25: red-team round 5 findings on the reader (N1, N2, N3)", () => {
     expect(parseBlueprint(JSON.stringify(bp)).plan.roles).toEqual(["a", "a\u0000a"]);
   });
 });
+
+describe("T-26: a role named after an Object.prototype member is looked up as an own key only", () => {
+  const NAMES = ["toString", "constructor", "__proto__", "hasOwnProperty"];
+
+  /** alpha is importable; the second role has no hint and no capability entry of its own. */
+  function withRole(name: string): GenomeBlueprint {
+    const [a, b] = [row("alpha"), row("beta")];
+    const bp = blueprint([a], {}, { withCapabilities: true });
+    bp.snapshot.genes.push({ geneId: b.v2, role: name, optional: false });
+    bp.snapshot.composition = { Seq: { steps: [leaf(a), leaf(b, name)] } };
+    return bp;
+  }
+
+  for (const name of NAMES) {
+    for (const [mode, cli] of [["--pinned", { pinned: true }], ["capability mode", {}], ["--dry-run", { pinned: true, dryRun: true }]] as const) {
+      it(`role '${name}' (${mode}): a clear error, nothing installed or created`, async () => {
+        const { code, text } = await runImport(withRole(name), cli);
+        expect(code).toBe(1);
+        expect(text).toContain(`Role '${name}' has no resolutionHints`);
+        expect(text).not.toMatch(/TypeError|Cannot read properties/);
+        expect(installs).toEqual([]);
+        expect(agents()).toEqual([]);
+        expect(readdirSync(join(root, "genes"))).toEqual([]);
+      });
+    }
+  }
+
+  it("the same names with their own hints still resolve", async () => {
+    for (const name of NAMES) {
+      const bp = withRole(name);
+      bp.resolutionHints = { ...bp.resolutionHints, [name]: { owner: "bob", name: "beta", version: "1.0.0", cloudId: "id-beta-1", fidelity: "Hybrid" } };
+      const result = await importGenome(writeBlueprint(bp), { isPinned: true, isDryRun: true }, { root, genesDir: "genes" });
+      expect(result.roles.map((r) => r.role), name).toEqual(["alpha", name]);
+      expect(result.roles[1].cloudId).toBe("id-beta-1");
+    }
+  });
+});

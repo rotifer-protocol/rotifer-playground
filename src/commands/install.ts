@@ -15,6 +15,7 @@ import { refreshDomainCacheFromCloud } from "../utils/domain-suggest.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { snapshotGene } from "../utils/gene-snapshots.js";
 import { checkNativeArtifact } from "../utils/artifact-consistency.js";
+import { contentHash } from "../utils/content-hash.js";
 
 /** The gene is already installed and `force` was not set. */
 export class GeneExistsError extends Error {
@@ -32,6 +33,38 @@ export class WasmIntegrityError extends Error {
   }
 }
 
+/**
+ * Whether a Registry row's phenotype and its recorded content_hash (the v1,
+ * client-defined hash) agree. Both come from the same row in the same
+ * response, so agreement says nothing about whether the content can be relied
+ * on — anyone able to change one can change the other, and some edits (a
+ * `__proto__` key) do not move the hash at all. Disagreement does say
+ * something: storage damage, a hash edited after publication, or one of the
+ * early-2026 rows known to differ.
+ */
+export type ContentHashCheck =
+  | { status: "match" }
+  | { status: "mismatch"; recorded: string; recomputed: string }
+  | { status: "absent" };
+
+export function checkContentHash(gene: Pick<CloudGene, "phenotype" | "content_hash">): ContentHashCheck {
+  if (!gene.content_hash) return { status: "absent" };
+  const recomputed = contentHash(gene.phenotype ?? {});
+  return recomputed === gene.content_hash
+    ? { status: "match" }
+    : { status: "mismatch", recorded: gene.content_hash, recomputed };
+}
+
+/** The one-line notice for a mismatch. Deliberately makes no claim about trust. */
+export function contentHashWarning(geneName: string, check: ContentHashCheck): string | null {
+  if (check.status !== "mismatch") return null;
+  return (
+    `Gene '${geneName}': its phenotype does not match the content_hash recorded in the Registry ` +
+    `(recorded ${check.recorded.slice(0, 12)}…, recomputed ${check.recomputed.slice(0, 12)}…). ` +
+    "This comparison can only show that the two disagree; a match would not show the content can be relied on."
+  );
+}
+
 export interface InstallFromCloudOptions {
   /** Absolute path of the workspace's genes directory. */
   genesDir: string;
@@ -46,6 +79,7 @@ export interface InstalledGene {
   gene: CloudGene;
   geneDir: string;
   didSnapshot: boolean;
+  contentHashCheck: ContentHashCheck;
 }
 
 /**
@@ -86,6 +120,14 @@ export async function installGeneFromCloud(
   );
 
   if (isVerbose) display.success("Phenotype saved");
+
+  // Consistency only: a mismatch warns and the install carries on (exit code 0).
+  const contentHashCheck = checkContentHash(gene);
+  if (isVerbose) {
+    const warning = contentHashWarning(gene.name, contentHashCheck);
+    if (warning) display.warn(warning);
+    else if (contentHashCheck.status === "absent") display.hint("No content_hash is recorded for this version; nothing to compare.");
+  }
 
   if (gene.wasm_url) {
     const ws = isVerbose ? display.spinner("Downloading WASM binary...") : null;
@@ -153,7 +195,7 @@ export async function installGeneFromCloud(
 
   trackDownload(gene.id, "cli").catch(() => {});
 
-  return { gene, geneDir, didSnapshot };
+  return { gene, geneDir, didSnapshot, contentHashCheck };
 }
 
 export const installCommand = new Command("install")

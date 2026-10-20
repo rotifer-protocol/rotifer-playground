@@ -185,6 +185,7 @@ playground/
 | `rotifer agent create <agent-name>` | 用基因组创建 Agent |
 | `rotifer agent list` | 列出全部 Agent |
 | `rotifer agent run <agent-name>` | 执行 Agent 的基因组管线 |
+| `rotifer genome export <agent>` | 把 Agent 的基因组导出为可分享的 Blueprint（`.rgenome`）；文件里若带凭证则中止 |
 | `rotifer vg [path]` | 对基因代码执行 V(g) 安全扫描 |
 | `rotifer network` | P2P 基因网络命令 |
 | `rotifer self-update` | 检查并升级 Rotifer 包 |

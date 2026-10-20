@@ -20,13 +20,27 @@ export interface PrePublishResult {
 const WASM_MAGIC = new Uint8Array([0x00, 0x61, 0x73, 0x6d]); // \0asm
 const MAX_WASM_SIZE = 50 * 1024 * 1024; // 50 MB — suspiciously large for a Gene
 
-const SENSITIVE_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
+/**
+ * Credential formats recognisable by their own prefix or framing. Shared by the
+ * publish check (every source file of a gene) and the Genome Blueprint export
+ * scan (every key and string of the file), so a format added here guards both.
+ *
+ * Bare key shapes — 64 hex characters, unframed Base64 of 32/64 bytes — are
+ * deliberately NOT here: gene source routinely carries sha256 constants and
+ * fixtures, so matching them would fail publishes that are fine today. The
+ * Blueprint scan adds those rules on its own, where it can exempt the fields
+ * that legitimately hold a hash (src/commands/genome.ts).
+ */
+export const SENSITIVE_PATTERNS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
   { label: "AWS key", pattern: /AKIA[0-9A-Z]{16}/ },
   { label: "GitHub token", pattern: /ghp_[A-Za-z0-9]{36}/ },
   { label: "npm token", pattern: /npm_[A-Za-z0-9]{36}/ },
   { label: "Supabase service key", pattern: /eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9_-]{50,}/ },
   { label: "Private key block", pattern: /-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----/ },
   { label: "Generic secret assignment", pattern: /(?:secret|password|token|api_key)\s*[:=]\s*["'][A-Za-z0-9+/=]{20,}["']/i },
+  { label: "Stripe live key", pattern: /(?:sk|rk)_live_[A-Za-z0-9]{24,}/ },
+  { label: "OpenAI key", pattern: /sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{40,}/ },
+  { label: "JWT", pattern: /eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/ },
 ];
 
 const SCAN_EXTENSIONS = new Set([".ts", ".js", ".mts", ".mjs", ".cjs", ".json", ".md"]);

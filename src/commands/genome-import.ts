@@ -122,11 +122,17 @@ export function effectiveMinVg(suggested: number | undefined, local: number | un
   return Math.max(DEFAULT_MIN_VG, suggested ?? 0, local ?? 0);
 }
 
+function ownEntry<T>(map: Record<string, T> | undefined, key: string): T | undefined {
+  return map !== undefined && Object.hasOwn(map, key) ? map[key] : undefined;
+}
+
 export async function resolveRole(role: string, ctx: ResolveContext): Promise<RoleResolution> {
   const { blueprint, options } = ctx;
   const ref = blueprint.snapshot.genes.find((g) => g.role === role)!;
-  const hint = blueprint.resolutionHints?.[role];
-  const query: CapabilityQuery | undefined = blueprint.capabilities?.[role];
+  // Own entries only: a role may be named "toString" or "__proto__", and a plain
+  // lookup would return the inherited member instead of "no entry".
+  const hint = ownEntry(blueprint.resolutionHints, role);
+  const query: CapabilityQuery | undefined = ownEntry(blueprint.capabilities, role);
 
   const pinned = async (mode: RoleMode, extra: Partial<RoleResolution> = {}): Promise<RoleResolution> => {
     const { cloudId } = await locatePinned(role, hint);

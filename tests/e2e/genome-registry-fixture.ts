@@ -14,6 +14,15 @@ import { fileURLToPath } from "node:url";
  */
 export const REGISTRY_E2E = process.env.ROTIFER_E2E_REGISTRY === "1";
 
+/**
+ * The native module carries #411's TryCatch payload ({ error: GeneError, ... }
+ * with FUEL_EXHAUSTED and the body's v2 ID). npm 0.28.0's prebuilt module does
+ * not, so the tests that need it run only when the module was built from this
+ * checkout (npm run build:napi) and loaded in place of the platform package:
+ * ROTIFER_E2E_LOCAL_NATIVE=1. Once a release ships it, the switch can go.
+ */
+export const LOCAL_NATIVE_E2E = process.env.ROTIFER_E2E_LOCAL_NATIVE === "1";
+
 export const GENES = {
   /** Native, takes { text }. */
   grammarChecker: { id: "3d3e3a08-21ce-4475-aa79-85839de52aca", name: "grammar-checker", version: "0.2.1" },
@@ -22,6 +31,8 @@ export const GENES = {
   /** Native with two published versions that both carry WASM. */
   urlExtractorOld: { id: "4a2da58c-f92a-45f6-b8ee-e5e05d251a9f", name: "url-extractor", version: "0.2.0" },
   urlExtractorNew: { id: "d9dcc1b4-4306-4800-bfe6-aa4d31e668bb", name: "url-extractor", version: "0.2.1" },
+  /** Native; a large grid over many generations runs past the default 500M fuel. */
+  evolveLife: { id: "c30f33f0-a4b1-45f3-a6e9-be280a05f925", name: "evolve-life", version: "0.3.0" },
   /** Hybrid with WASM. */
   polymarketScanner: { id: "a9114688-316c-4588-938d-681a81a1dd92", name: "polymarket-scanner", version: "0.3.1" },
 } as const;

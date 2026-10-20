@@ -371,3 +371,19 @@ describe("T-21b: export refuses what its own import would refuse, before writing
     expect(text).toContain("is not first, concat or merge");
   });
 });
+
+describe("T-25: export refuses an operator named after an Object.prototype member (N1)", () => {
+  beforeEach(() => {
+    for (const g of ["a", "b"]) writeGene(root, g, { manifest: { owner: "o", version: "1.0.0" } });
+  });
+
+  for (const op of ["toString", "constructor", "__proto__", "hasOwnProperty"]) {
+    it(`op '${op}' → exit 1, nothing written`, () => {
+      writeAgent(root, `bad-${op}`, ["a", "b"], { type: "Cond", predicate: { field: "kind", op, value: "x" } });
+      const { code, bp, text } = exportAgent(`bad-${op}`);
+      expect(code).toBe(1);
+      expect(bp).toBeNull();
+      expect(text).toContain(`unknown predicate operator '${op}'`);
+    });
+  }
+});

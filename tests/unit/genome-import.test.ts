@@ -1091,3 +1091,58 @@ describe("T-21b: export → import → export round trip, one per composition", 
     });
   }
 });
+
+describe("T-25: red-team round 5 findings on the reader (N1, N2, N3)", () => {
+  const condWith = (operator: string) => {
+    const rs = [row("alpha"), row("beta")];
+    const bp: any = blueprint(rs);
+    bp.snapshot.composition = { Cond: { predicate: { field: "kind", operator, value: "x" }, ifTrue: leaf(rs[0]), ifFalse: leaf(rs[1]) } };
+    return JSON.stringify(bp);
+  };
+
+  it("N1: an operator named after an Object.prototype member is refused, not run as Eq", () => {
+    for (const operator of ["toString", "constructor", "__proto__", "hasOwnProperty", "valueOf", "isPrototypeOf"]) {
+      expect(() => parseBlueprint(condWith(operator)), operator).toThrow(`unknown CompareOp '${operator}'`);
+    }
+  });
+
+  it("N1: the import command exits 1 for one and creates no agent", async () => {
+    const { code, text } = await runImport(JSON.parse(condWith("toString")), { pinned: true });
+    expect(code).toBe(1);
+    expect(text).toContain("unknown CompareOp 'toString'");
+    expect(installs).toEqual([]);
+    expect(agents()).toEqual([]);
+  });
+
+  it("N1 control: the seven executed operators still parse", () => {
+    for (const operator of ["EQ", "NEQ", "GT", "GTE", "LT", "LTE", "CONTAINS"]) {
+      expect(() => parseBlueprint(condWith(operator)), operator).not.toThrow();
+    }
+  });
+
+  it("N2: an explicit null parMerge is refused, in a Par and outside one; only an absent one means first", () => {
+    const rs = [row("alpha"), row("beta")];
+    const par: any = blueprint(rs, { bindingExtensions: { "rotifer-playground": { parMerge: null } } as any });
+    par.snapshot.composition = { Par: { left: leaf(rs[0]), right: leaf(rs[1]) } };
+    expect(() => parseBlueprint(JSON.stringify(par))).toThrow("parMerge 'null' is not first, concat or merge");
+    const seq = blueprint(rs, { bindingExtensions: { "rotifer-playground": { parMerge: null } } as any });
+    expect(() => parseBlueprint(JSON.stringify(seq))).toThrow("parMerge 'null' is not first, concat or merge");
+    delete par.bindingExtensions;
+    expect(parseBlueprint(JSON.stringify(par)).plan.parMerge).toBe("first");
+  });
+
+  it("N3: leaves out of list order are refused even when the role names joined with NUL coincide", () => {
+    const [a, b] = [row("alpha"), row("beta")];
+    const bp: any = blueprint([a, b]);
+    bp.snapshot.genes = [
+      { geneId: a.v2, role: "a", optional: false },
+      { geneId: b.v2, role: "a\u0000a", optional: false },
+    ];
+    delete bp.resolutionHints;
+    bp.snapshot.composition = { Seq: { steps: [leaf(b, "a\u0000a"), leaf(a, "a")] } };
+    expect(() => parseBlueprint(JSON.stringify(bp))).toThrow("every gene of snapshot.genes once, in order");
+    // Control: the same roles in list order parse.
+    bp.snapshot.composition = { Seq: { steps: [leaf(a, "a"), leaf(b, "a\u0000a")] } };
+    expect(parseBlueprint(JSON.stringify(bp)).plan.roles).toEqual(["a", "a\u0000a"]);
+  });
+});

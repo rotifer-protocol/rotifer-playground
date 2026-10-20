@@ -398,6 +398,20 @@ describe("#8 non-string key material and code in extension fields are caught", (
     }
   });
 
+  it("an import on any line, not only the first, is flagged (red-team round 5, N4)", () => {
+    for (const code of ["import x from y", "note\nimport x from y", "a\r\n  import { k } from 'm'", "first\n\nimport * as m from 'n'"]) {
+      const bp = blueprint();
+      bp.bindingExtensions = { "other-binding": { note: code } };
+      expect(scanBlueprint(bp), JSON.stringify(code)).toContainEqual(
+        expect.objectContaining({ pointer: "/bindingExtensions/other-binding/note", rule: "Code in extension field" }),
+      );
+    }
+    // Control: "import" that does not start a line is prose.
+    const bp = blueprint();
+    bp.bindingExtensions = { "other-binding": { note: "we import data from the feed\nand merge it" } };
+    expect(scanBlueprint(bp)).toEqual([]);
+  });
+
   it("plain extension values and code-like prose elsewhere are not flagged", () => {
     const bp = blueprint();
     bp.bindingExtensions = { "rotifer-playground": { parMerge: "first", minVg: 0.8 }, "other-binding": { note: "merge outputs by key" } };

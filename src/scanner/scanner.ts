@@ -1,9 +1,15 @@
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, extname, relative } from "node:path";
 import { SCAN_RULES } from "./rules.js";
+import { maskJsLiterals } from "./literals.js";
 import type { Finding, Grade, ScanResult } from "./types.js";
 
 const CODE_EXTENSIONS = new Set([".ts", ".js", ".mts", ".mjs", ".cjs", ".tsx", ".jsx", ".sh", ".py"]);
+
+// Files whose literals maskJsLiterals understands. .tsx/.jsx are left out (JSX
+// text such as `Don't` is not a string literal), as are .sh and .py, whose
+// quoting rules differ; those keep raw-line matching for every rule.
+const JS_EXTENSIONS = new Set([".ts", ".js", ".mts", ".mjs", ".cjs"]);
 
 function collectCodeFiles(dir: string): string[] {
   const files: string[] = [];
@@ -32,14 +38,16 @@ export function scanFile(filePath: string, rootDir: string): Finding[] {
   const lines = content.split("\n");
   const relPath = relative(rootDir, filePath);
   const findings: Finding[] = [];
+  const codeLines = JS_EXTENSIONS.has(extname(filePath)) ? maskJsLiterals(lines) : lines;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line.trimStart().startsWith("//") || line.trimStart().startsWith("*")) continue;
 
     for (const rule of SCAN_RULES) {
+      const subject = rule.matchOn === "code" ? codeLines[i] : line;
       for (const pattern of rule.patterns) {
-        if (pattern.test(line)) {
+        if (pattern.test(subject)) {
           findings.push({
             rule: rule.id,
             severity: rule.severity,

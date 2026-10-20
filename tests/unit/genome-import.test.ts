@@ -231,7 +231,9 @@ describe("parse and validate", () => {
     ["Cond with a nested branch", (bp, rs) => { bp.snapshot.composition = { Cond: { predicate: { field: "a", operator: "EQ", value: 1 }, ifTrue: { Seq: { steps: [leaf(rs[0])] } }, ifFalse: leaf(rs[1]) } }; }, "only a single gene"],
     ["unknown CompareOp", (bp, rs) => { bp.snapshot.composition = { Cond: { predicate: { field: "a", operator: "BETWEEN", value: 1 }, ifTrue: leaf(rs[0]), ifFalse: leaf(rs[1]) } }; }, "unknown CompareOp 'BETWEEN'"],
     ["leaves out of order", (bp, rs) => { bp.snapshot.composition = { Seq: { steps: [leaf(rs[1]), leaf(rs[0])] } }; }, "every gene of snapshot.genes once, in order"],
-    ["an unknown operator", (bp, rs) => { bp.snapshot.composition = { Loop: { body: leaf(rs[0]) } }; }, "'Loop' is not a §15.2 operator"],
+    // Body without a gene ID, so this case isolates the unknown operator; a gene ID under
+    // an unknown operator is not a leaf position and is refused by the scan (T-20 N9, below).
+    ["an unknown operator", (bp) => { bp.snapshot.composition = { Loop: { body: { times: 3 } } }; }, "'Loop' is not a §15.2 operator"],
     ["an optional gene", (bp) => { bp.snapshot.genes[0].optional = true; }, "is optional"],
   ];
   for (const [label, mutate, message] of outside) {
@@ -258,10 +260,20 @@ describe("parse and validate", () => {
   }
 
   it("refuses a leaf whose geneId does not match snapshot.genes", () => {
+    // An ID that is not in snapshot.genes is not exempt from the hex rule (T-20 N9),
+    // so the scan refuses it first — and without printing it.
     const rs = [row("alpha"), row("beta")];
     const bp = blueprint(rs);
     bp.snapshot.composition = { Seq: { steps: [leaf(rs[0]), { Gene: { geneRef: { geneId: fakeV2("other"), role: "beta", optional: false } } }] } };
-    expect(() => parseBlueprint(JSON.stringify(bp))).toThrow("does not match snapshot.genes");
+    expect(() => parseBlueprint(JSON.stringify(bp))).toThrow(/looks like a credential.*\/snapshot\/composition\/Seq\/steps\/1\/Gene\/geneRef\/geneId/);
+    expect(() => parseBlueprint(JSON.stringify(bp))).not.toThrow(fakeV2("other"));
+  });
+
+  it("refuses a leaf whose listed geneId sits under another role", () => {
+    const rs = [row("alpha"), row("beta")];
+    const bp = blueprint(rs);
+    bp.snapshot.composition = { Seq: { steps: [leaf(rs[0]), { Gene: { geneRef: { geneId: rs[0].v2, role: "beta", optional: false } } }] } };
+    expect(() => parseBlueprint(JSON.stringify(bp))).toThrow("Composition leaf 'beta' does not match snapshot.genes");
   });
 
   it("re-runs the export credential scan and refuses a Blueprint that carries a key", () => {
@@ -620,5 +632,99 @@ describe("T-10 #1 (rework): a secret in the file never reaches an import error, 
       expect(text).toContain("Not a JSON Blueprint");
       expect(text).not.toContain("deadbeef");
     }
+  });
+});
+
+describe("T-20: second-round red-team findings on import", () => {
+  const SECRET_HEX = "deadbeef".repeat(8); // obviously fake, the shape of a 32-byte key
+
+  describe("N1: non-finite numbers are refused anywhere in the file", () => {
+    // JSON.parse turns 1e400 into Infinity; saving writes null; agent run then swaps in its default.
+    const withNumber = (place: (bp: any) => void) => {
+      const rs = [row("alpha"), row("beta")];
+      const bp: any = blueprint(rs);
+      bp.snapshot.composition = { Cond: { predicate: { field: "score", operator: "GT", value: 0 }, ifTrue: leaf(rs[0]), ifFalse: leaf(rs[1]) } };
+      place(bp);
+      return JSON.stringify(bp).replace(/"__HUGE__"/g, "1e400").replace(/"__NEG_HUGE__"/g, "-1e400");
+    };
+
+    it("Cond value 1e400", () => {
+      expect(() => parseBlueprint(withNumber((bp) => { bp.snapshot.composition.Cond.predicate.value = "__HUGE__"; }))).toThrow(
+        "not a finite number at /snapshot/composition/Cond/predicate/value",
+      );
+    });
+
+    it("-1e400 in a field nothing else checks", () => {
+      expect(() => parseBlueprint(withNumber((bp) => { bp.metadata.extra = { limits: [1, "__NEG_HUGE__"] }; }))).toThrow(
+        "not a finite number at /metadata/extra/limits/1",
+      );
+    });
+
+    it("the import command exits 1 and creates no agent", async () => {
+      const text = withNumber((bp) => { bp.snapshot.composition.Cond.predicate.value = "__HUGE__"; });
+      const file = join(root, `${randomUUID()}.rgenome`);
+      writeFileSync(file, text);
+      const out = captureOutput();
+      let code: number;
+      try {
+        code = await runGenomeImport(file, { pinned: true }, { root, genesDir: "genes" });
+      } finally {
+        out.restore();
+      }
+      expect(code).toBe(1);
+      expect(agents()).toEqual([]);
+    });
+
+    it("ordinary numbers still parse", () => {
+      expect(() => parseBlueprint(withNumber((bp) => { bp.snapshot.composition.Cond.predicate.value = 1e300; }))).not.toThrow();
+    });
+  });
+
+  describe("N9: the gene-ID exemption covers real leaves with listed IDs only", () => {
+    it("a v2-shaped secret hidden in an extra geneRef inside a Gene body is refused, without echoing it", async () => {
+      const rs = [row("alpha")];
+      const bp: any = blueprint(rs);
+      bp.snapshot.composition = { Gene: { geneRef: leaf(rs[0]).Gene.geneRef, ignored: { geneRef: { geneId: "v2:" + SECRET_HEX } } } };
+      expect(() => parseBlueprint(JSON.stringify(bp))).toThrow(/looks like a credential.*\/snapshot\/composition\/Gene\/ignored\/geneRef\/geneId/);
+      const { code, text } = await runImport(bp, { pinned: true });
+      expect(code).toBe(1);
+      expect(text).not.toContain(SECRET_HEX);
+    });
+
+    it("a listed ID under an operator outside the subset is not a leaf position, so the scan refuses it", () => {
+      const rs = [row("alpha")];
+      const bp: any = blueprint(rs);
+      bp.snapshot.composition = { Loop: { body: leaf(rs[0]) } };
+      expect(() => parseBlueprint(JSON.stringify(bp))).toThrow(/looks like a credential.*\/snapshot\/composition\/Loop\/body\/Gene\/geneRef\/geneId/);
+    });
+
+    it("the same trick deeper in a Seq step is refused too", () => {
+      const rs = [row("alpha"), row("beta")];
+      const bp: any = blueprint(rs);
+      bp.snapshot.composition.Seq.steps[1].Gene.ignored = { geneRef: { geneId: "v2:" + SECRET_HEX } };
+      expect(() => parseBlueprint(JSON.stringify(bp))).toThrow("looks like a credential");
+    });
+
+    it("real leaves with listed IDs still pass, in every operator", () => {
+      const rs = [row("alpha"), row("beta"), row("gamma")];
+      const compositions = [
+        { Seq: { steps: rs.map((r) => leaf(r)) } },
+        { Par: { left: leaf(rs[0]), right: { Par: { left: leaf(rs[1]), right: leaf(rs[2]) } } } },
+      ];
+      for (const composition of compositions) {
+        const bp = blueprint(rs, { bindingExtensions: { "rotifer-playground": { parMerge: "first" } } });
+        bp.snapshot.composition = composition as never;
+        expect(() => parseBlueprint(JSON.stringify(bp))).not.toThrow();
+      }
+      const two = [row("alpha"), row("beta")];
+      for (const composition of [
+        { Cond: { predicate: { field: "a", operator: "EQ", value: 1 }, ifTrue: leaf(two[0]), ifFalse: leaf(two[1]) } },
+        { TryCatch: { body: leaf(two[0]), handler: leaf(two[1]) } },
+      ]) {
+        const bp = blueprint(two);
+        bp.snapshot.composition = composition as never;
+        expect(() => parseBlueprint(JSON.stringify(bp))).not.toThrow();
+      }
+    });
   });
 });

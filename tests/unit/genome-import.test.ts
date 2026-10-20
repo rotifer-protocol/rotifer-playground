@@ -27,7 +27,7 @@ import { installGeneFromCloud } from "../../src/commands/install.js";
 import { geneIdV2 } from "../../src/utils/binding.js";
 import { setOutputMode } from "../../src/utils/display.js";
 import type { CloudGene } from "../../src/cloud/types.js";
-import { jcs, type GenomeBlueprint } from "../../src/commands/genome.js";
+import { exportGenome, findAgent, jcs, type GenomeBlueprint } from "../../src/commands/genome.js";
 import {
   compositionPlan,
   computeGenomeId,
@@ -37,7 +37,7 @@ import {
   runGenomeImport,
   GenomeImportError,
 } from "../../src/commands/genome-import.js";
-import { captureOutput, fakeV2 } from "./genome-test-helpers.js";
+import { captureOutput, fakeV2, writeAgent } from "./genome-test-helpers.js";
 
 const NOW = new Date("2026-10-20T00:00:00.000Z");
 const IN = { type: "object", required: ["text"], properties: { text: { type: "string" } } };
@@ -1038,4 +1038,56 @@ describe("T-21b: genomeId is bp1: + SHA-256 of the canonical execution projectio
     const result = await importGenome(writeBlueprint(bp), { isPinned: true, isDryRun: true }, { root, genesDir: "genes" });
     expect(result.genomeId).toBe(computeGenomeId(bp));
   });
+});
+
+describe("T-21b: export → import → export round trip, one per composition", () => {
+  /** A project whose genes are the Registry rows, as `install` leaves them. */
+  function sourceProject(rows: Row[]): string {
+    const src = join(root, "source-project");
+    for (const r of rows) {
+      const dir = join(src, "genes", r.name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "phenotype.json"), JSON.stringify(cloudGene(r).phenotype));
+      writeFileSync(join(dir, "fake-v2"), r.v2);
+      writeFileSync(join(dir, ".cloud-manifest.json"), JSON.stringify({ cloud_id: r.id, owner: r.owner, version: r.version }));
+    }
+    return src;
+  }
+
+  const cases: Array<[string, Row[], Record<string, unknown>, Record<string, unknown>]> = [
+    ["single Gene", [row("alpha")], { type: "Single" }, { type: "Single" }],
+    ["Seq", [row("alpha"), row("beta"), row("gamma")], { type: "Seq" }, { type: "Seq" }],
+    ["Par", [row("alpha"), row("beta"), row("gamma")], { type: "Par", merge: "concat" }, { type: "Par", branches: ["alpha", "beta", "gamma"], merge: "concat" }],
+    ["Cond", [row("alpha"), row("beta")], { type: "Cond", predicate: { field: "lang", op: "Contains", value: "en" } }, { type: "Cond", predicate: { field: "lang", op: "Contains", value: "en" } }],
+    ["Try", [row("alpha"), row("beta")], { type: "Try" }, { type: "Try" }],
+  ];
+
+  for (const [label, rows, composition, imported] of cases) {
+    it(`${label}: the file imports, and the imported agent exports to the same composition and genomeId`, async () => {
+      const src = sourceProject(rows);
+      const original = writeAgent(src, "original", rows.map((r) => r.name), composition);
+      const first = join(root, "first.rgenome");
+      exportGenome({ root: src, genesDir: "genes", agent: original, output: first });
+
+      const out = captureOutput();
+      let code: number;
+      try {
+        code = await runGenomeImport(first, { pinned: true }, { root, genesDir: "genes" });
+      } finally {
+        out.restore();
+      }
+      expect(code, out.text()).toBe(0);
+      const [agent] = agents();
+      expect(agent.genome).toEqual(rows.map((r) => r.name));
+      expect(agent.composition).toMatchObject(imported);
+
+      const second = join(root, "second.rgenome");
+      exportGenome({ root, genesDir: "genes", agent: findAgent(root, "original"), output: second });
+      const a = parseBlueprint(readFileSync(first, "utf-8"));
+      const b = parseBlueprint(readFileSync(second, "utf-8"));
+      expect(b.blueprint.snapshot.composition).toEqual(a.blueprint.snapshot.composition);
+      expect(b.blueprint.bindingExtensions).toEqual(a.blueprint.bindingExtensions);
+      expect(b.genomeId).toBe(a.genomeId);
+    });
+  }
 });

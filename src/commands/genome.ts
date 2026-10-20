@@ -15,7 +15,9 @@ import {
   COMPARE_OPS,
   DEFAULT_MIN_FITNESS,
   GENE_ID_V2,
+  GenomeImportError,
   MIN_VG_FLOOR,
+  parseBlueprint,
   scanBlueprint,
   type AlgebraExpr,
   type CapabilityQuery,
@@ -344,7 +346,11 @@ export interface ExportGenomeResult {
   credentialScan: { passed: true; layers: CredentialLayer[] };
 }
 
-/** Build, scan, and write a Blueprint. Nothing is written when the scan finds anything. */
+/**
+ * Build, scan, and write a Blueprint. Nothing is written when the scan finds
+ * anything, or when this CLI's own import would refuse the file: the reader's
+ * rules (Cond forms, numbers, strings, required fields) run on the exact text.
+ */
 export function exportGenome(input: ExportGenomeInput): ExportGenomeResult {
   const { blueprint, roles, notices } = buildBlueprint(input);
 
@@ -357,7 +363,14 @@ export function exportGenome(input: ExportGenomeInput): ExportGenomeResult {
     );
   }
 
-  writeFileSync(input.output, JSON.stringify(blueprint, null, 2) + "\n");
+  const text = JSON.stringify(blueprint, null, 2) + "\n";
+  try {
+    parseBlueprint(text);
+  } catch (err) {
+    if (!(err instanceof GenomeImportError)) throw err;
+    throw new GenomeExportError(`The Blueprint would not import, so nothing was written: ${err.message}`, err.hint);
+  }
+  writeFileSync(input.output, text);
 
   return {
     file: input.output,

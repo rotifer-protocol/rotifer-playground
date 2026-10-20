@@ -7,7 +7,7 @@ import * as display from "../utils/display.js";
 import { c } from "../utils/palette.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
-import { tryLoadBinding, type NativeBinding } from "../utils/binding.js";
+import { geneIdV2, tryLoadBinding, type NativeBinding } from "../utils/binding.js";
 import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
 import { createGatewayFetch, type GatewayFetchOptions, type GatewayResponse } from "../runtime/network-gateway.js";
 import { DomainFailoverEngine, type GeneExecutionResult } from "../runtime/domain-failover.js";
@@ -733,7 +733,7 @@ function executeViaAlgebra(
   const comp = agent.composition;
   if (!comp) return { kind: "fallback" };
 
-  const geneEntries: Record<string, { wasm: number[]; phenotype: Record<string, unknown> }> = {};
+  const geneEntries: Record<string, { wasm: number[]; phenotype: Record<string, unknown>; v2Id?: string }> = {};
 
   for (const geneName of agent.genome) {
     const geneDir = join(genesDir, geneName);
@@ -751,7 +751,14 @@ function executeViaAlgebra(
       : {};
 
     const hexId = geneNameToId(geneName);
+    // The v2 ID of the gene actually installed here, read from the same
+    // directory as the wasm above. A TryCatch handler reports it as
+    // GeneError.geneId (spec §15.2); hexId is only the executor's lookup key.
+    // Not computable (e.g. an older native module) → omitted, geneId is null.
+    const idResult = geneIdV2(genesDir, geneName);
+    const v2Id = "id" in idResult ? idResult.id : undefined;
     geneEntries[hexId] = {
+      ...(v2Id ? { v2Id } : {}),
       wasm: Array.from(wasmBytes),
       // Rust deserializes this into rotifer_core's Phenotype; phenotype.json
       // keeps irHash / dependencies as hex strings or names and createdAt

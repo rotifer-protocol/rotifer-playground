@@ -676,7 +676,8 @@ describe("T-20: second-round red-team findings on import", () => {
     });
 
     it("ordinary numbers still parse", () => {
-      expect(() => parseBlueprint(withNumber((bp) => { bp.snapshot.composition.Cond.predicate.value = 1e300; }))).not.toThrow();
+      // 1e-300, not 1e300: integer-valued numbers beyond 2^53 are refused for another reason (T-22).
+      expect(() => parseBlueprint(withNumber((bp) => { bp.snapshot.composition.Cond.predicate.value = 1e-300; }))).not.toThrow();
     });
   });
 
@@ -726,5 +727,62 @@ describe("T-20: second-round red-team findings on import", () => {
         expect(() => parseBlueprint(JSON.stringify(bp))).not.toThrow();
       }
     });
+  });
+});
+
+describe("T-22: integers JSON.parse cannot hold exactly are refused", () => {
+  // 9007199254740993 is read as 9007199254740992 — a different value, decided before any check runs.
+  const withNumber = (literal: string, place: (bp: any) => void) => {
+    const rs = [row("alpha"), row("beta")];
+    const bp: any = blueprint(rs);
+    bp.snapshot.composition = { Cond: { predicate: { field: "score", operator: "EQ", value: 0 }, ifTrue: leaf(rs[0]), ifFalse: leaf(rs[1]) } };
+    place(bp);
+    return JSON.stringify(bp).replace(/"__N__"/g, literal);
+  };
+  const atCondValue = (bp: any) => { bp.snapshot.composition.Cond.predicate.value = "__N__"; };
+
+  it("a Cond value above 2^53 is refused, naming its position", () => {
+    expect(() => parseBlueprint(withNumber("9007199254740993", atCondValue))).toThrow(
+      "integer outside the exactly representable range at /snapshot/composition/Cond/predicate/value",
+    );
+  });
+
+  it("a negative one in a field nothing else checks is refused", () => {
+    expect(() => parseBlueprint(withNumber("-9007199254740993", (bp) => { bp.metadata.extra = { ids: [1, "__N__"] }; }))).toThrow(
+      "at /metadata/extra/ids/1",
+    );
+  });
+
+  it("2^53 itself is refused: it cannot be told apart from 2^53 + 1", () => {
+    expect(() => parseBlueprint(withNumber("9007199254740992", atCondValue))).toThrow("integer outside the exactly representable range");
+  });
+
+  it("the import command exits 1 and creates no agent", async () => {
+    const file = join(root, `${randomUUID()}.rgenome`);
+    writeFileSync(file, withNumber("9007199254740993", atCondValue));
+    const out = captureOutput();
+    let code: number;
+    try {
+      code = await runGenomeImport(file, { pinned: true }, { root, genesDir: "genes" });
+    } finally {
+      out.restore();
+    }
+    expect(code).toBe(1);
+    expect(agents()).toEqual([]);
+  });
+
+  // CEO ruling: judge the parsed value, not its spelling. Any integer outside the
+  // safe range is refused however it is written — so 9007199254740993e0 and
+  // ...993.0 are caught, and 1e20 / 1.5e300 (integer-valued) are refused too.
+  it("float spellings of an out-of-range integer are refused, and so are large integer-valued floats", () => {
+    for (const literal of ["9007199254740993e0", "9007199254740993.0", "9007199254740993.5", "1e20", "1.5e300", "-1e20"]) {
+      expect(() => parseBlueprint(withNumber(literal, atCondValue)), literal).toThrow("integer outside the exactly representable range");
+    }
+  });
+
+  it("safe integers and fractional numbers are not refused", () => {
+    for (const literal of ["9007199254740991", "-9007199254740991", "12", "0", "0.1", "1.5e3", "-2.5", "1e-7"]) {
+      expect(() => parseBlueprint(withNumber(literal, atCondValue)), literal).not.toThrow();
+    }
   });
 });

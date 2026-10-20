@@ -187,19 +187,33 @@ function checkMinVg(value: unknown, where: string): number {
   return value;
 }
 
-/** Pointer of the first number that is not finite (Infinity, NaN), or null. Keys are already scanned. */
-function firstNonFiniteNumber(node: unknown, pointer: string): string | null {
-  if (typeof node === "number") return Number.isFinite(node) ? null : pointer;
+/**
+ * The first number in the file that cannot be imported as written, with its
+ * pointer. Keys are already scanned. Judged on the parsed value, whatever the
+ * spelling: JSON.parse rounds an integer beyond 2^53 to a neighbour
+ * (9007199254740993, ...993e0 and ...993.0 all become ...992), and rounding is
+ * monotonic with 2^53 itself representable, so every such literal lands on an
+ * integer outside the safe range — which is what is refused. Integer-valued
+ * floats such as 1e20 are refused with them.
+ */
+function firstUnrepresentableNumber(node: unknown, pointer: string): { pointer: string; problem: string } | null {
+  if (typeof node === "number") {
+    if (!Number.isFinite(node)) return { pointer, problem: "a value that is not a finite number" };
+    if (Number.isInteger(node) && !Number.isSafeInteger(node)) {
+      return { pointer, problem: "an integer outside the exactly representable range" };
+    }
+    return null;
+  }
   if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) {
-      const hit = firstNonFiniteNumber(node[i], `${pointer}/${i}`);
+      const hit = firstUnrepresentableNumber(node[i], `${pointer}/${i}`);
       if (hit !== null) return hit;
     }
     return null;
   }
   if (isObject(node)) {
     for (const [key, value] of Object.entries(node)) {
-      const hit = firstNonFiniteNumber(value, `${pointer}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`);
+      const hit = firstUnrepresentableNumber(value, `${pointer}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`);
       if (hit !== null) return hit;
     }
   }
@@ -228,11 +242,15 @@ export function parseBlueprint(text: string): ParsedBlueprint {
     throw new GenomeImportError(`The Blueprint carries what looks like a credential, so it is not imported: ${where}`);
   }
 
-  // JSON.parse reads 1e400 as Infinity; saved again it becomes null, and agent
-  // run would then substitute a default. No number in a Blueprint may be non-finite.
-  const nonFinite = firstNonFiniteNumber(raw, "");
-  if (nonFinite !== null) {
-    throw new GenomeImportError(`The Blueprint has a value that is not a finite number at ${nonFinite || "/"}`);
+  // A number must import as written. JSON.parse reads 1e400 as Infinity (saved
+  // again it becomes null, and agent run substitutes a default) and rounds an
+  // integer beyond 2^53 to a neighbour — either can switch a Cond branch.
+  const unrepresentable = firstUnrepresentableNumber(raw, "");
+  if (unrepresentable !== null) {
+    throw new GenomeImportError(
+      `The Blueprint has ${unrepresentable.problem} at ${unrepresentable.pointer || "/"}`,
+      "Numbers must be finite, and integers within ±(2^53 − 1); write larger values as strings.",
+    );
   }
 
   const format = raw.blueprintFormat;

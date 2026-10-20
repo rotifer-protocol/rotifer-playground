@@ -31,7 +31,7 @@ export const MIN_VG_FLOOR = 0.5;
 /** Key under `bindingExtensions` for semantics only this binding defines. */
 export const BINDING_NAME = "rotifer-playground";
 
-const GENE_ID_V2 = /^v2:[0-9a-f]{64}$/;
+export const GENE_ID_V2 = /^v2:[0-9a-f]{64}$/;
 
 export interface GeneReference {
   geneId: string;
@@ -143,7 +143,7 @@ export function findAgent(root: string, ref: string): AgentRecord {
 // ── Composition ──────────────────────────────────────────────
 
 /** Rust executor CompareOp (what `agent run` accepts) → §15.2 CompareOp. */
-const COMPARE_OPS: Record<string, CompareOp> = {
+export const COMPARE_OPS: Readonly<Record<string, CompareOp>> = {
   Eq: "EQ",
   Neq: "NEQ",
   Gt: "GT",
@@ -730,5 +730,5 @@ const genomeExportCommand = new Command("export")
   });
 
 export const genomeCommand = new Command("genome")
-  .description("Genome Blueprint commands")
+  .description("Genome Blueprint commands: export an agent's genome, import one")
   .addCommand(genomeExportCommand);

@@ -186,6 +186,7 @@ playground/
 | `rotifer agent list` | 列出全部 Agent |
 | `rotifer agent run <agent-name>` | 执行 Agent 的基因组管线 |
 | `rotifer genome export <agent>` | 把 Agent 的基因组导出为可分享的 Blueprint（`.rgenome`）；文件里若带凭证则中止 |
+| `rotifer genome import <file>` | 从 Blueprint 重建 Agent：按精确版本安装 Native/Hybrid 基因（`--pinned`），或挑选 Arena 已验证、过 F(g) 与 V(g) 门槛的替代；`--dry-run` 只看解析结果 |
 | `rotifer vg [path]` | 对基因代码执行 V(g) 安全扫描 |
 | `rotifer network` | P2P 基因网络命令 |
 | `rotifer self-update` | 检查并升级 Rotifer 包 |

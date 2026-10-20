@@ -187,6 +187,25 @@ function checkMinVg(value: unknown, where: string): number {
   return value;
 }
 
+/** Pointer of the first number that is not finite (Infinity, NaN), or null. Keys are already scanned. */
+function firstNonFiniteNumber(node: unknown, pointer: string): string | null {
+  if (typeof node === "number") return Number.isFinite(node) ? null : pointer;
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i++) {
+      const hit = firstNonFiniteNumber(node[i], `${pointer}/${i}`);
+      if (hit !== null) return hit;
+    }
+    return null;
+  }
+  if (isObject(node)) {
+    for (const [key, value] of Object.entries(node)) {
+      const hit = firstNonFiniteNumber(value, `${pointer}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`);
+      if (hit !== null) return hit;
+    }
+  }
+  return null;
+}
+
 /** Parse a Blueprint, keep only what v0.9.2 can rebuild faithfully, and run the credential scan. */
 export function parseBlueprint(text: string): ParsedBlueprint {
   let raw: unknown;
@@ -203,10 +222,17 @@ export function parseBlueprint(text: string): ParsedBlueprint {
   // The credential scan runs before any structural check: structural errors
   // name roles, keys and values from the file, and none of those may be a
   // secret by the time they are printed. Findings carry masked pointers only.
-  const findings = scanBlueprint(raw as unknown as GenomeBlueprint, { isLeafIdCheckedStructurally: true });
+  const findings = scanBlueprint(raw as unknown as GenomeBlueprint, { isLeafPositionExact: true });
   if (findings.length > 0) {
     const where = findings.map((f) => `${f.pointer || "/"} [${f.layer}] ${f.rule}`).join("; ");
     throw new GenomeImportError(`The Blueprint carries what looks like a credential, so it is not imported: ${where}`);
+  }
+
+  // JSON.parse reads 1e400 as Infinity; saved again it becomes null, and agent
+  // run would then substitute a default. No number in a Blueprint may be non-finite.
+  const nonFinite = firstNonFiniteNumber(raw, "");
+  if (nonFinite !== null) {
+    throw new GenomeImportError(`The Blueprint has a value that is not a finite number at ${nonFinite || "/"}`);
   }
 
   const format = raw.blueprintFormat;

@@ -632,28 +632,71 @@ const COMPOSITION_GENE_ID = /^\/snapshot\/composition(?:\/[^/]+)*\/geneRef\/gene
  */
 export interface ScanBlueprintOptions {
   /**
-   * Import only: the structural check that runs right after the scan refuses a
-   * composition leaf whose geneId is not in snapshot.genes, and its message
-   * names the role, never the ID. So at import a v2-shaped leaf ID is exempt
-   * from the bare-hex rule whether or not it is listed, and the leaf is then
-   * refused for what it is. Export keeps the strict rule.
+   * Import only: a composition gene ID is exempt from the bare-hex rule only at
+   * a real leaf of the §15.2 subset (what the structural check reads), not at
+   * any path that merely ends in `geneRef/geneId` — extra fields inside a Gene
+   * body would otherwise smuggle a `v2:`-prefixed key past the scan. Export
+   * builds the composition itself and keeps its rule.
    */
-  isLeafIdCheckedStructurally?: boolean;
+  isLeafPositionExact?: boolean;
+}
+
+/** Pointers of the `geneRef/geneId` of every real leaf in a §15.2 subset composition. */
+export function compositionLeafIdPointers(expr: unknown, base = "/snapshot/composition"): Set<string> {
+  const out = new Set<string>();
+  const body = (node: unknown, tag: string): Record<string, unknown> | null => {
+    if (typeof node !== "object" || node === null || Array.isArray(node)) return null;
+    const keys = Object.keys(node);
+    if (keys.length !== 1 || keys[0] !== tag) return null;
+    const b = (node as Record<string, unknown>)[tag];
+    return typeof b === "object" && b !== null && !Array.isArray(b) ? (b as Record<string, unknown>) : null;
+  };
+  const visit = (node: unknown, at: string): void => {
+    if (typeof node !== "object" || node === null || Array.isArray(node)) return;
+    const [tag] = Object.keys(node);
+    const b = body(node, tag);
+    if (!b) return;
+    switch (tag) {
+      case "Gene":
+        out.add(`${at}/Gene/geneRef/geneId`);
+        break;
+      case "Seq":
+        if (Array.isArray(b.steps)) b.steps.forEach((step, i) => visit(step, `${at}/Seq/steps/${i}`));
+        break;
+      case "Par":
+        visit(b.left, `${at}/Par/left`);
+        visit(b.right, `${at}/Par/right`);
+        break;
+      case "Cond":
+        visit(b.ifTrue, `${at}/Cond/ifTrue`);
+        visit(b.ifFalse, `${at}/Cond/ifFalse`);
+        break;
+      case "TryCatch":
+        visit(b.body, `${at}/TryCatch/body`);
+        visit(b.handler, `${at}/TryCatch/handler`);
+        break;
+    }
+  };
+  visit(expr, base);
+  return out;
 }
 
 export function scanBlueprint(blueprint: GenomeBlueprint, options: ScanBlueprintOptions = {}): CredentialFinding[] {
   // Also called on unvalidated import input, so nothing about its shape is assumed.
-  const genes: unknown = (blueprint as { snapshot?: { genes?: unknown } } | null)?.snapshot?.genes;
+  const snapshot = (blueprint as { snapshot?: { genes?: unknown; composition?: unknown } } | null)?.snapshot;
+  const genes: unknown = snapshot?.genes;
   const listed = new Set(
     (Array.isArray(genes) ? genes : [])
       .map((g) => (typeof g === "object" && g !== null ? (g as { geneId?: unknown }).geneId : undefined))
       .filter((id): id is string => typeof id === "string" && GENE_ID_V2.test(id)),
   );
+  const leafIds = options.isLeafPositionExact ? compositionLeafIdPointers(snapshot?.composition) : null;
   return scanForCredentials(blueprint, {
     isHexExempt: (pointer, value) => {
       if (!GENE_ID_V2.test(value)) return false;
       if (GENES_GENE_ID.test(pointer) || EXCLUDED_GENE_ID.test(pointer)) return true;
-      return COMPOSITION_GENE_ID.test(pointer) && (options.isLeafIdCheckedStructurally || listed.has(value));
+      const isLeafPosition = leafIds ? leafIds.has(pointer) : COMPOSITION_GENE_ID.test(pointer);
+      return isLeafPosition && listed.has(value);
     },
     isCodeForbidden: (pointer) => pointer.startsWith("/bindingExtensions/"),
   });

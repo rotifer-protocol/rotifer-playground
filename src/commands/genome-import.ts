@@ -24,6 +24,7 @@ import {
   DEFAULT_MIN_FITNESS,
   GENE_ID_V2,
   MIN_VG_FLOOR,
+  looksLikeCredential,
   scanBlueprint,
   type AlgebraExpr,
   type CapabilityQuery,
@@ -160,6 +161,15 @@ export function compositionPlan(blueprint: GenomeBlueprint): CompositionPlan {
       if (p.value === null) throw outsideSubset("Cond predicate value must not be null");
       const op = OPS_FROM_SPEC[p.operator];
       if (!op) throw outsideSubset(`unknown CompareOp '${p.operator}'`);
+      // What the executor actually does (R3): MATCHES always evaluates to false,
+      // CONTAINS only tests substrings, and field is looked up as one top-level key.
+      if (p.operator === "MATCHES") throw outsideSubset("Cond operator MATCHES is not executed by agent run (it always evaluates to false)");
+      if (p.operator === "CONTAINS" && typeof p.value !== "string") {
+        throw outsideSubset("Cond operator CONTAINS needs a string value; agent run only tests substrings");
+      }
+      if (/[./]/.test(p.field)) {
+        throw outsideSubset("Cond field must be a top-level field name (no '.' or '/'); agent run does not follow paths");
+      }
       plan = {
         type: "Cond",
         roles: [leafRole(body.ifTrue, genes), leafRole(body.ifFalse, genes)],
@@ -220,6 +230,82 @@ function firstUnrepresentableNumber(node: unknown, pointer: string): { pointer: 
   return null;
 }
 
+const UNPAIRED_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+const BAD_KEY_TOKEN = "<key with an unpaired surrogate>";
+
+function pointerTokenFor(key: string): string {
+  if (UNPAIRED_SURROGATE.test(key)) return BAD_KEY_TOKEN;
+  if (looksLikeCredential(key)) return "<redacted key>";
+  return key.replace(/~/g, "~0").replace(/\//g, "~1");
+}
+
+/** Pointer of the first string (value or key) holding an unpaired UTF-16 surrogate, or null. */
+function firstUnpairedSurrogate(node: unknown, pointer: string): string | null {
+  if (typeof node === "string") return UNPAIRED_SURROGATE.test(node) ? pointer : null;
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i++) {
+      const hit = firstUnpairedSurrogate(node[i], `${pointer}/${i}`);
+      if (hit !== null) return hit;
+    }
+    return null;
+  }
+  if (isObject(node)) {
+    for (const [key, value] of Object.entries(node)) {
+      if (UNPAIRED_SURROGATE.test(key)) return `${pointer}/${BAD_KEY_TOKEN}`;
+      const hit = firstUnpairedSurrogate(value, `${pointer}/${pointerTokenFor(key)}`);
+      if (hit !== null) return hit;
+    }
+  }
+  return null;
+}
+
+/**
+ * Pointer of the first key that repeats within its object, or null. JSON.parse
+ * keeps the last occurrence and leaves no trace, so this reads the source text.
+ * It runs only after JSON.parse accepted the text, so the input is valid JSON;
+ * keys are decoded with JSON.parse, so "a" and "\u0061" are the same key.
+ */
+function firstDuplicateKey(text: string): string | null {
+  type Frame =
+    | { kind: "object"; token: string; keys: Set<string>; isExpectingKey: boolean; currentKey: string }
+    | { kind: "array"; token: string; index: number };
+  const stack: Frame[] = [];
+  const childToken = (): string => {
+    const top = stack[stack.length - 1];
+    if (!top) return "";
+    return top.kind === "object" ? pointerTokenFor(top.currentKey) : String(top.index);
+  };
+  const pathTo = (key: string) => [...stack.slice(1).map((f) => f.token), pointerTokenFor(key)].map((t) => `/${t}`).join("");
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      let j = i + 1;
+      while (text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+      const top = stack[stack.length - 1];
+      if (top?.kind === "object" && top.isExpectingKey) {
+        const key = JSON.parse(text.slice(i, j + 1)) as string;
+        if (top.keys.has(key)) return pathTo(key);
+        top.keys.add(key);
+        top.currentKey = key;
+        top.isExpectingKey = false;
+      }
+      i = j;
+    } else if (ch === "{") {
+      stack.push({ kind: "object", token: childToken(), keys: new Set(), isExpectingKey: true, currentKey: "" });
+    } else if (ch === "[") {
+      stack.push({ kind: "array", token: childToken(), index: 0 });
+    } else if (ch === "}" || ch === "]") {
+      stack.pop();
+    } else if (ch === ",") {
+      const top = stack[stack.length - 1];
+      if (top?.kind === "object") top.isExpectingKey = true;
+      else if (top?.kind === "array") top.index++;
+    }
+  }
+  return null;
+}
+
 /** Parse a Blueprint, keep only what v0.9.2 can rebuild faithfully, and run the credential scan. */
 export function parseBlueprint(text: string): ParsedBlueprint {
   let raw: unknown;
@@ -250,6 +336,20 @@ export function parseBlueprint(text: string): ParsedBlueprint {
     throw new GenomeImportError(
       `The Blueprint has ${unrepresentable.problem} at ${unrepresentable.pointer || "/"}`,
       "Numbers must be finite, and integers within ±(2^53 − 1); write larger values as strings.",
+    );
+  }
+
+  // Canonical JSON (RFC 8785) cannot represent either of these, and the genome ID
+  // is computed over canonical JSON: refuse them before anything else is decided.
+  const surrogate = firstUnpairedSurrogate(raw, "");
+  if (surrogate !== null) {
+    throw new GenomeImportError(`The Blueprint has a string with an unpaired surrogate at ${surrogate || "/"}`);
+  }
+  const duplicate = firstDuplicateKey(text);
+  if (duplicate !== null) {
+    throw new GenomeImportError(
+      `The Blueprint has a duplicate key at ${duplicate}`,
+      "JSON.parse would silently keep the last one; write each key once.",
     );
   }
 
@@ -568,6 +668,8 @@ async function installAndVerify(
 export interface ImportResult {
   ok: true;
   dryRun: boolean;
+  /** Computed from the Blueprint before anything is resolved or written. */
+  genomeId: string;
   agent: { id: string; name: string } | null;
   composition: CompositionPlan["type"];
   /** §4.6 ExecutionSnapshot; resolvedDeps keyed by role, valued by v2 gene ID. */
@@ -609,6 +711,8 @@ export async function importGenome(
     throw new GenomeImportError(`Cannot read ${file}: ${(err as Error).message}`);
   }
   const { blueprint, plan, suggestedMinVg } = parseBlueprint(text);
+  // Before any role is resolved or anything written: a failure here leaves no trace.
+  const genomeId = genomeIdOf(blueprint);
 
   const agentName = options.name ?? blueprint.metadata?.name;
   if (typeof agentName !== "string" || agentName === "") {
@@ -644,6 +748,7 @@ export async function importGenome(
     return {
       ok: true,
       dryRun: true,
+      genomeId,
       agent: null,
       composition: plan.type,
       executionSnapshot: null,
@@ -684,10 +789,11 @@ export async function importGenome(
   return {
     ok: true,
     dryRun: false,
+    genomeId,
     agent: { id: agent.id, name: agent.name },
     composition: plan.type,
     executionSnapshot: {
-      genomeId: genomeIdOf(blueprint),
+      genomeId,
       resolvedDeps: Object.fromEntries(staged.map((s) => [s.role, s.geneId])),
       resolvedAt,
       status: "ACTIVE",

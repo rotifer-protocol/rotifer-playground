@@ -563,6 +563,13 @@ export interface ScanOptions {
   isCodeForbidden?: (pointer: string) => boolean;
 }
 
+/** Whether a string, on its own, trips any value rule — for masking it wherever it is about to be printed. */
+export function looksLikeCredential(text: string): boolean {
+  const out: CredentialFinding[] = [];
+  scanString(text, "", false, out);
+  return out.length > 0;
+}
+
 /**
  * Scan any JSON value.
  *

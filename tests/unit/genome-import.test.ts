@@ -786,3 +786,97 @@ describe("T-22: integers JSON.parse cannot hold exactly are refused", () => {
     }
   });
 });
+
+describe("T-23: refuse what the executor or canonical JSON cannot honour (R3, R5)", () => {
+  /** A two-gene Cond Blueprint; `predicate` replaces the default one. */
+  const condBlueprint = (predicate: Record<string, unknown>) => {
+    const rs = [row("alpha"), row("beta")];
+    const bp: any = blueprint(rs);
+    bp.snapshot.composition = { Cond: { predicate, ifTrue: leaf(rs[0]), ifFalse: leaf(rs[1]) } };
+    return bp;
+  };
+
+  describe("R3: Cond forms the executor does not implement", () => {
+    it("MATCHES is refused (the executor always evaluates it to false)", () => {
+      expect(() => parseBlueprint(JSON.stringify(condBlueprint({ field: "kind", operator: "MATCHES", value: "^a" })))).toThrow(
+        "MATCHES is not executed",
+      );
+    });
+
+    it("CONTAINS with a non-string value is refused (the executor only handles strings)", () => {
+      for (const value of [5, ["a"], { a: 1 }, true]) {
+        expect(() => parseBlueprint(JSON.stringify(condBlueprint({ field: "kind", operator: "CONTAINS", value }))), JSON.stringify(value)).toThrow(
+          "CONTAINS needs a string value",
+        );
+      }
+    });
+
+    it("a field path is refused: field is a top-level name only", () => {
+      for (const field of ["a.b", "a/b", "outer.inner.leaf"]) {
+        expect(() => parseBlueprint(JSON.stringify(condBlueprint({ field, operator: "EQ", value: 1 }))), field).toThrow("top-level field name");
+      }
+    });
+
+    it("supported forms still parse", () => {
+      for (const predicate of [
+        { field: "kind", operator: "CONTAINS", value: "x" },
+        { field: "score", operator: "GTE", value: 10 },
+        { field: "flag_1", operator: "NEQ", value: false },
+      ]) {
+        expect(() => parseBlueprint(JSON.stringify(condBlueprint(predicate))), JSON.stringify(predicate)).not.toThrow();
+      }
+    });
+  });
+
+  describe("R5: input canonical JSON cannot represent", () => {
+    it("a lone surrogate in a value is refused, naming its position", () => {
+      const text = JSON.stringify({ ...blueprint([row("alpha")]), metadata: { name: "x", description: "__S__", createdAt: "t" } }).replace(
+        '"__S__"',
+        '"bad \\ud800 text"',
+      );
+      expect(() => parseBlueprint(text)).toThrow("unpaired surrogate at /metadata/description");
+    });
+
+    it("a lone surrogate in a key is refused without printing the key", () => {
+      const text = JSON.stringify({ ...blueprint([row("alpha")]), extra: { __K__: 1 } }).replace('"__K__"', '"k\\udc00"');
+      expect(() => parseBlueprint(text)).toThrow("unpaired surrogate at /extra/<key with an unpaired surrogate>");
+    });
+
+    it("a well-formed surrogate pair (an emoji) is fine", () => {
+      const text = JSON.stringify({ ...blueprint([row("alpha")]), metadata: { name: "x", description: "__S__", createdAt: "t" } }).replace(
+        '"__S__"',
+        '"ok \\ud83d\\ude00"',
+      );
+      expect(() => parseBlueprint(text)).not.toThrow();
+    });
+
+    it("a duplicate key is refused, naming where it repeats", () => {
+      const text = JSON.stringify(condBlueprint({ field: "kind", operator: "EQ", value: 1 })).replace(
+        '"operator":"EQ"',
+        '"operator":"EQ","operator":"NEQ"',
+      );
+      expect(() => parseBlueprint(text)).toThrow("duplicate key at /snapshot/composition/Cond/predicate/operator");
+    });
+
+    it("a duplicate spelled with an escape is still a duplicate", () => {
+      const text = JSON.stringify(blueprint([row("alpha")])).replace('"blueprintFormat":1', '"blueprintFormat":1,"blueprint\\u0046ormat":1');
+      expect(() => parseBlueprint(text)).toThrow("duplicate key at /blueprintFormat");
+    });
+
+    it("the same key in different objects, or quoted inside a string, is not a duplicate", () => {
+      const bp = blueprint([row("alpha"), row("beta")]);
+      bp.metadata.description = 'looks like {"a":1,"a":2} but is text';
+      expect(() => parseBlueprint(JSON.stringify(bp))).not.toThrow();
+    });
+  });
+
+  it("genomeId is known before anything is written: a dry run reports the same one the real import records", async () => {
+    const file = writeBlueprint(blueprint([row("alpha"), row("beta")]));
+    const dry = await importGenome(file, { isPinned: true, isDryRun: true }, { root, genesDir: "genes" });
+    expect(installs).toEqual([]);
+    expect(dry.genomeId).toMatch(/^[0-9a-f]{64}$/);
+    const real = await importGenome(file, { isPinned: true }, { root, genesDir: "genes" });
+    expect(real.executionSnapshot!.genomeId).toBe(dry.genomeId);
+    expect(real.genomeId).toBe(dry.genomeId);
+  });
+});

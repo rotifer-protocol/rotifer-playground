@@ -202,12 +202,20 @@ describe("excludeGeneIds is applied at admission", () => {
     expect(src.computeCalls.sort()).toEqual(["best", "next"]);
   });
 
-  it("without excludeGeneIds nothing is downloaded to compute IDs and the top scorer wins", async () => {
+  // T-10 #10: every admitted candidate is identified by content, exclusion list or not,
+  // so "what is installed is what was admitted" holds for every capability pick.
+  it("without excludeGeneIds the top scorer wins and is still identified by content", async () => {
     const src = sources(rows, genes);
     const { admitted } = await resolveCapabilityCandidates(QUERY, POLICY, src);
     expect(admitted[0].cloudId).toBe("best");
-    expect(admitted[0].geneId).toBeUndefined();
-    expect(src.computeCalls).toEqual([]);
+    expect(admitted[0].geneId).toBe(v2Of("best"));
+    expect(src.computeCalls.sort()).toEqual(["best", "next"]);
+  });
+
+  it("without excludeGeneIds a candidate whose ID cannot be computed is still refused", async () => {
+    const src = sources(rows, genes, { best: { reason: "WASM hash does not match the Registry row" } });
+    const { admitted } = await resolveCapabilityCandidates(QUERY, POLICY, src);
+    expect(admitted.map((c) => c.cloudId)).toEqual(["next"]);
   });
 
   it("an ID that cannot be computed counts as missing evidence, not as 'not excluded'", async () => {
@@ -221,6 +229,40 @@ describe("excludeGeneIds is applied at admission", () => {
     const src = sources(rows, genes);
     const { admitted } = await resolveCapabilityCandidates({ ...QUERY, excludeGeneIds: [v2Of("best"), v2Of("next")] }, POLICY, src);
     expect(admitted).toEqual([]);
+  });
+});
+
+describe("T-10 #13: candidates beyond the first leaderboard page are seen", () => {
+  // 450 rows in the domain; only row 421 is admissible.
+  const many = Array.from({ length: 450 }, (_, i) =>
+    row(`r${i}`, i === 420 ? { fitness_value: 0.9 } : { tier: "not_evaluated" }),
+  );
+  const genesById = Object.fromEntries(many.map((r) => [r.gene_id, gene(r.gene_id)]));
+
+  function pagedSources() {
+    const offsets: number[] = [];
+    const src = sources([], genesById);
+    src.arenaLeaderboard = async (o: { domain?: string; limit?: number; offset?: number }) => {
+      offsets.push(o.offset ?? 0);
+      const limit = o.limit ?? 200;
+      return many.slice(o.offset ?? 0, (o.offset ?? 0) + limit);
+    };
+    return { src, offsets };
+  }
+
+  it("pages until a short page and finds the admissible row on page 3", async () => {
+    const { src, offsets } = pagedSources();
+    const { candidates, admitted } = await resolveCapabilityCandidates(QUERY, POLICY, src);
+    expect(candidates).toHaveLength(450);
+    expect(admitted.map((c) => c.cloudId)).toEqual(["r420"]);
+    expect(offsets).toEqual([0, 200, 400]);
+  });
+
+  it("a leaderboard that never ends is evidence it cannot read, not 'no candidate'", async () => {
+    const src = sources([], {});
+    src.arenaLeaderboard = async (o: { limit?: number }) =>
+      Array.from({ length: o.limit ?? 200 }, (_, i) => row(`x${i}`, { domain: "other.domain" }));
+    await expect(resolveCapabilityCandidates(QUERY, POLICY, src)).rejects.toThrow("more than");
   });
 });
 

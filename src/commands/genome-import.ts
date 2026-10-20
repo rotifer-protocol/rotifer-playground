@@ -154,6 +154,10 @@ export function compositionPlan(blueprint: GenomeBlueprint): CompositionPlan {
       if (!isObject(p) || typeof p.field !== "string" || typeof p.operator !== "string" || !("value" in p)) {
         throw outsideSubset("Cond predicate must be { field, operator, value }");
       }
+      // agent run substitutes "type" for an empty field and "primary" for a null
+      // value; accepting them would run a different branch than the one declared.
+      if (p.field === "") throw outsideSubset("Cond predicate needs a non-empty field");
+      if (p.value === null) throw outsideSubset("Cond predicate value must not be null");
       const op = OPS_FROM_SPEC[p.operator];
       if (!op) throw outsideSubset(`unknown CompareOp '${p.operator}'`);
       plan = {
@@ -189,9 +193,21 @@ export function parseBlueprint(text: string): ParsedBlueprint {
   try {
     raw = JSON.parse(text);
   } catch (err) {
-    throw new GenomeImportError(`Not a JSON Blueprint: ${(err as Error).message}`);
+    // The parser's own message quotes the input around the error, which may be
+    // a key; report only where it broke.
+    const position = /position (\d+)/.exec((err as Error).message)?.[1];
+    throw new GenomeImportError(`Not a JSON Blueprint: the file is not valid JSON${position ? ` (at position ${position})` : ""}`);
   }
   if (!isObject(raw)) throw new GenomeImportError("Not a Blueprint: the top level is not an object");
+
+  // The credential scan runs before any structural check: structural errors
+  // name roles, keys and values from the file, and none of those may be a
+  // secret by the time they are printed. Findings carry masked pointers only.
+  const findings = scanBlueprint(raw as unknown as GenomeBlueprint, { isLeafIdCheckedStructurally: true });
+  if (findings.length > 0) {
+    const where = findings.map((f) => `${f.pointer || "/"} [${f.layer}] ${f.rule}`).join("; ");
+    throw new GenomeImportError(`The Blueprint carries what looks like a credential, so it is not imported: ${where}`);
+  }
 
   const format = raw.blueprintFormat;
   if (typeof format !== "number" || !Number.isInteger(format) || format < 1) {
@@ -255,12 +271,6 @@ export function parseBlueprint(text: string): ParsedBlueprint {
 
   const plan = compositionPlan(blueprint);
 
-  const findings = scanBlueprint(blueprint);
-  if (findings.length > 0) {
-    const where = findings.map((f) => `${f.pointer || "/"} [${f.layer}] ${f.rule}`).join("; ");
-    throw new GenomeImportError(`The Blueprint carries what looks like a credential, so it is not imported: ${where}`);
-  }
-
   return { blueprint, plan, suggestedMinVg };
 }
 
@@ -280,7 +290,7 @@ export interface RoleResolution {
   name: string;
   version: string;
   fidelity: string;
-  /** v2 gene ID computed at admission (when excludeGeneIds had to be checked). */
+  /** v2 gene ID computed at admission; set for every capability pick. */
   candidateGeneId?: string;
   /** Same author and gene name as the hint, newer version. */
   selfHealUpgrade: boolean;
@@ -486,7 +496,7 @@ async function installAndVerify(
       );
     }
     // Exclusion was applied at admission; what was installed must be what was admitted.
-    if (!isLockMode && r.candidateGeneId && id.id !== r.candidateGeneId) {
+    if (!isLockMode && id.id !== r.candidateGeneId) {
       throw new GenomeImportError(
         `Role '${r.role}': installed ${r.owner}/${r.name}@${r.version} is ${id.id}, not the ${r.candidateGeneId} admitted`,
         "The Registry row changed between admission and install; nothing was imported.",

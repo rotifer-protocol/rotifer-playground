@@ -452,13 +452,33 @@ function isCredentialKeyName(key: string): boolean {
 /** A bare 32-byte key in hex: exactly 64 hex characters, optionally `0x`-prefixed. */
 const BARE_HEX_KEY = /(?<![0-9A-Fa-f])(?:0x)?[0-9A-Fa-f]{64}(?![0-9A-Fa-f])/;
 
-/** A bare 32- or 64-byte key in Base64 outside a PEM block: a Base64 run of 43–44 or 86–88 characters. */
+/** A `/`-separated run of plain words ("docs/protocol/genome") — prose, not key material. */
+const PATH_WORD = /^[A-Za-z][a-z]*[0-9]*$/;
+
+function isPathLike(run: string): boolean {
+  const segments = run.split("/");
+  return segments.length >= 2 && segments.every((s) => s.length >= 2 && PATH_WORD.test(s));
+}
+
+/**
+ * A bare 32- or 64-byte key in Base64 outside a PEM block: a Base64 run of
+ * 43–44 or 86–88 characters that also looks random. Letters and `/` are in the
+ * Base64 alphabet, so length and charset alone also catch path text; random
+ * key material is told apart by its entropy (over 200,000 random keys the
+ * lowest seen was 4.24 bits/char at 32 bytes and 4.88 at 64; one million of
+ * each all still matched this rule) and by not splitting into plain words on `/`.
+ */
 function hasBareBase64Key(value: string): boolean {
   for (const run of value.match(/[A-Za-z0-9+/=]+/g) ?? []) {
     const body = run.replace(/={1,2}$/, "");
     if (body.includes("=")) continue;
     const len = run.length;
-    if ((len >= 43 && len <= 44) || (len >= 86 && len <= 88)) return true;
+    const isKey32 = len >= 43 && len <= 44;
+    const isKey64 = len >= 86 && len <= 88;
+    if (!isKey32 && !isKey64) continue;
+    if (shannonEntropy(body) < (isKey32 ? 4.0 : 4.5)) continue;
+    if (isPathLike(body)) continue;
+    return true;
   }
   return false;
 }

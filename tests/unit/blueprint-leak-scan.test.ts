@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 vi.mock("../../src/utils/binding.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/utils/binding.js")>()),
@@ -28,7 +28,12 @@ const FAKE_AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE"; // AWS's documented example ke
 const FAKE_STRIPE_KEY = "sk_" + "live_" + "0".repeat(24);
 const FAKE_OPENAI_KEY = "sk-" + "proj-" + "0".repeat(48);
 const FAKE_JWT = ["eyJ" + "A".repeat(20), "eyJ" + "B".repeat(20), "C".repeat(20)].join(".");
-const FAKE_BASE64_KEY = "A".repeat(43) + "=";
+// Random-looking Base64 of 32 and 64 bytes, derived from a fixed test string — not key material.
+const FAKE_BASE64_KEY_32 = createHash("sha256").update("rotifer-test-fixed-seed").digest("base64");
+const FAKE_BASE64_KEY_64 = createHash("sha512").update("rotifer-test-fixed-seed").digest("base64");
+/** n characters drawn from the Base64 alphabet, deterministic and random-looking. */
+const base64Run = (n: number) =>
+  [1, 2, 3].map((i) => createHash("sha512").update(`run-${i}`).digest("base64").replace(/=+$/, "")).join("").slice(0, n);
 // 24 distinct characters → log2(24) ≈ 4.58 bits/char, above the 4.5 threshold.
 const FAKE_HIGH_ENTROPY = "Zq8#mP2$vL9!xR4&kT7*wN1@";
 
@@ -181,7 +186,8 @@ describe("#29-c layer ② value patterns", () => {
       [FAKE_STRIPE_KEY, "Stripe live key"],
       [FAKE_OPENAI_KEY, "OpenAI key"],
       [FAKE_JWT, "JWT"],
-      [FAKE_BASE64_KEY, "Bare Base64 key (32/64 bytes)"],
+      [FAKE_BASE64_KEY_32, "Bare Base64 key (32/64 bytes)"],
+      [FAKE_BASE64_KEY_64, "Bare Base64 key (32/64 bytes)"],
     ];
     for (const [value, rule] of cases) {
       const bp = blueprint();
@@ -192,8 +198,30 @@ describe("#29-c layer ② value patterns", () => {
   });
 
   it("Base64 rule fires only for 43–44 and 86–88 character runs", () => {
-    const b64 = (n: number) => scanForCredentials({ v: "B".repeat(n) }).some((f) => f.rule.startsWith("Bare Base64"));
+    const b64 = (n: number) => scanForCredentials({ v: base64Run(n) }).some((f) => f.rule.startsWith("Bare Base64"));
     expect([42, 43, 44, 45, 85, 86, 88, 89].map(b64)).toEqual([false, true, true, false, false, true, true, false]);
+  });
+
+  it("path text of key length is not mistaken for a Base64 key", () => {
+    // The acceptance probe: the `/`-joined run is exactly 44 characters.
+    const probe = "Pipeline reads docs/protocol/specification/genome/blueprint";
+    expect("docs/protocol/specification/genome/blueprint").toHaveLength(44);
+    for (const text of [probe, "see Docs/Protocol/Specification/Genome/Blueprint2"]) {
+      expect(scanForCredentials({ d: text }).filter((f) => f.rule.startsWith("Bare Base64"))).toEqual([]);
+    }
+    writeAgent(root, "path-desc", ["alpha"], { type: "Single" });
+    const { code, written } = exportAgent("path-desc", { description: probe });
+    expect(code).toBe(0);
+    expect(written).toBe(true);
+  });
+
+  it("a random 32-byte Base64 key in metadata.description → blocked, value not echoed", () => {
+    writeAgent(root, "b64-desc", ["alpha"], { type: "Single" });
+    const { code, written, text } = exportAgent("b64-desc", { description: `backup ${FAKE_BASE64_KEY_32}` });
+    expect(code).toBe(1);
+    expect(written).toBe(false);
+    expect(text).toContain("Bare Base64 key (32/64 bytes)");
+    expect(text).not.toContain(FAKE_BASE64_KEY_32);
   });
 });
 

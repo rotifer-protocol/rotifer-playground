@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.27.0...v0.28.0) (2026-10-20)
+
+
+### Features
+
+* **genome:** add `rotifer genome export` with a credential scan gate ([#391](https://github.com/rotifer-protocol/rotifer-playground/issues/391)) ([fa1135a](https://github.com/rotifer-protocol/rotifer-playground/commit/fa1135abe2c649eaccdd0126fb59dd6d5c9f1ada))
+* **genome:** add `rotifer genome import` with evidence-based capability resolution ([#395](https://github.com/rotifer-protocol/rotifer-playground/issues/395)) ([bb893ca](https://github.com/rotifer-protocol/rotifer-playground/commit/bb893ca8410a72218abce142830fa05997670d22))
+* **install:** compare phenotype with the recorded content_hash, warning only ([#400](https://github.com/rotifer-protocol/rotifer-playground/issues/400)) ([0f0e8ff](https://github.com/rotifer-protocol/rotifer-playground/commit/0f0e8ff7fb6eb6c4343477b8710986bf0dc6d693))
+
+
+### Bug Fixes
+
+* **agent-run:** make Par / Cond / Try run on compiled genes ([#396](https://github.com/rotifer-protocol/rotifer-playground/issues/396)) ([f26d540](https://github.com/rotifer-protocol/rotifer-playground/commit/f26d5400b5c0deba7db1c484af7d31b4acc1bf14))
+* **deps:** bump wasmtime to 48.0.7 for the 2026-10-19 RustSec advisories ([#392](https://github.com/rotifer-protocol/rotifer-playground/issues/392)) ([a981083](https://github.com/rotifer-protocol/rotifer-playground/commit/a9810836ff0f8744be6173402bca516815ea968c))
+* **genome:** apply excludeGeneIds at admission, not after install ([#397](https://github.com/rotifer-protocol/rotifer-playground/issues/397)) ([ff41832](https://github.com/rotifer-protocol/rotifer-playground/commit/ff4183273f4b29fded555fc6a1c6c03342eb3289))
+* **genome:** close five gaps the Blueprint RFC review found ([#401](https://github.com/rotifer-protocol/rotifer-playground/issues/401)) ([f4bdc88](https://github.com/rotifer-protocol/rotifer-playground/commit/f4bdc8894d5d2f92d802548832317ecd1ffce4f1))
+* **genome:** stop the entropy rule from flagging natural-language text ([#404](https://github.com/rotifer-protocol/rotifer-playground/issues/404)) ([53ddc5d](https://github.com/rotifer-protocol/rotifer-playground/commit/53ddc5d6b62dfa12e24bc14e191b5e29b881decf))
+* **scanner:** pin scanner_version to the rules table and stop S-01 flagging literals ([#394](https://github.com/rotifer-protocol/rotifer-playground/issues/394)) ([9751938](https://github.com/rotifer-protocol/rotifer-playground/commit/9751938815f499542be27eff28aa87d86cbe9fff))
+* **supabase:** give the arena leaderboard a unique tiebreak so paging is stable ([#403](https://github.com/rotifer-protocol/rotifer-playground/issues/403)) ([eb6d62a](https://github.com/rotifer-protocol/rotifer-playground/commit/eb6d62acb586a050557ec0a414ebdbc666dc6215))
+* **supabase:** pin genes.created_at and decide duplicate hashes by who came first ([#399](https://github.com/rotifer-protocol/rotifer-playground/issues/399)) ([49fc4ea](https://github.com/rotifer-protocol/rotifer-playground/commit/49fc4eac8474aa8f0cbbbe6d440a5b1087dd4474))
+* **supabase:** stop recomputing content_hash server-side; pin content hash v1 ([#398](https://github.com/rotifer-protocol/rotifer-playground/issues/398)) ([d01a6d7](https://github.com/rotifer-protocol/rotifer-playground/commit/d01a6d7816ad789f65c12413157686d085a62c11))
+
 ## [0.27.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.26.3...v0.27.0) (2026-10-19)
 
 

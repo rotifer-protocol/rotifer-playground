@@ -58,6 +58,8 @@ describe("S-01 ignores literals and comments", () => {
       "const a = 'avoid eval(x)';",
       "const b = `eval(${name}) is unsafe`;",
       "const c = 1; // eval(c) later",
+      'const e = "continued \\',
+      'eval(still inside the string)";',
       "/* Function(x) */ const d = 2;",
       "/*",
       "eval(inside a block comment)",
@@ -99,6 +101,38 @@ describe("S-01 still flags real calls", () => {
       "const d = (n) / eval(w) / 2;",
     ].join("\n");
     expect(s01Lines(src)).toEqual([2, 3, 4, 5]);
+  });
+
+  it("flags a call after a `/` that could be division or a regex (E2–E4)", () => {
+    // In each, the `/` after `)` or `}` really starts a regex. Read as division,
+    // the quote or backtick inside it would open a string or template and hide
+    // the call that follows.
+    expect(s01Lines("if (s) /'/.test(s); eval(x);")).toEqual([1]); // E2
+    expect(s01Lines("if (s) /`/.test(s);\neval(x);\nconst t = 1;")).toEqual([2]); // E3
+    expect(s01Lines('function f() {}\n/"/.test(s); eval(x);')).toEqual([2]); // E4
+    expect(
+      s01Lines("export function run(input: { code: string }) {\n  const s = input.code;\n  if (s) /'/.test(s); return eval(s);\n}"),
+    ).toEqual([3]);
+  });
+
+  it("flags a call when two ambiguous `/` on one line point opposite ways", () => {
+    // The first `/` is a regex, the second is division: no single reading of
+    // the line is right, so both readings must be followed.
+    expect(s01Lines("if (s) /'/.test(s); y = (b) / eval(x) / 2;")).toEqual([1]);
+  });
+
+  it("flags a call after a string continued onto the next line (E1)", () => {
+    expect(s01Lines('const s = "abc\\\nabc"; eval(y);')).toEqual([2]);
+  });
+
+  it("flags a call after break / continue and a line break (automatic semicolon)", () => {
+    expect(s01Lines("for (;;) { if (c) break\n/'/.test(s); eval(x) }")).toEqual([2]);
+    expect(s01Lines("for (;;) { if (c) continue\n/'/.test(s); eval(x) }")).toEqual([2]);
+  });
+
+  it("flags a call after a line comment ended by CR or U+2028", () => {
+    expect(s01Lines("a = 1; // c\reval(x)")).toEqual([1]);
+    expect(s01Lines("a = 1; // c\u2028eval(x)")).toEqual([1]);
   });
 
   it("keeps raw-line matching for .tsx, .py and .sh files", () => {

@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { SCAN_RULES, SCANNER_VERSION, rulesFingerprint } from "../../src/scanner/rules.js";
 
 function matchesRule(ruleId: string, line: string): boolean {
@@ -172,8 +175,23 @@ describe("S-07: File system operations", () => {
 const RULES_FINGERPRINTS: Record<string, string> = {
   "0.8.0": "8162ba67ab1d7c5ff576aaa435fbfd980b1d9dd1d6345e6a29eca29e70ec748d",
   // S-01 matches code only (string / regex literals and comments blanked).
-  "0.8.1": "fcb587526c5a55be4734e08d71544a301f428c55040b9a09a896b01ab40ec258",
+  // 0.8.1 was an unreleased draft of the same table with a weaker masker.
+  "0.8.2": "fcb587526c5a55be4734e08d71544a301f428c55040b9a09a896b01ab40ec258",
 };
+
+// The fingerprint covers the table, not the masking in literals.ts, which also
+// changes results. Its hash is pinned per version so that editing it fails
+// here: if the edit changes what gets masked, bump SCANNER_VERSION; then pin
+// the new hash under the (possibly new) version.
+const MASKER_SHA256: Record<string, string> = {
+  "0.8.2": "e4c03b49c2755774d416b76f94473d7ed35d2d621d5f9d961977e5d9bbe7b3fb",
+};
+
+function maskerHash(): string {
+  const path = fileURLToPath(new URL("../../src/scanner/literals.ts", import.meta.url));
+  const source = readFileSync(path, "utf-8").replace(/\r\n/g, "\n");
+  return createHash("sha256").update(source).digest("hex");
+}
 
 describe("SCANNER_VERSION ↔ rules table fingerprint", () => {
   it("the current rules table matches the fingerprint pinned for SCANNER_VERSION", () => {
@@ -185,6 +203,13 @@ describe("SCANNER_VERSION ↔ rules table fingerprint", () => {
       rulesFingerprint(),
       "SCAN_RULES changed: bump SCANNER_VERSION and pin the new fingerprint",
     ).toBe(RULES_FINGERPRINTS[SCANNER_VERSION]);
+  });
+
+  it("src/scanner/literals.ts matches the hash pinned for SCANNER_VERSION", () => {
+    expect(
+      maskerHash(),
+      "literals.ts changed: if masking behaviour changed, bump SCANNER_VERSION; then pin the new hash",
+    ).toBe(MASKER_SHA256[SCANNER_VERSION]);
   });
 
   it("the fingerprint changes when any rule field changes", () => {

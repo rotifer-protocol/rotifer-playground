@@ -4,10 +4,12 @@ import type { ScanRule } from "./types.js";
 /**
  * Version of the rules table, sent as `scanner_version` with every uploaded
  * safety badge. Grades are only comparable between scans of the same version,
- * so any change to SCAN_RULES must bump it — tests/unit/scanner-rules.test.ts
- * pins rulesFingerprint() per version and fails until it is updated.
+ * so any change to SCAN_RULES or to how lines are matched (scanner.ts,
+ * literals.ts) must bump it. tests/unit/scanner-rules.test.ts pins
+ * rulesFingerprint() per version, and the hash of literals.ts, and fails until
+ * both are updated.
  */
-export const SCANNER_VERSION = "0.8.1";
+export const SCANNER_VERSION = "0.8.2";
 
 export const SCAN_RULES: ScanRule[] = [
   {

@@ -1,0 +1,14 @@
+name = "rotifer-badge"
+main = "src/index.ts"
+compatibility_date = "2026-03-01"
+
+routes = [
+  { pattern = "badge.rotifer.dev/*", zone_name = "rotifer.dev" }
+]
+
+[[kv_namespaces]]
+binding = "BADGE_KV"
+id = "312561e231a949b984e54efe2d8c9a86"
+
+[vars]
+SUPABASE_URL = "https://vihbmpuqlamhxbmahcje.supabase.co"

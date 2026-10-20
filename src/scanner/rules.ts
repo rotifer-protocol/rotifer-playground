@@ -1,10 +1,23 @@
+import { createHash } from "node:crypto";
 import type { ScanRule } from "./types.js";
+
+/**
+ * Version of the rules table, sent as `scanner_version` with every uploaded
+ * safety badge. Grades are only comparable between scans of the same version,
+ * so any change to SCAN_RULES must bump it — tests/unit/scanner-rules.test.ts
+ * pins rulesFingerprint() per version and fails until it is updated.
+ */
+export const SCANNER_VERSION = "0.8.1";
 
 export const SCAN_RULES: ScanRule[] = [
   {
     id: "S-01",
     description: "Dynamic code execution",
     severity: "CRITICAL",
+    // security-auditor detects eval() in other code, so its source holds the
+    // regex /\beval\s*\(/ and the message "eval() usage"; raw-line matching
+    // graded it D. Only an actual call in code counts.
+    matchOn: "code",
     patterns: [
       /\beval\s*\(/,
       /\bFunction\s*\(/,
@@ -100,3 +113,18 @@ export const SCAN_RULES: ScanRule[] = [
     ],
   },
 ];
+
+/**
+ * SHA-256 over everything in the rules table that affects a scan result: ids,
+ * descriptions, severities, match mode and each pattern's source and flags.
+ */
+export function rulesFingerprint(rules: ScanRule[] = SCAN_RULES): string {
+  const canonical = rules.map((r) => ({
+    id: r.id,
+    description: r.description,
+    severity: r.severity,
+    matchOn: r.matchOn ?? "line",
+    patterns: r.patterns.map((p) => [p.source, p.flags]),
+  }));
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}

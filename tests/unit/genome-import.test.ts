@@ -112,7 +112,7 @@ beforeEach(() => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "phenotype.json"), JSON.stringify(cloudGene(r).phenotype));
     writeFileSync(join(dir, "fake-v2"), r.v2);
-    return { gene: cloudGene(r), geneDir: dir, didSnapshot: false };
+    return { gene: cloudGene(r), geneDir: dir, didSnapshot: false, contentHashCheck: { status: "match" as const } };
   });
   vi.mocked(downloadGeneWasm).mockResolvedValue(Buffer.from([0x00, 0x61, 0x73, 0x6d]));
   // The v2 ID of an installed gene is the one remembered beside it; of a candidate
@@ -468,7 +468,7 @@ describe("excludeGeneIds: an excluded top candidate is passed over at admission"
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, "phenotype.json"), "{}");
       writeFileSync(join(dir, "fake-v2"), fakeV2("swapped after admission"));
-      return { gene: cloudGene(row("delta", "3.0.0")), geneDir: dir, didSnapshot: false };
+      return { gene: cloudGene(row("delta", "3.0.0")), geneDir: dir, didSnapshot: false, contentHashCheck: { status: "match" as const } };
     });
     const { code, text } = await runImport(excludingAlpha2(), {});
     expect(code).toBe(1);

@@ -201,6 +201,41 @@ describe("runPrePublishChecks", () => {
     expect(secretCheck?.status).toBe("pass");
   });
 
+  // The Blueprint export scan blocks bare 64-hex strings; the shared publish
+  // patterns must not, or every gene carrying a sha256 constant stops publishing.
+  it("passes sensitive data check for source holding a 64-hex sha256 constant", () => {
+    writePhenotype(tmpDir);
+    mkdirSync(join(tmpDir, "src"), { recursive: true });
+    const sha256OfEmpty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    writeFileSync(
+      join(tmpDir, "src", "index.ts"),
+      `export const EMPTY_SHA256 = "${sha256OfEmpty}";\nexport const PREFIXED = "0x${sha256OfEmpty}";\n`,
+    );
+
+    const result = runPrePublishChecks(tmpDir, "hash-constant-gene");
+    const secretCheck = result.checks.find((c) => c.name === "Sensitive Data Scan");
+    expect(secretCheck?.status).toBe("pass");
+  });
+
+  // Fakes are assembled at run time so no credential-shaped literal sits in source.
+  const newFormats: Array<[string, string]> = [
+    ["Stripe live key", "sk_" + "live_" + "0".repeat(24)],
+    ["OpenAI key", "sk-" + "proj-" + "0".repeat(48)],
+    ["JWT", ["eyJ" + "A".repeat(20), "eyJ" + "B".repeat(20), "C".repeat(20)].join(".")],
+  ];
+  for (const [label, fake] of newFormats) {
+    it(`detects ${label}`, () => {
+      writePhenotype(tmpDir);
+      writeFileSync(join(tmpDir, "config.ts"), `export const key = "${fake}";\n`);
+
+      const result = runPrePublishChecks(tmpDir, "new-format-leak-gene");
+      expect(result.passed).toBe(false);
+      const secretCheck = result.checks.find((c) => c.name === "Sensitive Data Scan");
+      expect(secretCheck?.status).toBe("fail");
+      expect(secretCheck?.message).toContain(label);
+    });
+  }
+
   it("warns when package.json has file: references", () => {
     writePhenotype(tmpDir, { dependencies: ["other-gene"] });
     writeFileSync(

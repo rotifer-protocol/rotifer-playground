@@ -806,10 +806,15 @@ function executeViaAlgebra(
   }
 
   try {
+    // Same sandbox limits as the Single / Seq path (execute_gene). Without
+    // them the binding falls back to ConstraintSet::default() (1M fuel),
+    // below what one compiled gene of ordinary size needs. A binding older
+    // than this argument ignores it.
     const result = binding.executeAlgebra(
       JSON.stringify(algebraExpr),
       JSON.stringify(geneEntries),
       JSON.stringify(input),
+      DEFAULT_SANDBOX_CONSTRAINTS_JSON,
     );
 
     if (result.success) {

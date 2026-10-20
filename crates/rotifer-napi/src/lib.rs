@@ -655,12 +655,15 @@ impl PlaygroundBinding {
     /// Execute a gene composition algebra expression via the Rust AlgebraExecutor.
     ///
     /// `gene_entries_json` maps hex-encoded gene IDs to `{ "wasm": [bytes], "phenotype": {...} }`.
+    /// `constraints_json` sets the sandbox limits applied to every gene, as in
+    /// `execute_gene`; omitted, `ConstraintSet::default()` applies.
     #[napi]
     pub fn execute_algebra(
         &self,
         algebra_json: String,
         gene_entries_json: String,
         input_json: String,
+        constraints_json: Option<String>,
     ) -> Result<AlgebraResultView> {
         use rotifer_core::algebra::{AlgebraExpr, AlgebraExecutor};
         use std::collections::HashMap;
@@ -691,7 +694,12 @@ impl PlaygroundBinding {
             });
         }
 
-        let constraints = ConstraintSet::default();
+        let constraints = if let Some(cj) = constraints_json {
+            serde_json::from_str::<ConstraintSet>(&cj)
+                .unwrap_or_default()
+        } else {
+            ConstraintSet::default()
+        };
         let sandbox = WasmtimeSandbox::new(constraints)
             .map_err(|e| Error::from_reason(format!("sandbox init failed: {e}")))?;
 

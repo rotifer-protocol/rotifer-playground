@@ -16,11 +16,11 @@ Three manuals, loaded on demand rather than all at once:
 ## Quick Start
 
 ```bash
-npx --yes @rotifer/playground@0.26.0 init my-gene --domain content.grammar --fidelity Native
+npx --yes @rotifer/playground@0.27.0 init my-gene --domain content.grammar --fidelity Native
 # write express() in genes/my-gene/index.ts
-npx --yes @rotifer/playground@0.26.0 test my-gene --verbose
-npx --yes @rotifer/playground@0.26.0 compile my-gene
-npx --yes @rotifer/playground@0.26.0 test my-gene --compliance
+npx --yes @rotifer/playground@0.27.0 test my-gene --verbose
+npx --yes @rotifer/playground@0.27.0 compile my-gene
+npx --yes @rotifer/playground@0.27.0 test my-gene --compliance
 ```
 
 Every command names an exact CLI version on purpose: an unversioned `npx` resolves to whatever the
@@ -28,7 +28,7 @@ registry serves at that moment, so what you run would not be what was reviewed. 
 install the CLI into the project and run the local binary:
 
 ```bash
-npm install --save-dev --save-exact @rotifer/playground@0.26.0
+npm install --save-dev --save-exact @rotifer/playground@0.27.0
 npm exec -- rotifer test my-gene --verbose
 ```
 
@@ -59,7 +59,7 @@ permissions are for: the CLI acting, not this Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.26.0`; fetched from npm at that exact version if it is not already installed. |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.27.0`; fetched from npm at that exact version if it is not already installed. |
 | **Reads** | Genes in the current project — source, `phenotype.json`, and the local manifests. |
 | **Writes** | Genes into the project's `genes/`, compiled IR beside them. Nothing outside the project. |
 | **Sends** | Nothing, until you publish. `publish`, `arena submit --cloud` and `login` reach the network; `init`, `test` and `compile` are local. |

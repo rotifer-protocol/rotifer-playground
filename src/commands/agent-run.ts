@@ -15,6 +15,7 @@ import { flushInvocationReports } from "../cloud/invocation.js";
 import { flushHeartbeat } from "../telemetry/heartbeat.js";
 import { logGeneExecution } from "../utils/run-logger.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
+import { toRustPhenotype } from "../utils/rust-phenotype.js";
 
 interface AgentInfo {
   id: string;
@@ -744,7 +745,10 @@ function executeViaAlgebra(
     const hexId = geneNameToId(geneName);
     geneEntries[hexId] = {
       wasm: Array.from(wasmBytes),
-      phenotype,
+      // Rust deserializes this into rotifer_core's Phenotype; phenotype.json
+      // keeps irHash / dependencies as hex strings or names and createdAt
+      // possibly as an ISO string, which Rust rejects.
+      phenotype: toRustPhenotype(phenotype, geneNameToId),
     };
   }
 

@@ -289,24 +289,96 @@ describe("#30-c evidence that cannot be read is a failure, not a fallback", () =
   });
 });
 
-describe("schema compatibility rule", () => {
-  it("accepts a candidate needing a subset of the inputs and producing a superset of the outputs", () => {
+describe("schema compatibility rule (RFC §4.5, B2: exact equality after normalisation)", () => {
+  const base = { inputSchema: IN, outputSchema: OUT };
+  const withIn = (inputSchema: unknown) => schemaIncompatibility({ inputSchemaCompat: inputSchema, outputSchemaCompat: OUT }, base);
+
+  it("accepts the same schemas", () => {
+    expect(schemaIncompatibility(QUERY, base)).toBeNull();
+  });
+
+  it("no longer accepts a subset of the inputs or a superset of the outputs (the field-presence rule is gone)", () => {
     expect(
       schemaIncompatibility(QUERY, {
         inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, lang: { type: "string" } } },
+        outputSchema: OUT,
+      }),
+    ).toContain("input schema differs");
+    expect(
+      schemaIncompatibility(QUERY, {
+        inputSchema: IN,
         outputSchema: { type: "object", properties: { summary: { type: "string" }, words: { type: "number" } } },
       }),
-    ).toBeNull();
+    ).toContain("output schema differs");
   });
 
   it("refuses a missing required input, a missing output, a type change, or no schema", () => {
-    const base = { inputSchema: IN, outputSchema: OUT };
-    expect(schemaIncompatibility(QUERY, { ...base, inputSchema: { type: "object", required: ["url"], properties: {} } })).toContain("requires input 'url'");
-    expect(schemaIncompatibility(QUERY, { ...base, outputSchema: { type: "object", properties: {} } })).toContain("does not produce output 'summary'");
+    expect(schemaIncompatibility(QUERY, { ...base, inputSchema: { type: "object", required: ["url"], properties: {} } })).toContain("input schema differs");
+    expect(schemaIncompatibility(QUERY, { ...base, outputSchema: { type: "object", properties: {} } })).toContain("output schema differs");
     expect(
       schemaIncompatibility(QUERY, { ...base, outputSchema: { type: "object", properties: { summary: { type: "number" } } } }),
-    ).toContain("different type");
+    ).toContain("output schema differs");
     expect(schemaIncompatibility(QUERY, {})).toContain("no checkable");
     expect(schemaIncompatibility({ inputSchemaCompat: {}, outputSchemaCompat: OUT }, base)).toContain("no checkable");
+    expect(schemaIncompatibility({ inputSchemaCompat: true, outputSchemaCompat: OUT }, base)).toContain("no checkable");
+  });
+
+  it("ignores the five annotation keywords wherever a schema sits", () => {
+    const annotated = {
+      type: "object",
+      title: "T",
+      description: "D",
+      $comment: "C",
+      examples: [{ text: "x" }],
+      default: {},
+      required: ["text"],
+      properties: { text: { type: "string", description: "the text", default: "", examples: ["a"], title: "Text" } },
+    };
+    expect(withIn(annotated)).toBeNull();
+    const deep = (note: Record<string, unknown>) => ({
+      type: "object",
+      properties: {
+        list: { type: "array", items: { type: "string", ...note }, prefixItems: [{ type: "number", ...note }] },
+        pick: { anyOf: [{ type: "string", ...note }], not: { type: "null", ...note } },
+        map: { type: "object", additionalProperties: { type: "string", ...note }, patternProperties: { "^x": { type: "number", ...note } } },
+        cond: { if: { type: "string", ...note }, then: { minLength: 1, ...note }, else: { type: "number", ...note }, contains: { const: 1, ...note } },
+      },
+      $defs: { d: { type: "string", ...note } },
+      allOf: [{ type: "object", ...note }],
+      oneOf: [{ type: "object", ...note }],
+    });
+    expect(schemaIncompatibility({ inputSchemaCompat: deep({}), outputSchemaCompat: OUT }, { inputSchema: deep({ description: "x", title: "y" }), outputSchema: OUT })).toBeNull();
+  });
+
+  it("compares everything else verbatim: names in properties, data inside other keywords, array order", () => {
+    // A property called "description" is a property, not an annotation.
+    expect(withIn({ ...IN, properties: { ...IN.properties, description: { type: "string" } } })).toContain("input schema differs");
+    // "default" inside dependentRequired is data.
+    const dep = (names: string[]) => ({ ...IN, dependentRequired: { default: names } });
+    expect(schemaIncompatibility({ inputSchemaCompat: dep(["a"]), outputSchemaCompat: OUT }, { inputSchema: dep(["b"]), outputSchema: OUT })).toContain("input schema differs");
+    expect(schemaIncompatibility({ inputSchemaCompat: dep(["a"]), outputSchemaCompat: OUT }, { inputSchema: dep(["a"]), outputSchema: OUT })).toBeNull();
+    // Inside const / enum / unknown keywords nothing is deleted.
+    for (const key of ["const", "enum", "x-unknown", "definitions"]) {
+      const v = (title: string) => ({ ...IN, [key]: key === "enum" ? [{ title }] : { title } });
+      expect(schemaIncompatibility({ inputSchemaCompat: v("a"), outputSchemaCompat: OUT }, { inputSchema: v("b"), outputSchema: OUT }), key).toContain("input schema differs");
+    }
+    // The same required set in another order is not equal.
+    const two = (required: string[]) => ({ type: "object", required, properties: { a: { type: "string" }, b: { type: "string" } } });
+    expect(schemaIncompatibility({ inputSchemaCompat: two(["a", "b"]), outputSchemaCompat: OUT }, { inputSchema: two(["b", "a"]), outputSchema: OUT })).toContain("input schema differs");
+    // Member order inside objects does not matter (JCS sorts keys).
+    expect(withIn({ properties: IN.properties, required: IN.required, type: "object" })).toBeNull();
+  });
+
+  it("refuses $ref anywhere in either schema, even when both are identical", () => {
+    const withRef = { ...IN, properties: { text: { $ref: "#/$defs/t" } }, $defs: { t: { type: "string" } } };
+    expect(schemaIncompatibility({ inputSchemaCompat: withRef, outputSchemaCompat: OUT }, { inputSchema: withRef, outputSchema: OUT })).toContain("$ref");
+    const nested = { ...OUT, properties: { summary: { type: "string", const: { $ref: "x" } } } };
+    expect(schemaIncompatibility({ inputSchemaCompat: IN, outputSchemaCompat: nested }, { inputSchema: IN, outputSchema: nested })).toContain("$ref");
+  });
+
+  it("a non-finite number in a Registry schema is incompatible, not equal to null", () => {
+    const q = { ...IN, properties: { text: { type: "string", maxLength: null } } };
+    const c = { ...IN, properties: { text: { type: "string", maxLength: Infinity } } };
+    expect(schemaIncompatibility({ inputSchemaCompat: q, outputSchemaCompat: OUT }, { inputSchema: c, outputSchema: OUT })).toContain("canonical JSON");
   });
 });

@@ -576,21 +576,30 @@ function checkParMerge(value: unknown): string {
 // ── genomeId (RFC §4.4, decision B4) ─────────────────────────
 
 /**
- * RFC 8785 canonical JSON. parseBlueprint has already refused non-finite
- * numbers, unsafe integers and lone surrogates, so JSON.stringify gives the
- * RFC 8785 form of every scalar; keys sort by UTF-16 code unit, as RFC 8785 says.
+ * RFC 8785 canonical JSON. For finite numbers and well-formed strings,
+ * JSON.stringify gives the RFC 8785 form of every scalar, and keys sort by
+ * UTF-16 code unit as RFC 8785 says; anything else throws. parseBlueprint has
+ * already refused both in a Blueprint; schemas read from a Registry row have not
+ * been through it.
  */
 export function jcs(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(jcs).join(",")}]`;
   if (isObject(value)) {
     return `{${Object.keys(value)
       .sort()
-      .map((k) => `${JSON.stringify(k)}:${jcs(value[k])}`)
+      .map((k) => `${jcsString(k)}:${jcs(value[k])}`)
       .join(",")}}`;
   }
+  if (typeof value === "string") return jcsString(value);
+  if (typeof value === "number" && !Number.isFinite(value)) throw new GenomeImportError("Canonical JSON has no form for a non-finite number");
   const text = JSON.stringify(value);
-  if (text === undefined) throw new GenomeImportError("The genome ID cannot be computed: a value has no JSON form");
+  if (text === undefined) throw new GenomeImportError("Canonical JSON has no form for this value");
   return text;
+}
+
+function jcsString(s: string): string {
+  if (UNPAIRED_SURROGATE.test(s)) throw new GenomeImportError("Canonical JSON has no form for a string with an unpaired surrogate");
+  return JSON.stringify(s);
 }
 
 /** The execution projection of RFC §4.4: leaf gene IDs, operators, predicate and Par merge; nothing else. */

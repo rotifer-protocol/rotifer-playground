@@ -25,6 +25,7 @@ import { arenaLeaderboard, downloadGeneWasm, getGene, type LeaderboardRow } from
 import type { CloudGene } from "./types.js";
 import { geneIdV2, type GeneIdV2Result } from "../utils/binding.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
+import { jcs } from "../commands/genome-format.js";
 
 export type RejectionCode =
   | "not-verified"
@@ -136,49 +137,82 @@ export async function computeGeneIdFromRegistry(gene: CloudGene): Promise<GeneId
 
 const DEFAULT_SOURCES: CandidateSources = { arenaLeaderboard, getGene, computeGeneId: computeGeneIdFromRegistry };
 
-// ── Schema compatibility ─────────────────────────────────────
+// ── Schema compatibility (RFC §4.5, decision B2) ─────────────
 //
-// Structural rule until the Blueprint RFC fixes one: the candidate must accept
-// what the original was fed, and produce what the original produced.
-//   input:  every field the candidate requires is offered by the query's
-//           inputSchemaCompat, with the same JSON type when both declare one;
-//   output: every field the query's outputSchemaCompat declares is produced by
-//           the candidate, with the same JSON type when both declare one.
-// A schema without a `properties` object cannot be checked and is incompatible.
+// A substitute is compatible only if its schemas equal the query's exactly
+// after normalisation: JCS(normalise(query)) = JCS(normalise(candidate)), for
+// input and output. normalise deletes the annotation keywords and nothing else,
+// and descends only into keywords whose value is itself a schema. Every other
+// member is compared verbatim. A schema without a `properties` object, or a
+// `$ref` member anywhere in either schema, makes the pair incompatible.
 
-type ObjectSchema = { properties: Record<string, { type?: unknown }>; required?: unknown };
+const ANNOTATIONS = new Set(["description", "title", "examples", "default", "$comment"]);
+/** Keywords whose member values are schemas (member names are kept). */
+const SCHEMA_MAPS = new Set(["properties", "patternProperties", "$defs"]);
+/** Keywords whose value is a schema. */
+const SCHEMA_VALUES = new Set(["items", "additionalProperties", "not", "if", "then", "else", "contains"]);
+/** Keywords whose elements are schemas. */
+const SCHEMA_ARRAYS = new Set(["prefixItems", "allOf", "anyOf", "oneOf"]);
 
-function asObjectSchema(s: unknown): ObjectSchema | null {
-  if (typeof s !== "object" || s === null) return null;
-  const props = (s as { properties?: unknown }).properties;
-  if (typeof props !== "object" || props === null || Array.isArray(props)) return null;
-  return s as ObjectSchema;
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-function sameType(a: { type?: unknown } | undefined, b: { type?: unknown } | undefined): boolean {
-  if (!a || !b || a.type === undefined || b.type === undefined) return true;
-  return JSON.stringify(a.type) === JSON.stringify(b.type);
+/** RFC §4.5 normalise. A schema that is not an object is returned as it is. */
+export function normaliseSchema(schema: unknown): unknown {
+  if (!isPlainObject(schema)) return schema;
+  const entries: Array<[string, unknown]> = [];
+  for (const [key, value] of Object.entries(schema)) {
+    if (ANNOTATIONS.has(key)) continue;
+    if (SCHEMA_MAPS.has(key) && isPlainObject(value)) {
+      entries.push([key, Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, normaliseSchema(sub)]))]);
+    } else if (SCHEMA_VALUES.has(key)) {
+      entries.push([key, normaliseSchema(value)]);
+    } else if (SCHEMA_ARRAYS.has(key) && Array.isArray(value)) {
+      entries.push([key, value.map(normaliseSchema)]);
+    } else {
+      entries.push([key, value]);
+    }
+  }
+  // fromEntries, not assignment: a member called "__proto__" stays a member.
+  return Object.fromEntries(entries);
+}
+
+function hasRefMember(node: unknown): boolean {
+  if (Array.isArray(node)) return node.some(hasRefMember);
+  if (!isPlainObject(node)) return false;
+  return Object.entries(node).some(([key, value]) => key === "$ref" || hasRefMember(value));
+}
+
+function hasProperties(s: unknown): boolean {
+  return isPlainObject(s) && isPlainObject(s.properties);
+}
+
+/** JCS of the normalised schema, or null when canonical JSON has no form for it. */
+function canonicalSchema(s: unknown): string | null {
+  try {
+    return jcs(normaliseSchema(s));
+  } catch {
+    return null;
+  }
 }
 
 export function schemaIncompatibility(
   query: { inputSchemaCompat: unknown; outputSchemaCompat: unknown },
   candidate: { inputSchema?: unknown; outputSchema?: unknown },
 ): string | null {
-  const qIn = asObjectSchema(query.inputSchemaCompat);
-  const qOut = asObjectSchema(query.outputSchemaCompat);
-  const cIn = asObjectSchema(candidate.inputSchema);
-  const cOut = asObjectSchema(candidate.outputSchema);
-  if (!qIn || !qOut) return "the Blueprint's capability query has no checkable schema";
-  if (!cIn || !cOut) return "the candidate declares no checkable input/output schema";
-
-  const required = Array.isArray(cIn.required) ? (cIn.required as unknown[]).filter((r) => typeof r === "string") : [];
-  for (const field of required as string[]) {
-    if (!(field in qIn.properties)) return `candidate requires input '${field}', which the original input does not provide`;
-    if (!sameType(qIn.properties[field], cIn.properties[field])) return `input '${field}' has a different type`;
-  }
-  for (const field of Object.keys(qOut.properties)) {
-    if (!(field in cOut.properties)) return `candidate does not produce output '${field}'`;
-    if (!sameType(qOut.properties[field], cOut.properties[field])) return `output '${field}' has a different type`;
+  const pairs: Array<[string, unknown, unknown]> = [
+    ["input", query.inputSchemaCompat, candidate.inputSchema],
+    ["output", query.outputSchemaCompat, candidate.outputSchema],
+  ];
+  for (const [side, q, c] of pairs) {
+    if (!hasProperties(q)) return `the Blueprint's ${side} schema has no checkable properties`;
+    if (!hasProperties(c)) return `the candidate declares no checkable ${side} schema`;
+    if (hasRefMember(q) || hasRefMember(c)) return `the ${side} schemas use $ref, which cannot be compared`;
+    const qc = canonicalSchema(q);
+    const cc = canonicalSchema(c);
+    if (qc === null || cc === null) return `the ${side} schemas hold a value canonical JSON cannot represent`;
+    if (qc !== cc) return `${side} schema differs from the original's (annotations aside)`;
   }
   return null;
 }

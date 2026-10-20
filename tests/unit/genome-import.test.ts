@@ -574,3 +574,51 @@ describe("output", () => {
     expect(new GenomeImportError("m", "h").hint).toBe("h");
   });
 });
+
+describe("T-10 #1 (rework): a secret in the file never reaches an import error, whatever check fails first", () => {
+  const SECRET = "deadbeef".repeat(8); // obviously fake, the shape of a 32-byte hex key
+
+  async function bothModes(content: string) {
+    const results: Array<{ code: number; text: string }> = [];
+    for (const mode of ["human", "json"] as const) {
+      setOutputMode(mode);
+      const file = join(root, `${randomUUID()}.rgenome`);
+      writeFileSync(file, content);
+      const out = captureOutput();
+      try {
+        results.push({ code: await runGenomeImport(file, {}, { root, genesDir: "genes" }), text: out.text() });
+      } finally {
+        out.restore();
+      }
+    }
+    setOutputMode("human");
+    return results;
+  }
+
+  it("a secret used as a capabilities role name that snapshot.genes lacks", async () => {
+    const bp = blueprint([row("alpha")], {}, { withCapabilities: true });
+    bp.capabilities![SECRET] = bp.capabilities!.alpha;
+    for (const { code, text } of await bothModes(JSON.stringify(bp))) {
+      expect(code).toBe(1);
+      expect(text).not.toContain(SECRET);
+      expect(text).toContain("<redacted key #");
+    }
+  });
+
+  it("a secret used as snapshot.genes[0].role with an invalid geneId", async () => {
+    const bp = blueprint([row("alpha")]);
+    bp.snapshot.genes[0] = { geneId: "not-a-v2-id", role: SECRET, optional: false };
+    for (const { code, text } of await bothModes(JSON.stringify(bp))) {
+      expect(code).toBe(1);
+      expect(text).not.toContain(SECRET);
+    }
+  });
+
+  it("malformed JSON is reported by position only, never with a quote of the input", async () => {
+    for (const { code, text } of await bothModes(`{"blueprintFormat": 1, "x": ${SECRET}}`)) {
+      expect(code).toBe(1);
+      expect(text).toContain("Not a JSON Blueprint");
+      expect(text).not.toContain("deadbeef");
+    }
+  });
+});

@@ -193,9 +193,21 @@ export function parseBlueprint(text: string): ParsedBlueprint {
   try {
     raw = JSON.parse(text);
   } catch (err) {
-    throw new GenomeImportError(`Not a JSON Blueprint: ${(err as Error).message}`);
+    // The parser's own message quotes the input around the error, which may be
+    // a key; report only where it broke.
+    const position = /position (\d+)/.exec((err as Error).message)?.[1];
+    throw new GenomeImportError(`Not a JSON Blueprint: the file is not valid JSON${position ? ` (at position ${position})` : ""}`);
   }
   if (!isObject(raw)) throw new GenomeImportError("Not a Blueprint: the top level is not an object");
+
+  // The credential scan runs before any structural check: structural errors
+  // name roles, keys and values from the file, and none of those may be a
+  // secret by the time they are printed. Findings carry masked pointers only.
+  const findings = scanBlueprint(raw as unknown as GenomeBlueprint, { isLeafIdCheckedStructurally: true });
+  if (findings.length > 0) {
+    const where = findings.map((f) => `${f.pointer || "/"} [${f.layer}] ${f.rule}`).join("; ");
+    throw new GenomeImportError(`The Blueprint carries what looks like a credential, so it is not imported: ${where}`);
+  }
 
   const format = raw.blueprintFormat;
   if (typeof format !== "number" || !Number.isInteger(format) || format < 1) {
@@ -258,12 +270,6 @@ export function parseBlueprint(text: string): ParsedBlueprint {
   const suggestedMinVg = ext?.minVg === undefined ? undefined : checkMinVg(ext.minVg, `bindingExtensions["${BINDING_NAME}"].minVg`);
 
   const plan = compositionPlan(blueprint);
-
-  const findings = scanBlueprint(blueprint);
-  if (findings.length > 0) {
-    const where = findings.map((f) => `${f.pointer || "/"} [${f.layer}] ${f.rule}`).join("; ");
-    throw new GenomeImportError(`The Blueprint carries what looks like a credential, so it is not imported: ${where}`);
-  }
 
   return { blueprint, plan, suggestedMinVg };
 }

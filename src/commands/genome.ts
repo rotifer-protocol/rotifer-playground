@@ -626,15 +626,30 @@ const COMPOSITION_GENE_ID = /^\/snapshot\/composition(?:\/[^/]+)*\/geneRef\/gene
  * `snapshot.genes`. The same hex anywhere else is blocked. Strings under
  * `bindingExtensions` must not look like code.
  */
-export function scanBlueprint(blueprint: GenomeBlueprint): CredentialFinding[] {
+export interface ScanBlueprintOptions {
+  /**
+   * Import only: the structural check that runs right after the scan refuses a
+   * composition leaf whose geneId is not in snapshot.genes, and its message
+   * names the role, never the ID. So at import a v2-shaped leaf ID is exempt
+   * from the bare-hex rule whether or not it is listed, and the leaf is then
+   * refused for what it is. Export keeps the strict rule.
+   */
+  isLeafIdCheckedStructurally?: boolean;
+}
+
+export function scanBlueprint(blueprint: GenomeBlueprint, options: ScanBlueprintOptions = {}): CredentialFinding[] {
+  // Also called on unvalidated import input, so nothing about its shape is assumed.
+  const genes: unknown = (blueprint as { snapshot?: { genes?: unknown } } | null)?.snapshot?.genes;
   const listed = new Set(
-    (blueprint.snapshot?.genes ?? []).map((g) => g.geneId).filter((id) => GENE_ID_V2.test(id)),
+    (Array.isArray(genes) ? genes : [])
+      .map((g) => (typeof g === "object" && g !== null ? (g as { geneId?: unknown }).geneId : undefined))
+      .filter((id): id is string => typeof id === "string" && GENE_ID_V2.test(id)),
   );
   return scanForCredentials(blueprint, {
     isHexExempt: (pointer, value) => {
       if (!GENE_ID_V2.test(value)) return false;
       if (GENES_GENE_ID.test(pointer) || EXCLUDED_GENE_ID.test(pointer)) return true;
-      return COMPOSITION_GENE_ID.test(pointer) && listed.has(value);
+      return COMPOSITION_GENE_ID.test(pointer) && (options.isLeafIdCheckedStructurally || listed.has(value));
     },
     isCodeForbidden: (pointer) => pointer.startsWith("/bindingExtensions/"),
   });

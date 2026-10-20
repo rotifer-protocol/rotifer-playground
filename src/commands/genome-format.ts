@@ -482,9 +482,13 @@ export function compositionPlan(blueprint: GenomeBlueprint): CompositionPlan {
   const ext = blueprint.bindingExtensions?.[BINDING_NAME] ?? {};
   const expr = blueprint.snapshot.composition;
 
-  // §4.3: a genome is an ordered composition; with no expression it runs in order.
+  // Format 1 requires the expression (RFC B3): §4.3's dataFlow fallback is
+  // neither written nor read, so list order alone does not say what runs.
   if (expr === undefined) {
-    return genes.length === 1 ? { type: "Single", roles: order } : { type: "Seq", roles: order };
+    throw new GenomeImportError(
+      "Blueprint has no snapshot.composition",
+      "Blueprint format 1 requires it; export the agent again with rotifer genome export.",
+    );
   }
 
   const [tag, body] = tagOf(expr);
@@ -514,11 +518,7 @@ export function compositionPlan(blueprint: GenomeBlueprint): CompositionPlan {
         roles.push(leafRole(node.right, genes));
         break;
       }
-      const merge = ext.parMerge ?? "first";
-      if (typeof merge !== "string" || !PAR_MERGES.has(merge)) {
-        throw new GenomeImportError(`bindingExtensions["${BINDING_NAME}"].parMerge '${String(merge)}' is not first, concat or merge`);
-      }
-      plan = { type: "Par", roles, parMerge: merge };
+      plan = { type: "Par", roles, parMerge: checkParMerge(ext.parMerge) };
       break;
     }
     case "Cond": {
@@ -538,8 +538,8 @@ export function compositionPlan(blueprint: GenomeBlueprint): CompositionPlan {
       if (p.operator === "CONTAINS" && typeof p.value !== "string") {
         throw outsideSubset("Cond operator CONTAINS needs a string value; agent run only tests substrings");
       }
-      if (/[./]/.test(p.field)) {
-        throw outsideSubset("Cond field must be a top-level field name (no '.' or '/'); agent run does not follow paths");
+      if (/[./[\]]/.test(p.field)) {
+        throw outsideSubset("Cond field must be a top-level field name (no '.', '/', '[' or ']'); agent run does not follow paths");
       }
       plan = {
         type: "Cond",
@@ -559,6 +559,15 @@ export function compositionPlan(blueprint: GenomeBlueprint): CompositionPlan {
     throw outsideSubset("the composition must use every gene of snapshot.genes once, in order");
   }
   return plan;
+}
+
+/** The Par merge strategy (RFC §2.6, on the §7 list): applied as defined, or the Blueprint is refused. */
+function checkParMerge(value: unknown): string {
+  const merge = value ?? "first";
+  if (typeof merge !== "string" || !PAR_MERGES.has(merge)) {
+    throw new GenomeImportError(`bindingExtensions["${BINDING_NAME}"].parMerge '${String(merge)}' is not first, concat or merge`);
+  }
+  return merge;
 }
 
 export function checkMinVg(value: unknown, where: string): number {
@@ -735,9 +744,36 @@ export function parseBlueprint(text: string): ParsedBlueprint {
     );
   }
 
+  // RFC §2.1 (B5): every MUST field, with the shape §2.7 gives it. protocolVersion
+  // is informational (B6): its shape is checked, its value never gates anything.
+  const pv = raw.protocolVersion;
+  const isVersionPart = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v >= 0;
+  if (
+    !isObject(pv) ||
+    !["major", "minor", "patch"].every((k) => isVersionPart(pv[k])) ||
+    !Array.isArray(pv.supportedFeatures) ||
+    !pv.supportedFeatures.every((f) => typeof f === "string")
+  ) {
+    throw new GenomeImportError(
+      "Not a Blueprint: protocolVersion must be { major, minor, patch, supportedFeatures } with non-negative integers and a list of strings",
+    );
+  }
+  const metadata = raw.metadata;
+  if (!isObject(metadata) || typeof metadata.createdAt !== "string") {
+    throw new GenomeImportError("Not a Blueprint: metadata.createdAt is missing or not a string");
+  }
+  for (const key of ["name", "description", "author"]) {
+    if (metadata[key] !== undefined && typeof metadata[key] !== "string") {
+      throw new GenomeImportError(`metadata.${key} must be a string`);
+    }
+  }
+
   const snapshot = raw.snapshot;
   if (!isObject(snapshot) || !Array.isArray(snapshot.genes) || snapshot.genes.length === 0) {
     throw new GenomeImportError("Blueprint has no snapshot.genes");
+  }
+  if (typeof snapshot.snapshotAt !== "string") {
+    throw new GenomeImportError("Not a Blueprint: snapshot.snapshotAt is missing or not a string");
   }
   const roles = new Set<string>();
   for (const g of snapshot.genes) {
@@ -745,6 +781,7 @@ export function parseBlueprint(text: string): ParsedBlueprint {
       throw new GenomeImportError("Every snapshot.genes entry needs a geneId and a role");
     }
     if (!GENE_ID_V2.test(g.geneId)) throw new GenomeImportError(`Gene '${g.role}' has no v2 gene ID`);
+    if (typeof g.optional !== "boolean") throw new GenomeImportError(`Gene '${g.role}' needs optional: true or false`);
     if (g.optional === true) throw outsideSubset(`gene '${g.role}' is optional, which agent run has no notion of`);
     if (roles.has(g.role)) throw new GenomeImportError(`Role '${g.role}' appears twice in snapshot.genes`);
     roles.add(g.role);
@@ -757,8 +794,11 @@ export function parseBlueprint(text: string): ParsedBlueprint {
       if (!isObject(q) || typeof q.domain !== "string" || q.domain === "") {
         throw new GenomeImportError(`capabilities['${role}'] has no domain`);
       }
-      if (q.minFitness !== undefined && (typeof q.minFitness !== "number" || q.minFitness < 0 || q.minFitness > 1)) {
-        throw new GenomeImportError(`capabilities['${role}'].minFitness must be between 0 and 1`);
+      for (const key of ["inputSchemaCompat", "outputSchemaCompat"]) {
+        if (q[key] === undefined) throw new GenomeImportError(`capabilities['${role}'] has no ${key}`);
+      }
+      if (typeof q.minFitness !== "number" || q.minFitness < 0 || q.minFitness > 1) {
+        throw new GenomeImportError(`capabilities['${role}'].minFitness must be a number between 0 and 1`);
       }
       if (q.excludeGeneIds !== undefined) {
         if (!Array.isArray(q.excludeGeneIds) || !q.excludeGeneIds.every((id) => typeof id === "string" && GENE_ID_V2.test(id))) {
@@ -780,8 +820,17 @@ export function parseBlueprint(text: string): ParsedBlueprint {
     }
   }
 
+  if (raw.bindingExtensions !== undefined) {
+    if (!isObject(raw.bindingExtensions)) throw new GenomeImportError("bindingExtensions must be an object");
+    for (const [binding, value] of Object.entries(raw.bindingExtensions)) {
+      if (!isObject(value)) throw new GenomeImportError(`bindingExtensions['${binding}'] must be an object`);
+    }
+  }
+
   const blueprint = raw as unknown as GenomeBlueprint;
+  // The §7 list (parMerge, minVg): apply as defined or refuse; checked whenever written.
   const ext = blueprint.bindingExtensions?.[BINDING_NAME];
+  if (ext?.parMerge !== undefined) checkParMerge(ext.parMerge);
   const suggestedMinVg = ext?.minVg === undefined ? undefined : checkMinVg(ext.minVg, `bindingExtensions["${BINDING_NAME}"].minVg`);
 
   const plan = compositionPlan(blueprint);

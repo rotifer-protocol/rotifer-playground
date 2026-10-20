@@ -880,3 +880,72 @@ describe("T-23: refuse what the executor or canonical JSON cannot honour (R3, R5
     expect(real.genomeId).toBe(dry.genomeId);
   });
 });
+
+describe("T-21b: RFC draft 5 reader rules (B3, B5)", () => {
+  /** The text of a valid two-gene Blueprint after `mutate` edits it. */
+  const edited = (mutate: (bp: any) => void) => {
+    const bp: any = blueprint([row("alpha"), row("beta")], {}, { withCapabilities: true });
+    mutate(bp);
+    return JSON.stringify(bp);
+  };
+
+  it("B3: a Blueprint without composition is refused, for one gene and for several", () => {
+    for (const rows of [[row("alpha")], [row("alpha"), row("beta")]]) {
+      const bp: any = blueprint(rows);
+      delete bp.snapshot.composition;
+      expect(() => parseBlueprint(JSON.stringify(bp)), `${rows.length} gene(s)`).toThrow("no snapshot.composition");
+    }
+  });
+
+  it("B3: the import command exits 1 and creates no agent", async () => {
+    const bp: any = blueprint([row("alpha"), row("beta")]);
+    delete bp.snapshot.composition;
+    const { code, text } = await runImport(bp, { pinned: true });
+    expect(code).toBe(1);
+    expect(text).toContain("no snapshot.composition");
+    expect(installs).toEqual([]);
+    expect(agents()).toEqual([]);
+  });
+
+  const refused: Array<[string, (bp: any) => void, string]> = [
+    ["no protocolVersion", (bp) => { delete bp.protocolVersion; }, "protocolVersion must be"],
+    ["a protocolVersion that is a string", (bp) => { bp.protocolVersion = "0.9.2"; }, "protocolVersion must be"],
+    ["a protocolVersion part that is not an integer", (bp) => { bp.protocolVersion.minor = 9.5; }, "protocolVersion must be"],
+    ["a negative protocolVersion part", (bp) => { bp.protocolVersion.patch = -1; }, "protocolVersion must be"],
+    ["no supportedFeatures", (bp) => { delete bp.protocolVersion.supportedFeatures; }, "protocolVersion must be"],
+    ["a supportedFeatures entry that is not a string", (bp) => { bp.protocolVersion.supportedFeatures = [1]; }, "protocolVersion must be"],
+    ["no metadata", (bp) => { delete bp.metadata; }, "metadata.createdAt"],
+    ["no metadata.createdAt", (bp) => { delete bp.metadata.createdAt; }, "metadata.createdAt"],
+    ["a metadata.name that is not a string", (bp) => { bp.metadata.name = 7; }, "metadata.name must be a string"],
+    ["no snapshot.snapshotAt", (bp) => { delete bp.snapshot.snapshotAt; }, "snapshot.snapshotAt"],
+    ["a gene without optional", (bp) => { delete bp.snapshot.genes[0].optional; }, "needs optional: true or false"],
+    ["optional: \"yes\"", (bp) => { bp.snapshot.genes[1].optional = "yes"; }, "needs optional: true or false"],
+    ["a capability without inputSchemaCompat", (bp) => { delete bp.capabilities.alpha.inputSchemaCompat; }, "has no inputSchemaCompat"],
+    ["a capability without outputSchemaCompat", (bp) => { delete bp.capabilities.beta.outputSchemaCompat; }, "has no outputSchemaCompat"],
+    ["a capability without minFitness", (bp) => { delete bp.capabilities.alpha.minFitness; }, "minFitness must be a number"],
+    ["a bindingExtensions that is an array", (bp) => { bp.bindingExtensions = []; }, "bindingExtensions must be an object"],
+    ["a bindingExtensions value that is not an object", (bp) => { bp.bindingExtensions = { "other-binding": "on" }; }, "bindingExtensions['other-binding'] must be an object"],
+    ["an unknown parMerge outside a Par composition", (bp) => { bp.bindingExtensions = { "rotifer-playground": { parMerge: "zip" } }; }, "is not first, concat or merge"],
+    ["a Cond field with [ or ]", (bp) => {
+      bp.snapshot.composition = { Cond: { predicate: { field: "items[0]", operator: "EQ", value: 1 }, ifTrue: leaf(row("alpha")), ifFalse: leaf(row("beta")) } };
+    }, "top-level field name"],
+  ];
+  for (const [label, mutate, message] of refused) {
+    it(`B5: refuses ${label}`, () => {
+      expect(() => parseBlueprint(edited(mutate))).toThrow(message);
+    });
+  }
+
+  it("B5 controls: optional false, other bindings' unknown fields, any protocolVersion value and annotated metadata pass", () => {
+    expect(() =>
+      parseBlueprint(
+        edited((bp) => {
+          bp.protocolVersion = { major: 9, minor: 0, patch: 0, supportedFeatures: [] };
+          bp.metadata.description = "d";
+          bp.metadata.author = "a";
+          bp.bindingExtensions = { "other-binding": { anything: [1] }, "rotifer-playground": { futureKnob: true, minVg: 0.8 } };
+        }),
+      ),
+    ).not.toThrow();
+  });
+});

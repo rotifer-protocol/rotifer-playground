@@ -915,7 +915,7 @@ impl WasmtimeSandbox {
                     let fuel_remaining = store.get_fuel().unwrap_or(0);
                     if fuel_remaining == 0 {
                         return Err(SandboxError::ResourceLimitExceeded(
-                            "fuel exhausted".into(),
+                            super::FUEL_EXHAUSTED_MESSAGE.into(),
                         ));
                     }
                     return Err(SandboxError::ExecutionFailed(msg));
@@ -981,7 +981,7 @@ impl WasmtimeSandbox {
             .map_err(|e| {
                 let fuel_remaining = store.get_fuel().unwrap_or(0);
                 if fuel_remaining == 0 {
-                    SandboxError::ResourceLimitExceeded("fuel exhausted".into())
+                    SandboxError::ResourceLimitExceeded(super::FUEL_EXHAUSTED_MESSAGE.into())
                 } else {
                     SandboxError::ExecutionFailed(e.to_string())
                 }
@@ -1128,7 +1128,8 @@ impl WasmtimeSandbox {
             let msg = e.to_string();
             if msg.contains("epoch") || msg.contains("interrupt") {
                 SandboxError::ResourceLimitExceeded(format!(
-                    "execution timed out after {}ms",
+                    "{} after {}ms",
+                    super::TIMEOUT_MESSAGE_PREFIX,
                     timeout_ms
                 ))
             } else if !stderr_text.is_empty() {

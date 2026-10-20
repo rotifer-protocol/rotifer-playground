@@ -319,3 +319,89 @@ describe("entropy layer: natural-language descriptions are not credentials", () 
     expect(scanForCredentials({ note: `令牌${FAKE_AWS_KEY}已失效` })).toContainEqual(expect.objectContaining({ rule: "AWS key" }));
   });
 });
+
+// ── Red-team findings on the RFC draft (T-10 #1, #8) ─────────────────────
+
+/** 32 bytes of obviously fake key material as a number array (all 0xde/0xad/0xbe/0xef). */
+const FAKE_KEY_BYTES = Array.from({ length: 32 }, (_, i) => [0xde, 0xad, 0xbe, 0xef][i % 4]);
+
+describe("#1 a key name that is itself a secret never appears in a finding", () => {
+  const leaks = (findings: Array<{ pointer: string; rule: string }>, secret: string) =>
+    findings.some((f) => f.pointer.includes(secret) || f.rule.includes(secret));
+
+  it("the key is flagged, but its pointer token is masked", () => {
+    const findings = scanForCredentials({ [FAKE_HEX_KEY]: "x" });
+    expect(findings.length).toBeGreaterThan(0);
+    expect(leaks(findings, FAKE_HEX_KEY)).toBe(false);
+    expect(findings[0].pointer).toMatch(/^\/<redacted key #0>$/);
+  });
+
+  it("findings below a secret key use the masked token too", () => {
+    const findings = scanForCredentials({ outer: { [FAKE_HEX_KEY]: { inner: FAKE_AWS_KEY } } });
+    expect(findings.map((f) => f.pointer)).toContain("/outer/<redacted key #0>/inner");
+    expect(leaks(findings, FAKE_HEX_KEY)).toBe(false);
+  });
+
+  it("ordinary keys, including credential-named ones, stay readable", () => {
+    const findings = scanForCredentials({ config: { apiKey: "not-a-real-key-000" } });
+    expect(findings.map((f) => f.pointer)).toContain("/config/apiKey");
+  });
+
+  it("export: a secret used as a schema property name is reported without echoing it", () => {
+    writeGene(root, "keyed-prop", {
+      inputSchema: { type: "object", properties: { [FAKE_HEX_KEY]: { type: "string" } } },
+    });
+    writeAgent(root, "keyed-prop-agent", ["keyed-prop"], { type: "Single" });
+    const { code, written, text } = exportAgent("keyed-prop-agent");
+    expect(code).toBe(1);
+    expect(written).toBe(false);
+    expect(text).toContain("<redacted key #0>");
+    expect(text).not.toContain(FAKE_HEX_KEY);
+  });
+});
+
+describe("#8 non-string key material and code in extension fields are caught", () => {
+  it("a credential-named field holding a number array is flagged", () => {
+    const findings = scanForCredentials({ privateKey: FAKE_KEY_BYTES });
+    expect(findings).toContainEqual(expect.objectContaining({ pointer: "/privateKey", layer: "key-name" }));
+  });
+
+  it("a credential-named field holding a number is flagged", () => {
+    expect(scanForCredentials({ pin_token: 482913 })).toContainEqual(expect.objectContaining({ pointer: "/pin_token", layer: "key-name" }));
+  });
+
+  it("a 32- or 64-byte array under any key is flagged as key material", () => {
+    for (const bytes of [FAKE_KEY_BYTES, [...FAKE_KEY_BYTES, ...FAKE_KEY_BYTES]]) {
+      expect(scanForCredentials({ seed: bytes })).toContainEqual(
+        expect.objectContaining({ pointer: "/seed", layer: "value-pattern", rule: "Byte array of key length (32/64)" }),
+      );
+    }
+  });
+
+  it("short number lists, other lengths, and non-byte numbers are not", () => {
+    expect(scanForCredentials({ enum: [1, 2, 3] })).toEqual([]);
+    expect(scanForCredentials({ seed: FAKE_KEY_BYTES.slice(0, 31) })).toEqual([]);
+    expect(scanForCredentials({ weights: FAKE_KEY_BYTES.map((n) => n + 0.5) })).toEqual([]);
+    expect(scanForCredentials({ ids: FAKE_KEY_BYTES.map((n) => n + 1000) })).toEqual([]);
+  });
+
+  it("code under bindingExtensions is flagged, in any binding's extension", () => {
+    for (const ext of [
+      { "rotifer-playground": { parMerge: "first", source: "return 1;" } },
+      { "other-binding": { script: "() => fetch(url)" } },
+      { "other-binding": { hook: "eval(payload)" } },
+      { "other-binding": { nested: { code: "function run(x) { return x }" } } },
+    ]) {
+      const bp = blueprint();
+      bp.bindingExtensions = ext;
+      expect(scanBlueprint(bp)).toContainEqual(expect.objectContaining({ layer: "value-pattern", rule: "Code in extension field" }));
+    }
+  });
+
+  it("plain extension values and code-like prose elsewhere are not flagged", () => {
+    const bp = blueprint();
+    bp.bindingExtensions = { "rotifer-playground": { parMerge: "first", minVg: 0.8 }, "other-binding": { note: "merge outputs by key" } };
+    bp.metadata.description = "Calls the function, then returns the summary";
+    expect(scanBlueprint(bp)).toEqual([]);
+  });
+});

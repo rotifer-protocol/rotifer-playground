@@ -61,7 +61,7 @@ export interface CandidateVerdict {
   name: string;
   version: string;
   fidelity: string;
-  /** v2 gene ID, computed only when the query has excludeGeneIds to check. */
+  /** v2 gene ID of the row's content, computed for every candidate that passed the other checks. */
   geneId?: string;
   evidence: CandidateEvidence;
   admitted: boolean;
@@ -98,8 +98,12 @@ export class EvidenceError extends Error {
   }
 }
 
+const LEADERBOARD_PAGE = 200;
+/** 10 000 rows per domain is far beyond today's board; past it the read is treated as unreliable. */
+const LEADERBOARD_MAX_PAGES = 50;
+
 export interface CandidateSources {
-  arenaLeaderboard: (o: { domain?: string; limit?: number }) => Promise<LeaderboardRow[]>;
+  arenaLeaderboard: (o: { domain?: string; limit?: number; offset?: number }) => Promise<LeaderboardRow[]>;
   getGene: (id: string) => Promise<CloudGene>;
   /** v2 gene ID of a Registry row's content — needed to apply excludeGeneIds before choosing. */
   computeGeneId: (gene: CloudGene) => Promise<GeneIdV2Result>;
@@ -250,13 +254,25 @@ export async function resolveCapabilityCandidates(
   policy: AdmissionPolicy,
   sources: CandidateSources = DEFAULT_SOURCES,
 ): Promise<CandidateResolution> {
-  let rows: LeaderboardRow[];
-  try {
-    rows = await sources.arenaLeaderboard({ domain: query.domain });
-  } catch (err) {
-    throw new EvidenceError(`could not read the Arena leaderboard for '${query.domain}': ${(err as Error).message}`);
+  // The RPC returns at most `limit` rows per call; read every page, or a
+  // qualifying candidate past the first page would be reported as "none".
+  const rows: LeaderboardRow[] = [];
+  for (let page = 0; ; page++) {
+    if (page >= LEADERBOARD_MAX_PAGES) {
+      throw new EvidenceError(
+        `the Arena leaderboard for '${query.domain}' has more than ${LEADERBOARD_PAGE * LEADERBOARD_MAX_PAGES} rows; refusing to decide on a partial read`,
+      );
+    }
+    let batch: LeaderboardRow[];
+    try {
+      batch = await sources.arenaLeaderboard({ domain: query.domain, limit: LEADERBOARD_PAGE, offset: page * LEADERBOARD_PAGE });
+    } catch (err) {
+      throw new EvidenceError(`could not read the Arena leaderboard for '${query.domain}': ${(err as Error).message}`);
+    }
+    if (!Array.isArray(batch)) throw new EvidenceError(`the Arena leaderboard for '${query.domain}' returned no rows array`);
+    rows.push(...batch);
+    if (batch.length < LEADERBOARD_PAGE) break;
   }
-  if (!Array.isArray(rows)) throw new EvidenceError(`the Arena leaderboard for '${query.domain}' returned no rows array`);
 
   const candidates: CandidateVerdict[] = [];
   for (const row of rows.filter((r) => r.domain === query.domain)) {
@@ -271,12 +287,13 @@ export async function resolveCapabilityCandidates(
     }
     const rejections = admissionRejections(row, gene, query, policy);
 
-    // excludeGeneIds names v2 IDs, so a candidate that passed everything else
-    // is identified by content before it can be chosen; an excluded one is
-    // rejected here and the next candidate gets its turn.
+    // Every candidate that passed everything else is identified by content
+    // before it can be chosen: the import later checks that what it installed
+    // is this exact content, and excludeGeneIds (v2 IDs) can be applied here,
+    // so an excluded candidate is rejected and the next one gets its turn.
     let geneId: string | undefined;
     const excluded = query.excludeGeneIds ?? [];
-    if (excluded.length > 0 && rejections.length === 0) {
+    if (rejections.length === 0) {
       const id = await sources.computeGeneId(gene);
       if ("id" in id) {
         geneId = id.id;
@@ -284,7 +301,7 @@ export async function resolveCapabilityCandidates(
           rejections.push({ code: "excluded", detail: `v2 gene ID ${id.id} is in the Blueprint's excludeGeneIds` });
         }
       } else {
-        rejections.push({ code: "missing-evidence", detail: `v2 gene ID could not be computed to check excludeGeneIds: ${id.reason}` });
+        rejections.push({ code: "missing-evidence", detail: `v2 gene ID could not be computed from the Registry row: ${id.reason}` });
       }
     }
 

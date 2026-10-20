@@ -534,38 +534,77 @@ function scanString(value: string, pointer: string, isHexExempt: boolean, out: C
   }
 }
 
+/** A number array of key length (32 or 64 entries, each a byte) — key material stored as bytes. */
+function isKeyLengthByteArray(node: unknown[]): boolean {
+  return (node.length === 32 || node.length === 64) && node.every((n) => Number.isInteger(n) && (n as number) >= 0 && (n as number) <= 255);
+}
+const BYTE_ARRAY_RULE = "Byte array of key length (32/64)";
+
+/** A value a credential-named field could hold: a non-empty string, a number, or a list of those. */
+function holdsCredentialValue(value: unknown): boolean {
+  if (typeof value === "string") return value.trim() !== "";
+  if (typeof value === "number") return Number.isFinite(value);
+  return Array.isArray(value) && value.length > 0 && value.every((v) => typeof v === "number" || typeof v === "string");
+}
+
 /**
- * Scan any JSON value. `isHexExempt(pointer, value)` decides which positions
- * may hold a 64-hex hash.
+ * Code a Blueprint must not carry (it holds references and public fields only).
+ * Checked only where free-form binding data lives, so prose like "calls the
+ * function" in a description is not mistaken for code.
  */
-export function scanForCredentials(
-  doc: unknown,
-  isHexExempt: (pointer: string, value: string) => boolean = () => false,
-): CredentialFinding[] {
+const CODE_SHAPE =
+  /\breturn\b[^;\n]*;|=>|\bfunction\b\s*[\w$]*\s*\(|\b(?:eval|require|Function|setTimeout|setInterval|fetch)\s*\(|<script\b|^\s*import\s|\bmodule\.exports\b/;
+const CODE_RULE = "Code in extension field";
+
+export interface ScanOptions {
+  /** Positions that may hold a 64-hex hash; only the bare-hex rule is lifted there. */
+  isHexExempt?: (pointer: string, value: string) => boolean;
+  /** Positions whose strings must not look like code. */
+  isCodeForbidden?: (pointer: string) => boolean;
+}
+
+/**
+ * Scan any JSON value.
+ *
+ * Pointers are built for humans to find the problem, so they must not become
+ * the leak: an object key that itself looks like a credential is replaced by
+ * `<redacted key #i>` (i = its position among that object's keys) in its own
+ * pointer and in every pointer below it.
+ */
+export function scanForCredentials(doc: unknown, options: ScanOptions = {}): CredentialFinding[] {
+  const isHexExempt = options.isHexExempt ?? (() => false);
+  const isCodeForbidden = options.isCodeForbidden ?? (() => false);
   const out: CredentialFinding[] = [];
 
   const walk = (node: unknown, pointer: string): void => {
     if (typeof node === "string") {
       scanString(node, pointer, isHexExempt(pointer, node), out);
+      if (isCodeForbidden(pointer) && CODE_SHAPE.test(node)) out.push({ pointer, layer: "value-pattern", rule: CODE_RULE });
       return;
     }
     if (Array.isArray(node)) {
+      if (isKeyLengthByteArray(node)) out.push({ pointer, layer: "value-pattern", rule: BYTE_ARRAY_RULE });
       node.forEach((item, i) => walk(item, `${pointer}/${i}`));
       return;
     }
     if (node === null || typeof node !== "object") return;
 
-    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
-      const child = `${pointer}/${pointerToken(key)}`;
+    Object.entries(node as Record<string, unknown>).forEach(([key, value], index) => {
+      // Map keys (roles, schema properties, extension names) are content too.
+      const keyFindings: CredentialFinding[] = [];
+      scanString(key, "", false, keyFindings);
+      const isSecretKey = keyFindings.length > 0;
+      const token = isSecretKey ? `<redacted key #${index}>` : pointerToken(key);
+      const child = `${pointer}/${token}`;
+      for (const f of keyFindings) out.push({ ...f, pointer: child });
+
       // A key that names a credential only counts when it holds one: a schema
       // declaring an `apiKey` parameter (an object) is not a leak.
-      if (isCredentialKeyName(key) && typeof value === "string" && value.trim() !== "") {
-        out.push({ pointer: child, layer: "key-name", rule: `Credential field name '${key}'` });
+      if (isCredentialKeyName(key) && holdsCredentialValue(value)) {
+        out.push({ pointer: child, layer: "key-name", rule: `Credential field name ${isSecretKey ? token : `'${key}'`}` });
       }
-      // Map keys (roles, extension names) are content too.
-      scanString(key, child, false, out);
       walk(value, child);
-    }
+    });
   };
 
   walk(doc, "");
@@ -588,16 +627,35 @@ const COMPOSITION_GENE_ID = /^\/snapshot\/composition(?:\/[^/]+)*\/geneRef\/gene
  * and only for a value shaped like one (`v2:` + 64 lowercase hex):
  * `/snapshot/genes/N/geneId`, `/capabilities/ROLE/excludeGeneIds/N`, and a
  * composition leaf's `geneRef/geneId` when it repeats an ID from
- * `snapshot.genes`. The same hex anywhere else is blocked.
+ * `snapshot.genes`. The same hex anywhere else is blocked. Strings under
+ * `bindingExtensions` must not look like code.
  */
-export function scanBlueprint(blueprint: GenomeBlueprint): CredentialFinding[] {
+export interface ScanBlueprintOptions {
+  /**
+   * Import only: the structural check that runs right after the scan refuses a
+   * composition leaf whose geneId is not in snapshot.genes, and its message
+   * names the role, never the ID. So at import a v2-shaped leaf ID is exempt
+   * from the bare-hex rule whether or not it is listed, and the leaf is then
+   * refused for what it is. Export keeps the strict rule.
+   */
+  isLeafIdCheckedStructurally?: boolean;
+}
+
+export function scanBlueprint(blueprint: GenomeBlueprint, options: ScanBlueprintOptions = {}): CredentialFinding[] {
+  // Also called on unvalidated import input, so nothing about its shape is assumed.
+  const genes: unknown = (blueprint as { snapshot?: { genes?: unknown } } | null)?.snapshot?.genes;
   const listed = new Set(
-    (blueprint.snapshot?.genes ?? []).map((g) => g.geneId).filter((id) => GENE_ID_V2.test(id)),
+    (Array.isArray(genes) ? genes : [])
+      .map((g) => (typeof g === "object" && g !== null ? (g as { geneId?: unknown }).geneId : undefined))
+      .filter((id): id is string => typeof id === "string" && GENE_ID_V2.test(id)),
   );
-  return scanForCredentials(blueprint, (pointer, value) => {
-    if (!GENE_ID_V2.test(value)) return false;
-    if (GENES_GENE_ID.test(pointer) || EXCLUDED_GENE_ID.test(pointer)) return true;
-    return COMPOSITION_GENE_ID.test(pointer) && listed.has(value);
+  return scanForCredentials(blueprint, {
+    isHexExempt: (pointer, value) => {
+      if (!GENE_ID_V2.test(value)) return false;
+      if (GENES_GENE_ID.test(pointer) || EXCLUDED_GENE_ID.test(pointer)) return true;
+      return COMPOSITION_GENE_ID.test(pointer) && (options.isLeafIdCheckedStructurally || listed.has(value));
+    },
+    isCodeForbidden: (pointer) => pointer.startsWith("/bindingExtensions/"),
   });
 }
 

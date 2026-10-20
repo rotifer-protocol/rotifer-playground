@@ -5,6 +5,7 @@
  * export always imports with the same CLI; the reader (genome-import.ts) runs
  * it before resolving anything.
  */
+import { createHash } from "node:crypto";
 import { SENSITIVE_PATTERNS } from "../publish/pre-publish-check.js";
 
 // ── Genome Blueprint format (.rgenome) ───────────────────────
@@ -431,6 +432,8 @@ export interface CompositionPlan {
 export interface ParsedBlueprint {
   blueprint: GenomeBlueprint;
   plan: CompositionPlan;
+  /** RFC §4.4 (B4): what runs, computed before anything is resolved or written. */
+  genomeId: string;
   /** The author's suggested V(g) threshold, if any. */
   suggestedMinVg?: number;
 }
@@ -568,6 +571,62 @@ function checkParMerge(value: unknown): string {
     throw new GenomeImportError(`bindingExtensions["${BINDING_NAME}"].parMerge '${String(merge)}' is not first, concat or merge`);
   }
   return merge;
+}
+
+// ── genomeId (RFC §4.4, decision B4) ─────────────────────────
+
+/**
+ * RFC 8785 canonical JSON. parseBlueprint has already refused non-finite
+ * numbers, unsafe integers and lone surrogates, so JSON.stringify gives the
+ * RFC 8785 form of every scalar; keys sort by UTF-16 code unit, as RFC 8785 says.
+ */
+export function jcs(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(jcs).join(",")}]`;
+  if (isObject(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${jcs(value[k])}`)
+      .join(",")}}`;
+  }
+  const text = JSON.stringify(value);
+  if (text === undefined) throw new GenomeImportError("The genome ID cannot be computed: a value has no JSON form");
+  return text;
+}
+
+/** The execution projection of RFC §4.4: leaf gene IDs, operators, predicate and Par merge; nothing else. */
+function project(expr: unknown, merge: string): unknown {
+  const [tag, body] = tagOf(expr);
+  switch (tag) {
+    case "Gene":
+      return { Gene: (body.geneRef as Record<string, unknown>).geneId };
+    case "Seq":
+      return { Seq: (body.steps as unknown[]).map((step) => project(step, merge)) };
+    case "Par":
+      return { Par: { left: project(body.left, merge), right: project(body.right, merge), merge } };
+    case "Cond": {
+      const p = body.predicate as Record<string, unknown>;
+      return {
+        Cond: {
+          field: p.field,
+          operator: p.operator,
+          value: p.value,
+          ifTrue: project(body.ifTrue, merge),
+          ifFalse: project(body.ifFalse, merge),
+        },
+      };
+    }
+    case "TryCatch":
+      return { TryCatch: { body: project(body.body, merge), handler: project(body.handler, merge) } };
+    default:
+      throw outsideSubset(`'${tag}' is not a §15.2 operator v0.9.2 supports`);
+  }
+}
+
+/** "bp1:" + SHA-256 of the canonical execution projection. Call only on a Blueprint parseBlueprint accepted. */
+export function computeGenomeId(blueprint: GenomeBlueprint): string {
+  const merge = checkParMerge(blueprint.bindingExtensions?.[BINDING_NAME]?.parMerge);
+  const canonical = jcs(project(blueprint.snapshot.composition, merge));
+  return `bp1:${createHash("sha256").update(canonical, "utf8").digest("hex")}`;
 }
 
 export function checkMinVg(value: unknown, where: string): number {
@@ -834,7 +893,9 @@ export function parseBlueprint(text: string): ParsedBlueprint {
   const suggestedMinVg = ext?.minVg === undefined ? undefined : checkMinVg(ext.minVg, `bindingExtensions["${BINDING_NAME}"].minVg`);
 
   const plan = compositionPlan(blueprint);
+  // Step 7 of RFC §4.1: last, on a composition already known to be in the subset.
+  const genomeId = computeGenomeId(blueprint);
 
-  return { blueprint, plan, suggestedMinVg };
+  return { blueprint, plan, genomeId, suggestedMinVg };
 }
 

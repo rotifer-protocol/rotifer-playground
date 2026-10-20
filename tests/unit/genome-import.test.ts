@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 // Registry reads, the install itself and the native v2 ID are stubbed here; the
 // real counterpart is covered by tests/e2e/genome-*.test.ts (ROTIFER_E2E_REGISTRY=1).
@@ -27,9 +27,10 @@ import { installGeneFromCloud } from "../../src/commands/install.js";
 import { geneIdV2 } from "../../src/utils/binding.js";
 import { setOutputMode } from "../../src/utils/display.js";
 import type { CloudGene } from "../../src/cloud/types.js";
-import type { GenomeBlueprint } from "../../src/commands/genome.js";
+import { jcs, type GenomeBlueprint } from "../../src/commands/genome.js";
 import {
   compositionPlan,
+  computeGenomeId,
   effectiveMinVg,
   importGenome,
   parseBlueprint,
@@ -446,7 +447,7 @@ describe("#30-c capability mode in import: thresholds and evidence", () => {
     const r = await importGenome(writeBlueprint(blueprint([row("alpha")], {}, { withCapabilities: true })), { now: NOW }, { root, genesDir: "genes" });
     expect(installs).toEqual(["id-alpha-2"]);
     expect(r.executionSnapshot).toMatchObject({ resolvedDeps: { alpha: row("alpha", "2.0.0").v2 }, status: "ACTIVE" });
-    expect(r.executionSnapshot!.genomeId).toMatch(/^[0-9a-f]{64}$/);
+    expect(r.executionSnapshot!.genomeId).toMatch(/^bp1:[0-9a-f]{64}$/);
   });
 });
 
@@ -874,7 +875,7 @@ describe("T-23: refuse what the executor or canonical JSON cannot honour (R3, R5
     const file = writeBlueprint(blueprint([row("alpha"), row("beta")]));
     const dry = await importGenome(file, { isPinned: true, isDryRun: true }, { root, genesDir: "genes" });
     expect(installs).toEqual([]);
-    expect(dry.genomeId).toMatch(/^[0-9a-f]{64}$/);
+    expect(dry.genomeId).toMatch(/^bp1:[0-9a-f]{64}$/);
     const real = await importGenome(file, { isPinned: true }, { root, genesDir: "genes" });
     expect(real.executionSnapshot!.genomeId).toBe(dry.genomeId);
     expect(real.genomeId).toBe(dry.genomeId);
@@ -947,5 +948,94 @@ describe("T-21b: RFC draft 5 reader rules (B3, B5)", () => {
         }),
       ),
     ).not.toThrow();
+  });
+});
+
+describe("T-21b: genomeId is bp1: + SHA-256 of the canonical execution projection (B4)", () => {
+  const sha = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
+  const idOf = (bp: unknown) => parseBlueprint(JSON.stringify(bp)).genomeId;
+  const rs = () => [row("alpha"), row("beta")];
+  const parBp = (over: Partial<GenomeBlueprint> = {}) => {
+    const bp: any = blueprint(rs(), over);
+    bp.snapshot.composition = { Par: { left: leaf(rs()[0]), right: leaf(rs()[1]) } };
+    return bp;
+  };
+
+  it("jcs reproduces the RFC 8785 vectors the Rust gene-ID tests use", () => {
+    const fixture = JSON.parse(
+      readFileSync(join(__dirname, "../../crates/rotifer-core/tests/fixtures/gene-id-v2/vectors.json"), "utf-8"),
+    ) as { vectors: Array<{ kind: string; name: string; value: unknown; expected: string }> };
+    const vectors = fixture.vectors.filter((v) => v.kind === "jcs");
+    expect(vectors.length).toBe(2);
+    for (const v of vectors) expect(jcs(v.value), v.name).toBe(v.expected);
+  });
+
+  it("matches the projection written out by hand, for Gene, Seq, Par, Cond and TryCatch", () => {
+    const [a, b] = rs();
+    const single = blueprint([a]);
+    expect(idOf(single)).toBe(`bp1:${sha(`{"Gene":"${a.v2}"}`)}`);
+    expect(idOf(blueprint([a, b]))).toBe(`bp1:${sha(`{"Seq":[{"Gene":"${a.v2}"},{"Gene":"${b.v2}"}]}`)}`);
+    expect(idOf(parBp())).toBe(`bp1:${sha(`{"Par":{"left":{"Gene":"${a.v2}"},"merge":"first","right":{"Gene":"${b.v2}"}}}`)}`);
+    const cond: any = blueprint([a, b]);
+    cond.snapshot.composition = { Cond: { predicate: { field: "score", operator: "GTE", value: 10 }, ifTrue: leaf(a), ifFalse: leaf(b) } };
+    expect(idOf(cond)).toBe(
+      `bp1:${sha(`{"Cond":{"field":"score","ifFalse":{"Gene":"${b.v2}"},"ifTrue":{"Gene":"${a.v2}"},"operator":"GTE","value":10}}`)}`,
+    );
+    const tryBp: any = blueprint([a, b]);
+    tryBp.snapshot.composition = { TryCatch: { body: leaf(a), handler: leaf(b) } };
+    expect(idOf(tryBp)).toBe(`bp1:${sha(`{"TryCatch":{"body":{"Gene":"${a.v2}"},"handler":{"Gene":"${b.v2}"}}}`)}`);
+  });
+
+  it("is unchanged by everything the projection leaves out", () => {
+    const base = idOf(blueprint(rs(), {}, { withCapabilities: true }));
+    const variants: Array<[string, (bp: any) => void]> = [
+      ["role names", (bp) => {
+        bp.snapshot.genes.forEach((g: any, i: number) => (g.role = `role${i}`));
+        bp.snapshot.composition.Seq.steps.forEach((s: any, i: number) => (s.Gene.geneRef.role = `role${i}`));
+        delete bp.capabilities;
+        delete bp.resolutionHints;
+      }],
+      ["snapshotAt and metadata", (bp) => { bp.snapshot.snapshotAt = "2030-01-01T00:00:00Z"; bp.metadata = { name: "other", description: "d", createdAt: "x" }; }],
+      ["capabilities, hints and minVg", (bp) => { delete bp.capabilities; delete bp.resolutionHints; bp.bindingExtensions = { "rotifer-playground": { minVg: 0.9 } }; }],
+      ["protocolVersion and unknown fields", (bp) => { bp.protocolVersion = { major: 1, minor: 0, patch: 0, supportedFeatures: [] }; bp.future = { a: 1 }; bp.snapshot.later = 2; }],
+      ["extra members inside operator bodies and geneRefs", (bp) => {
+        bp.snapshot.composition.Seq.note = "ignored";
+        bp.snapshot.composition.Seq.steps[0].Gene.note = "ignored";
+        bp.snapshot.composition.Seq.steps[1].Gene.geneRef.label = "ignored";
+      }],
+      ["the order members are written in", (bp) => { bp.snapshot = { snapshotAt: bp.snapshot.snapshotAt, composition: bp.snapshot.composition, genes: bp.snapshot.genes }; }],
+    ];
+    for (const [label, mutate] of variants) {
+      const bp: any = blueprint(rs(), {}, { withCapabilities: true });
+      mutate(bp);
+      expect(idOf(bp), label).toBe(base);
+    }
+  });
+
+  it("an absent parMerge and an explicit \"first\" give the same ID; concat does not", () => {
+    const absent = idOf(parBp());
+    expect(idOf(parBp({ bindingExtensions: { "rotifer-playground": { parMerge: "first" } } }))).toBe(absent);
+    expect(idOf(parBp({ bindingExtensions: { "rotifer-playground": { parMerge: "concat" } } }))).not.toBe(absent);
+  });
+
+  it("changes with what runs: a gene ID, the gene order, the Cond value or operator", () => {
+    const [a, b] = rs();
+    const base = idOf(blueprint([a, b]));
+    expect(idOf(blueprint([a, row("gamma")]))).not.toBe(base);
+    expect(idOf(blueprint([b, a]))).not.toBe(base);
+    const cond = (operator: string, value: unknown) => {
+      const bp: any = blueprint([a, b]);
+      bp.snapshot.composition = { Cond: { predicate: { field: "score", operator, value }, ifTrue: leaf(a), ifFalse: leaf(b) } };
+      return idOf(bp);
+    };
+    expect(cond("GTE", 10)).not.toBe(cond("GTE", 11));
+    expect(cond("GTE", 10)).not.toBe(cond("GT", 10));
+    expect(cond("EQ", 10)).not.toBe(cond("EQ", "10"));
+  });
+
+  it("computeGenomeId is what the import reports", async () => {
+    const bp = blueprint(rs());
+    const result = await importGenome(writeBlueprint(bp), { isPinned: true, isDryRun: true }, { root, genesDir: "genes" });
+    expect(result.genomeId).toBe(computeGenomeId(bp));
   });
 });

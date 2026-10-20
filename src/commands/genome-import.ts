@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -29,7 +29,7 @@ import {
   type ResolutionHint,
 } from "./genome-format.js";
 
-export { GenomeImportError, compositionPlan, parseBlueprint, type CompositionPlan, type ParsedBlueprint } from "./genome-format.js";
+export { GenomeImportError, compositionPlan, computeGenomeId, parseBlueprint, type CompositionPlan, type ParsedBlueprint } from "./genome-format.js";
 
 /** Recommended V_min of §5.1: the floor every capability selection must clear. */
 export const DEFAULT_MIN_VG = 0.7;
@@ -300,12 +300,6 @@ export interface ImportResult {
   schemaWarnings: string[];
 }
 
-/** sha256 of the composition-relevant part of the Blueprint: same genome, same id. */
-function genomeIdOf(blueprint: GenomeBlueprint): string {
-  const material = JSON.stringify({ genes: blueprint.snapshot.genes, composition: blueprint.snapshot.composition ?? null });
-  return createHash("sha256").update(material).digest("hex");
-}
-
 export interface RunImportContext {
   root: string;
   genesDir: string;
@@ -327,9 +321,8 @@ export async function importGenome(
   } catch (err) {
     throw new GenomeImportError(`Cannot read ${file}: ${(err as Error).message}`);
   }
-  const { blueprint, plan, suggestedMinVg } = parseBlueprint(text);
-  // Before any role is resolved or anything written: a failure here leaves no trace.
-  const genomeId = genomeIdOf(blueprint);
+  // parseBlueprint computes genomeId before any role is resolved or anything written.
+  const { blueprint, plan, genomeId, suggestedMinVg } = parseBlueprint(text);
 
   const agentName = options.name ?? blueprint.metadata?.name;
   if (typeof agentName !== "string" || agentName === "") {

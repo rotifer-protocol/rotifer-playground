@@ -14,15 +14,6 @@ import { fileURLToPath } from "node:url";
  */
 export const REGISTRY_E2E = process.env.ROTIFER_E2E_REGISTRY === "1";
 
-/**
- * The native module carries #411's TryCatch payload ({ error: GeneError, ... }
- * with FUEL_EXHAUSTED and the body's v2 ID). npm 0.28.0's prebuilt module does
- * not, so the tests that need it run only when the module was built from this
- * checkout (npm run build:napi) and loaded in place of the platform package:
- * ROTIFER_E2E_LOCAL_NATIVE=1. Once a release ships it, the switch can go.
- */
-export const LOCAL_NATIVE_E2E = process.env.ROTIFER_E2E_LOCAL_NATIVE === "1";
-
 export const GENES = {
   /** Native, takes { text }. */
   grammarChecker: { id: "3d3e3a08-21ce-4475-aa79-85839de52aca", name: "grammar-checker", version: "0.2.1" },

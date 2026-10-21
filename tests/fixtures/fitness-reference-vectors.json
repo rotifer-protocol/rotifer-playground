@@ -1,0 +1,137 @@
+{
+  "description": "F(g) with a reference scale (ADR-318 D2): phi = 1/(1+L/L_ref), psi = 1/(1+Cost/Cost_ref), F = S_r * ln(1+C_util) * (1+R_rob) * phi * psi with C_util = R_rob = 0.5 (the transitional values, ADR-318 D4). Expected values computed independently in Python; both crates/rotifer-core/src/fitness and src/utils/fitness-formula.ts must reproduce them.",
+  "coverage": 0.5,
+  "robustness": 0.5,
+  "vectors": [
+    {
+      "name": "fallback constants",
+      "runs": [
+        {
+          "success": true,
+          "latency_ms": 100,
+          "resource_cost": 1000.0
+        },
+        {
+          "success": true,
+          "latency_ms": 300,
+          "resource_cost": 3000.0
+        }
+      ],
+      "reference": {
+        "latency_ms": 1000.0,
+        "resource_cost": 10000.0
+      },
+      "expected": {
+        "success_rate": 1.0,
+        "latency_score": 0.8333333333333334,
+        "resource_efficiency": 0.8333333333333334,
+        "value": 0.4223594876126713
+      }
+    },
+    {
+      "name": "exactly at the season median",
+      "runs": [
+        {
+          "success": true,
+          "latency_ms": 50,
+          "resource_cost": 5000.0
+        },
+        {
+          "success": true,
+          "latency_ms": 50,
+          "resource_cost": 5000.0
+        }
+      ],
+      "reference": {
+        "latency_ms": 50.0,
+        "resource_cost": 5000.0
+      },
+      "expected": {
+        "success_rate": 1.0,
+        "latency_score": 0.5,
+        "resource_efficiency": 0.5,
+        "value": 0.15204941554056164
+      }
+    },
+    {
+      "name": "faster and cheaper than the median",
+      "runs": [
+        {
+          "success": true,
+          "latency_ms": 20,
+          "resource_cost": 800.0
+        },
+        {
+          "success": true,
+          "latency_ms": 30,
+          "resource_cost": 1200.0
+        }
+      ],
+      "reference": {
+        "latency_ms": 50.0,
+        "resource_cost": 5000.0
+      },
+      "expected": {
+        "success_rate": 1.0,
+        "latency_score": 0.6666666666666666,
+        "resource_efficiency": 0.8333333333333334,
+        "value": 0.337887590090137
+      }
+    },
+    {
+      "name": "slower and costlier than the median",
+      "runs": [
+        {
+          "success": true,
+          "latency_ms": 150,
+          "resource_cost": 15000.0
+        },
+        {
+          "success": true,
+          "latency_ms": 250,
+          "resource_cost": 25000.0
+        }
+      ],
+      "reference": {
+        "latency_ms": 50.0,
+        "resource_cost": 5000.0
+      },
+      "expected": {
+        "success_rate": 1.0,
+        "latency_score": 0.2,
+        "resource_efficiency": 0.2,
+        "value": 0.024327906486489866
+      }
+    },
+    {
+      "name": "a failed run counts in S_r and in the averages",
+      "runs": [
+        {
+          "success": true,
+          "latency_ms": 40,
+          "resource_cost": 400.0
+        },
+        {
+          "success": false,
+          "latency_ms": 0,
+          "resource_cost": 0.0
+        },
+        {
+          "success": true,
+          "latency_ms": 80,
+          "resource_cost": 800.0
+        }
+      ],
+      "reference": {
+        "latency_ms": 40.0,
+        "resource_cost": 800.0
+      },
+      "expected": {
+        "success_rate": 0.6666666666666666,
+        "latency_score": 0.5,
+        "resource_efficiency": 0.6666666666666666,
+        "value": 0.13515503603605478
+      }
+    }
+  ]
+}

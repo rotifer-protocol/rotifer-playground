@@ -13,6 +13,7 @@ import { DEFAULT_CLOUD_ENDPOINT,
   resolveAnonKey, CLOUD_CONFIG_FILE } from "./types.js";
 import { loadCredentials, refreshTokenIfNeeded } from "./auth.js";
 import { parseGeneRef } from "./gene-ref.js";
+import { REFERENCE_FUNCTION_MISSING, type SeasonReferenceRow } from "../utils/fitness-formula.js";
 
 const ROTIFER_HOME = join(
   process.env.HOME || process.env.USERPROFILE || "/tmp",
@@ -693,6 +694,34 @@ export async function publishEvaluationRuns(
   await handleResponse<unknown>(res);
 }
 
+/**
+ * The current-season median latency and resource cost of published genes in
+ * one domain and fidelity — F(g)'s L_ref / Cost_ref (ADR-318 D2). Null when the
+ * season has too few measured genes in that group. Throws when the registry
+ * cannot answer, which callers treat as "fall back to the fixed constants";
+ * a registry without the function (404) throws an error whose `code` is
+ * REFERENCE_FUNCTION_MISSING, because that registry cannot store the record.
+ */
+export async function getFitnessReference(
+  domain: string,
+  fidelity: string,
+  timeoutMs: number = 5_000,
+): Promise<SeasonReferenceRow | null> {
+  const res = await fetch(apiUrl("/rpc/get_fitness_reference"), {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ p_domain: domain, p_fidelity: fidelity }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (res.status === 404) {
+    throw Object.assign(new Error("get_fitness_reference is not deployed on this registry"), {
+      code: REFERENCE_FUNCTION_MISSING,
+    });
+  }
+  const rows = await handleResponse<SeasonReferenceRow[]>(res);
+  return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+}
+
 export async function arenaSubmit(
   geneId: string,
   fitness: FitnessReport
@@ -712,6 +741,13 @@ export async function arenaSubmit(
     resource_efficiency: fitness.resource_efficiency,
   };
   if (fitness.evaluation_method) body.evaluation_method = fitness.evaluation_method;
+  // All three or none: the ledger's constraint refuses a source without its
+  // two values.
+  if (fitness.fitness_reference !== undefined && fitness.l_ref_ms !== undefined && fitness.cost_ref !== undefined) {
+    body.fitness_reference = fitness.fitness_reference;
+    body.l_ref_ms = fitness.l_ref_ms;
+    body.cost_ref = fitness.cost_ref;
+  }
   if (fitness.evaluation_n !== undefined) body.evaluation_n = fitness.evaluation_n;
   // Both or neither — the ledger's pair constraint refuses half, and half
   // would reconstruct nothing anyway.

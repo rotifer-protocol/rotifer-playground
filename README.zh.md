@@ -9,7 +9,7 @@
 
 **Rotifer Protocol** 的开发环境——构建基因、运行 Arena 竞争、通过 Cloud 共享、模拟代理进化。
 
-> **状态：** v0.28.x——Agent 的基因组现在可以在机器之间搬运了。`rotifer genome export` 先扫描凭证，再把基因组写成一份 Genome Blueprint（`.rgenome`：用了哪些基因、怎样组合、每个角色的能力查询）；`rotifer genome import` 从 Registry 把 Agent 重建出来，可以原样安装钉住的基因，也可以按角色挑选过了 Arena 准入门槛的候选。Blueprint 格式仍是草案，后续可能调整。目前 Registry 里还没有基因进入 Arena 的 `verified` 档，所以按能力挑选暂时都会退回钉住的基因（作者从未发布过的基因无法导入），Wrapped 基因也还不能导入。`rotifer install` 现在会把下载到的 phenotype 与 Registry 记录的内容哈希比对，不一致时给出警告；`agent run` 可以在编译过的基因上执行 Par／Cond／Try 组合。每个基因仍有一个由内容算出的 `v2:` 身份号（见 [docs/gene-id-v2.md](docs/gene-id-v2.md)）；实验性的 P2P 层用这个号在已冻结的 protobuf 线格式上发布基因公告，0.26.x 及更早版本的节点看不到新节点的公告，P2P 环境里的每台机器都要升级。发布基因仍强制执行规范 §47.5 T1：至少正确处理一条用例、通过 `__rotifer_error` 通道拒绝一条格式错误的输入（报告为 `INVALID_INPUT`），并让 10 组生成输入全部产出符合结构的输出。详细版本历史请参见 [CHANGELOG.md](CHANGELOG.md)。自动节点发现、跨公网连接与 L4 集体免疫是后续里程碑——详见下方[实现状态](#实现状态)。
+> **状态：** v0.29.x——Genome Blueprint（`.rgenome`）的格式已固定为 format 1。`rotifer genome export` 先扫描凭证，再写出 Agent 用了哪些基因、怎样组合、每个角色的能力查询；`rotifer genome import` 从 Registry 把 Agent 重建出来，不符合 format 1 的文件一律拒收，导入时格式检查通不过的文件，导出时也不会写出。替代基因只有在输入输出 schema 完全一致（描述、标题、示例和默认值除外）时才会采用；目前 Registry 里还没有基因进入 Arena 的 `verified` 档，所以现在导入时都会安装钉住的基因，作者从未发布过的基因无法导入，Wrapped 基因也不能导入。破坏性变更：`genomeId` 改为 `bp1:` 加 64 位十六进制，与 0.28 算出的值不能互相比较；TryCatch 的 handler 现在收到 `{error: {geneId, errorCode, message, context}, original_input}`，读取 `error.code` 的 handler 需要更新；Blueprint 里的 Cond 只接受 `agent run` 能执行的写法（不支持 `MATCHES`，`CONTAINS` 只比字符串，字段只认顶层）；`agent run` 的 `EQ`／`NEQ` 现在按数学值比较数字（`1` 等于 `1.0`）；基因的 `rotifer.net` 请求不能再自行设置 `Host`、`Content-Length` 等应由客户端管理的请求头。每个基因仍有一个由内容算出的 `v2:` 身份号（见 [docs/gene-id-v2.md](docs/gene-id-v2.md)）；实验性的 P2P 层用这个号在已冻结的 protobuf 线格式上发布基因公告，0.26.x 及更早版本的节点看不到新节点的公告，P2P 环境里的每台机器都要升级。发布基因仍强制执行规范 §47.5 T1：至少正确处理一条用例、通过 `__rotifer_error` 通道拒绝一条格式错误的输入（报告为 `INVALID_INPUT`），并让 10 组生成输入全部产出符合结构的输出。详细版本历史请参见 [CHANGELOG.md](CHANGELOG.md)。自动节点发现、跨公网连接与 L4 集体免疫是后续里程碑——详见下方[实现状态](#实现状态)。
 
 ---
 
@@ -185,7 +185,7 @@ playground/
 | `rotifer agent create <agent-name>` | 用基因组创建 Agent |
 | `rotifer agent list` | 列出全部 Agent |
 | `rotifer agent run <agent-name>` | 执行 Agent 的基因组管线 |
-| `rotifer genome export <agent>` | 把 Agent 的基因组导出为可分享的 Blueprint（`.rgenome`）；文件里若带凭证、或导不回来，则中止 |
+| `rotifer genome export <agent>` | 把 Agent 的基因组导出为可分享的 Blueprint（`.rgenome`）；文件里若带凭证、或通不过导入的格式检查，则中止 |
 | `rotifer genome import <file>` | 从 Blueprint 重建 Agent：按精确版本安装 Native/Hybrid 基因（`--pinned`），或挑选 Arena 已验证、过 F(g) 与 V(g) 门槛的替代；`--dry-run` 只看解析结果 |
 | `rotifer vg [path]` | 对基因代码执行 V(g) 安全扫描 |
 | `rotifer network` | P2P 基因网络命令 |

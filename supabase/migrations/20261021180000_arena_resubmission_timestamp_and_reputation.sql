@@ -16,13 +16,23 @@
 --    has its own UPDATE trigger (trg_arena_invalidation_reputation); this
 --    adds the same for the score.
 --
--- last_evaluated is stamped by the server, on writes made by a client
--- (PostgREST roles authenticated / anon) that set any of the columns a
--- submission writes. The time is the server's, so a client cannot backdate it.
--- Server-side writers — reset_season() scaling fitness_value by the retention
--- rate, the invalidation job, the total_calls trigger, backfills — are not
--- evaluations and do not move it; a future server-side evaluator sets
--- last_evaluated itself.
+-- No client write decides last_evaluated. The site sorts by it, so a value
+-- a client could choose would let an author pin a gene to the top (T-56
+-- acceptance wrote 2099 both by PATCHing the column alone and by sending it on
+-- the first INSERT). For writes by a client (PostgREST roles authenticated /
+-- anon), two BEFORE triggers run in name order:
+--
+--   trg_guard_arena_last_evaluated   (every INSERT and UPDATE)
+--     INSERT → now(); UPDATE → the row's previous value, whatever was sent.
+--   trg_stamp_arena_resubmission_time (UPDATE OF the submitted columns)
+--     → now(): a re-submission is a new evaluation. It fires whenever one of
+--     those columns is set, so re-submitting an unchanged score still moves
+--     the date; it runs after the guard because triggers fire in name order.
+--
+-- Server-side writers (service_role, migrations, jobs) are not touched:
+-- reset_season() scaling fitness_value, the invalidation job, the total_calls
+-- trigger and backfills leave last_evaluated as it is, and a future
+-- server-side evaluator sets it itself.
 --
 -- Reputation is recomputed whenever a column compute_gene_reputation reads
 -- for the score actually changes (fitness_value, evaluation_method), from any
@@ -30,9 +40,35 @@
 -- total_calls is excluded — it changes on every invocation, and usage has its
 -- own pipeline.
 --
--- Additive per ADR-295: two functions, two triggers. Nothing existing is
--- altered or removed.
+-- Additive per ADR-295: two functions and three triggers (the reputation
+-- trigger reuses fn_arena_entry_reputation). Nothing existing is altered or
+-- removed.
 -- ============================================================
+
+CREATE OR REPLACE FUNCTION guard_arena_last_evaluated()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF coalesce(auth.role(), '') IN ('authenticated', 'anon') THEN
+    IF TG_OP = 'INSERT' THEN
+      NEW.last_evaluated := now();
+    ELSE
+      NEW.last_evaluated := OLD.last_evaluated;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
+
+COMMENT ON FUNCTION guard_arena_last_evaluated() IS
+  'Clients never choose last_evaluated: on their INSERT it is now(), on their UPDATE it keeps its previous value (trg_stamp_arena_resubmission_time, which runs after this one, moves it for a re-submission). Server-side writes are left alone.';
+
+-- Named to sort before trg_stamp_arena_resubmission_time: BEFORE triggers on
+-- the same table fire in name order, and the stamp must have the last word.
+DROP TRIGGER IF EXISTS trg_guard_arena_last_evaluated ON arena_entries;
+CREATE TRIGGER trg_guard_arena_last_evaluated
+  BEFORE INSERT OR UPDATE ON arena_entries
+  FOR EACH ROW EXECUTE FUNCTION guard_arena_last_evaluated();
 
 CREATE OR REPLACE FUNCTION stamp_arena_resubmission_time()
 RETURNS TRIGGER AS $$
@@ -46,7 +82,7 @@ $$ LANGUAGE plpgsql
 SET search_path = public, pg_temp;
 
 COMMENT ON FUNCTION stamp_arena_resubmission_time() IS
-  'A client re-submission (UPDATE of the submitted columns by authenticated/anon) is a new evaluation: last_evaluated becomes the server''s now(). Server-side updates are left alone.';
+  'A client re-submission (UPDATE of the submitted columns by authenticated/anon) is a new evaluation: last_evaluated becomes the server''s now(). Runs after trg_guard_arena_last_evaluated. Server-side updates are left alone.';
 
 DROP TRIGGER IF EXISTS trg_stamp_arena_resubmission_time ON arena_entries;
 CREATE TRIGGER trg_stamp_arena_resubmission_time
@@ -68,3 +104,4 @@ CREATE TRIGGER trg_arena_entry_reputation_on_update
 -- Trigger functions are not callable as RPCs, but Postgres grants EXECUTE to
 -- PUBLIC by default; state it.
 REVOKE ALL ON FUNCTION stamp_arena_resubmission_time() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION guard_arena_last_evaluated() FROM PUBLIC, anon, authenticated;

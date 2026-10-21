@@ -14,14 +14,16 @@
 
 BEGIN;
 
-SELECT plan(10);
+SELECT plan(13);
 
 INSERT INTO auth.users (id, email, raw_user_meta_data)
 VALUES ('c5111111-1111-4111-8111-111111111111', 'resubmit@example.com', '{"user_name": "resubmit_test"}'::jsonb);
 
-INSERT INTO genes (id, owner_id, name, domain, version, fidelity, phenotype, published, content_hash)
-VALUES ('c5222222-2222-4222-8222-222222222222', 'c5111111-1111-4111-8111-111111111111',
-        'resubmit-gene', 'test.resubmit', '0.1.0', 'Native', '{}'::jsonb, true, repeat('c', 64));
+INSERT INTO genes (id, owner_id, name, domain, version, fidelity, phenotype, published, content_hash) VALUES
+  ('c5222222-2222-4222-8222-222222222222', 'c5111111-1111-4111-8111-111111111111',
+   'resubmit-gene', 'test.resubmit', '0.1.0', 'Native', '{}'::jsonb, true, repeat('c', 64)),
+  ('c5333333-3333-4333-8333-333333333333', 'c5111111-1111-4111-8111-111111111111',
+   'resubmit-gene-2', 'test.resubmit', '0.1.0', 'Native', '{}'::jsonb, true, repeat('d', 64));
 
 -- The first submission, a day ago, measured: it counts toward reputation.
 INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method, last_evaluated)
@@ -123,6 +125,37 @@ SELECT is(
   (SELECT count(*)::INTEGER FROM gene_reputation WHERE gene_id = 'c5222222-2222-4222-8222-222222222222'),
   (SELECT n FROM rep_before),
   'T10: ...but reputation is not recomputed when no score column changed');
+
+-- ── A client cannot choose last_evaluated (T-56 acceptance) ──
+
+UPDATE arena_entries SET last_evaluated = now() - interval '1 day'
+ WHERE gene_id = 'c5222222-2222-4222-8222-222222222222';
+
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claims = '{"sub":"c5111111-1111-4111-8111-111111111111","role":"authenticated"}';
+UPDATE arena_entries SET last_evaluated = '2099-01-01T00:00:00Z'
+ WHERE gene_id = 'c5222222-2222-4222-8222-222222222222';
+INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method, last_evaluated)
+VALUES ('c5333333-3333-4333-8333-333333333333', 'test.resubmit', 0.4, 'sandbox', '2099-01-01T00:00:00Z');
+RESET ROLE;
+RESET request.jwt.claims;
+
+SELECT ok(
+  (SELECT last_evaluated < now() - interval '23 hours' FROM arena_entries WHERE gene_id = 'c5222222-2222-4222-8222-222222222222'),
+  'T11: a client PATCH of last_evaluated alone (2099) is ignored — the previous value stays');
+
+SELECT is(
+  (SELECT last_evaluated FROM arena_entries WHERE gene_id = 'c5333333-3333-4333-8333-333333333333'),
+  now(),
+  'T12: a client INSERT that sends last_evaluated (2099) gets the server''s now()');
+
+-- The server itself may still set it (a future server-side evaluator).
+UPDATE arena_entries SET last_evaluated = '2030-01-01T00:00:00Z'
+ WHERE gene_id = 'c5333333-3333-4333-8333-333333333333';
+SELECT is(
+  (SELECT last_evaluated FROM arena_entries WHERE gene_id = 'c5333333-3333-4333-8333-333333333333'),
+  '2030-01-01T00:00:00Z'::TIMESTAMPTZ,
+  'T13: a server-side write sets last_evaluated as given');
 
 SELECT * FROM finish();
 ROLLBACK;

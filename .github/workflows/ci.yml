@@ -315,11 +315,18 @@ jobs:
           # compiled into the binary (it only lingers in Cargo.lock as a disabled
           # optional dependency). -0118 has no fixed release. Tracked: move to libp2p
           # component crates to drop it from the lockfile entirely.
+          # RUSTSEC-2026-0381: webpki-roots. The real crate, webpki-roots 1.x, is at the
+          # fixed 1.0.10 in Cargo.lock. The advisory also names webpki-roots 0.26.11, which
+          # ureq 2 pulls in and which has no fixed 0.26 release; 0.26.11 is only a
+          # compatibility shim — its whole source is `pub use parent::TLS_SERVER_ROOTS`
+          # with `parent = { package = "webpki-roots", version = "1" }` — so the roots it
+          # serves are the fixed 1.0.10 ones. Remove this ignore when ureq moves to 3.x
+          # (task T-29), which depends on webpki-roots 1.x directly and drops the shim.
           # NOTE: there is no wasmtime ignore, and there should not be one. wasmtime is
           # pinned to the first release that carries the fixes (see Cargo.toml); when a
           # new advisory lands, upgrade — do not add an ignore for the WASM sandbox,
           # since it is the Gene isolation boundary.
-          cargo audit --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119
+          cargo audit --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 --ignore RUSTSEC-2026-0381
 
       - name: npm dependency audit
         run: npm audit --audit-level=high

@@ -121,4 +121,41 @@ describe.runIf(ready && isLocal)("arena submit re-submits the same gene (real Po
     const rows = await (await service(`/rest/v1/arena_entries?gene_id=eq.${geneId}&select=fitness_value,base_fitness`)).json();
     expect(rows).toEqual([{ fitness_value: 0.75, base_fitness: 0.75 }]);
   }, 60_000);
+
+  // Since 20261021200000 a client holds INSERT/UPDATE privileges on the 14
+  // submitted columns only. The upsert must still work end to end, and
+  // return=representation must still hand back the whole row, server-owned
+  // columns included (they are readable, just not writable).
+  it("the submission comes back whole, with the server-owned columns set by the server", async () => {
+    const { arenaSubmit } = await import("../../src/cloud/client.js");
+    const entry = await arenaSubmit(geneId, report(0.5));
+    expect(entry.gene_id).toBe(geneId);
+    expect(entry.fitness).toBe(0.5);
+    expect(entry.total_calls).toBe(0);
+    expect(Date.parse(entry.last_evaluated as string)).toBeGreaterThan(Date.now() - 60_000);
+
+    const rows = await (await service(`/rest/v1/arena_entries?gene_id=eq.${geneId}&select=evaluator,evaluation_method`)).json();
+    expect(rows).toEqual([{ evaluator: userId, evaluation_method: "estimated" }]);
+  }, 60_000);
+
+  // publishEvaluationRuns: one POST of the 8 columns the client may write,
+  // for a gene the user owns. The server stamps evaluator and evaluated_at.
+  it("the evaluation runs of a submission are recorded", async () => {
+    const { publishEvaluationRuns } = await import("../../src/cloud/client.js");
+    const submissionId = randomUUID();
+    await publishEvaluationRuns(geneId, submissionId, [
+      { run_index: 0, sandbox_success: true, output_schema_valid: true, latency_ms: 1, resource_cost: 10, failure_kind: null },
+      { run_index: 1, sandbox_success: true, output_schema_valid: null, latency_ms: 2, resource_cost: 20, failure_kind: null },
+      { run_index: 2, sandbox_success: false, output_schema_valid: null, latency_ms: 3, resource_cost: 30, failure_kind: "crash" },
+    ]);
+
+    const runs = await (
+      await service(`/rest/v1/arena_evaluation_runs?submission_id=eq.${submissionId}&select=run_index,evaluator,evaluated_at&order=run_index`)
+    ).json();
+    expect(runs.map((r: { run_index: number }) => r.run_index)).toEqual([0, 1, 2]);
+    for (const r of runs) {
+      expect(r.evaluator).toBe(userId);
+      expect(Date.parse(r.evaluated_at)).toBeGreaterThan(Date.now() - 60_000);
+    }
+  }, 60_000);
 });

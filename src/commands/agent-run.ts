@@ -912,14 +912,16 @@ export function printProtocolInsights(
 
     try {
       const phenotype = JSON.parse(readFileSync(phenotypePath, "utf-8"));
-      const hasExpress = existsSync(join(genesDir, name, "index.ts")) ||
-                         existsSync(join(genesDir, name, "index.js")) ||
-                         existsSync(join(genesDir, name, "index.mjs"));
+      // Same two ways a run can execute a gene: the compiled gene.ir.wasm in
+      // the sandbox, or its source on Node. Counting only source files called
+      // an installed Native gene metadata-only right after it had run.
+      const geneDir = join(genesDir, name);
+      const isExecutable = existsSync(join(geneDir, "gene.ir.wasm")) || findSourceFile(geneDir) !== null;
 
       geneStats.push({
         name,
         domain: phenotype.domain || "general",
-        executable: hasExpress,
+        executable: isExecutable,
       });
     } catch {
       // skip

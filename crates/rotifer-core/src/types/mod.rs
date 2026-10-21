@@ -125,8 +125,7 @@ pub struct ExecutionMetadata {
 }
 
 /// IR spec §6.1 "metering participation" made concrete: what the gene spent
-/// inside host functions, on top of (not instead of) the fuel surcharges
-/// already deducted per call (ADR-327 D4).
+/// inside host functions (ADR-327 D4).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HostMetering {
     /// Total wall time spent inside host functions.
@@ -137,6 +136,11 @@ pub struct HostMetering {
     pub host_bytes_in: u64,
     /// Payload bytes crossing the boundary out of the guest.
     pub host_bytes_out: u64,
+    /// Fuel-unit surcharges billed for these calls. Part of `resource_cost`,
+    /// not of the guest fuel burned: a run's `resource_cost` is its burned
+    /// fuel plus this, so it can exceed the run's fuel budget.
+    #[serde(default)]
+    pub host_fuel_surcharge: u64,
 }
 
 /// Standardized error codes per Rotifer spec §6.

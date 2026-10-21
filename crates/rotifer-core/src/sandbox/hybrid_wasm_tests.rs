@@ -21,7 +21,8 @@ use crate::types::{Context, GeneResult, PermissionSet};
 
 // ── suite-wide constants (no-overfit: one parameter set for every case) ──
 
-/// Fuel budget covering the net-fetch base surcharge (1e9) plus guest work.
+/// Fuel budget for guest work. Host surcharges are billed to resource_cost,
+/// not drawn from it (T-49 C), so it does not have to cover them.
 const SUITE_FUEL: u64 = 4_000_000_000;
 /// Matches the protocol-default `ResourceLimits.max_execution_time_ms` so the
 /// L0 gate's limit comparison passes for default permissions.
@@ -72,6 +73,7 @@ fn loopback_config() -> HybridConfig {
         env_plain: HashMap::new(),
         env_secret: HashMap::new(),
         allow_insecure_loopback: true,
+        host_millis_cap: None,
     }
 }
 
@@ -285,8 +287,8 @@ fn wasm_fetch_success_returns_envelope_and_meters() {
     assert_eq!(body_of(&data), br#"{"hello":"world"}"#);
     assert_eq!(server.hits.load(Ordering::SeqCst), 1);
 
-    // Metering (ADR-327 D4): the surcharge is on the fuel bill, and the
-    // host-side channel is reported.
+    // Metering (ADR-327 D4): the surcharge is on the bill (resource_cost),
+    // and the host-side channel is reported.
     assert!(
         metadata.resource_cost >= constants::BASE_CALL_FUEL_NET_FETCH as f64,
         "fuel bill must include the fetch surcharge, got {}",
@@ -1021,5 +1023,104 @@ fn composition_runs_each_gene_with_the_permissions_it_declares() {
         run_in_composition(&sb, &wasm, declaring, &ctx(false), false),
         errors::ERR_PERMISSION_DENIED,
     );
+    assert_eq!(server.hits.load(Ordering::SeqCst), 1);
+}
+
+// ── host surcharges are billed, not drawn from the guest's fuel (T-49) ──
+//
+// BASE_CALL_FUEL_NET_FETCH is 1e9 and the CLI gives a run 5e8 fuel. While the
+// surcharge came out of the fuel budget, one successful fetch left the guest
+// with none: the request went out, then the gene trapped as fuel-exhausted.
+
+/// `DEFAULT_SANDBOX_CONSTRAINTS` in src/utils/sandbox-defaults.ts.
+const CLI_FUEL: u64 = 500_000_000;
+
+/// A short counted loop (local 3). Gives the guest work after a host call
+/// that wasmtime meters: fuel is checked on loop headers and function entry,
+/// not on straight-line code, so a gene that only returns after its fetch
+/// never notices how much fuel it has left.
+fn guest_work() -> Vec<wasm_encoder::Instruction<'static>> {
+    use wasm_encoder::{BlockType, Instruction as I};
+    vec![
+        I::I32Const(1_000),
+        I::LocalSet(3),
+        I::Loop(BlockType::Empty),
+        I::LocalGet(3),
+        I::I32Const(1),
+        I::I32Sub,
+        I::LocalTee(3),
+        I::BrIf(0),
+        I::End,
+    ]
+}
+
+/// Fetch `envelope` `times` times, doing guest work after each response,
+/// then return OUT; the first negative code is returned instead.
+fn build_fetch_then_work_gene(envelope: &str, times: usize) -> Vec<u8> {
+    use wasm_encoder::Instruction as I;
+    let mut body = Vec::new();
+    for _ in 0..times {
+        body.extend(call_and_bail_if_negative(0, &[DATA, envelope.len() as i32, OUT, OUT_CAP]));
+        body.extend(guest_work());
+    }
+    body.push(I::I32Const(OUT));
+    build_gene(&[fetch_import()], envelope.as_bytes(), body)
+}
+
+fn cli_sandbox() -> WasmtimeSandbox {
+    let mut sb = WasmtimeSandbox::new(ConstraintSet {
+        max_fuel: CLI_FUEL,
+        max_execution_time_ms: 60_000,
+        ..suite_constraints()
+    })
+    .unwrap();
+    sb.set_insecure_loopback(true);
+    sb
+}
+
+#[test]
+fn a_declared_fetch_completes_within_the_cli_fuel_budget_and_is_billed() {
+    let server = TestServer::spawn(200, br#"{"ok":true}"#.to_vec(), None, 0);
+    let wasm = build_fetch_then_work_gene(&envelope_for(&server.url("/cli")), 1);
+    let ph = hybrid_phenotype(Fidelity::Hybrid);
+
+    let (data, metadata) =
+        expect_success(cli_sandbox().execute_gated(&wasm, &declared_ctx(&ph), serde_json::json!({}), &ph));
+    assert_eq!(data["status"], 200);
+    assert_eq!(server.hits.load(Ordering::SeqCst), 1);
+
+    let host = metadata.host.expect("host metering must be present");
+    assert!(host.host_fuel_surcharge >= constants::BASE_CALL_FUEL_NET_FETCH);
+    // The bill carries the surcharge on top of the guest fuel burned, so it
+    // exceeds the run's fuel budget.
+    assert!(metadata.resource_cost >= host.host_fuel_surcharge as f64);
+    assert!(metadata.resource_cost > CLI_FUEL as f64);
+}
+
+#[test]
+fn the_request_past_max_requests_never_reaches_the_wire_on_the_cli_budget() {
+    let server = TestServer::spawn(200, b"{}".to_vec(), None, 0);
+    let wasm = build_fetch_then_work_gene(&envelope_for(&server.url("/n")), 4);
+    let mut ph = hybrid_phenotype(Fidelity::Hybrid);
+    ph.network.as_mut().unwrap().max_requests_per_min = 3;
+
+    expect_error_code(
+        cli_sandbox().execute_gated(&wasm, &declared_ctx(&ph), serde_json::json!({}), &ph),
+        errors::ERR_RATE_LIMITED,
+    );
+    assert_eq!(server.hits.load(Ordering::SeqCst), 3, "the fourth request must not be sent");
+}
+
+#[test]
+fn a_request_is_bounded_by_what_is_left_of_the_host_time_budget() {
+    // The server answers after 1.5 s. The request's own timeout (5 s) would
+    // wait for that answer and succeed; only 300 ms of host time remain in
+    // this run, so the request has to give up with a timeout instead.
+    let server = TestServer::spawn(200, b"{}".to_vec(), None, 1_500);
+    let wasm = build_fetch_gene(&envelope_for(&server.url("/slow")));
+    let mut config = loopback_config();
+    config.host_millis_cap = Some(300);
+
+    expect_error_code(run(&sandbox(), &wasm, config), errors::ERR_TIMEOUT);
     assert_eq!(server.hits.load(Ordering::SeqCst), 1);
 }

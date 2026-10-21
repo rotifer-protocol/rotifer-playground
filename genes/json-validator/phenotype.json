@@ -57,7 +57,7 @@
     }
   },
   "dependencies": [],
-  "version": "0.2.1",
+  "version": "0.2.2",
   "author": "rotifer-genesis",
   "fidelity": "Native",
   "transparency": "Open",
@@ -73,5 +73,5 @@
     "strict-mode",
     "data-quality"
   ],
-  "irHash": "ba24ade5823b23ccd94110e7d95d64f6deafa0ea0bdf29e9d3a69b7ccd1aa555"
+  "irHash": "cd09f9c6b662333df251b9c8f8ebe0bdde210d398c3be649218e7e5ca761ab23"
 }

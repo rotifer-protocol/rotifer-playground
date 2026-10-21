@@ -22,7 +22,7 @@
 
 BEGIN;
 
-SELECT plan(16);
+SELECT plan(18);
 
 -- ── Fixture ─────────────────────────────────────────────────
 
@@ -150,6 +150,36 @@ SELECT results_eq(
   $$ VALUES (20::DOUBLE PRECISION, 200::DOUBLE PRECISION, 3) $$,
   'T13: anon can call it and gets the same medians');
 RESET ROLE;
+
+-- ── One vote per (owner, gene name), not per version ────────
+-- genes holds one row per version. Counting rows would let one author publish
+-- five versions and set a group's median alone; only the latest published
+-- version of each (owner, name) counts.
+
+INSERT INTO genes (id, owner_id, name, domain, version, fidelity, phenotype, published, content_hash, created_at)
+SELECT ('f4000000-0000-4000-8000-00000000000' || v)::UUID,
+       'f1111111-1111-4111-8111-111111111111', 'fref-versions', 'test.fref.versions',
+       '0.' || v || '.0', 'Native', '{}'::jsonb, true, repeat(chr(96 + v), 64),
+       now() - (10 - v) * interval '1 hour'
+FROM generate_series(1, 5) AS v;
+
+INSERT INTO arena_evaluation_runs
+  (gene_id, submission_id, run_index, sandbox_success, latency_ms, resource_cost, evaluator, evaluated_at)
+SELECT ('f4000000-0000-4000-8000-00000000000' || v)::UUID,
+       ('f5000000-0000-4000-8000-00000000000' || v)::UUID,
+       0, true, v * 10, v * 100, 'f1111111-1111-4111-8111-111111111111', now() - interval '1 minute'
+FROM generate_series(1, 5) AS v;
+
+UPDATE seasons SET config = config || '{"fitness_reference_min_genes": 2}'::jsonb WHERE status = 'active';
+SELECT is_empty(
+  $$ SELECT * FROM get_fitness_reference('test.fref.versions', 'Native') $$,
+  'T17: five versions of one gene by one author are one vote, below a minimum of two');
+
+UPDATE seasons SET config = config || '{"fitness_reference_min_genes": 1}'::jsonb WHERE status = 'active';
+SELECT results_eq(
+  $$ SELECT l_ref_ms, cost_ref, sample_genes FROM get_fitness_reference('test.fref.versions', 'Native') $$,
+  $$ VALUES (50::DOUBLE PRECISION, 500::DOUBLE PRECISION, 1) $$,
+  'T18: that vote is the latest version''s (0.5.0: 50 ms / 500 fuel)');
 
 -- ── Arena rows record the reference they were scaled by ─────
 

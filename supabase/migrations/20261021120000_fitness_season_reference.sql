@@ -20,10 +20,17 @@
 --     unpublished rows RLS lets them see;
 --   * runs recorded by the Gene's own owner (evaluator = owner_id), so a third
 --     party cannot write runs that move someone else's reference;
---   * one vote per Gene: its latest submission this season, averaged over the
---     runs that succeeded in the sandbox; a Gene whose latest submission has no
+--   * one vote per (owner, Gene name), not per version: genes holds a row per
+--     version, and counting rows would let one author publish five versions
+--     and set a small group's median alone. Only the latest published version
+--     of each (owner, name) counts (by created_at), and only when that version
+--     is in the requested domain and fidelity;
+--   * that version's latest submission this season, averaged over the runs
+--     that succeeded in the sandbox; a version whose latest submission has no
 --     successful run does not count (a crash records 0 ms / 0 fuel, which is
---     not what a working Gene costs);
+--     not what a working Gene costs). The Gene being scored averages over all
+--     of its runs, failures included — the two are different quantities, and
+--     ADR-318's implementation notes record both;
 --   * Genes whose Arena entry is invalidated do not count;
 --   * fewer than min_genes Genes (season config fitness_reference_min_genes,
 --     default 5, a provisional [N]) → no row, and the CLI falls back to its
@@ -60,6 +67,12 @@ AS $$
     ORDER BY s.season_number DESC
     LIMIT 1
   ),
+  latest_version AS (
+    SELECT DISTINCT ON (g.owner_id, g.name) g.id, g.owner_id, g.domain, g.fidelity
+    FROM genes g
+    WHERE g.published = true
+    ORDER BY g.owner_id, g.name, g.created_at DESC, g.id
+  ),
   per_submission AS (
     SELECT r.gene_id,
            r.submission_id,
@@ -68,11 +81,10 @@ AS $$
            avg(r.latency_ms)    FILTER (WHERE r.sandbox_success) AS avg_latency_ms,
            avg(r.resource_cost) FILTER (WHERE r.sandbox_success) AS avg_cost
     FROM arena_evaluation_runs r
-    JOIN genes g ON g.id = r.gene_id
+    JOIN latest_version g ON g.id = r.gene_id
     CROSS JOIN season
     WHERE g.domain = p_domain
       AND g.fidelity = p_fidelity
-      AND g.published = true
       AND r.evaluator = g.owner_id::TEXT
       AND r.evaluated_at >= season.started_at
     GROUP BY r.gene_id, r.submission_id
@@ -105,7 +117,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION get_fitness_reference(TEXT, TEXT) IS
-  'ADR-318 D2: L_ref / Cost_ref for F(g) — the current-season median latency (ms) and resource cost of published Genes in the given domain and fidelity, from their owners'' latest sandbox evaluation. No row when the sample is below the season''s fitness_reference_min_genes (default 5); callers fall back to their constants.';
+  'ADR-318 D2: L_ref / Cost_ref for F(g) — the current-season median latency (ms) and resource cost of published Genes in the given domain and fidelity, one vote per (owner, name) from its latest published version, using the owner''s latest sandbox evaluation. No row when the sample is below the season''s fitness_reference_min_genes (default 5); callers fall back to their constants.';
 
 -- Postgres grants EXECUTE to PUBLIC by default; state the grants instead.
 REVOKE ALL ON FUNCTION get_fitness_reference(TEXT, TEXT) FROM PUBLIC;

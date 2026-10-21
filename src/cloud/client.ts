@@ -756,7 +756,11 @@ export async function arenaSubmit(
     body.fidelity_discount = fitness.fidelity_discount;
   }
 
-  const res = await fetch(apiUrl("/arena_entries"), {
+  // One row per gene (gene_id is UNIQUE). merge-duplicates resolves the
+  // conflict on the primary key unless told otherwise, and the body carries no
+  // id — so without on_conflict=gene_id every re-submission of a gene hit
+  // arena_entries_gene_id_key with a 409 and the row kept its first values.
+  const res = await fetch(apiUrl("/arena_entries?on_conflict=gene_id"), {
     method: "POST",
     headers: {
       ...authHeaders(true),

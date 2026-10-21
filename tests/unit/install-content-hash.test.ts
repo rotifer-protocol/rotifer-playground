@@ -87,15 +87,18 @@ describe("contentHashWarning wording", () => {
 
 describe("rotifer install compares phenotype and content_hash", () => {
   let root: string;
-  let cwd: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     root = join(tmpdir(), `install-hash-${randomUUID()}`);
     mkdirSync(join(root, "genes"), { recursive: true });
     writeFileSync(join(root, "rotifer.json"), JSON.stringify({ name: "t", version: "0.1.0", author: "t", genes_dir: "genes", default_domain: "general" }));
-    cwd = process.cwd();
-    process.chdir(root);
+    // Point the project lookup at `root` without process.chdir(): Stryker runs
+    // tests in worker threads, where chdir throws, and one failure in its dry
+    // run aborts the whole mutation pass (#405). install resolves every path
+    // from findProjectRoot(process.cwd()), so nothing is written elsewhere.
+    cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(root);
     process.exitCode = undefined;
     exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
@@ -105,7 +108,7 @@ describe("rotifer install compares phenotype and content_hash", () => {
   });
 
   afterEach(() => {
-    process.chdir(cwd);
+    cwdSpy.mockRestore();
     rmSync(root, { recursive: true, force: true });
     exitSpy.mockRestore();
     process.exitCode = undefined;

@@ -181,9 +181,12 @@ export async function runDaemon(
       req.on("data", (chunk) => (data += chunk));
       req.on("end", () => {
         try {
-          const g = JSON.parse(data) as Record<string, string>;
-          node.announceGene(g.geneId, g.name, g.domain, g.version, g.fidelity);
-          send(200, { ok: true });
+          const g = JSON.parse(data) as { genesRoot?: string; name?: string };
+          if (!g.genesRoot || !g.name) throw new Error("genesRoot and name are required");
+          // The native node builds the wire record itself (v2 ID, fields,
+          // IR spec version), so every field has a single implementation.
+          const geneId = node.announceLocalGene(g.genesRoot, g.name);
+          send(200, { ok: true, geneId });
         } catch (err) {
           send(400, { error: (err as Error).message });
         }

@@ -35,6 +35,11 @@ pub const BOOTSTRAP_CONNECTIVITY_FLOOR: usize = 2;
 /// Width of the per-peer rate-limit window, in milliseconds.
 const RATE_WINDOW_MS: u64 = 1000;
 
+/// Peers whose rate-limit window is tracked before idle ones are swept.
+/// Each sender is rate-limited, but identities are free to mint, so the
+/// bookkeeping itself must not grow with the number of identities seen.
+pub const MAX_TRACKED_PEERS: usize = 4096;
+
 /// Upper bound on the replay-nonce cache (bounded LRU, RFC §6.4).
 const NONCE_CACHE_CAP: usize = 10_000;
 
@@ -99,6 +104,14 @@ impl Security {
     /// rate ceiling within a 1s sliding window. `Err` once the ceiling is hit.
     /// Time is a parameter so the policy is deterministic under test.
     pub fn record_message_at(&mut self, peer: &PeerId, now_millis: u64) -> Result<(), NetworkError> {
+        if self.msg_times.len() >= MAX_TRACKED_PEERS && !self.msg_times.contains_key(peer) {
+            // Drop peers whose newest message has left the window: their
+            // state is empty for rate-limiting purposes. Amortized — runs only
+            // once the table is full.
+            self.msg_times.retain(|_, w| {
+                w.back().is_some_and(|&last| now_millis.saturating_sub(last) < RATE_WINDOW_MS)
+            });
+        }
         let window = self.msg_times.entry(peer.clone()).or_default();
         while let Some(&front) = window.front() {
             if now_millis.saturating_sub(front) >= RATE_WINDOW_MS {
@@ -115,6 +128,11 @@ impl Security {
         }
         window.push_back(now_millis);
         Ok(())
+    }
+
+    /// Number of peers whose rate-limit window is currently tracked.
+    pub fn tracked_peers(&self) -> usize {
+        self.msg_times.len()
     }
 
     /// Real-time entry point for the node's receive path.
@@ -192,6 +210,25 @@ mod tests {
     // -----------------------------------------------------------------
     // A.5.1 — PeerId derivation determinism
     // -----------------------------------------------------------------
+    // -----------------------------------------------------------------
+    // Rate-limit bookkeeping does not grow with the number of identities
+    // seen: an attacker rotating fresh PeerIds must not grow memory forever.
+    // -----------------------------------------------------------------
+    #[test]
+    fn rate_limit_state_is_evicted_for_idle_peers() {
+        let mut sec = Security::new();
+        for i in 0..10_000 {
+            sec.record_message_at(&PeerId(format!("sybil-{i}")), 0).unwrap();
+        }
+        // Long after their windows closed, one more message triggers cleanup.
+        sec.record_message_at(&PeerId("late".into()), 10_000).unwrap();
+        assert!(
+            sec.tracked_peers() <= MAX_TRACKED_PEERS,
+            "tracked {} peers; idle ones must be evicted",
+            sec.tracked_peers()
+        );
+    }
+
     #[test]
     fn A_5_1_peer_id_derivation_is_deterministic() {
         let pubkey = b"some-public-key-bytes";

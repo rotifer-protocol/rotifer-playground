@@ -3,7 +3,7 @@ members = ["crates/rotifer-core", "crates/rotifer-napi"]
 resolver = "2"
 
 [workspace.package]
-version = "0.26.1"
+version = "0.29.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/rotifer-protocol/rotifer-playground"
@@ -15,13 +15,19 @@ sha2 = "0.10"
 thiserror = "2"
 anyhow = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
-wasmtime = "47.0.3"
+wasmtime = "48.0.7"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 hex = "0.4"
 rmp-serde = "1"
+# RFC 8785 canonical JSON for gene ID v2 (docs/gene-id-v2.md). ECMAScript number
+# formatting is the hard part of JCS; this crate does it via ryu-js.
+serde_jcs = "0.2"
+# P2P wire format v1 (crates/rotifer-core/proto/p2p-wire-v1.proto), hand-written
+# derive types — no build-time protoc. Already in the tree via libp2p-identity.
+prost = "0.14"
 wasm-encoder = "0.251"
 wasmparser = "0.251"
 libp2p = { version = "0.56", default-features = false }
@@ -29,5 +35,5 @@ base64 = "0.22"
 # Hybrid Binding API (ADR-327): synchronous HTTP client for the rotifer.net
 # host function. ureq over reqwest on purpose — no tokio entanglement inside
 # sync wasmtime host callbacks, small dependency tree (rustls).
-ureq = { version = "2", default-features = false, features = ["tls"] }
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 url = "2"

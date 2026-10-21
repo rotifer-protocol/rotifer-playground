@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { resolve, relative, basename } from "node:path";
 import * as display from "../utils/display.js";
 import { c } from "../utils/palette.js";
-import { scan } from "../scanner/index.js";
+import { scan, SCANNER_VERSION } from "../scanner/index.js";
 import type { Finding, ScanResult } from "../scanner/types.js";
 import { uploadSafetyBadge } from "../cloud/badge.js";
 
@@ -58,7 +58,7 @@ export const vgCommand = new Command("vg")
     const result = scan(dir, opts.id, { scanAll: opts.all });
 
     if (opts.publish && display.isJsonMode() && result.grade !== "?" && opts.id) {
-      await publishSafety(opts.id, result, "0.8.0");
+      await publishSafety(opts.id, result, SCANNER_VERSION);
     }
 
     display.renderResult(result, (data) => {
@@ -113,7 +113,7 @@ export const vgCommand = new Command("vg")
           display.warn("--publish requires --id <gene_uuid> to identify the gene");
         } else {
           console.log();
-          publishSafety(opts.id, result, "0.8.0");
+          publishSafety(opts.id, result, SCANNER_VERSION);
         }
       }
 

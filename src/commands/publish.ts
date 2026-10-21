@@ -22,12 +22,12 @@ import {
 } from "../utils/detect-source-language.js";
 import { decideBadgeAction, uploadSafetyBadge } from "../cloud/badge.js";
 import type { ScanResult } from "../scanner/types.js";
+import { SCANNER_VERSION } from "../scanner/rules.js";
 import { evaluatePublishGate, outcomeFromSandbox, loadNodeRunner } from "../testsuite/gate.js";
 import { evaluateL0 } from "../utils/l0-gate.js";
 import { tryLoadBinding } from "../utils/binding.js";
 import { FUEL_LADDER, constraintsForFuel } from "../utils/run-fuel-ladder.js";
 
-const VG_SCANNER_VERSION = "0.8.0";
 
 interface PublishOptions {
   description?: string;
@@ -335,7 +335,7 @@ async function tryUploadVgBadge(
   }
 
   const payload = action.mode === "skipped" ? null : scanResult;
-  const r = await uploadSafetyBadge(geneUuid, payload, VG_SCANNER_VERSION, action.mode, token);
+  const r = await uploadSafetyBadge(geneUuid, payload, SCANNER_VERSION, action.mode, token);
   if (!isQuiet) {
     if (r.ok) {
       const detail = action.mode === "skipped" ? "skipped" : `grade ${payload?.grade ?? "?"}`;

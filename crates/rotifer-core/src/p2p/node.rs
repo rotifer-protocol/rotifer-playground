@@ -73,7 +73,7 @@ enum Command {
 /// libp2p Identify protocol version advertised by Rotifer nodes. Peers compare
 /// this to spot protocol-incompatible nodes; autonat/dcutr (Milestone B) build
 /// on the observed-address info Identify provides. ADR-304.
-const IDENTIFY_PROTOCOL_VERSION: &str = "/rotifer/0.9.1";
+const IDENTIFY_PROTOCOL_VERSION: &str = "/rotifer/p2p/1";
 
 /// Composite network behaviour driven by the node's Swarm. Kademlia provides
 /// peer discovery + a distributed record store; GossipSub provides
@@ -91,6 +91,46 @@ const MAX_ESTABLISHED_INCOMING: u32 = 256;
 const MAX_ESTABLISHED_OUTGOING: u32 = 256;
 /// Deny new connections once process memory exceeds this fraction of system RAM.
 const MAX_MEMORY_PERCENTAGE: f64 = 0.9;
+
+/// Upper bound on buffered inbound GossipSub messages. Each sender is
+/// rate-limited, but many identities together are not (Sybil), so the buffer
+/// itself must be bounded or it grows without limit; the oldest drop first.
+const MAX_RECEIVED_MESSAGES: usize = 1024;
+
+/// How long GossipSub remembers a message id to drop re-deliveries. It must
+/// span the whole anti-replay window (±`MAX_TIMESTAMP_SKEW_SECS`): the
+/// timestamp check rejects replays after the window, this cache rejects them
+/// inside it. libp2p's 60s default left a 1–5 minute replay gap.
+const GOSSIP_DUPLICATE_CACHE: Duration =
+    Duration::from_secs(2 * super::messages::MAX_TIMESTAMP_SKEW_SECS);
+
+fn gossipsub_config() -> gossipsub::Config {
+    gossipsub::ConfigBuilder::default()
+        .duplicate_cache_time(GOSSIP_DUPLICATE_CACHE)
+        // Application validation before forwarding: every message is held
+        // until the event loop reports Accept / Reject / Ignore, so an
+        // invalid announcement is never relayed to other peers.
+        .validate_messages()
+        .build()
+        .expect("gossipsub config is valid")
+}
+
+/// Wall-clock Unix milliseconds (announcement freshness is wall-clock based).
+fn wall_clock_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Append `msg`, evicting the oldest entries beyond `cap`.
+fn push_bounded(buf: &mut Vec<ReceivedMessage>, msg: ReceivedMessage, cap: usize) {
+    buf.push(msg);
+    if buf.len() > cap {
+        let excess = buf.len() - cap;
+        buf.drain(..excess);
+    }
+}
 
 #[derive(NetworkBehaviour)]
 struct NodeBehaviour {
@@ -116,6 +156,8 @@ pub struct ReceivedMessage {
     pub topic: String,
     pub data: Vec<u8>,
     pub source: Option<String>,
+    /// Wall-clock arrival time (Unix ms), the time validation ran against.
+    pub received_at_ms: u64,
 }
 
 /// GossipSub messages received by the node, shared between the synchronous API
@@ -132,6 +174,8 @@ struct NodeShared {
     met_peers: Arc<Mutex<Vec<String>>>,
     received: ReceivedMessages,
     rate_limited: Arc<Mutex<u64>>,
+    /// Count of inbound messages rejected by wire-format validation.
+    invalid: Arc<Mutex<u64>>,
     /// Count of inbound connections denied by the connection limits (ADR-304).
     rejected: Arc<Mutex<u64>>,
 }
@@ -167,6 +211,8 @@ pub struct Node {
     received: ReceivedMessages,
     /// Count of inbound messages dropped by the per-peer rate limiter (§8.6).
     rate_limited: Arc<Mutex<u64>>,
+    /// Count of inbound messages rejected by wire-format validation.
+    invalid: Arc<Mutex<u64>>,
     /// Count of inbound connections denied by the connection limits (ADR-304).
     rejected: Arc<Mutex<u64>>,
     /// Override for `max_established_incoming` (tests / future config). `None`
@@ -242,6 +288,7 @@ impl Node {
             met_peers: Arc::new(Mutex::new(Vec::new())),
             received: Arc::new(Mutex::new(Vec::new())),
             rate_limited: Arc::new(Mutex::new(0)),
+            invalid: Arc::new(Mutex::new(0)),
             rejected: Arc::new(Mutex::new(0)),
             max_established_incoming: None,
             runtime: None,
@@ -314,6 +361,34 @@ impl Node {
     /// GossipSub messages received so far, each with its authenticated publisher.
     pub fn received_messages(&self) -> Vec<ReceivedMessage> {
         self.received.lock().map(|m| m.clone()).unwrap_or_default()
+    }
+
+    /// Gene announcements accepted on the announcements topic, each with its
+    /// authenticated publisher. One entry per `(gene_id, publisher)` — the
+    /// newest: a content ID can have many publishers, and each one's latest
+    /// announcement replaces its earlier ones, never another publisher's.
+    pub fn received_announcements(&self) -> Vec<(super::GeneAnnouncement, String)> {
+        use super::messages::{ANNOUNCEMENTS_TOPIC, Verdict, validate_gossip};
+        // Messages were validated on arrival; re-validate against the time
+        // they arrived at so a long-running node keeps showing them.
+        let mut latest: Vec<(super::GeneAnnouncement, String)> = Vec::new();
+        for m in self.received_messages() {
+            let (true, Some(source)) = (m.topic == ANNOUNCEMENTS_TOPIC, m.source) else { continue };
+            let Verdict::Accept(ann) = validate_gossip(&m.data, Some(&source), m.received_at_ms) else {
+                continue;
+            };
+            match latest.iter_mut().find(|(a, s)| a.gene_id == ann.gene_id && *s == source) {
+                Some(slot) if slot.0.timestamp_ms <= ann.timestamp_ms => slot.0 = ann,
+                Some(_) => {}
+                None => latest.push((ann, source)),
+            }
+        }
+        latest
+    }
+
+    /// Number of inbound messages rejected by wire-format validation.
+    pub fn invalid_message_count(&self) -> u64 {
+        self.invalid.lock().map(|n| *n).unwrap_or(0)
     }
 
     /// Number of inbound messages dropped by the per-peer rate limiter (§8.6).
@@ -410,6 +485,7 @@ impl Node {
             met_peers: Arc::clone(&self.met_peers),
             received: Arc::clone(&self.received),
             rate_limited: Arc::clone(&self.rate_limited),
+            invalid: Arc::clone(&self.invalid),
             rejected: Arc::clone(&self.rejected),
         };
         let (ready_tx, ready_rx) = oneshot::channel();
@@ -644,9 +720,9 @@ fn build_swarm(
             kademlia.set_mode(Some(kad::Mode::Server));
             let gossipsub = gossipsub::Behaviour::new(
                 gossipsub::MessageAuthenticity::Signed(key.clone()),
-                gossipsub::Config::default(),
+                gossipsub_config(),
             )
-            .expect("default gossipsub config is valid");
+            .expect("gossipsub config is valid");
             let identify = identify::Behaviour::new(identify::Config::new(
                 IDENTIFY_PROTOCOL_VERSION.to_string(),
                 key.public(),
@@ -703,6 +779,7 @@ async fn run_event_loop(
         met_peers,
         received,
         rate_limited,
+        invalid,
         rejected,
     } = shared;
     // Per-peer flood defence (§8.6); lives in the single-threaded event loop.
@@ -846,24 +923,57 @@ async fn run_event_loop(
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(
                     gossipsub::Event::Message {
                         propagation_source,
+                        message_id,
                         message,
-                        ..
                     },
                 )) => {
-                    // Flood defence (§8.6): rate-limit per sending peer. Over the
-                    // ceiling, drop the message and count it instead of enqueuing.
+                    use super::messages::{ANNOUNCEMENTS_TOPIC, Verdict, validate_gossip};
+                    use gossipsub::MessageAcceptance;
+                    let now_ms = wall_clock_ms();
+                    let topic = message.topic.to_string();
+                    let source = message.source.map(|p| p.to_string());
+                    // Flood defence (§8.6) first: over the per-peer ceiling the
+                    // message is dropped unforwarded (not penalized — the
+                    // relay may be honest).
                     let sender = PeerId(propagation_source.to_string());
-                    if security.record_message(&sender).is_ok() {
-                        if let Ok(mut msgs) = received.lock() {
-                            msgs.push(ReceivedMessage {
-                                topic: message.topic.to_string(),
-                                data: message.data,
-                                source: message.source.map(|p| p.to_string()),
-                            });
+                    let acceptance = if security.record_message(&sender).is_err() {
+                        if let Ok(mut n) = rate_limited.lock() {
+                            *n += 1;
                         }
-                    } else if let Ok(mut n) = rate_limited.lock() {
-                        *n += 1;
+                        MessageAcceptance::Ignore
+                    } else if topic == ANNOUNCEMENTS_TOPIC {
+                        // Wire-format validation before forwarding (ADR-340):
+                        // invalid announcements are dropped and their sender
+                        // penalized, never relayed.
+                        match validate_gossip(&message.data, source.as_deref(), now_ms) {
+                            Verdict::Accept(_) => MessageAcceptance::Accept,
+                            Verdict::Ignore => MessageAcceptance::Ignore,
+                            Verdict::Reject(_) => {
+                                if let Ok(mut n) = invalid.lock() {
+                                    *n += 1;
+                                }
+                                MessageAcceptance::Reject
+                            }
+                        }
+                    } else {
+                        MessageAcceptance::Accept
+                    };
+                    if matches!(acceptance, MessageAcceptance::Accept)
+                        && let Ok(mut msgs) = received.lock()
+                    {
+                        push_bounded(
+                            &mut msgs,
+                            ReceivedMessage { topic, data: message.data, source, received_at_ms: now_ms },
+                            MAX_RECEIVED_MESSAGES,
+                        );
                     }
+                    // Always report: with `validate_messages` a message stays
+                    // queued until its fate is reported.
+                    let _ = swarm.behaviour_mut().gossipsub.report_message_validation_result(
+                        &message_id,
+                        &propagation_source,
+                        acceptance,
+                    );
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Identify(
                     identify::Event::Received { peer_id, info, .. },
@@ -1174,6 +1284,37 @@ mod tests {
             IDENTIFY_PROTOCOL_VERSION.starts_with("/rotifer/"),
             "identify protocol version must be /rotifer/-namespaced, got {IDENTIFY_PROTOCOL_VERSION}"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Replay inside the freshness window is de-duplicated by GossipSub
+    // -----------------------------------------------------------------
+    #[test]
+    fn gossip_duplicate_cache_spans_the_replay_window() {
+        let window = Duration::from_secs(2 * super::super::messages::MAX_TIMESTAMP_SKEW_SECS);
+        assert!(
+            gossipsub_config().duplicate_cache_time() >= window,
+            "a re-injected message still inside the timestamp window must hit the duplicate cache"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Inbound message buffer is bounded (many identities, each under the
+    // per-peer rate limit, must not grow memory without limit)
+    // -----------------------------------------------------------------
+    #[test]
+    fn received_buffer_is_bounded_and_drops_oldest() {
+        let mut buf = Vec::new();
+        for i in 0..10u8 {
+            push_bounded(
+                &mut buf,
+                ReceivedMessage { topic: "t".into(), data: vec![i], source: None, received_at_ms: 0 },
+                4,
+            );
+        }
+        assert_eq!(buf.len(), 4);
+        assert_eq!(buf.first().unwrap().data, vec![6], "oldest entries are evicted first");
+        assert_eq!(buf.last().unwrap().data, vec![9]);
     }
 
     // -----------------------------------------------------------------

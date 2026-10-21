@@ -59,7 +59,8 @@ export interface NativeBinding {
   executeAlgebra(
     algebraJson: string,
     geneEntriesJson: string,
-    inputJson: string
+    inputJson: string,
+    constraintsJson?: string
   ): AlgebraResultView;
 }
 
@@ -138,8 +139,11 @@ export interface ReceivedAnnouncement {
   geneId: string;
   name: string;
   domain: string;
+  /** Display label claimed by the publisher — not part of the identity. */
   version: string;
   fidelity: string;
+  irSpec: string;
+  /** GossipSub-authenticated publisher PeerId. */
   publisher: string;
   source?: string;
 }
@@ -154,13 +158,8 @@ export interface P2pNodeHandle {
   listenAddrs(): string[];
   discoveredPeers(): string[];
   receivedAnnouncements(): ReceivedAnnouncement[];
-  announceGene(
-    geneId: string,
-    name: string,
-    domain: string,
-    version: string,
-    fidelity: string
-  ): void;
+  /** Announce the local gene `name` under `genesRoot`; returns its v2 ID. */
+  announceLocalGene(genesRoot: string, name: string): string;
   stop(): void;
 }
 
@@ -182,6 +181,29 @@ export function loadP2pNode(
     | undefined;
   if (typeof Ctor !== "function") return null;
   return new Ctor(listenHost, listenPort, bootstrapPeers);
+}
+
+/** Outcome of computing a gene's v2 ID: the ID, or why it has none. */
+export type GeneIdV2Result = { id: string } | { reason: string };
+
+/**
+ * Gene ID v2 of the gene `name` under `genesRoot` (docs/gene-id-v2.md).
+ * Computed by the native addon — the single implementation — so it is
+ * unavailable in a pure-TS environment.
+ */
+export function geneIdV2(genesRoot: string, name: string): GeneIdV2Result {
+  const fn = loadRawModule()?.geneIdV2 as ((root: string, name: string) => string) | undefined;
+  if (typeof fn !== "function") return { reason: "native module not available" };
+  try {
+    return { id: fn(genesRoot, name) };
+  } catch (err) {
+    return { reason: (err as Error).message.replace(/^gene ID not computable: /, "") };
+  }
+}
+
+/** Whether the loaded native addon can compute v2 gene IDs (an older installed package cannot). */
+export function hasNativeGeneIdV2(): boolean {
+  return typeof loadRawModule()?.geneIdV2 === "function";
 }
 
 export function isNativeAvailable(): boolean {

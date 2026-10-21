@@ -225,9 +225,32 @@ pub struct NetRequest {
     pub timeout_ms: Option<u32>,
 }
 
+/// Request headers the HTTP client manages and a gene may not set, matched
+/// case-insensitively. Routing (`host`: the client derives it from the URL,
+/// and a gene choosing it would pick the virtual host on a whitelisted
+/// server), message framing (`content-length`, `transfer-encoding`: computed
+/// from the actual body; a gene's own value can desynchronise the request or
+/// stall it until timeout), connection management (the RFC 9110 §7.6.1
+/// hop-by-hop headers `connection`, `keep-alive`, `proxy-connection`, `te`,
+/// `trailer`, `upgrade`) and the `expect` handshake, which changes how the
+/// client sends the body.
+pub const CLIENT_MANAGED_HEADERS: [&str; 10] = [
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "te",
+    "trailer",
+    "upgrade",
+    "expect",
+];
+
 /// Parse and structurally validate the JSON request envelope.
 /// Errors with -10 (invalid request) on malformed JSON, missing/empty
-/// method or url, unsupported method, or undecodable bodyBase64.
+/// method or url, unsupported method, undecodable bodyBase64, or a header in
+/// [`CLIENT_MANAGED_HEADERS`] — refused, never silently dropped.
 pub fn parse_request_envelope(bytes: &[u8]) -> Result<NetRequest, i32> {
     use base64::Engine as _;
 
@@ -254,6 +277,9 @@ pub fn parse_request_envelope(bytes: &[u8]) -> Result<NetRequest, i32> {
     if let Some(h) = v.get("headers") {
         let obj = h.as_object().ok_or(errors::ERR_INVALID_REQUEST)?;
         for (name, value) in obj {
+            if CLIENT_MANAGED_HEADERS.iter().any(|h| name.eq_ignore_ascii_case(h)) {
+                return Err(errors::ERR_INVALID_REQUEST);
+            }
             let value = value.as_str().ok_or(errors::ERR_INVALID_REQUEST)?;
             headers.push((name.clone(), value.to_string()));
         }
@@ -392,32 +418,29 @@ pub fn perform_fetch(
         .min(policy.max_timeout_ms)
         .min(constants::MAX_FETCH_TIMEOUT_MS);
 
-    let agent = ureq::AgentBuilder::new()
-        .redirects(0) // manual redirect loop: every hop re-checked below
-        .timeout(std::time::Duration::from_millis(timeout_ms as u64))
-        .build();
+    // ureq 3 defaults differ from ureq 2 in ways that matter here, so each is
+    // set explicitly: proxies are NOT read from the environment (that would
+    // route gene traffic around the whitelist), 4xx/5xx are responses rather
+    // than errors, and nothing is followed automatically — the loop below
+    // re-checks every redirect hop against the whitelist.
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .proxy(None)
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .timeout_global(Some(std::time::Duration::from_millis(timeout_ms as u64)))
+        .build()
+        .into();
 
     let mut current_url = req.url.clone();
     for _hop in 0..=constants::MAX_REDIRECT_HOPS {
         let checked = check_url(policy, &current_url, allow_insecure_loopback)?;
 
-        let mut request = agent.request(&req.method, checked.as_str());
-        for (name, value) in resolved_headers {
-            request = request.set(name, value);
-        }
+        let result = send(&agent, &req.method, checked.as_str(), resolved_headers, req.body.as_deref());
 
-        let result = match &req.body {
-            Some(body) => request.send_bytes(body),
-            None => request.call(),
-        };
-
-        let response = match result {
+        let mut response = match result {
             Ok(r) => r,
-            // 4xx/5xx are valid protocol outcomes: the envelope carries them.
-            Err(ureq::Error::Status(_, r)) => r,
-            Err(ureq::Error::Transport(t)) => {
-                let msg = t.to_string().to_ascii_lowercase();
-                return Err(if msg.contains("timed out") || msg.contains("timeout") {
+            Err(e) => {
+                return Err(if is_timeout(&e) {
                     errors::ERR_TIMEOUT
                 } else {
                     errors::ERR_NETWORK
@@ -425,9 +448,11 @@ pub fn perform_fetch(
             }
         };
 
+        let status = response.status().as_u16();
+
         // Whitelist-checked manual redirect.
-        if (300..400).contains(&response.status())
-            && let Some(location) = response.header("location")
+        if (300..400).contains(&status)
+            && let Some(location) = header_str(response.headers(), "location")
         {
             let next = checked
                 .join(location)
@@ -436,18 +461,19 @@ pub fn perform_fetch(
             continue;
         }
 
-        let status = response.status();
+        // Header names arrive lower-cased; keep the first value of each.
         let mut resp_headers = serde_json::Map::new();
-        for name in response.headers_names() {
-            if let Some(v) = response.header(&name) {
-                resp_headers.insert(name.to_ascii_lowercase(), serde_json::Value::String(v.to_string()));
+        for name in response.headers().keys() {
+            if let Some(v) = header_str(response.headers(), name.as_str()) {
+                resp_headers.insert(name.as_str().to_string(), serde_json::Value::String(v.to_string()));
             }
         }
 
         let mut body = Vec::new();
         let limit = policy.max_response_bytes;
         response
-            .into_reader()
+            .body_mut()
+            .as_reader()
             .take(limit + 1)
             .read_to_end(&mut body)
             .map_err(|_| errors::ERR_NETWORK)?;
@@ -465,6 +491,72 @@ pub fn perform_fetch(
 
     // Redirect chain longer than MAX_REDIRECT_HOPS.
     Err(errors::ERR_NETWORK)
+}
+
+/// One HTTP request. `method` is one of the parsed envelope's allowed
+/// methods. A body is sent whenever the guest supplied one, whatever the
+/// method — as ureq 2 did — hence `force_send_body` on the body-less builders.
+fn send(
+    agent: &ureq::Agent,
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: Option<&[u8]>,
+) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+    macro_rules! with_headers {
+        ($b:expr) => {{
+            let mut b = $b;
+            for (name, value) in headers {
+                b = b.header(name.as_str(), value.as_str());
+            }
+            b
+        }};
+    }
+    macro_rules! without_body {
+        ($b:expr) => {{
+            let b = with_headers!($b);
+            match body {
+                Some(bytes) => b.force_send_body().send(bytes),
+                None => b.call(),
+            }
+        }};
+    }
+    macro_rules! with_body {
+        ($b:expr) => {{
+            let b = with_headers!($b);
+            match body {
+                Some(bytes) => b.send(bytes),
+                None => b.send_empty(),
+            }
+        }};
+    }
+    match method {
+        "GET" => without_body!(agent.get(url)),
+        "HEAD" => without_body!(agent.head(url)),
+        "DELETE" => without_body!(agent.delete(url)),
+        "POST" => with_body!(agent.post(url)),
+        "PUT" => with_body!(agent.put(url)),
+        "PATCH" => with_body!(agent.patch(url)),
+        // parse_request_envelope admits only the six methods above.
+        other => Err(ureq::Error::BadUri(format!("unsupported method {other}"))),
+    }
+}
+
+/// Timeouts map to ERR_TIMEOUT, as ureq 2's "timed out" transport errors did.
+fn is_timeout(e: &ureq::Error) -> bool {
+    match e {
+        ureq::Error::Timeout(_) => true,
+        ureq::Error::Io(io) => io.kind() == std::io::ErrorKind::TimedOut,
+        other => {
+            let msg = other.to_string().to_ascii_lowercase();
+            msg.contains("timed out") || msg.contains("timeout")
+        }
+    }
+}
+
+/// First value of `name` as a string, if it is valid UTF-8 (ureq 2's `header()`).
+fn header_str<'a>(headers: &'a ureq::http::HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
 }
 
 /// The three capability module names (ADR-327 D2).
@@ -659,6 +751,56 @@ mod tests {
                 String::from_utf8_lossy(bad),
             );
         }
+    }
+
+    // ── Client-managed request headers ──────────────────────────────────
+    //
+    // The HTTP client owns routing (Host), message framing (Content-Length,
+    // Transfer-Encoding), connection management (the hop-by-hop headers) and
+    // the expectation handshake (Expect). A gene setting any of them gets
+    // ERR_INVALID_REQUEST before anything is sent — not a silent drop. Names
+    // are matched case-insensitively, so each case uses a different casing.
+
+    macro_rules! rejects_client_managed_header {
+        ($($test:ident: $name:literal),* $(,)?) => {$(
+            #[test]
+            fn $test() {
+                let envelope = format!(
+                    r#"{{"method":"GET","url":"https://api.example.com/x","headers":{{"Accept":"*/*","{}":"v"}}}}"#,
+                    $name
+                );
+                assert_eq!(
+                    parse_request_envelope(envelope.as_bytes()).unwrap_err(),
+                    errors::ERR_INVALID_REQUEST,
+                    "gene-set {:?} must be refused",
+                    $name,
+                );
+            }
+        )*};
+    }
+
+    rejects_client_managed_header! {
+        envelope_rejects_host_header: "Host",
+        envelope_rejects_content_length_header: "content-length",
+        envelope_rejects_transfer_encoding_header: "Transfer-Encoding",
+        envelope_rejects_connection_header: "CONNECTION",
+        envelope_rejects_keep_alive_header: "Keep-Alive",
+        envelope_rejects_proxy_connection_header: "proxy-connection",
+        envelope_rejects_te_header: "TE",
+        envelope_rejects_trailer_header: "Trailer",
+        envelope_rejects_upgrade_header: "upgrade",
+        envelope_rejects_expect_header: "Expect",
+    }
+
+    #[test]
+    fn envelope_keeps_ordinary_headers() {
+        let req = parse_request_envelope(
+            br#"{"method":"POST","url":"https://api.example.com/x","headers":{"Accept":"application/json","Authorization":"Bearer ${env:TOKEN}","Content-Type":"application/json","User-Agent":"gene/1","X-Request-Id":"7"}}"#,
+        )
+        .unwrap();
+        let mut names: Vec<&str> = req.headers.iter().map(|(n, _)| n.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["Accept", "Authorization", "Content-Type", "User-Agent", "X-Request-Id"]);
     }
 
     // ── URL policy checks ───────────────────────────────────────────────

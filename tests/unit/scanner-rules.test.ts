@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { SCAN_RULES } from "../../src/scanner/rules.js";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { SCAN_RULES, SCANNER_VERSION, rulesFingerprint } from "../../src/scanner/rules.js";
 
 function matchesRule(ruleId: string, line: string): boolean {
   const rule = SCAN_RULES.find((r) => r.id === ruleId);
@@ -160,5 +163,66 @@ describe("S-07: File system operations", () => {
 
   it("detects bare readFileSync import usage", () => {
     expect(matchesRule("S-07", 'const content = readFileSync("file.txt", "utf-8");')).toBe(true);
+  });
+});
+
+// ─── Scanner version is bound to the rules table ──────────────
+//
+// Badges carry `scanner_version`, and grades are only comparable between scans
+// made with the same rules. Changing SCAN_RULES without bumping SCANNER_VERSION
+// fails here. To change the rules: bump SCANNER_VERSION in src/scanner/rules.ts
+// and add its fingerprint below; never edit an existing entry.
+const RULES_FINGERPRINTS: Record<string, string> = {
+  "0.8.0": "8162ba67ab1d7c5ff576aaa435fbfd980b1d9dd1d6345e6a29eca29e70ec748d",
+  // S-01 matches code only (string / regex literals and comments blanked).
+  // 0.8.1 was an unreleased draft of the same table with a weaker masker.
+  "0.8.2": "fcb587526c5a55be4734e08d71544a301f428c55040b9a09a896b01ab40ec258",
+};
+
+// The fingerprint covers the table, not the masking in literals.ts, which also
+// changes results. Its hash is pinned per version so that editing it fails
+// here: if the edit changes what gets masked, bump SCANNER_VERSION; then pin
+// the new hash under the (possibly new) version.
+const MASKER_SHA256: Record<string, string> = {
+  "0.8.2": "e4c03b49c2755774d416b76f94473d7ed35d2d621d5f9d961977e5d9bbe7b3fb",
+};
+
+function maskerHash(): string {
+  const path = fileURLToPath(new URL("../../src/scanner/literals.ts", import.meta.url));
+  const source = readFileSync(path, "utf-8").replace(/\r\n/g, "\n");
+  return createHash("sha256").update(source).digest("hex");
+}
+
+describe("SCANNER_VERSION ↔ rules table fingerprint", () => {
+  it("the current rules table matches the fingerprint pinned for SCANNER_VERSION", () => {
+    expect(
+      RULES_FINGERPRINTS[SCANNER_VERSION],
+      `no fingerprint pinned for SCANNER_VERSION ${SCANNER_VERSION}`,
+    ).toBeDefined();
+    expect(
+      rulesFingerprint(),
+      "SCAN_RULES changed: bump SCANNER_VERSION and pin the new fingerprint",
+    ).toBe(RULES_FINGERPRINTS[SCANNER_VERSION]);
+  });
+
+  it("src/scanner/literals.ts matches the hash pinned for SCANNER_VERSION", () => {
+    expect(
+      maskerHash(),
+      "literals.ts changed: if masking behaviour changed, bump SCANNER_VERSION; then pin the new hash",
+    ).toBe(MASKER_SHA256[SCANNER_VERSION]);
+  });
+
+  it("the fingerprint changes when any rule field changes", () => {
+    const base = rulesFingerprint();
+    const variants = [
+      SCAN_RULES.map((r, i) => (i === 0 ? { ...r, severity: "HIGH" as const } : r)),
+      SCAN_RULES.map((r, i) => (i === 0 ? { ...r, description: r.description + "!" } : r)),
+      SCAN_RULES.map((r, i) => (i === 0 ? { ...r, id: "S-99" } : r)),
+      SCAN_RULES.map((r, i) => (i === 0 ? { ...r, matchOn: undefined } : r)),
+      SCAN_RULES.map((r, i) => (i === 0 ? { ...r, patterns: [...r.patterns, /x/] } : r)),
+      SCAN_RULES.map((r, i) => (i === 0 ? { ...r, patterns: r.patterns.map((p) => new RegExp(p.source, "i")) } : r)),
+      SCAN_RULES.slice(1),
+    ];
+    for (const v of variants) expect(rulesFingerprint(v)).not.toBe(base);
   });
 });

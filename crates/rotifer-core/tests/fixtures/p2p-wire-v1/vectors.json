@@ -1,0 +1,71 @@
+{
+  "schema": "crates/rotifer-core/proto/p2p-wire-v1.proto",
+  "generator": "scripts/p2p-wire-v1-reference.py",
+  "vectors": [
+    {
+      "name": "native",
+      "announcement": {
+        "gene_id": "v2:3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f",
+        "name": "math.sort",
+        "domain": "math",
+        "fidelity": "Native",
+        "ir_spec": "0.2.0",
+        "version": "1.0.0",
+        "timestamp_ms": 1760000000000
+      },
+      "hex": "0a730a4376323a3366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336612096d6174682e736f72741a046d61746822064e61746976652a05302e322e303205312e302e30388080b3c19c33"
+    },
+    {
+      "name": "wrapped-without-ir-spec",
+      "announcement": {
+        "gene_id": "v2:3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f",
+        "name": "writer",
+        "domain": "content.writing",
+        "fidelity": "Wrapped",
+        "ir_spec": "",
+        "version": "0.3.1",
+        "timestamp_ms": 1760000000123
+      },
+      "hex": "0a750a4376323a3366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336612067772697465721a0f636f6e74656e742e77726974696e672207577261707065643205302e332e3138fb80b3c19c33"
+    },
+    {
+      "name": "unicode-display-name",
+      "announcement": {
+        "gene_id": "v2:3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f",
+        "name": "写作助手 ✍️",
+        "domain": "content",
+        "fidelity": "Hybrid",
+        "ir_spec": "0.2.0",
+        "version": "2.0.0-rc.1",
+        "timestamp_ms": 1
+      },
+      "hex": "0a80010a4376323a336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633661213e58699e4bd9ce58aa9e6898b20e29c8defb88f1a07636f6e74656e7422064879627269642a05302e322e30320a322e302e302d72632e313801"
+    },
+    {
+      "name": "empty-optional-display-fields",
+      "announcement": {
+        "gene_id": "v2:3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f",
+        "name": "",
+        "domain": "d",
+        "fidelity": "Wrapped",
+        "ir_spec": "",
+        "version": "",
+        "timestamp_ms": 18446744073709551615
+      },
+      "hex": "0a5c0a4376323a336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633661a016422075772617070656438ffffffffffffffffff01"
+    },
+    {
+      "name": "max-length-fields",
+      "announcement": {
+        "gene_id": "v2:3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f",
+        "name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "domain": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "fidelity": "Native",
+        "ir_spec": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+        "version": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv",
+        "timestamp_ms": 300000
+      },
+      "hex": "0abb030a4376323a336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633663366336633661280016e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e1a8001646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646422064e61746976652a20696969696969696969696969696969696969696969696969696969696969696932407676767676767676767676767676767676767676767676767676767676767676767676767676767676767676767676767676767676767676767676767676767638e0a712"
+    }
+  ]
+}

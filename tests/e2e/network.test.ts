@@ -3,6 +3,7 @@ import { execSync } from "node:child_process";
 import { mkdirSync, existsSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { hasNativeGeneIdV2 } from "../../src/utils/binding.js";
 
 const TEST_DIR = join(tmpdir(), `rotifer-net-test-${Date.now()}`);
 const CLI = join(__dirname, "..", "..", "dist", "index.js");
@@ -131,13 +132,28 @@ describe("rotifer network commands", () => {
     expect(result.stdout).toContain("not found");
   });
 
-  it("network announce reports not-running when no daemon is up", () => {
+  it("network announce refuses a gene with no v2 ID (uncompiled Native)", () => {
+    const geneDir = join(TEST_DIR, "genes", "e2e-uncompiled");
+    mkdirSync(geneDir, { recursive: true });
+    writeFileSync(
+      join(geneDir, "phenotype.json"),
+      JSON.stringify({ name: "e2e-uncompiled", domain: "test", version: "0.1.0", fidelity: "Native" })
+    );
+    const result = run("network announce e2e-uncompiled");
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("no v2 gene ID");
+  });
+
+  // Computing a v2 ID needs a native addon that has `geneIdV2` (the single
+  // implementation); an older installed platform package does not.
+  it.skipIf(!hasNativeGeneIdV2())("network announce reports not-running when no daemon is up", () => {
     const geneDir = join(TEST_DIR, "genes", "e2e-net-gene");
     mkdirSync(geneDir, { recursive: true });
     writeFileSync(
       join(geneDir, "phenotype.json"),
-      JSON.stringify({ name: "e2e-net-gene", domain: "test", version: "0.1.0", fidelity: "Native" })
+      JSON.stringify({ name: "e2e-net-gene", domain: "test", version: "0.1.0", fidelity: "Wrapped" })
     );
+    writeFileSync(join(geneDir, "SKILL.md"), "# e2e net gene\n");
     const result = run("network announce e2e-net-gene");
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toLowerCase()).toContain("not running");

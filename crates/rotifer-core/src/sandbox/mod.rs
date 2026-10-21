@@ -29,6 +29,15 @@ pub enum SandboxError {
     InvalidWasm(String),
 }
 
+/// `ResourceLimitExceeded` message for fuel exhaustion. Callers that need to
+/// tell it apart from other limits (the algebra executor maps it to the
+/// `FUEL_EXHAUSTED` error code, spec §34) match on this constant, so the
+/// wording lives in one place.
+pub const FUEL_EXHAUSTED_MESSAGE: &str = "fuel exhausted";
+
+/// Start of the `ResourceLimitExceeded` message for a wall-clock timeout.
+pub const TIMEOUT_MESSAGE_PREFIX: &str = "execution timed out";
+
 /// Runtime constraints applied to a sandbox instance.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ConstraintSet {

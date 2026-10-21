@@ -7,7 +7,7 @@ import * as display from "../utils/display.js";
 import { c } from "../utils/palette.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
-import { tryLoadBinding, type NativeBinding } from "../utils/binding.js";
+import { geneIdV2, tryLoadBinding, type NativeBinding } from "../utils/binding.js";
 import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
 import { createGatewayFetch, type GatewayFetchOptions, type GatewayResponse } from "../runtime/network-gateway.js";
 import { DomainFailoverEngine, type GeneExecutionResult } from "../runtime/domain-failover.js";
@@ -15,6 +15,7 @@ import { flushInvocationReports } from "../cloud/invocation.js";
 import { flushHeartbeat } from "../telemetry/heartbeat.js";
 import { logGeneExecution } from "../utils/run-logger.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
+import { toRustPhenotype } from "../utils/rust-phenotype.js";
 
 interface AgentInfo {
   id: string;
@@ -39,7 +40,8 @@ export const agentRunCommand = new Command("run")
   .option("--input <json>", "input JSON for the pipeline", '{"name":"world"}')
   .option("--verbose", "show intermediate results", false)
   .option("--no-sandbox", "force Node.js execution (skip WASM sandbox)")
-  .action(async (agentName: string, options: { input: string; verbose: boolean; sandbox: boolean }) => {
+  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed genes", false)
+  .action(async (agentName: string, options: { input: string; verbose: boolean; sandbox: boolean; trustUnsigned: boolean }) => {
     const root = requireProjectRoot();
     const config = loadConfig(root);
 
@@ -95,16 +97,17 @@ export const agentRunCommand = new Command("run")
 
     // TryPool: domain-based failover with fitness tracking
     if (compositionType === "TryPool") {
-      await executeTryPool(agent, genesDir, binding, l0Binding, input, root, options.verbose);
+      await executeTryPool(agent, genesDir, binding, l0Binding, input, root, options.verbose, options.trustUnsigned);
       return;
     }
 
     // For non-Seq compositions with WASM support, use executeAlgebra()
     if (compositionType !== "Single" && compositionType !== "Seq" && binding) {
-      const algebraResult = executeViaAlgebra(
+      const algebra = executeViaAlgebra(
         agent, genesDir, binding, input, compositionType, options.verbose
       );
-      if (algebraResult !== null) {
+      if (algebra.kind === "failed") return;
+      if (algebra.kind === "done") {
         const totalElapsed = performance.now() - startTime;
         console.log();
         display.success("Pipeline execution complete");
@@ -113,7 +116,7 @@ export const agentRunCommand = new Command("run")
         display.keyValue("Duration", `${totalElapsed.toFixed(1)}ms`);
         console.log();
         display.info("Final output:");
-        console.log(JSON.stringify(algebraResult, null, 2));
+        console.log(JSON.stringify(algebra.output, null, 2));
         return;
       }
       display.warn("Falling back to sequential execution (some genes not compiled)");
@@ -251,25 +254,28 @@ export const agentRunCommand = new Command("run")
 
         const stepStart = performance.now();
         try {
-          const absPath = resolve(geneDir, srcFile);
-          const mod = await import(pathToFileURL(absPath).href);
+          const phenotypeData = existsSync(phenotypePath)
+            ? JSON.parse(readFileSync(phenotypePath, "utf-8"))
+            : {};
 
-          if (typeof mod.express !== "function") {
+          // Both checks run before import(): loading the module already
+          // executes its top-level code, so a refusal issued after the import
+          // would come too late to mean anything.
+          const refusal = refuseNodeExecution(geneDir, options.trustUnsigned);
+          if (refusal) {
             pipelineLog.push({
-              gene: geneName, status: "error", engine: "node",
+              gene: geneName, status: "error", engine: "none",
               durationMs: performance.now() - stepStart, inputPreview, outputPreview: "",
-              error: "does not export express()",
+              error: refusal,
             });
-            display.error(`${step} Gene '${geneName}' does not export express()`);
+            display.error(`${step} ${refusal}`);
+            display.hint(TRUST_UNSIGNED_HINT);
+            display.hint("Or compile the gene first: rotifer compile " + geneName);
             printPipelineLog(pipelineLog);
             await flushInvocationReports();
             await flushHeartbeat();
             process.exit(1);
           }
-
-          const phenotypeData = existsSync(phenotypePath)
-            ? JSON.parse(readFileSync(phenotypePath, "utf-8"))
-            : {};
 
           const l0 = evaluateL0(l0Binding, phenotypeData);
           const violation =
@@ -288,6 +294,22 @@ export const agentRunCommand = new Command("run")
               error: `L0 gate blocked: ${violation}`,
             });
             display.error(`${step} L0 gate blocked '${geneName}': ${violation}`);
+            printPipelineLog(pipelineLog);
+            await flushInvocationReports();
+            await flushHeartbeat();
+            process.exit(1);
+          }
+
+          const absPath = resolve(geneDir, srcFile);
+          const mod = await import(pathToFileURL(absPath).href);
+
+          if (typeof mod.express !== "function") {
+            pipelineLog.push({
+              gene: geneName, status: "error", engine: "node",
+              durationMs: performance.now() - stepStart, inputPreview, outputPreview: "",
+              error: "does not export express()",
+            });
+            display.error(`${step} Gene '${geneName}' does not export express()`);
             printPipelineLog(pipelineLog);
             await flushInvocationReports();
             await flushHeartbeat();
@@ -420,6 +442,7 @@ async function executeTryPool(
   input: unknown,
   root: string,
   isVerbose: boolean,
+  isTrustUnsigned: boolean,
 ): Promise<void> {
   const engine = new DomainFailoverEngine();
   const startTime = performance.now();
@@ -435,7 +458,7 @@ async function executeTryPool(
     const hasWasm = existsSync(irWasmPath);
 
     const executor = await buildGeneExecutor(
-      geneName, geneDir, irWasmPath, hasWasm, phenotype, binding, l0Binding
+      geneName, geneDir, irWasmPath, hasWasm, phenotype, binding, l0Binding, isTrustUnsigned
     );
     engine.registerGene(geneName, domain, executor);
   }
@@ -524,6 +547,23 @@ async function executeTryPool(
   await flushHeartbeat();
 }
 
+const TRUST_UNSIGNED_HINT = "Use --trust-unsigned to explicitly allow unsandboxed execution.";
+
+/**
+ * The same consent `rotifer run` asks for. A Cloud-installed gene is someone
+ * else's code; on the Node.js path it runs with the host's full privileges, so
+ * it runs only when the user says so. Without this, `agent run` was a side
+ * door: a gene `run` refused would run as soon as it was put in a pipeline.
+ *
+ * Returns the refusal message, or null when execution may proceed. This is
+ * separate from the L0 gate and does not replace it — --trust-unsigned is
+ * consent to run unsandboxed, not a waiver of L0.
+ */
+function refuseNodeExecution(geneDir: string, isTrustUnsigned: boolean): string | null {
+  if (isTrustUnsigned || !isExternallySourced(geneDir)) return null;
+  return "Cloud-installed genes cannot run via Node.js without sandbox.";
+}
+
 async function buildGeneExecutor(
   geneName: string,
   geneDir: string,
@@ -532,6 +572,7 @@ async function buildGeneExecutor(
   phenotype: Record<string, unknown>,
   binding: NativeBinding | null,
   l0Binding: NativeBinding | null,
+  isTrustUnsigned: boolean,
 ): Promise<(input: unknown) => Promise<GeneExecutionResult>> {
   if (hasWasm && binding) {
     const wasmBytes = readFileSync(irWasmPath) as Buffer;
@@ -581,6 +622,16 @@ async function buildGeneExecutor(
   // 走到这里说明没有可用的 WASM 路径，接下来是 Node.js 执行——它没有沙箱，
   // 所以门控必须在这里拦。TryPool 语义下拦截表现为「该基因失败」而非终止进程，
   // 这样 failover 会照常换下一个基因。
+  const refusal = refuseNodeExecution(geneDir, isTrustUnsigned);
+  if (refusal) {
+    return async (): Promise<GeneExecutionResult> => ({
+      success: false,
+      error: `${refusal} ${TRUST_UNSIGNED_HINT}`,
+      engine: "none",
+      durationMs: 0,
+    });
+  }
+
   const l0 = evaluateL0(l0Binding, phenotype);
   const blocked =
     l0.kind === "violation"
@@ -664,6 +715,13 @@ function geneNameToId(geneName: string): string {
   return createHash("sha256").update(geneName).digest("hex");
 }
 
+// "failed": the error is already reported and exit(1) is scheduled; the
+// caller must not print anything else.
+type AlgebraOutcome =
+  | { kind: "done"; output: unknown }
+  | { kind: "fallback" }
+  | { kind: "failed" };
+
 function executeViaAlgebra(
   agent: AgentInfo,
   genesDir: string,
@@ -671,11 +729,11 @@ function executeViaAlgebra(
   input: unknown,
   compositionType: string,
   isVerbose: boolean,
-): unknown | null {
+): AlgebraOutcome {
   const comp = agent.composition;
-  if (!comp) return null;
+  if (!comp) return { kind: "fallback" };
 
-  const geneEntries: Record<string, { wasm: number[]; phenotype: Record<string, unknown> }> = {};
+  const geneEntries: Record<string, { wasm: number[]; phenotype: Record<string, unknown>; v2Id?: string }> = {};
 
   for (const geneName of agent.genome) {
     const geneDir = join(genesDir, geneName);
@@ -684,7 +742,7 @@ function executeViaAlgebra(
 
     if (!existsSync(irWasmPath)) {
       display.warn(`  Gene '${geneName}' not compiled — cannot use ${compositionType} via Rust executor`);
-      return null;
+      return { kind: "fallback" };
     }
 
     const wasmBytes = readFileSync(irWasmPath);
@@ -693,9 +751,19 @@ function executeViaAlgebra(
       : {};
 
     const hexId = geneNameToId(geneName);
+    // The v2 ID of the gene actually installed here, read from the same
+    // directory as the wasm above. A TryCatch handler reports it as
+    // GeneError.geneId (spec §15.2); hexId is only the executor's lookup key.
+    // Not computable (e.g. an older native module) → omitted, geneId is null.
+    const idResult = geneIdV2(genesDir, geneName);
+    const v2Id = "id" in idResult ? idResult.id : undefined;
     geneEntries[hexId] = {
+      ...(v2Id ? { v2Id } : {}),
       wasm: Array.from(wasmBytes),
-      phenotype,
+      // Rust deserializes this into rotifer_core's Phenotype; phenotype.json
+      // keeps irHash / dependencies as hex strings or names and createdAt
+      // possibly as an ISO string, which Rust rejects.
+      phenotype: toRustPhenotype(phenotype, geneNameToId),
     };
   }
 
@@ -721,7 +789,7 @@ function executeViaAlgebra(
       break;
     }
     case "Cond": {
-      if (geneIds.length < 2) return null;
+      if (geneIds.length < 2) return { kind: "fallback" };
       const pred = comp?.predicate;
       algebraExpr = {
         Cond: {
@@ -738,7 +806,7 @@ function executeViaAlgebra(
       break;
     }
     case "Try": {
-      if (geneIds.length < 2) return null;
+      if (geneIds.length < 2) return { kind: "fallback" };
       algebraExpr = {
         Try: {
           primary: { Gene: hexToGeneIdArray(geneIds[0]) },
@@ -749,14 +817,19 @@ function executeViaAlgebra(
       break;
     }
     default:
-      return null;
+      return { kind: "fallback" };
   }
 
   try {
+    // Same sandbox limits as the Single / Seq path (execute_gene). Without
+    // them the binding falls back to ConstraintSet::default() (1M fuel),
+    // below what one compiled gene of ordinary size needs. A binding older
+    // than this argument ignores it.
     const result = binding.executeAlgebra(
       JSON.stringify(algebraExpr),
       JSON.stringify(geneEntries),
       JSON.stringify(input),
+      DEFAULT_SANDBOX_CONSTRAINTS_JSON,
     );
 
     if (result.success) {
@@ -767,7 +840,7 @@ function executeViaAlgebra(
         display.info(`  Steps executed: ${result.stepsExecuted}`);
         display.info(`  Output: ${JSON.stringify(result.output).slice(0, 200)}`);
       }
-      return result.output;
+      return { kind: "done", output: result.output };
     } else {
       display.rustStyleError({
         code: "E0053",
@@ -776,7 +849,7 @@ function executeViaAlgebra(
       });
       // Not an async scope here: defer the exit until the report settles.
       void flushInvocationReports().finally(() => process.exit(1));
-      return undefined as never;
+      return { kind: "failed" };
     }
   } catch (err: any) {
     display.rustStyleError({
@@ -785,7 +858,7 @@ function executeViaAlgebra(
       suggestion: "Ensure all genes are compiled and valid",
     });
     void flushInvocationReports().finally(() => process.exit(1));
-    return undefined as never;
+    return { kind: "failed" };
   }
 }
 

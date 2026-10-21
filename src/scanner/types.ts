@@ -6,6 +6,13 @@ export interface ScanRule {
   description: string;
   severity: Severity;
   patterns: RegExp[];
+  /**
+   * "code": in JS/TS files, match against the line with string, template and
+   * regex literal bodies and comments blanked out (see literals.ts), so text
+   * that merely names a call is not a finding. Other file types, and rules
+   * without this field, match the raw line.
+   */
+  matchOn?: "code";
 }
 
 export interface Finding {

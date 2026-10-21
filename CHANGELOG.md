@@ -5,6 +5,85 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.28.0...v0.29.0) (2026-10-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **genome:** genomeId changes format from 64 hex characters to `bp1:` plus 64, and the same Blueprint now hashes to a different value (it covers the execution projection only). Readers are stricter: a Blueprint without `composition`, with missing required fields, or with a schema using any `$` keyword other than `$comment` is refused, and export refuses anything import would refuse.
+* **core:** TryCatch handlers get a spec GeneError naming the gene that ran ([#411](https://github.com/rotifer-protocol/rotifer-playground/issues/411))
+
+### Features
+
+* **genome:** RFC draft 5 B2-B5, and export refuses what import would refuse ([99973ca](https://github.com/rotifer-protocol/rotifer-playground/commit/99973ca7c892bd6eabc065d64def533051e9aa66))
+
+
+### Bug Fixes
+
+* **core:** compare Cond predicate numbers by mathematical value ([#413](https://github.com/rotifer-protocol/rotifer-playground/issues/413)) ([b014158](https://github.com/rotifer-protocol/rotifer-playground/commit/b01415887e45b5ddb47515d200c9f71d995d97df))
+* **core:** move the rotifer.net HTTP client to ureq 3 and drop the webpki-roots ignore ([#418](https://github.com/rotifer-protocol/rotifer-playground/issues/418)) ([705b3be](https://github.com/rotifer-protocol/rotifer-playground/commit/705b3be43cc68c2b98608ab5920b9b65779b96ba))
+* **core:** refuse request headers the HTTP client must manage in rotifer.net ([#419](https://github.com/rotifer-protocol/rotifer-playground/issues/419)) ([6c21e52](https://github.com/rotifer-protocol/rotifer-playground/commit/6c21e52f89b2b1ff461a796ecab6a3845e4bc1b0))
+* **core:** TryCatch handlers get a spec GeneError naming the gene that ran ([#411](https://github.com/rotifer-protocol/rotifer-playground/issues/411)) ([eeaf8d5](https://github.com/rotifer-protocol/rotifer-playground/commit/eeaf8d5dad5a4d140fbb2cca3bcd74633d1f3c51))
+* **deps:** bump rustls-webpki and webpki-roots for RUSTSEC-2026-0381/0382 ([#417](https://github.com/rotifer-protocol/rotifer-playground/issues/417)) ([5f9d865](https://github.com/rotifer-protocol/rotifer-playground/commit/5f9d86553e865e2f27449478b8aa9f8c0dc171eb))
+* **genome:** look up hints and capability queries by own role key only ([#415](https://github.com/rotifer-protocol/rotifer-playground/issues/415)) ([8bc3576](https://github.com/rotifer-protocol/rotifer-playground/commit/8bc35769c12785e6dc6f62f71e55bf11dd1c5041))
+* **genome:** red-team round 5 reader gaps N1-N4, and an e2e for a Try body out of fuel (F5) ([#414](https://github.com/rotifer-protocol/rotifer-playground/issues/414)) ([b18480a](https://github.com/rotifer-protocol/rotifer-playground/commit/b18480a9f469a1713053495a8d2f9a5ce419a4e9))
+* **genome:** refuse Cond forms, surrogates and duplicate keys import cannot honour ([#410](https://github.com/rotifer-protocol/rotifer-playground/issues/410)) ([a861da7](https://github.com/rotifer-protocol/rotifer-playground/commit/a861da702c723725ab217a3f53a2d5f664be3c62))
+* **genome:** refuse integers JSON.parse cannot hold exactly on import ([#408](https://github.com/rotifer-protocol/rotifer-playground/issues/408)) ([93f3e62](https://github.com/rotifer-protocol/rotifer-playground/commit/93f3e622017e26a017820a3567a13adcd516ef6e))
+* **genome:** refuse non-finite numbers and exempt only real, listed leaf IDs on import ([#406](https://github.com/rotifer-protocol/rotifer-playground/issues/406)) ([6e76aff](https://github.com/rotifer-protocol/rotifer-playground/commit/6e76aff6b38954b22b99d8a54457fd06f3606847))
+
+## [0.28.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.27.0...v0.28.0) (2026-10-20)
+
+
+### Features
+
+* **genome:** add `rotifer genome export` with a credential scan gate ([#391](https://github.com/rotifer-protocol/rotifer-playground/issues/391)) ([fa1135a](https://github.com/rotifer-protocol/rotifer-playground/commit/fa1135abe2c649eaccdd0126fb59dd6d5c9f1ada))
+* **genome:** add `rotifer genome import` with evidence-based capability resolution ([#395](https://github.com/rotifer-protocol/rotifer-playground/issues/395)) ([bb893ca](https://github.com/rotifer-protocol/rotifer-playground/commit/bb893ca8410a72218abce142830fa05997670d22))
+* **install:** compare phenotype with the recorded content_hash, warning only ([#400](https://github.com/rotifer-protocol/rotifer-playground/issues/400)) ([0f0e8ff](https://github.com/rotifer-protocol/rotifer-playground/commit/0f0e8ff7fb6eb6c4343477b8710986bf0dc6d693))
+
+
+### Bug Fixes
+
+* **agent-run:** make Par / Cond / Try run on compiled genes ([#396](https://github.com/rotifer-protocol/rotifer-playground/issues/396)) ([f26d540](https://github.com/rotifer-protocol/rotifer-playground/commit/f26d5400b5c0deba7db1c484af7d31b4acc1bf14))
+* **deps:** bump wasmtime to 48.0.7 for the 2026-10-19 RustSec advisories ([#392](https://github.com/rotifer-protocol/rotifer-playground/issues/392)) ([a981083](https://github.com/rotifer-protocol/rotifer-playground/commit/a9810836ff0f8744be6173402bca516815ea968c))
+* **genome:** apply excludeGeneIds at admission, not after install ([#397](https://github.com/rotifer-protocol/rotifer-playground/issues/397)) ([ff41832](https://github.com/rotifer-protocol/rotifer-playground/commit/ff4183273f4b29fded555fc6a1c6c03342eb3289))
+* **genome:** close five gaps the Blueprint RFC review found ([#401](https://github.com/rotifer-protocol/rotifer-playground/issues/401)) ([f4bdc88](https://github.com/rotifer-protocol/rotifer-playground/commit/f4bdc8894d5d2f92d802548832317ecd1ffce4f1))
+* **genome:** stop the entropy rule from flagging natural-language text ([#404](https://github.com/rotifer-protocol/rotifer-playground/issues/404)) ([53ddc5d](https://github.com/rotifer-protocol/rotifer-playground/commit/53ddc5d6b62dfa12e24bc14e191b5e29b881decf))
+* **scanner:** pin scanner_version to the rules table and stop S-01 flagging literals ([#394](https://github.com/rotifer-protocol/rotifer-playground/issues/394)) ([9751938](https://github.com/rotifer-protocol/rotifer-playground/commit/9751938815f499542be27eff28aa87d86cbe9fff))
+* **supabase:** give the arena leaderboard a unique tiebreak so paging is stable ([#403](https://github.com/rotifer-protocol/rotifer-playground/issues/403)) ([eb6d62a](https://github.com/rotifer-protocol/rotifer-playground/commit/eb6d62acb586a050557ec0a414ebdbc666dc6215))
+* **supabase:** pin genes.created_at and decide duplicate hashes by who came first ([#399](https://github.com/rotifer-protocol/rotifer-playground/issues/399)) ([49fc4ea](https://github.com/rotifer-protocol/rotifer-playground/commit/49fc4eac8474aa8f0cbbbe6d440a5b1087dd4474))
+* **supabase:** stop recomputing content_hash server-side; pin content hash v1 ([#398](https://github.com/rotifer-protocol/rotifer-playground/issues/398)) ([d01a6d7](https://github.com/rotifer-protocol/rotifer-playground/commit/d01a6d7816ad789f65c12413157686d085a62c11))
+
+## [0.27.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.26.3...v0.27.0) (2026-10-19)
+
+
+### Features
+
+* **genes:** declare source files for three bundled Wrapped genes ([#383](https://github.com/rotifer-protocol/rotifer-playground/issues/383)) ([f1540c6](https://github.com/rotifer-protocol/rotifer-playground/commit/f1540c6d6c1199d55cbe1294b709852477cc2ce4))
+* **identity:** gene ID v2 — a content-derived gene identity (docs/gene-id-v2.md); `rotifer network announce` sends it and refuses genes that have none ([927048c](https://github.com/rotifer-protocol/rotifer-playground/commit/927048c4074127ec6ce45a468f20224f96f6bf1f))
+* **p2p:** freeze P2P wire format v1 — protobuf announcements on /rotifer/p2p/1/announcements, validated before forwarding. Not compatible with 0.26.x and earlier, which use JSON on /rotifer/announcements: upgrade every machine in a P2P setup ([927048c](https://github.com/rotifer-protocol/rotifer-playground/commit/927048c4074127ec6ce45a468f20224f96f6bf1f))
+
+
+### Bug Fixes
+
+* **deps:** bump rustls to 0.23.46 for today's RustSec advisories ([#384](https://github.com/rotifer-protocol/rotifer-playground/issues/384)) ([43a54b2](https://github.com/rotifer-protocol/rotifer-playground/commit/43a54b2336bfbdc5db1f2c01a2522c5bcb392e6f))
+* **deps:** bump wasmtime to 48.0.6 for today's RustSec advisories ([#385](https://github.com/rotifer-protocol/rotifer-playground/issues/385)) ([22d8e4e](https://github.com/rotifer-protocol/rotifer-playground/commit/22d8e4e3454d8b9bbc6d3aad1db10bea7f1cdb48))
+
+## [0.26.3](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.26.2...v0.26.3) (2026-10-14)
+
+
+### Bug Fixes
+
+* **deps:** patch today's RustSec and npm advisories ([#376](https://github.com/rotifer-protocol/rotifer-playground/issues/376)) ([69070a9](https://github.com/rotifer-protocol/rotifer-playground/commit/69070a978e1ef58b185b437d8a22ca6ca6172b23))
+* **p2p:** reject forged, stale and future-dated announcements; add an adversarial suite ([#373](https://github.com/rotifer-protocol/rotifer-playground/issues/373)) ([6991411](https://github.com/rotifer-protocol/rotifer-playground/commit/6991411c6a2d46a85afedd95cca4f35b32d0d562))
+
+## [0.26.2](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.26.1...v0.26.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* **agent-run:** refuse installed genes on the Node.js path without --trust-unsigned ([#371](https://github.com/rotifer-protocol/rotifer-playground/issues/371)) ([31aeb73](https://github.com/rotifer-protocol/rotifer-playground/commit/31aeb7323a884563a463c005d6557c66558d9815))
+* **ci:** make the mutation job measure something again ([#366](https://github.com/rotifer-protocol/rotifer-playground/issues/366)) ([bbefcd7](https://github.com/rotifer-protocol/rotifer-playground/commit/bbefcd7eb5971b5da34b76b2d4866f60b074459f))
+
 ## [0.26.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.26.0...v0.26.1) (2026-09-21)
 
 

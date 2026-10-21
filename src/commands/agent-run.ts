@@ -916,12 +916,12 @@ export function printProtocolInsights(
       // the sandbox, or its source on Node. Counting only source files called
       // an installed Native gene metadata-only right after it had run.
       const geneDir = join(genesDir, name);
-      const executable = existsSync(join(geneDir, "gene.ir.wasm")) || findSourceFile(geneDir) !== null;
+      const isExecutable = existsSync(join(geneDir, "gene.ir.wasm")) || findSourceFile(geneDir) !== null;
 
       geneStats.push({
         name,
         domain: phenotype.domain || "general",
-        executable,
+        executable: isExecutable,
       });
     } catch {
       // skip

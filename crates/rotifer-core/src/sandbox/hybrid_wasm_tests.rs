@@ -1124,3 +1124,59 @@ fn a_request_is_bounded_by_what_is_left_of_the_host_time_budget() {
     expect_error_code(run(&sandbox(), &wasm, config), errors::ERR_TIMEOUT);
     assert_eq!(server.hits.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn a_request_cannot_outlast_the_run_deadline() {
+    // Spec §5 pre-send checks, the run's wall-clock deadline. Host code does
+    // not stop for the epoch deadline, so a request that waits past it comes
+    // back to a run that is already over: the server answered, the gene
+    // traps on its next metered instruction, and the response is lost. The
+    // request has to be bounded by the time the run has left, and the gene
+    // has to see that as -4 while it can still act on it.
+    let server = TestServer::spawn(200, b"{}".to_vec(), None, 2_000);
+    let wasm = build_fetch_then_work_gene(&envelope_for(&server.url("/late")), 1);
+    let sb = WasmtimeSandbox::new(ConstraintSet {
+        max_execution_time_ms: 500,
+        ..suite_constraints()
+    })
+    .unwrap();
+
+    expect_error_code(run(&sb, &wasm, loopback_config()), errors::ERR_TIMEOUT);
+    assert!(server.hits.load(Ordering::SeqCst) <= 1);
+}
+
+#[test]
+fn no_request_is_sent_once_the_run_deadline_has_passed() {
+    // The first fetch waits on a slow server until the run's time is used
+    // up (it comes back -4). The gene ignores that and tries a second,
+    // different host: with the deadline already reached, that request is
+    // refused before it is sent.
+    let slow = TestServer::spawn(200, b"{}".to_vec(), None, 2_000);
+    let other = TestServer::spawn(200, b"{}".to_vec(), None, 0);
+    let first = envelope_for(&slow.url("/first"));
+    let second = envelope_for(&other.url("/second"));
+    let data = format!("{first}{second}");
+    use wasm_encoder::Instruction as I;
+    let body = vec![
+        I::I32Const(DATA),
+        I::I32Const(first.len() as i32),
+        I::I32Const(OUT),
+        I::I32Const(OUT_CAP),
+        I::Call(0),
+        I::Drop,
+        I::I32Const(DATA + first.len() as i32),
+        I::I32Const(second.len() as i32),
+        I::I32Const(OUT),
+        I::I32Const(OUT_CAP),
+        I::Call(0),
+    ];
+    let wasm = build_gene(&[fetch_import()], data.as_bytes(), body);
+    let sb = WasmtimeSandbox::new(ConstraintSet {
+        max_execution_time_ms: 500,
+        ..suite_constraints()
+    })
+    .unwrap();
+
+    expect_error_code(run(&sb, &wasm, loopback_config()), errors::ERR_TIMEOUT);
+    assert_eq!(other.hits.load(Ordering::SeqCst), 0, "the request after the deadline must not be sent");
+}

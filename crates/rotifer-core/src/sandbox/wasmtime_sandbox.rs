@@ -720,11 +720,18 @@ impl WasmtimeSandbox {
             Err(code) => return code,
         };
 
-        // Every limit is checked before the request goes out (T-49 D). The
-        // request count and an exhausted host budget are refused above; this
-        // bounds the request itself by what is left of the host-time budget,
-        // so one slow request cannot carry the run past it.
-        let remaining_ms = caller.data().hybrid.remaining_host_millis();
+        // Every limit is checked before the request goes out (T-49 D, spec
+        // §5 pre-send checks). The request count and an exhausted host
+        // budget are refused above. The run's wall-clock deadline is refused
+        // here: host code does not stop for the epoch deadline, so a request
+        // sent past it would come back to a run that is already over, and
+        // its result would be lost. The request itself is then bounded by
+        // what is left of both, so one slow request cannot outlast either.
+        let remaining_run_ms = caller.data().hybrid.remaining_run_millis();
+        if remaining_run_ms == 0 {
+            return ERR_TIMEOUT;
+        }
+        let remaining_ms = caller.data().hybrid.remaining_host_millis().min(remaining_run_ms);
         let requested_ms = req.timeout_ms.unwrap_or(policy.max_timeout_ms);
         req.timeout_ms = Some(requested_ms.min(remaining_ms.min(u32::MAX as u64) as u32));
 
@@ -1070,6 +1077,8 @@ impl WasmtimeSandbox {
         let epoch_interval_ms = 100u64;
         let ticks_until_deadline = (timeout_ms / epoch_interval_ms).max(1);
         store.set_epoch_deadline(ticks_until_deadline);
+        store.data_mut().hybrid.run_deadline =
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms));
 
         let stop_flag = Arc::new(AtomicBool::new(false));
         let stop_clone = stop_flag.clone();

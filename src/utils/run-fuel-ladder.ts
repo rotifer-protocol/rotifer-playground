@@ -12,9 +12,12 @@ import { DEFAULT_SANDBOX_CONSTRAINTS } from "./sandbox-defaults.js";
  * A ladder keeps both properties we care about:
  *   - completion: a run that dies of fuel alone is retried with more, up to a
  *     hard cap, so "expensive" stops reading as "broken";
- *   - honesty: the fuel actually burned is what lands in resource_cost, and
- *     F(g)'s efficiency term already prices it — a Gene that needs 8e9 fuel
- *     pays for 8e9 fuel. Nothing here makes an expensive Gene look cheap.
+ *   - honesty: what lands in resource_cost is the fuel actually burned plus
+ *     any host-call surcharges (ADR-327 D4, billed on top, not drawn from the
+ *     budget), and F(g)'s efficiency term prices all of it — a Gene that
+ *     needs 8e9 fuel pays for 8e9 fuel. Nothing here makes an expensive Gene
+ *     look cheap. A rung's budget bounds guest computation only, so
+ *     resource_cost can exceed it; that is not a fuel-exhausted failure.
  *
  * The cap is finite on purpose: a Gene that exhausts the top rung records a
  * fuel-exhausted failure, because at some point "needs more fuel" is the

@@ -158,6 +158,10 @@ pub struct HybridRuntime {
     /// Surcharges billed so far (ADR-327 D4), in fuel units. Added to
     /// `resource_cost`; never deducted from the guest's fuel.
     pub host_fuel_surcharge: u64,
+    /// When the whole run's wall-clock deadline falls. Host calls do not
+    /// stop for the epoch deadline, so a request has to be bounded by it
+    /// before it is sent; `None` = no deadline known (unit tests).
+    pub run_deadline: Option<Instant>,
 }
 
 impl HybridRuntime {
@@ -178,6 +182,13 @@ impl HybridRuntime {
     /// Host time still available to this run.
     pub fn remaining_host_millis(&self) -> u64 {
         self.host_millis_cap().saturating_sub(self.host_call_millis)
+    }
+
+    /// Wall-clock time left before the run's deadline.
+    pub fn remaining_run_millis(&self) -> u64 {
+        self.run_deadline.map_or(u64::MAX, |d| {
+            d.saturating_duration_since(Instant::now()).as_millis() as u64
+        })
     }
 }
 

@@ -3200,6 +3200,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wasm-encoder 0.251.0",
 ]
 
 [[package]]

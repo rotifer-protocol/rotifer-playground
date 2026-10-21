@@ -258,6 +258,12 @@ jobs:
       - name: Cargo test (core)
         run: cargo test -p rotifer-core
 
+      # The napi bridge is where the CLI decides what permissions a gene runs
+      # with (PermissionSet::declared_by). Its tests drive execute_gene and
+      # execute_algebra directly; without this step they never run in CI.
+      - name: Cargo test (napi bridge)
+        run: cargo test -p rotifer-napi
+
       - name: Build napi bridge (verify compilation)
         run: |
           npm install -g @napi-rs/cli

@@ -929,3 +929,97 @@ fn wasm_fetch_with_a_gene_set_host_header_is_refused_before_sending() {
     expect_error_code(run(&sandbox(), &wasm, loopback_config()), errors::ERR_INVALID_REQUEST);
     assert_eq!(server.hits.load(Ordering::SeqCst), 0);
 }
+
+// ── permissions declared by the phenotype (v0.9.3 §3.5 phase 3, CLI path) ──
+//
+// A binding with no deployer policy of its own runs each gene with
+// `PermissionSet::declared_by(phenotype)`. Until this was wired in, the CLI
+// passed `PermissionSet::default()`, so a Hybrid gene that declared network
+// access was still refused with -2.
+
+fn declared_ctx(phenotype: &Phenotype) -> Context {
+    Context {
+        permissions: PermissionSet::declared_by(phenotype),
+        ..ctx(false)
+    }
+}
+
+#[test]
+fn declared_permissions_let_a_hybrid_gene_reach_its_declared_domain() {
+    let server = TestServer::spawn(200, br#"{"ok":true}"#.to_vec(), None, 0);
+    let wasm = build_fetch_gene(&envelope_for(&server.url("/declared")));
+    let ph = hybrid_phenotype(Fidelity::Hybrid);
+
+    let mut sb = sandbox();
+    sb.set_insecure_loopback(true);
+    let (data, _) = expect_success(sb.execute_gated(&wasm, &declared_ctx(&ph), serde_json::json!({}), &ph));
+    assert_eq!(data["status"], 200);
+    assert_eq!(server.hits.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn declared_permissions_refuse_a_hybrid_gene_that_declares_no_network() {
+    let server = TestServer::spawn(200, b"{}".to_vec(), None, 0);
+    let wasm = build_fetch_gene(&envelope_for(&server.url("/undeclared")));
+    let mut ph = hybrid_phenotype(Fidelity::Hybrid);
+    ph.network = None;
+
+    let mut sb = sandbox();
+    sb.set_insecure_loopback(true);
+    expect_error_code(
+        sb.execute_gated(&wasm, &declared_ctx(&ph), serde_json::json!({}), &ph),
+        errors::ERR_PERMISSION_DENIED,
+    );
+    assert_eq!(server.hits.load(Ordering::SeqCst), 0, "no network I/O may happen");
+}
+
+/// Run `Seq[gene]` through the AlgebraExecutor, the path `agent run` takes
+/// for Par / Cond / Try genomes.
+fn run_in_composition(
+    sb: &WasmtimeSandbox,
+    wasm: &[u8],
+    phenotype: Phenotype,
+    caller: &Context,
+    declared: bool,
+) -> Result<GeneResult, super::SandboxError> {
+    use crate::algebra::{AlgebraExecutor, AlgebraExpr};
+    use crate::types::gene::Gene;
+    let id = [7u8; 32];
+    let mut store = HashMap::new();
+    store.insert(id, Gene { id, phenotype, wasm_bytes: Some(wasm.to_vec()), source_code: None });
+    let executor = AlgebraExecutor::new(sb, &store);
+    let executor = if declared { executor.with_declared_permissions() } else { executor };
+    executor.execute(&AlgebraExpr::Seq(vec![AlgebraExpr::Gene(id)]), caller, serde_json::json!({}))
+}
+
+#[test]
+fn composition_runs_each_gene_with_the_permissions_it_declares() {
+    let server = TestServer::spawn(200, b"{}".to_vec(), None, 0);
+    let wasm = build_fetch_gene(&envelope_for(&server.url("/composed")));
+    let mut sb = sandbox();
+    sb.set_insecure_loopback(true);
+
+    // The caller grants nothing (the CLI's context); the gene's own
+    // declaration is what lets it fetch.
+    let declaring = hybrid_phenotype(Fidelity::Hybrid);
+    expect_success(run_in_composition(&sb, &wasm, declaring.clone(), &ctx(false), true));
+    assert_eq!(server.hits.load(Ordering::SeqCst), 1);
+
+    // A gene that declares no network is refused even when the caller's
+    // context would have granted it: it gets what it declared, no more.
+    let mut silent = declaring.clone();
+    silent.network = None;
+    expect_error_code(
+        run_in_composition(&sb, &wasm, silent, &ctx(true), true),
+        errors::ERR_PERMISSION_DENIED,
+    );
+    assert_eq!(server.hits.load(Ordering::SeqCst), 1, "the refused gene made no request");
+
+    // Without the opt-in the caller's context still applies, as other
+    // bindings rely on.
+    expect_error_code(
+        run_in_composition(&sb, &wasm, declaring, &ctx(false), false),
+        errors::ERR_PERMISSION_DENIED,
+    );
+    assert_eq!(server.hits.load(Ordering::SeqCst), 1);
+}

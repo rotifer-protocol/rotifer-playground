@@ -49,6 +49,31 @@ pub struct PermissionSet {
     pub file_system_access: Option<Vec<String>>,
 }
 
+impl PermissionSet {
+    /// The permissions a gene's own phenotype declares, and nothing more —
+    /// what a binding with no deployer policy of its own (the CLI) grants.
+    ///
+    /// - `network_access`: only a `Hybrid` gene with a `network` block. The
+    ///   `rotifer.net` host functions then confine it to that block's
+    ///   `allowedDomains` and its `externalDependencies` (ADR-327 D5); any
+    ///   other gene is refused with `ERR_PERMISSION_DENIED` (-2).
+    /// - `file_system_access`: a phenotype has no way to declare any, so
+    ///   none (an explicit empty list, not "unchecked").
+    /// - `allowed_domains` stays `None`: it is the deployer's allowlist of
+    ///   gene domains, which a gene cannot grant itself.
+    /// - `resource_limits`: the protocol defaults; the sandbox's
+    ///   `ConstraintSet` still caps what actually runs.
+    pub fn declared_by(phenotype: &gene::Phenotype) -> Self {
+        Self {
+            allowed_domains: None,
+            resource_limits: ResourceLimits::default(),
+            network_access: phenotype.fidelity == gene::Fidelity::Hybrid
+                && phenotype.network.is_some(),
+            file_system_access: Some(Vec::new()),
+        }
+    }
+}
+
 /// Hard resource caps enforced by the sandbox.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceLimits {
@@ -293,6 +318,46 @@ mod tests {
         assert_eq!(rl.max_memory_bytes, Some(64 * 1024 * 1024));
         assert_eq!(rl.max_execution_time_ms, Some(30_000));
         assert_eq!(rl.max_fuel_units, Some(1_000_000));
+    }
+
+    fn phenotype_with(fidelity: gene::Fidelity, network: bool) -> gene::Phenotype {
+        let mut p: gene::Phenotype = serde_json::from_value(serde_json::json!({
+            "domain": "test.permissions",
+            "inputSchema": {},
+            "outputSchema": {},
+            "version": "0.1.0",
+        }))
+        .unwrap();
+        p.fidelity = fidelity;
+        if network {
+            p.network = Some(gene::NetworkConfig {
+                allowed_domains: vec!["api.example.com".into()],
+                max_timeout_ms: 5_000,
+                max_response_bytes: 1_048_576,
+                max_requests_per_min: 10,
+            });
+        }
+        p
+    }
+
+    #[test]
+    fn declared_by_grants_network_only_to_a_hybrid_gene_that_declares_it() {
+        use gene::Fidelity::*;
+        assert!(PermissionSet::declared_by(&phenotype_with(Hybrid, true)).network_access);
+        assert!(!PermissionSet::declared_by(&phenotype_with(Hybrid, false)).network_access);
+        // A network block does not make a Native or Wrapped gene a networked
+        // one: the WASM capability modules are for Hybrid genes (ADR-327 D1).
+        assert!(!PermissionSet::declared_by(&phenotype_with(Native, true)).network_access);
+        assert!(!PermissionSet::declared_by(&phenotype_with(Wrapped, true)).network_access);
+    }
+
+    #[test]
+    fn declared_by_grants_no_filesystem_and_no_domain_allowlist() {
+        let ps = PermissionSet::declared_by(&phenotype_with(gene::Fidelity::Hybrid, true));
+        assert_eq!(ps.file_system_access, Some(vec![]));
+        assert!(ps.allowed_domains.is_none());
+        let defaults = ResourceLimits::default();
+        assert_eq!(ps.resource_limits.max_fuel_units, defaults.max_fuel_units);
     }
 
     #[test]

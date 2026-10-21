@@ -518,7 +518,9 @@ impl PlaygroundBinding {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64,
-            permissions: PermissionSet::default(),
+            // The CLI has no deployer policy of its own: a gene gets what its
+            // phenotype declares, and nothing it does not (v0.9.3 §3.5).
+            permissions: PermissionSet::declared_by(&phenotype),
             trace_id: Some(uuid::Uuid::new_v4().to_string()),
             binding_extensions: None,
         };
@@ -634,7 +636,8 @@ impl PlaygroundBinding {
         let permissions = if let Some(pj) = permissions_json {
             serde_json::from_str::<PermissionSet>(&pj).unwrap_or_default()
         } else {
-            PermissionSet::default()
+            // Same set execute_gene runs the gene with.
+            PermissionSet::declared_by(&phenotype)
         };
 
         let constraints = if let Some(cj) = constraints_json {
@@ -723,7 +726,11 @@ impl PlaygroundBinding {
         };
 
         let start = std::time::Instant::now();
-        let executor = AlgebraExecutor::new(&sandbox, &gene_store).with_gene_ids(gene_ids);
+        // Each gene runs with what its own phenotype declares; the context's
+        // permission set is not used (v0.9.3 §3.5).
+        let executor = AlgebraExecutor::new(&sandbox, &gene_store)
+            .with_gene_ids(gene_ids)
+            .with_declared_permissions();
 
         match executor.execute(&expr, &context, input) {
             Ok(result) => {
@@ -880,4 +887,179 @@ fn extract_rs_function(line: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod permission_tests {
+    //! The CLI runs every gene through `execute_gene` or `execute_algebra`.
+    //! Each must hand the sandbox the permissions the gene's phenotype
+    //! declares: a Hybrid gene with a `network` block may call
+    //! `rotifer.net.fetch`, a gene without one is refused with -2
+    //! (ERR_PERMISSION_DENIED). The CLI cannot reach a loopback server, so
+    //! the declaring gene fetches a `.invalid` host (RFC 2606, never
+    //! resolves): being let through shows up as a network-layer failure
+    //! rather than -2.
+    use super::*;
+
+    const HOST: &str = "rotifer-permission-test.invalid";
+    const DATA: i32 = 1024;
+    const OUT: i32 = 16384;
+    const OUT_CAP: i32 = 65536;
+    /// `DEFAULT_SANDBOX_CONSTRAINTS_JSON` in src/utils/sandbox-defaults.ts.
+    const CLI_CONSTRAINTS: &str = r#"{"max_fuel":500000000,"max_memory_bytes":268435456,"max_execution_time_ms":60000,"allowed_host_functions":[],"denied_host_functions":[]}"#;
+
+    /// `express(i32, i32) -> i32` that fetches the envelope in its data
+    /// segment and returns the host's result code when it is negative.
+    fn fetch_gene() -> Vec<u8> {
+        use wasm_encoder::*;
+        let envelope = format!(r#"{{"method":"GET","url":"https://{HOST}/"}}"#);
+        let mut module = Module::new();
+        let mut types = TypeSection::new();
+        types.ty().function(vec![ValType::I32; 4], vec![ValType::I32]);
+        types.ty().function(vec![ValType::I32; 2], vec![ValType::I32]);
+        module.section(&types);
+        let mut imports = ImportSection::new();
+        imports.import("rotifer.net", "fetch", EntityType::Function(0));
+        module.section(&imports);
+        let mut functions = FunctionSection::new();
+        functions.function(1);
+        module.section(&functions);
+        let mut memories = MemorySection::new();
+        memories.memory(MemoryType { minimum: 4, maximum: Some(16), memory64: false, shared: false, page_size_log2: None });
+        module.section(&memories);
+        let mut exports = ExportSection::new();
+        exports.export("express", ExportKind::Func, 1);
+        exports.export("memory", ExportKind::Memory, 0);
+        module.section(&exports);
+        let mut code = CodeSection::new();
+        let mut f = Function::new(vec![(1, ValType::I32)]);
+        for ins in [
+            Instruction::I32Const(DATA),
+            Instruction::I32Const(envelope.len() as i32),
+            Instruction::I32Const(OUT),
+            Instruction::I32Const(OUT_CAP),
+            Instruction::Call(0),
+            Instruction::LocalSet(2),
+            Instruction::LocalGet(2),
+            Instruction::I32Const(0),
+            Instruction::I32LtS,
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(2),
+            Instruction::Return,
+            Instruction::End,
+            Instruction::I32Const(OUT),
+            Instruction::End,
+        ] {
+            f.instruction(&ins);
+        }
+        code.function(&f);
+        module.section(&code);
+        let mut data = DataSection::new();
+        data.active(0, &ConstExpr::i32_const(DATA), envelope.bytes());
+        module.section(&data);
+        module.finish()
+    }
+
+    fn phenotype(declares_network: bool) -> serde_json::Value {
+        let mut p = serde_json::json!({
+            "domain": "test.permissions",
+            "inputSchema": {"type": "object"},
+            "outputSchema": {"type": "object"},
+            "version": "0.1.0",
+            "fidelity": "Hybrid",
+            "externalDependencies": [
+                {"apiType": "rest", "semanticTag": "permission-test", "domains": [HOST]}
+            ],
+        });
+        if declares_network {
+            p["network"] = serde_json::json!({"allowedDomains": [HOST], "maxTimeoutMs": 5000});
+        }
+        p
+    }
+
+    fn binding() -> PlaygroundBinding {
+        let dir = std::env::temp_dir().join(format!("rotifer-napi-perm-{}", uuid::Uuid::new_v4()));
+        PlaygroundBinding::new(dir.to_string_lossy().into_owned()).unwrap()
+    }
+
+    fn guest_code(message: &str) -> i32 {
+        let tail = message
+            .split("error code: ")
+            .nth(1)
+            .unwrap_or_else(|| panic!("no guest error code in: {message}"));
+        tail.trim_start()
+            .chars()
+            .take_while(|c| *c == '-' || c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+            .unwrap_or_else(|_| panic!("unparseable guest error code in: {message}"))
+    }
+
+    /// -5 (ERR_NETWORK) when the lookup fails outright, -4 (ERR_TIMEOUT) if
+    /// the resolver is slow: either way the request was let through.
+    fn assert_let_through(code: i32) {
+        assert!(code == -5 || code == -4, "expected a network-layer failure (-5 / -4), got {code}");
+    }
+
+    fn run_gene(declares_network: bool) -> ExecutionResultView {
+        binding()
+            .execute_gene(
+                Buffer::from(fetch_gene()),
+                "{}".into(),
+                phenotype(declares_network).to_string(),
+                Some(CLI_CONSTRAINTS.into()),
+            )
+            .unwrap()
+    }
+
+    fn run_algebra(declares_network: bool) -> AlgebraResultView {
+        let id = [7u8; 32];
+        let entries = serde_json::json!({
+            hex::encode(id): {"wasm": fetch_gene(), "phenotype": phenotype(declares_network)}
+        });
+        let expr = serde_json::json!({"Seq": [{"Gene": id}]});
+        binding()
+            .execute_algebra(expr.to_string(), entries.to_string(), "{}".into(), Some(CLI_CONSTRAINTS.into()))
+            .unwrap()
+    }
+
+    #[test]
+    fn execute_gene_lets_a_gene_that_declares_network_fetch() {
+        let r = run_gene(true);
+        assert!(!r.success);
+        assert_let_through(guest_code(r.error_message.as_deref().unwrap()));
+    }
+
+    #[test]
+    fn execute_gene_refuses_a_gene_that_declares_no_network() {
+        let r = run_gene(false);
+        assert!(!r.success);
+        assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2);
+    }
+
+    #[test]
+    fn execute_algebra_lets_a_gene_that_declares_network_fetch() {
+        let r = run_algebra(true);
+        assert!(!r.success);
+        assert_let_through(guest_code(r.error_message.as_deref().unwrap()));
+    }
+
+    #[test]
+    fn execute_algebra_refuses_a_gene_that_declares_no_network() {
+        let r = run_algebra(false);
+        assert!(!r.success);
+        assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2);
+    }
+
+    #[test]
+    fn l0_check_without_explicit_permissions_uses_the_declared_ones() {
+        // The declared set carries an explicit (empty) filesystem list, so
+        // the gate checks it instead of skipping it.
+        let declared = binding().l0_check(phenotype(true).to_string(), None, None).unwrap();
+        let explicit_default = binding()
+            .l0_check(phenotype(true).to_string(), Some(serde_json::to_string(&PermissionSet::default()).unwrap()), None)
+            .unwrap();
+        assert!(declared.passed);
+        assert_eq!(declared.checks_performed, explicit_default.checks_performed + 1);
+    }
 }

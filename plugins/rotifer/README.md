@@ -53,7 +53,9 @@ no runtime code of its own:
 
 - `rotifer-skills` — a `dsh-skill-filesystem` provider scoped to this package's
   own `skills/` directory. It sets `includeDefaultRoots: false`, so it contributes
-  only the four Rotifer skills and never rescans your project or user skill roots.
+  only the four Rotifer skills — the three skill folders plus the `rotifer-overview`
+  card, which this provider also reads as a skill — and never rescans your project
+  or user skill roots.
   It cannot shadow a skill you wrote.
 - `rotifer-mcp` — the `dsh-mcp-client` bridge on the pinned, narrowed launch line
   below. Its 10 tool schemas are paid on every request while mounted (6,736 bytes
@@ -89,7 +91,7 @@ trying someone else's capability does not mean trusting their code with your mac
 
 | Skill | Purpose |
 |---|---|
-| `rotifer` | Browse, install, and compete Genes in the live Arena |
+| `rotifer-overview` | Browse, install, and compete Genes in the live Arena. A single-file card rather than a skill folder: DeepSeek Harness loads it as a skill, the other hosts read only the three folders |
 | `rotifer-hello` | Interactive agent creation from curated templates — quality diagnosis, security scanning, content analysis, Web3 auditing, document Q&A |
 | `rotifer-evolve` | The full loop: scan capabilities, benchmark against live Arena rankings, and replace weaker Genes. Ranking is the automatic part — every replacement waits for your approval and can be rolled back |
 | `rotifer-assistant` | Unified entry point — guide, architect, and challenge your agents |

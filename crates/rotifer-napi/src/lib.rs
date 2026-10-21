@@ -961,12 +961,16 @@ mod permission_tests {
     }
 
     fn phenotype(declares_network: bool) -> serde_json::Value {
+        phenotype_of("Hybrid", declares_network)
+    }
+
+    fn phenotype_of(fidelity: &str, declares_network: bool) -> serde_json::Value {
         let mut p = serde_json::json!({
             "domain": "test.permissions",
             "inputSchema": {"type": "object"},
             "outputSchema": {"type": "object"},
             "version": "0.1.0",
-            "fidelity": "Hybrid",
+            "fidelity": fidelity,
             "externalDependencies": [
                 {"apiType": "rest", "semanticTag": "permission-test", "domains": [HOST]}
             ],
@@ -1002,20 +1006,28 @@ mod permission_tests {
     }
 
     fn run_gene(declares_network: bool) -> ExecutionResultView {
+        run_gene_with(phenotype(declares_network))
+    }
+
+    fn run_gene_with(phenotype: serde_json::Value) -> ExecutionResultView {
         binding()
             .execute_gene(
                 Buffer::from(fetch_gene()),
                 "{}".into(),
-                phenotype(declares_network).to_string(),
+                phenotype.to_string(),
                 Some(CLI_CONSTRAINTS.into()),
             )
             .unwrap()
     }
 
     fn run_algebra(declares_network: bool) -> AlgebraResultView {
+        run_algebra_with(phenotype(declares_network))
+    }
+
+    fn run_algebra_with(phenotype: serde_json::Value) -> AlgebraResultView {
         let id = [7u8; 32];
         let entries = serde_json::json!({
-            hex::encode(id): {"wasm": fetch_gene(), "phenotype": phenotype(declares_network)}
+            hex::encode(id): {"wasm": fetch_gene(), "phenotype": phenotype}
         });
         let expr = serde_json::json!({"Seq": [{"Gene": id}]});
         binding()
@@ -1049,6 +1061,25 @@ mod permission_tests {
         let r = run_algebra(false);
         assert!(!r.success);
         assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2);
+    }
+
+    /// The case only the permission gate decides. A gene with no `network`
+    /// block is refused by the sandbox whatever permissions it gets, so the
+    /// tests above would stay green if the bridge granted network to every
+    /// gene. A Wrapped gene that writes a `network` block has a policy the
+    /// sandbox would honour; only `declared_by` (network for Hybrid genes
+    /// alone) keeps it off the network.
+    #[test]
+    fn a_wrapped_gene_with_a_network_block_is_refused_on_both_paths() {
+        let wrapped = phenotype_of("Wrapped", true);
+
+        let r = run_gene_with(wrapped.clone());
+        assert!(!r.success);
+        assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2, "execute_gene");
+
+        let r = run_algebra_with(wrapped);
+        assert!(!r.success);
+        assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2, "execute_algebra");
     }
 
     #[test]

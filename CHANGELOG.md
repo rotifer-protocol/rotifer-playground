@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.29.0...v0.30.0) (2026-10-21)
+
+
+### Features
+
+* **arena:** F(g) reference scale from the season median (v0.9.3 [#6](https://github.com/rotifer-protocol/rotifer-playground/issues/6)) ([#429](https://github.com/rotifer-protocol/rotifer-playground/issues/429)) ([2e94c4a](https://github.com/rotifer-protocol/rotifer-playground/commit/2e94c4ab2054694f2ce832bfc3fc4534638e7bb7))
+* **permissions:** run each gene with the permissions its phenotype declares on the CLI path ([#428](https://github.com/rotifer-protocol/rotifer-playground/issues/428)) ([1b273f1](https://github.com/rotifer-protocol/rotifer-playground/commit/1b273f1c052492fc946b79f63a2c3c2510d5a0d9))
+
+
+### Bug Fixes
+
+* **agent:** count a compiled Native gene as executable in the genome snapshot ([#426](https://github.com/rotifer-protocol/rotifer-playground/issues/426)) ([93feb35](https://github.com/rotifer-protocol/rotifer-playground/commit/93feb355f5bbc06e3991c82e53ad95b907bead31))
+* **arena:** publish measured runs for estimated submissions too ([#432](https://github.com/rotifer-protocol/rotifer-playground/issues/432)) ([b023135](https://github.com/rotifer-protocol/rotifer-playground/commit/b023135a645be91e1cad5bdb3ac73578728592d1))
+* **cloud:** re-submitting a gene to the Arena updates its row instead of failing with 409 ([#431](https://github.com/rotifer-protocol/rotifer-playground/issues/431)) ([86fed0d](https://github.com/rotifer-protocol/rotifer-playground/commit/86fed0de5f1f672852d099a874559ef6b4962e3f))
+* **core:** bill host-call surcharges to resource_cost instead of guest fuel ([#430](https://github.com/rotifer-protocol/rotifer-playground/issues/430)) ([6cc9ee2](https://github.com/rotifer-protocol/rotifer-playground/commit/6cc9ee2819ab5dbd60bcf6dfd2a8dd8643a723c1))
+* **genome:** only tell the user to drop --pinned when they passed it ([#425](https://github.com/rotifer-protocol/rotifer-playground/issues/425)) ([282024b](https://github.com/rotifer-protocol/rotifer-playground/commit/282024bee0efe1d717788b1d7a75c7b244141234))
+* **supabase:** an Arena re-submission moves last_evaluated and recomputes reputation ([#433](https://github.com/rotifer-protocol/rotifer-playground/issues/433)) ([8525f45](https://github.com/rotifer-protocol/rotifer-playground/commit/8525f458eba58e59ab042002e2512054303d1415))
+* **supabase:** harden what clients may write to the Arena tables ([#434](https://github.com/rotifer-protocol/rotifer-playground/issues/434)) ([136f074](https://github.com/rotifer-protocol/rotifer-playground/commit/136f074b78f4a5fb661e52e28d18023d4cefd0a5))
+
 ## [0.29.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.28.0...v0.29.0) (2026-10-21)
 
 

@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   FALLBACK_REFERENCE,
+  REFERENCE_FUNCTION_MISSING,
   LATENCY_SCALE_MS,
   RESOURCE_SCALE_UNITS,
   computeBaseFitness,
@@ -104,14 +105,23 @@ describe("resolveFitnessReference: a median when there is one, the constants oth
     expect(r.reason).toContain("too few measured text.x / Native genes");
   });
 
-  it("registry unreachable or without the function: the constants, and nothing is recorded", async () => {
+  it("registry without the function: the constants, and nothing is recorded (its table lacks the columns)", async () => {
     const r = await resolveFitnessReference("text.x", "Native", async () => {
-      throw new Error("HTTP 404");
+      throw Object.assign(new Error("get_fitness_reference does not exist"), { code: REFERENCE_FUNCTION_MISSING });
     });
     expect(r.scale).toEqual(FALLBACK_REFERENCE);
     expect(r.source).toBe("fallback");
     expect(r.isRecordable).toBe(false);
-    expect(r.reason).toContain("HTTP 404");
+  });
+
+  it("any other failure: the constants, recorded as fallback so the row never keeps an older median", async () => {
+    const r = await resolveFitnessReference("text.x", "Native", async () => {
+      throw new Error("HTTP 503: upstream unavailable");
+    });
+    expect(r.scale).toEqual(FALLBACK_REFERENCE);
+    expect(r.source).toBe("fallback");
+    expect(r.isRecordable).toBe(true);
+    expect(r.reason).toContain("HTTP 503");
   });
 
   it("a non-positive median is not used", async () => {
@@ -180,6 +190,21 @@ describe("the cloud client: reading the median and recording the reference", () 
     expect(r.isRecordable).toBe(false);
   });
 
+  it("a server error (500) falls back and records the constants", async () => {
+    fetchMock.mockResolvedValue(json({ message: "internal error" }, 500));
+    const { getFitnessReference } = await import("../../src/cloud/client.js");
+    const r = await resolveFitnessReference("text.x", "Native", getFitnessReference);
+    expect(r).toMatchObject({ source: "fallback", isRecordable: true, scale: { latencyMs: 1000, resourceCost: 10000 } });
+  });
+
+  it("a timeout falls back and records the constants", async () => {
+    fetchMock.mockRejectedValue(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+    const { getFitnessReference } = await import("../../src/cloud/client.js");
+    const r = await resolveFitnessReference("text.x", "Native", getFitnessReference);
+    expect(r).toMatchObject({ source: "fallback", isRecordable: true, scale: { latencyMs: 1000, resourceCost: 10000 } });
+    expect(r.reason).toContain("timeout");
+  });
+
   async function submitBody(fitness: Record<string, unknown>): Promise<Record<string, unknown>> {
     mkdirSync(join(home, ".rotifer"), { recursive: true });
     writeFileSync(
@@ -204,6 +229,11 @@ describe("the cloud client: reading the median and recording the reference", () 
   it("a submission carries the reference it was scaled by", async () => {
     const body = await submitBody({ fitness_reference: "season-median", l_ref_ms: 80, cost_ref: 3000 });
     expect(body).toMatchObject({ fitness_reference: "season-median", l_ref_ms: 80, cost_ref: 3000, evaluation_method: "estimated" });
+  });
+
+  it("a recorded fallback overwrites the row's reference with the constants", async () => {
+    const body = await submitBody({ fitness_reference: "fallback", l_ref_ms: 1000, cost_ref: 10000 });
+    expect(body).toMatchObject({ fitness_reference: "fallback", l_ref_ms: 1000, cost_ref: 10000 });
   });
 
   it("without a recordable reference the three columns are not sent at all", async () => {

@@ -13,6 +13,7 @@ import { DEFAULT_CLOUD_ENDPOINT,
   resolveAnonKey, CLOUD_CONFIG_FILE } from "./types.js";
 import { loadCredentials, refreshTokenIfNeeded } from "./auth.js";
 import { parseGeneRef } from "./gene-ref.js";
+import { REFERENCE_FUNCTION_MISSING, type SeasonReferenceRow } from "../utils/fitness-formula.js";
 
 const ROTIFER_HOME = join(
   process.env.HOME || process.env.USERPROFILE || "/tmp",
@@ -697,21 +698,27 @@ export async function publishEvaluationRuns(
  * The current-season median latency and resource cost of published genes in
  * one domain and fidelity — F(g)'s L_ref / Cost_ref (ADR-318 D2). Null when the
  * season has too few measured genes in that group. Throws when the registry
- * cannot answer (unreachable, or too old to have the function), which callers
- * treat as "fall back to the fixed constants".
+ * cannot answer, which callers treat as "fall back to the fixed constants";
+ * a registry without the function (404) throws an error whose `code` is
+ * REFERENCE_FUNCTION_MISSING, because that registry cannot store the record.
  */
 export async function getFitnessReference(
   domain: string,
   fidelity: string,
   timeoutMs: number = 5_000,
-): Promise<import("../utils/fitness-formula.js").SeasonReferenceRow | null> {
+): Promise<SeasonReferenceRow | null> {
   const res = await fetch(apiUrl("/rpc/get_fitness_reference"), {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ p_domain: domain, p_fidelity: fidelity }),
     signal: AbortSignal.timeout(timeoutMs),
   });
-  const rows = await handleResponse<import("../utils/fitness-formula.js").SeasonReferenceRow[]>(res);
+  if (res.status === 404) {
+    throw Object.assign(new Error("get_fitness_reference is not deployed on this registry"), {
+      code: REFERENCE_FUNCTION_MISSING,
+    });
+  }
+  const rows = await handleResponse<SeasonReferenceRow[]>(res);
   return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
 }
 

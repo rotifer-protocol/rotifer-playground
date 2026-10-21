@@ -86,15 +86,25 @@ export interface SeasonReferenceRow {
   season_number: number;
 }
 
+/**
+ * `code` on the error a reference fetcher throws when the registry has no
+ * `get_fitness_reference` (HTTP 404): a registry from before the migration,
+ * whose arena_entries has no reference columns either. A code rather than an
+ * error class, so the check survives two copies of this module.
+ */
+export const REFERENCE_FUNCTION_MISSING = "REFERENCE_FUNCTION_MISSING";
+
 export interface ResolvedReference {
   scale: ReferenceScale;
   source: "season-median" | "fallback";
   /**
-   * The registry answered. Only then is it known to have the columns that
-   * record a reference (they ship in the same migration as the function), so
-   * only then may a submission send them — an older registry rejects unknown
-   * columns, and a submit that failed for that would be worse than a missing
-   * record.
+   * Whether a submission may record this reference in the row. False only
+   * when the registry said it has no `get_fitness_reference` (404): the
+   * columns ship in the same migration as the function, so that registry
+   * would reject them. Any other failure — a timeout, a 500 — still records
+   * the fallback with its constants: the upsert keeps columns it is not sent,
+   * so leaving them out would leave an older median on a row whose F(g) used
+   * the constants, and the row could no longer be recomputed on its own.
    */
   isRecordable: boolean;
   /** Why the fallback was used; absent for a season median. */
@@ -117,11 +127,14 @@ export async function resolveFitnessReference(
   try {
     row = await fetchReference(domain, fidelity);
   } catch (err) {
+    const isFunctionMissing = (err as { code?: unknown } | null)?.code === REFERENCE_FUNCTION_MISSING;
     return {
       scale: { ...FALLBACK_REFERENCE },
       source: "fallback",
-      isRecordable: false,
-      reason: `the registry's season median could not be read (${(err as Error).message})`,
+      isRecordable: !isFunctionMissing,
+      reason: isFunctionMissing
+        ? "the registry has no season median yet (get_fitness_reference is not deployed)"
+        : `the registry's season median could not be read (${(err as Error).message})`,
     };
   }
   if (row === null) {

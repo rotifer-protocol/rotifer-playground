@@ -75,8 +75,8 @@ SELECT throws_ok(
 -- T6 — the evidence is public, or the promise to recompute is empty
 SELECT policies_are(
   'public', 'arena_evaluation_runs',
-  ARRAY['Evaluation runs are publicly readable', 'Signed-in callers may record evaluation runs'],
-  'T6: exactly two policies — public read, signed-in insert');
+  ARRAY['Evaluation runs are publicly readable', 'Gene owners may record evaluation runs'],
+  'T6: exactly two policies — public read, gene-owner insert (20261021200000; was any signed-in caller)');
 
 -- T7 — append-only: there is no door to edit history
 SELECT is(

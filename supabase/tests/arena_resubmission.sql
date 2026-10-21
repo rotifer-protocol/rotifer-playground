@@ -67,11 +67,12 @@ RESET ROLE;
 SELECT ok(
   (SELECT last_evaluated < now() - interval '23 hours' FROM arena_entries WHERE gene_id = 'c5222222-2222-4222-8222-222222222222'),
   'T5: a client update of a column a submission does not write leaves last_evaluated alone');
-SET LOCAL ROLE authenticated;
-
 -- What PostgREST runs for `POST /arena_entries?on_conflict=gene_id` with
 -- merge-duplicates: an upsert that sets every submitted column. Including
--- last_evaluated, backdated, to show the client cannot choose it.
+-- last_evaluated, backdated, to show the client cannot choose it. Since
+-- 20261021200000 PostgREST cannot even send last_evaluated (no column
+-- privilege), so this runs as the test role with the client's claims: the
+-- guard is checked on its own.
 INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method, evaluation_n, last_evaluated)
 VALUES ('c5222222-2222-4222-8222-222222222222', 'test.resubmit', 0.9, 'sandbox', 3, now() - interval '30 days')
 ON CONFLICT (gene_id) DO UPDATE
@@ -95,8 +96,8 @@ SELECT is(
 
 SELECT is(
   (SELECT arena_score FROM gene_reputation WHERE gene_id = 'c5222222-2222-4222-8222-222222222222' ORDER BY epoch DESC LIMIT 1),
-  0.9::DOUBLE PRECISION,
-  'T8: the re-submission recomputed reputation from the new score');
+  0::DOUBLE PRECISION,
+  'T8: the re-submission recomputed reputation (from 0.1): a client re-submission is recorded as estimated since 20261021200000 (T-58 F4), and an estimate carries no arena score');
 
 -- Re-submitting the same score is still an evaluation for the date, but
 -- reputation has nothing new to compute.
@@ -131,7 +132,7 @@ SELECT is(
 UPDATE arena_entries SET last_evaluated = now() - interval '1 day'
  WHERE gene_id = 'c5222222-2222-4222-8222-222222222222';
 
-SET LOCAL ROLE authenticated;
+-- As above: the guard on its own (the column privilege also refuses it).
 SET LOCAL request.jwt.claims = '{"sub":"c5111111-1111-4111-8111-111111111111","role":"authenticated"}';
 UPDATE arena_entries SET last_evaluated = '2099-01-01T00:00:00Z'
  WHERE gene_id = 'c5222222-2222-4222-8222-222222222222';

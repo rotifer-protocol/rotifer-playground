@@ -54,15 +54,22 @@ SELECT throws_ok(
   NULL,
   'T3: a client claiming binding_runtime is refused');
 
--- T4 — a client claim the server can accept, and the identity it stamps
+-- T4 — a client claim the server can accept, and the identity it stamps.
+-- Since 20261021200000 a client has no column privilege on evaluator, so
+-- PostgREST refuses to send it at all; the guard is checked on its own here,
+-- as the test role carrying the client's claims. A client 'sandbox' is
+-- recorded as 'estimated' since the same migration (T-58 F4), so the claim
+-- sent here is 'estimated'.
+RESET ROLE;
 SELECT lives_ok(
   $$ INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method, evaluator)
-     VALUES ('a8222222-2222-4222-8222-222222222222', 'test.guard', 0.5, 'sandbox', 'someone-else') $$,
-  'T4: a sandbox claim from a client is accepted');
+     VALUES ('a8222222-2222-4222-8222-222222222222', 'test.guard', 0.5, 'estimated', 'someone-else') $$,
+  'T4: an estimated claim from a client is accepted');
 SELECT is(
   (SELECT evaluator FROM arena_entries WHERE gene_id = 'a8222222-2222-4222-8222-222222222222'),
   'a8111111-1111-4111-8111-111111111111',
   'T5: evaluator is stamped from the authenticated principal, overwriting what the client sent');
+SET LOCAL ROLE authenticated;
 
 -- T6 — the server does NOT adjudicate between client-asserted methods
 SELECT lives_ok(

@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.28.0...v0.29.0) (2026-10-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **genome:** genomeId changes format from 64 hex characters to `bp1:` plus 64, and the same Blueprint now hashes to a different value (it covers the execution projection only). Readers are stricter: a Blueprint without `composition`, with missing required fields, or with a schema using any `$` keyword other than `$comment` is refused, and export refuses anything import would refuse.
+* **core:** TryCatch handlers get a spec GeneError naming the gene that ran ([#411](https://github.com/rotifer-protocol/rotifer-playground/issues/411))
+
+### Features
+
+* **genome:** RFC draft 5 B2-B5, and export refuses what import would refuse ([99973ca](https://github.com/rotifer-protocol/rotifer-playground/commit/99973ca7c892bd6eabc065d64def533051e9aa66))
+
+
+### Bug Fixes
+
+* **core:** compare Cond predicate numbers by mathematical value ([#413](https://github.com/rotifer-protocol/rotifer-playground/issues/413)) ([b014158](https://github.com/rotifer-protocol/rotifer-playground/commit/b01415887e45b5ddb47515d200c9f71d995d97df))
+* **core:** move the rotifer.net HTTP client to ureq 3 and drop the webpki-roots ignore ([#418](https://github.com/rotifer-protocol/rotifer-playground/issues/418)) ([705b3be](https://github.com/rotifer-protocol/rotifer-playground/commit/705b3be43cc68c2b98608ab5920b9b65779b96ba))
+* **core:** refuse request headers the HTTP client must manage in rotifer.net ([#419](https://github.com/rotifer-protocol/rotifer-playground/issues/419)) ([6c21e52](https://github.com/rotifer-protocol/rotifer-playground/commit/6c21e52f89b2b1ff461a796ecab6a3845e4bc1b0))
+* **core:** TryCatch handlers get a spec GeneError naming the gene that ran ([#411](https://github.com/rotifer-protocol/rotifer-playground/issues/411)) ([eeaf8d5](https://github.com/rotifer-protocol/rotifer-playground/commit/eeaf8d5dad5a4d140fbb2cca3bcd74633d1f3c51))
+* **deps:** bump rustls-webpki and webpki-roots for RUSTSEC-2026-0381/0382 ([#417](https://github.com/rotifer-protocol/rotifer-playground/issues/417)) ([5f9d865](https://github.com/rotifer-protocol/rotifer-playground/commit/5f9d86553e865e2f27449478b8aa9f8c0dc171eb))
+* **genome:** look up hints and capability queries by own role key only ([#415](https://github.com/rotifer-protocol/rotifer-playground/issues/415)) ([8bc3576](https://github.com/rotifer-protocol/rotifer-playground/commit/8bc35769c12785e6dc6f62f71e55bf11dd1c5041))
+* **genome:** red-team round 5 reader gaps N1-N4, and an e2e for a Try body out of fuel (F5) ([#414](https://github.com/rotifer-protocol/rotifer-playground/issues/414)) ([b18480a](https://github.com/rotifer-protocol/rotifer-playground/commit/b18480a9f469a1713053495a8d2f9a5ce419a4e9))
+* **genome:** refuse Cond forms, surrogates and duplicate keys import cannot honour ([#410](https://github.com/rotifer-protocol/rotifer-playground/issues/410)) ([a861da7](https://github.com/rotifer-protocol/rotifer-playground/commit/a861da702c723725ab217a3f53a2d5f664be3c62))
+* **genome:** refuse integers JSON.parse cannot hold exactly on import ([#408](https://github.com/rotifer-protocol/rotifer-playground/issues/408)) ([93f3e62](https://github.com/rotifer-protocol/rotifer-playground/commit/93f3e622017e26a017820a3567a13adcd516ef6e))
+* **genome:** refuse non-finite numbers and exempt only real, listed leaf IDs on import ([#406](https://github.com/rotifer-protocol/rotifer-playground/issues/406)) ([6e76aff](https://github.com/rotifer-protocol/rotifer-playground/commit/6e76aff6b38954b22b99d8a54457fd06f3606847))
+
 ## [0.28.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.27.0...v0.28.0) (2026-10-20)
 
 

@@ -915,3 +915,17 @@ fn proxy_env_probe() {
     assert_eq!(server.hits.load(Ordering::SeqCst), 1, "request went to the server, not a proxy");
     println!("{PROXY_PROBE_DONE}");
 }
+
+#[test]
+fn wasm_fetch_with_a_gene_set_host_header_is_refused_before_sending() {
+    // Host is the client's: a gene choosing it would pick the virtual host
+    // on a whitelisted server. Refused at the envelope, nothing is sent.
+    let server = TestServer::spawn(200, b"{}".to_vec(), None, 0);
+    let envelope = format!(
+        r#"{{"method":"GET","url":"{}","headers":{{"Host":"internal.example"}}}}"#,
+        server.url("/")
+    );
+    let wasm = build_fetch_gene(&envelope);
+    expect_error_code(run(&sandbox(), &wasm, loopback_config()), errors::ERR_INVALID_REQUEST);
+    assert_eq!(server.hits.load(Ordering::SeqCst), 0);
+}

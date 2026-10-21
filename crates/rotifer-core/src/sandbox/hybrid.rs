@@ -225,9 +225,32 @@ pub struct NetRequest {
     pub timeout_ms: Option<u32>,
 }
 
+/// Request headers the HTTP client manages and a gene may not set, matched
+/// case-insensitively. Routing (`host`: the client derives it from the URL,
+/// and a gene choosing it would pick the virtual host on a whitelisted
+/// server), message framing (`content-length`, `transfer-encoding`: computed
+/// from the actual body; a gene's own value can desynchronise the request or
+/// stall it until timeout), connection management (the RFC 9110 §7.6.1
+/// hop-by-hop headers `connection`, `keep-alive`, `proxy-connection`, `te`,
+/// `trailer`, `upgrade`) and the `expect` handshake, which changes how the
+/// client sends the body.
+pub const CLIENT_MANAGED_HEADERS: [&str; 10] = [
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "te",
+    "trailer",
+    "upgrade",
+    "expect",
+];
+
 /// Parse and structurally validate the JSON request envelope.
 /// Errors with -10 (invalid request) on malformed JSON, missing/empty
-/// method or url, unsupported method, or undecodable bodyBase64.
+/// method or url, unsupported method, undecodable bodyBase64, or a header in
+/// [`CLIENT_MANAGED_HEADERS`] — refused, never silently dropped.
 pub fn parse_request_envelope(bytes: &[u8]) -> Result<NetRequest, i32> {
     use base64::Engine as _;
 
@@ -254,6 +277,9 @@ pub fn parse_request_envelope(bytes: &[u8]) -> Result<NetRequest, i32> {
     if let Some(h) = v.get("headers") {
         let obj = h.as_object().ok_or(errors::ERR_INVALID_REQUEST)?;
         for (name, value) in obj {
+            if CLIENT_MANAGED_HEADERS.iter().any(|h| name.eq_ignore_ascii_case(h)) {
+                return Err(errors::ERR_INVALID_REQUEST);
+            }
             let value = value.as_str().ok_or(errors::ERR_INVALID_REQUEST)?;
             headers.push((name.clone(), value.to_string()));
         }
@@ -511,7 +537,7 @@ fn send(
         "POST" => with_body!(agent.post(url)),
         "PUT" => with_body!(agent.put(url)),
         "PATCH" => with_body!(agent.patch(url)),
-        // parse_net_request admits only the six methods above.
+        // parse_request_envelope admits only the six methods above.
         other => Err(ureq::Error::BadUri(format!("unsupported method {other}"))),
     }
 }
@@ -725,6 +751,56 @@ mod tests {
                 String::from_utf8_lossy(bad),
             );
         }
+    }
+
+    // ── Client-managed request headers ──────────────────────────────────
+    //
+    // The HTTP client owns routing (Host), message framing (Content-Length,
+    // Transfer-Encoding), connection management (the hop-by-hop headers) and
+    // the expectation handshake (Expect). A gene setting any of them gets
+    // ERR_INVALID_REQUEST before anything is sent — not a silent drop. Names
+    // are matched case-insensitively, so each case uses a different casing.
+
+    macro_rules! rejects_client_managed_header {
+        ($($test:ident: $name:literal),* $(,)?) => {$(
+            #[test]
+            fn $test() {
+                let envelope = format!(
+                    r#"{{"method":"GET","url":"https://api.example.com/x","headers":{{"Accept":"*/*","{}":"v"}}}}"#,
+                    $name
+                );
+                assert_eq!(
+                    parse_request_envelope(envelope.as_bytes()).unwrap_err(),
+                    errors::ERR_INVALID_REQUEST,
+                    "gene-set {:?} must be refused",
+                    $name,
+                );
+            }
+        )*};
+    }
+
+    rejects_client_managed_header! {
+        envelope_rejects_host_header: "Host",
+        envelope_rejects_content_length_header: "content-length",
+        envelope_rejects_transfer_encoding_header: "Transfer-Encoding",
+        envelope_rejects_connection_header: "CONNECTION",
+        envelope_rejects_keep_alive_header: "Keep-Alive",
+        envelope_rejects_proxy_connection_header: "proxy-connection",
+        envelope_rejects_te_header: "TE",
+        envelope_rejects_trailer_header: "Trailer",
+        envelope_rejects_upgrade_header: "upgrade",
+        envelope_rejects_expect_header: "Expect",
+    }
+
+    #[test]
+    fn envelope_keeps_ordinary_headers() {
+        let req = parse_request_envelope(
+            br#"{"method":"POST","url":"https://api.example.com/x","headers":{"Accept":"application/json","Authorization":"Bearer ${env:TOKEN}","Content-Type":"application/json","User-Agent":"gene/1","X-Request-Id":"7"}}"#,
+        )
+        .unwrap();
+        let mut names: Vec<&str> = req.headers.iter().map(|(n, _)| n.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["Accept", "Authorization", "Content-Type", "User-Agent", "X-Request-Id"]);
     }
 
     // ── URL policy checks ───────────────────────────────────────────────

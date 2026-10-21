@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::{AlgebraExpr, MergeStrategy};
 use crate::sandbox::{Sandbox, SandboxError, FUEL_EXHAUSTED_MESSAGE, TIMEOUT_MESSAGE_PREFIX};
 use crate::types::gene::Gene;
-use crate::types::{Context, ErrorCode, ExecutionMetadata, GeneId, GeneResult};
+use crate::types::{Context, ErrorCode, ExecutionMetadata, GeneId, GeneResult, PermissionSet};
 
 /// An evaluation result plus the gene a failure came from (see `eval`).
 type Evaluated = Result<(GeneResult, Option<GeneId>), (SandboxError, Option<GeneId>)>;
@@ -34,6 +34,9 @@ pub struct AlgebraExecutor<'a> {
     /// store's own ID. Reported as `geneId` in the `GeneError` a TryCatch
     /// handler receives; a gene missing here is reported with `geneId: null`.
     gene_ids: HashMap<GeneId, String>,
+    /// Run each gene with the permissions its own phenotype declares
+    /// (`PermissionSet::declared_by`) instead of the caller's context.
+    declared_permissions: bool,
 }
 
 impl<'a> AlgebraExecutor<'a> {
@@ -43,6 +46,7 @@ impl<'a> AlgebraExecutor<'a> {
             sandbox,
             gene_store,
             gene_ids: HashMap::new(),
+            declared_permissions: false,
         }
     }
 
@@ -51,6 +55,17 @@ impl<'a> AlgebraExecutor<'a> {
     /// name); §15.2 `GeneError.geneId` must name the gene that actually ran.
     pub fn with_gene_ids(mut self, gene_ids: HashMap<GeneId, String>) -> Self {
         self.gene_ids = gene_ids;
+        self
+    }
+
+    /// Give every gene the permissions its own phenotype declares, and no
+    /// others, in place of the caller's `context.permissions`. Genes in one
+    /// composition declare different things — a Hybrid gene may reach the
+    /// network while the Native gene beside it may not — so one shared
+    /// permission set cannot be right for all of them. For a binding with
+    /// no deployer policy of its own (the CLI).
+    pub fn with_declared_permissions(mut self) -> Self {
+        self.declared_permissions = true;
         self
     }
 
@@ -169,6 +184,14 @@ impl<'a> AlgebraExecutor<'a> {
             // path here meant any gene wrapped in Seq / Par / Cond / Try / Transform
             // had its domain allowlist and resource caps go unchecked — and genome
             // composition is the protocol's headline usage.
+            Some(bytes) if self.declared_permissions => {
+                let context = Context {
+                    permissions: PermissionSet::declared_by(&gene.phenotype),
+                    ..context.clone()
+                };
+                self.sandbox
+                    .execute_gated(bytes, &context, input, &gene.phenotype)
+            }
             Some(bytes) => self
                 .sandbox
                 .execute_gated(bytes, context, input, &gene.phenotype),

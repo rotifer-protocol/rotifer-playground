@@ -392,32 +392,29 @@ pub fn perform_fetch(
         .min(policy.max_timeout_ms)
         .min(constants::MAX_FETCH_TIMEOUT_MS);
 
-    let agent = ureq::AgentBuilder::new()
-        .redirects(0) // manual redirect loop: every hop re-checked below
-        .timeout(std::time::Duration::from_millis(timeout_ms as u64))
-        .build();
+    // ureq 3 defaults differ from ureq 2 in ways that matter here, so each is
+    // set explicitly: proxies are NOT read from the environment (that would
+    // route gene traffic around the whitelist), 4xx/5xx are responses rather
+    // than errors, and nothing is followed automatically — the loop below
+    // re-checks every redirect hop against the whitelist.
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .proxy(None)
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .timeout_global(Some(std::time::Duration::from_millis(timeout_ms as u64)))
+        .build()
+        .into();
 
     let mut current_url = req.url.clone();
     for _hop in 0..=constants::MAX_REDIRECT_HOPS {
         let checked = check_url(policy, &current_url, allow_insecure_loopback)?;
 
-        let mut request = agent.request(&req.method, checked.as_str());
-        for (name, value) in resolved_headers {
-            request = request.set(name, value);
-        }
+        let result = send(&agent, &req.method, checked.as_str(), resolved_headers, req.body.as_deref());
 
-        let result = match &req.body {
-            Some(body) => request.send_bytes(body),
-            None => request.call(),
-        };
-
-        let response = match result {
+        let mut response = match result {
             Ok(r) => r,
-            // 4xx/5xx are valid protocol outcomes: the envelope carries them.
-            Err(ureq::Error::Status(_, r)) => r,
-            Err(ureq::Error::Transport(t)) => {
-                let msg = t.to_string().to_ascii_lowercase();
-                return Err(if msg.contains("timed out") || msg.contains("timeout") {
+            Err(e) => {
+                return Err(if is_timeout(&e) {
                     errors::ERR_TIMEOUT
                 } else {
                     errors::ERR_NETWORK
@@ -425,9 +422,11 @@ pub fn perform_fetch(
             }
         };
 
+        let status = response.status().as_u16();
+
         // Whitelist-checked manual redirect.
-        if (300..400).contains(&response.status())
-            && let Some(location) = response.header("location")
+        if (300..400).contains(&status)
+            && let Some(location) = header_str(response.headers(), "location")
         {
             let next = checked
                 .join(location)
@@ -436,18 +435,19 @@ pub fn perform_fetch(
             continue;
         }
 
-        let status = response.status();
+        // Header names arrive lower-cased; keep the first value of each.
         let mut resp_headers = serde_json::Map::new();
-        for name in response.headers_names() {
-            if let Some(v) = response.header(&name) {
-                resp_headers.insert(name.to_ascii_lowercase(), serde_json::Value::String(v.to_string()));
+        for name in response.headers().keys() {
+            if let Some(v) = header_str(response.headers(), name.as_str()) {
+                resp_headers.insert(name.as_str().to_string(), serde_json::Value::String(v.to_string()));
             }
         }
 
         let mut body = Vec::new();
         let limit = policy.max_response_bytes;
         response
-            .into_reader()
+            .body_mut()
+            .as_reader()
             .take(limit + 1)
             .read_to_end(&mut body)
             .map_err(|_| errors::ERR_NETWORK)?;
@@ -465,6 +465,72 @@ pub fn perform_fetch(
 
     // Redirect chain longer than MAX_REDIRECT_HOPS.
     Err(errors::ERR_NETWORK)
+}
+
+/// One HTTP request. `method` is one of the parsed envelope's allowed
+/// methods. A body is sent whenever the guest supplied one, whatever the
+/// method — as ureq 2 did — hence `force_send_body` on the body-less builders.
+fn send(
+    agent: &ureq::Agent,
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: Option<&[u8]>,
+) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+    macro_rules! with_headers {
+        ($b:expr) => {{
+            let mut b = $b;
+            for (name, value) in headers {
+                b = b.header(name.as_str(), value.as_str());
+            }
+            b
+        }};
+    }
+    macro_rules! without_body {
+        ($b:expr) => {{
+            let b = with_headers!($b);
+            match body {
+                Some(bytes) => b.force_send_body().send(bytes),
+                None => b.call(),
+            }
+        }};
+    }
+    macro_rules! with_body {
+        ($b:expr) => {{
+            let b = with_headers!($b);
+            match body {
+                Some(bytes) => b.send(bytes),
+                None => b.send_empty(),
+            }
+        }};
+    }
+    match method {
+        "GET" => without_body!(agent.get(url)),
+        "HEAD" => without_body!(agent.head(url)),
+        "DELETE" => without_body!(agent.delete(url)),
+        "POST" => with_body!(agent.post(url)),
+        "PUT" => with_body!(agent.put(url)),
+        "PATCH" => with_body!(agent.patch(url)),
+        // parse_net_request admits only the six methods above.
+        other => Err(ureq::Error::BadUri(format!("unsupported method {other}"))),
+    }
+}
+
+/// Timeouts map to ERR_TIMEOUT, as ureq 2's "timed out" transport errors did.
+fn is_timeout(e: &ureq::Error) -> bool {
+    match e {
+        ureq::Error::Timeout(_) => true,
+        ureq::Error::Io(io) => io.kind() == std::io::ErrorKind::TimedOut,
+        other => {
+            let msg = other.to_string().to_ascii_lowercase();
+            msg.contains("timed out") || msg.contains("timeout")
+        }
+    }
+}
+
+/// First value of `name` as a string, if it is valid UTF-8 (ureq 2's `header()`).
+fn header_str<'a>(headers: &'a ureq::http::HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
 }
 
 /// The three capability module names (ADR-327 D2).

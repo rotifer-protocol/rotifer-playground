@@ -677,3 +677,241 @@ fn native_gene_without_capability_imports_is_unaffected() {
     assert_eq!(data, serde_json::json!({"echo": 1}));
     assert!(metadata.host.is_none(), "no host metering for pure native runs");
 }
+
+// ── perform_fetch behaviour pinned across the HTTP client (ureq 2 → 3) ──
+//
+// These call perform_fetch directly against loopback servers, so a change of
+// HTTP client cannot quietly change what a gene sees: non-2xx statuses arrive
+// in the envelope (not as errors), transport failures and timeouts map to
+// their own codes, redirects are followed only by the whitelist-checked loop,
+// response header names are lower-cased with the first value kept, and proxy
+// environment variables are ignored.
+
+use super::hybrid::{perform_fetch, NetRequest};
+
+fn get(url: String, timeout_ms: Option<u32>) -> NetRequest {
+    NetRequest { method: "GET".into(), url, headers: Vec::new(), body: None, timeout_ms }
+}
+
+fn envelope(bytes: Vec<u8>) -> serde_json::Value {
+    serde_json::from_slice(&bytes).expect("envelope is JSON")
+}
+
+/// Serve exactly `response` (raw HTTP bytes) to every connection.
+fn spawn_raw(response: &'static [u8]) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut buf = [0u8; 8192];
+            let mut req = Vec::new();
+            while let Ok(n) = stream.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                req.extend_from_slice(&buf[..n]);
+                if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let _ = stream.write_all(response);
+        }
+    });
+    port
+}
+
+#[test]
+fn fetch_non_2xx_status_is_returned_in_the_envelope() {
+    for status in [404u16, 503] {
+        let server = TestServer::spawn(status, br#"{"err":true}"#.to_vec(), None, 0);
+        let env = envelope(
+            perform_fetch(&loopback_policy(), true, &get(server.url("/x"), None), &[])
+                .unwrap_or_else(|code| panic!("{status} must not be an error, got {code}")),
+        );
+        assert_eq!(env["status"], status);
+        assert_eq!(body_of(&env), br#"{"err":true}"#);
+    }
+}
+
+#[test]
+fn fetch_transport_failure_is_a_network_error() {
+    // A port nothing listens on: connection refused.
+    let port = {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let req = get(format!("http://127.0.0.1:{port}/x"), None);
+    assert_eq!(perform_fetch(&loopback_policy(), true, &req, &[]), Err(errors::ERR_NETWORK));
+}
+
+#[test]
+fn fetch_timeout_is_a_timeout_error() {
+    let server = TestServer::spawn(200, b"{}".to_vec(), None, 2_000);
+    let req = get(server.url("/slow"), Some(300));
+    let started = std::time::Instant::now();
+    assert_eq!(perform_fetch(&loopback_policy(), true, &req, &[]), Err(errors::ERR_TIMEOUT));
+    assert!(started.elapsed() < std::time::Duration::from_millis(1_800), "the 300ms budget applies");
+}
+
+#[test]
+fn fetch_follows_a_whitelisted_redirect_and_returns_a_bare_3xx() {
+    let target = TestServer::spawn(200, br#"{"ok":1}"#.to_vec(), None, 0);
+    let hop = TestServer::spawn(302, Vec::new(), Some(target.url("/final")), 0);
+    let env = envelope(perform_fetch(&loopback_policy(), true, &get(hop.url("/start"), None), &[]).unwrap());
+    assert_eq!(env["status"], 200);
+    assert_eq!(body_of(&env), br#"{"ok":1}"#);
+    assert_eq!(hop.hits.load(Ordering::SeqCst), 1);
+    assert_eq!(target.hits.load(Ordering::SeqCst), 1);
+
+    // A 3xx without Location is an ordinary response.
+    let bare = TestServer::spawn(304, Vec::new(), None, 0);
+    let env = envelope(perform_fetch(&loopback_policy(), true, &get(bare.url("/x"), None), &[]).unwrap());
+    assert_eq!(env["status"], 304);
+}
+
+#[test]
+fn fetch_lowercases_header_names_and_keeps_the_first_value() {
+    let port = spawn_raw(
+        b"HTTP/1.1 200 OK\r\nX-Dup: first\r\nX-Dup: second\r\nX-Mixed-Case: v\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+    );
+    let env = envelope(
+        perform_fetch(&loopback_policy(), true, &get(format!("http://127.0.0.1:{port}/h"), None), &[]).unwrap(),
+    );
+    assert_eq!(env["headers"]["x-dup"], "first");
+    assert_eq!(env["headers"]["x-mixed-case"], "v");
+    assert!(env["headers"].get("X-Mixed-Case").is_none());
+}
+
+/// Read one full request (headers, then Content-Length bytes of body), record
+/// it, answer 200. Unlike TestServer it drains the body before replying, so
+/// closing the socket never resets a client still writing.
+fn spawn_capturing() -> (u16, Arc<Mutex<Vec<u8>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let seen_t = seen.clone();
+    std::thread::spawn(move || {
+        let Some(Ok(mut stream)) = listener.incoming().next() else { return };
+        let mut req = Vec::new();
+        let mut buf = [0u8; 8192];
+        let header_end = loop {
+            let n = stream.read(&mut buf).unwrap_or(0);
+            if n == 0 {
+                return;
+            }
+            req.extend_from_slice(&buf[..n]);
+            if let Some(i) = req.windows(4).position(|w| w == b"\r\n\r\n") {
+                break i + 4;
+            }
+        };
+        let head = String::from_utf8_lossy(&req[..header_end]).to_ascii_lowercase();
+        let len: usize = head
+            .lines()
+            .find_map(|l| l.strip_prefix("content-length:"))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0);
+        while req.len() < header_end + len {
+            let n = stream.read(&mut buf).unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            req.extend_from_slice(&buf[..n]);
+        }
+        *seen_t.lock().unwrap() = req;
+        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
+    });
+    (port, seen)
+}
+
+#[test]
+fn fetch_sends_resolved_headers_and_body() {
+    let (port, seen) = spawn_capturing();
+    let req = NetRequest {
+        method: "POST".into(),
+        url: format!("http://127.0.0.1:{port}/p"),
+        headers: Vec::new(),
+        body: Some(b"payload".to_vec()),
+        timeout_ms: None,
+    };
+    let headers = vec![("x-api-key".to_string(), "resolved-secret".to_string())];
+    let env = envelope(perform_fetch(&loopback_policy(), true, &req, &headers).unwrap());
+    assert_eq!(env["status"], 200);
+    let seen = String::from_utf8_lossy(&seen.lock().unwrap()).to_string();
+    let lower = seen.to_ascii_lowercase();
+    assert!(lower.starts_with("post /p "), "method and path: {seen}");
+    assert!(lower.contains("x-api-key: resolved-secret"), "header reached the wire: {seen}");
+    assert!(seen.ends_with("\r\n\r\npayload"), "body reached the wire: {seen}");
+}
+
+#[test]
+fn fetch_sends_a_body_with_get_head_and_delete() {
+    // ureq 2 sent a guest-supplied body whatever the method; ureq 3 needs
+    // force_send_body for these three, so each is checked on the wire.
+    for method in ["GET", "HEAD", "DELETE"] {
+        let (port, seen) = spawn_capturing();
+        let req = NetRequest {
+            method: method.into(),
+            url: format!("http://127.0.0.1:{port}/b"),
+            headers: Vec::new(),
+            body: Some(b"payload".to_vec()),
+            timeout_ms: None,
+        };
+        let env = envelope(
+            perform_fetch(&loopback_policy(), true, &req, &[])
+                .unwrap_or_else(|code| panic!("{method} with a body failed: {code}")),
+        );
+        assert_eq!(env["status"], 200, "{method}");
+        let seen = String::from_utf8_lossy(&seen.lock().unwrap()).to_string();
+        assert!(seen.starts_with(&format!("{method} /b ")), "{method}: {seen}");
+        assert!(seen.to_ascii_lowercase().contains("content-length: 7"), "{method}: {seen}");
+        assert!(seen.ends_with("\r\n\r\npayload"), "{method} body reached the wire: {seen}");
+    }
+}
+
+/// Set only by `fetch_ignores_proxy_environment_variables` for its child.
+const PROXY_PROBE_FLAG: &str = "ROTIFER_TEST_PROXY_PROBE";
+/// Printed by the probe once it has really checked, so the parent can tell
+/// a real pass from an early return.
+const PROXY_PROBE_DONE: &str = "proxy-probe: direct request confirmed";
+
+/// Proxy variables must not route gene traffic around the whitelist. Runs the
+/// probe below in a child process so the environment change cannot leak into
+/// other tests running in parallel.
+#[test]
+fn fetch_ignores_proxy_environment_variables() {
+    let exe = std::env::current_exe().unwrap();
+    let proxy = "http://127.0.0.1:9";
+    let out = std::process::Command::new(exe)
+        .args(["--exact", "sandbox::hybrid_wasm_tests::proxy_env_probe", "--nocapture"])
+        .env(PROXY_PROBE_FLAG, "1")
+        .env("HTTP_PROXY", proxy)
+        .env("http_proxy", proxy)
+        .env("HTTPS_PROXY", proxy)
+        .env("ALL_PROXY", proxy)
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.contains("1 passed") && stdout.contains(PROXY_PROBE_DONE),
+        "probe failed:\n{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Checks only inside the child process started above; a normal test run,
+/// which does not set PROXY_PROBE_FLAG, returns at once.
+#[test]
+fn proxy_env_probe() {
+    if std::env::var_os(PROXY_PROBE_FLAG).is_none() {
+        return;
+    }
+    assert!(std::env::var_os("HTTP_PROXY").is_some(), "the parent sets the proxy variables");
+    let server = TestServer::spawn(200, br#"{"direct":true}"#.to_vec(), None, 0);
+    let env = envelope(perform_fetch(&loopback_policy(), true, &get(server.url("/d"), None), &[]).unwrap());
+    assert_eq!(env["status"], 200);
+    assert_eq!(server.hits.load(Ordering::SeqCst), 1, "request went to the server, not a proxy");
+    println!("{PROXY_PROBE_DONE}");
+}

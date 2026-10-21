@@ -35,5 +35,5 @@ base64 = "0.22"
 # Hybrid Binding API (ADR-327): synchronous HTTP client for the rotifer.net
 # host function. ureq over reqwest on purpose — no tokio entanglement inside
 # sync wasmtime host callbacks, small dependency tree (rustls).
-ureq = { version = "2", default-features = false, features = ["tls"] }
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 url = "2"

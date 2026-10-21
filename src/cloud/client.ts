@@ -691,7 +691,9 @@ export async function publishEvaluationRuns(
     ),
   });
 
-  await handleResponse<unknown>(res);
+  // return=minimal: success is 201 with an empty body, which res.json() cannot
+  // parse. Only a failure has a body worth reading (handleResponse throws).
+  if (!res.ok) await handleResponse<unknown>(res);
 }
 
 /**

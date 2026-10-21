@@ -421,10 +421,14 @@ export const arenaSubmitCommand = new Command("submit")
     // sandbox that is in doubt.
     if (didRunInSandbox && !hasCompleteFitnessInputs) {
       display.hint(
-        "The Gene ran and its output was checked, but F(g) still uses placeholder values for C_util and R_rob, " +
-        "and measures latency and cost against fixed constants rather than this domain's season median " +
-        "(ADR-318 D2/D4). Until that lands the score is filed as an estimate and does not rank — the run " +
-        "itself, its latency and its cost are still recorded."
+        "The Gene ran and its output was checked, but F(g) still uses placeholder values for C_util and R_rob " +
+        "(ADR-318 D4), so the score is filed as an estimate and does not rank. The runs themselves are " +
+        "measurements, not estimates: " +
+        (options.cloud
+          ? "each run's outcome, schema check, latency and fuel go to the public run ledger, where they also " +
+            "count toward this domain's season median."
+          : "with --cloud, each run's outcome, schema check, latency and fuel go to the public run ledger; " +
+            "this local submission keeps them on this machine only.")
       );
       if (!doesPassFitness) {
         display.warn(
@@ -458,8 +462,15 @@ export const arenaSubmitCommand = new Command("submit")
           // score checkable (§9.7.1); publishing the score first and the
           // evidence second would leave a window — and, if the second call
           // fails, a permanent row — asserting a number nobody can verify.
-          // Only measured runs have evidence; an estimate has none to offer.
-          if (evaluationMethod === "sandbox") {
+          //
+          // Uploaded whenever the Gene actually ran, whatever the score is
+          // labelled. Runs are measurements; `estimated` describes the formula
+          // (C_util / R_rob are placeholders), not them. Gating on `sandbox`
+          // meant none were ever uploaded, and the season median F(g) is
+          // scaled by could never gather a sample. The label, and with it the
+          // leaderboard tier, is unaffected: tiers read evaluation_method. A
+          // content-hash estimate ran nothing and has no runs to send.
+          if (didRunInSandbox) {
             await publishEvaluationRuns(
               cloudGeneId,
               randomUUID(),

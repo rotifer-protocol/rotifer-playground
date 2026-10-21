@@ -50,4 +50,29 @@ describe("printProtocolInsights", () => {
     expect(first).not.toContain("Fitness Score");
     expect(first).toBe(second);
   });
+
+  // `agent run` executes a gene from gene.ir.wasm in the WASM sandbox before it
+  // ever looks for index.ts, so a compiled Native gene with no source next to
+  // it (as `rotifer install` leaves one) runs. The snapshot counted only source
+  // files and reported "Executable Genes: 0/1" right after that gene had run.
+  it("counts a compiled Native gene with no source file as executable", async () => {
+    const { printProtocolInsights } = await import("../../src/commands/agent-run.js");
+    const plain = () => logSpy.mock.calls.map((c) => String(c[0])).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+    mkdirSync(join(genesDir, "gamma"), { recursive: true });
+    writeFileSync(
+      join(genesDir, "gamma", "phenotype.json"),
+      JSON.stringify({ domain: "text.x", fidelity: "Native" }, null, 2),
+    );
+    writeFileSync(join(genesDir, "gamma", "gene.ir.wasm"), Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
+
+    printProtocolInsights(["gamma"], genesDir, 1);
+    expect(plain()).toMatch(/Executable Genes\W+1\/1/);
+    expect(plain()).not.toContain("metadata-only");
+
+    // A gene with neither wasm nor source still counts as not executable.
+    logSpy.mockClear();
+    printProtocolInsights(["gamma", "beta"], genesDir, 1);
+    expect(plain()).toMatch(/Executable Genes\W+1\/2/);
+    expect(plain()).toContain("metadata-only");
+  });
 });

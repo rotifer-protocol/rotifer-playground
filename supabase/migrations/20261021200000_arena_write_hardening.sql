@@ -10,7 +10,8 @@
 --   - move a row to another of their genes, change its domain, id,
 --     created_at or total_calls (F6);
 --   - overwrite a binding_runtime measurement with a self-report (F4);
---   - claim Native's discount (1.00) for a Wrapped gene (F4);
+--   - claim Native's discount (1.00) for a Wrapped gene, or send no
+--     discount at all and record the score undiscounted (F4, A6);
 --   - write evaluation runs for anyone's gene, with any evaluated_at (F7, F8).
 -- And server-side writers that clients can reach (log_mcp_call → the
 -- total_calls trigger; apply_arena_invalidation) ran the client branch of the
@@ -135,7 +136,14 @@ BEGIN
         USING ERRCODE = '42501';
     END IF;
 
-    IF NEW.fidelity_discount IS NOT NULL THEN
+    -- Checked when the score is written, not on every later write: a season
+    -- reset scales fitness_value server-side, and an unrelated client
+    -- update must not be refused for that.
+    IF NEW.fidelity_discount IS NOT NULL
+       AND (TG_OP = 'INSERT'
+            OR NEW.fitness_value IS DISTINCT FROM OLD.fitness_value
+            OR NEW.base_fitness IS DISTINCT FROM OLD.base_fitness
+            OR NEW.fidelity_discount IS DISTINCT FROM OLD.fidelity_discount) THEN
       -- FIDELITY_DISCOUNT, spec §5.1 v2.11 (native 1.00 / hybrid 0.85 /
       -- wrapped 0.70); the same table as src/types/phenotype.ts. It is a
       -- PAP-adjustable protocol parameter (§14.6): when it moves, this list
@@ -163,13 +171,24 @@ BEGIN
     END IF;
   END IF;
 
+  -- The pair is what the discount check above needs. Without this a client
+  -- could leave both out (chk_arena_dual_column_pair allows "neither") and a
+  -- Wrapped gene's score went in undiscounted (T-58 acceptance A6). The
+  -- current CLI always sends both; rows written before them are left as
+  -- they are until their next submission.
+  IF NEW.base_fitness IS NULL OR NEW.fidelity_discount IS NULL THEN
+    RAISE EXCEPTION
+      'arena_entries: a client submission carries base_fitness and fidelity_discount (spec §5.1 dual column)'
+      USING ERRCODE = '42501';
+  END IF;
+
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = public, pg_temp;
 
 COMMENT ON FUNCTION guard_arena_entry_client_write() IS
-  'T-58: what a client (authenticated/anon, no rotifer.arena_server_write marker) may write to arena_entries. Records a client-claimed sandbox as estimated (ADR-319 D3 changed, approved 2026-10-21). Refuses changes to id, gene_id, created_at, total_calls and the invalidation pair; any change to a binding_runtime row; unknown-legacy; a domain other than the gene''s; a fidelity_discount other than spec §5.1''s for the gene''s fidelity, and a fitness_value that is not base × discount. Sets total_calls and created_at on insert.';
+  'T-58: what a client (authenticated/anon, no rotifer.arena_server_write marker) may write to arena_entries. Records a client-claimed sandbox as estimated (ADR-319 D3 changed, approved 2026-10-21). Refuses changes to id, gene_id, created_at, total_calls and the invalidation pair; any change to a binding_runtime row; unknown-legacy; a domain other than the gene''s; a missing base_fitness / fidelity_discount; a fidelity_discount other than spec §5.1''s for the gene''s fidelity, and a fitness_value that is not base × discount. Sets total_calls and created_at on insert.';
 
 -- Sorts after trg_enforce_arena_provenance and before
 -- trg_guard_arena_last_evaluated; BEFORE triggers fire in name order.

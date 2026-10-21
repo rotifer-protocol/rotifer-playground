@@ -26,8 +26,8 @@ INSERT INTO genes (id, owner_id, name, domain, version, fidelity, phenotype, pub
    'resubmit-gene-2', 'test.resubmit', '0.1.0', 'Native', '{}'::jsonb, true, repeat('d', 64));
 
 -- The first submission, a day ago, measured: it counts toward reputation.
-INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method, last_evaluated)
-VALUES ('c5222222-2222-4222-8222-222222222222', 'test.resubmit', 0.2, 'sandbox', now() - interval '1 day');
+INSERT INTO arena_entries (gene_id, domain, fitness_value, base_fitness, fidelity_discount, evaluation_method, last_evaluated)
+VALUES ('c5222222-2222-4222-8222-222222222222', 'test.resubmit', 0.2, 0.2, 1.0, 'sandbox', now() - interval '1 day');
 
 SELECT is(
   (SELECT arena_score FROM gene_reputation WHERE gene_id = 'c5222222-2222-4222-8222-222222222222' ORDER BY epoch DESC LIMIT 1),
@@ -73,10 +73,12 @@ SELECT ok(
 -- 20261021200000 PostgREST cannot even send last_evaluated (no column
 -- privilege), so this runs as the test role with the client's claims: the
 -- guard is checked on its own.
-INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method, evaluation_n, last_evaluated)
-VALUES ('c5222222-2222-4222-8222-222222222222', 'test.resubmit', 0.9, 'sandbox', 3, now() - interval '30 days')
+INSERT INTO arena_entries (gene_id, domain, fitness_value, base_fitness, fidelity_discount, evaluation_method, evaluation_n, last_evaluated)
+VALUES ('c5222222-2222-4222-8222-222222222222', 'test.resubmit', 0.9, 0.9, 1.0, 'sandbox', 3, now() - interval '30 days')
 ON CONFLICT (gene_id) DO UPDATE
   SET fitness_value = EXCLUDED.fitness_value,
+      base_fitness = EXCLUDED.base_fitness,
+      fidelity_discount = EXCLUDED.fidelity_discount,
       evaluation_method = EXCLUDED.evaluation_method,
       evaluation_n = EXCLUDED.evaluation_n,
       last_evaluated = EXCLUDED.last_evaluated;
@@ -108,10 +110,12 @@ UPDATE arena_entries SET last_evaluated = now() - interval '1 day'
 
 SET LOCAL ROLE authenticated;
 SET LOCAL request.jwt.claims = '{"sub":"c5111111-1111-4111-8111-111111111111","role":"authenticated"}';
-INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method, evaluation_n)
-VALUES ('c5222222-2222-4222-8222-222222222222', 'test.resubmit', 0.9, 'sandbox', 3)
+INSERT INTO arena_entries (gene_id, domain, fitness_value, base_fitness, fidelity_discount, evaluation_method, evaluation_n)
+VALUES ('c5222222-2222-4222-8222-222222222222', 'test.resubmit', 0.9, 0.9, 1.0, 'sandbox', 3)
 ON CONFLICT (gene_id) DO UPDATE
   SET fitness_value = EXCLUDED.fitness_value,
+      base_fitness = EXCLUDED.base_fitness,
+      fidelity_discount = EXCLUDED.fidelity_discount,
       evaluation_method = EXCLUDED.evaluation_method,
       evaluation_n = EXCLUDED.evaluation_n;
 RESET ROLE;
@@ -136,8 +140,8 @@ UPDATE arena_entries SET last_evaluated = now() - interval '1 day'
 SET LOCAL request.jwt.claims = '{"sub":"c5111111-1111-4111-8111-111111111111","role":"authenticated"}';
 UPDATE arena_entries SET last_evaluated = '2099-01-01T00:00:00Z'
  WHERE gene_id = 'c5222222-2222-4222-8222-222222222222';
-INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method, last_evaluated)
-VALUES ('c5333333-3333-4333-8333-333333333333', 'test.resubmit', 0.4, 'sandbox', '2099-01-01T00:00:00Z');
+INSERT INTO arena_entries (gene_id, domain, fitness_value, base_fitness, fidelity_discount, evaluation_method, last_evaluated)
+VALUES ('c5333333-3333-4333-8333-333333333333', 'test.resubmit', 0.4, 0.4, 1.0, 'sandbox', '2099-01-01T00:00:00Z');
 RESET ROLE;
 RESET request.jwt.claims;
 

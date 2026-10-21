@@ -62,8 +62,8 @@ SELECT throws_ok(
 -- sent here is 'estimated'.
 RESET ROLE;
 SELECT lives_ok(
-  $$ INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method, evaluator)
-     VALUES ('a8222222-2222-4222-8222-222222222222', 'test.guard', 0.5, 'estimated', 'someone-else') $$,
+  $$ INSERT INTO arena_entries (gene_id, domain, fitness_value, base_fitness, fidelity_discount, evaluation_method, evaluator)
+     VALUES ('a8222222-2222-4222-8222-222222222222', 'test.guard', 0.35, 0.5, 0.7, 'estimated', 'someone-else') $$,
   'T4: an estimated claim from a client is accepted');
 SELECT is(
   (SELECT evaluator FROM arena_entries WHERE gene_id = 'a8222222-2222-4222-8222-222222222222'),

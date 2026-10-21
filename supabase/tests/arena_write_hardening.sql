@@ -22,7 +22,7 @@
 
 BEGIN;
 
-SELECT plan(37);
+SELECT plan(38);
 
 -- ── Fixtures (written as the test role: server-side, no guard) ──
 
@@ -47,14 +47,15 @@ INSERT INTO genes (id, owner_id, name, domain, version, fidelity, phenotype, pub
   ('d58c0000-0000-4000-8000-0000000000c5', 'd5811111-1111-4111-8111-111111111111', 'harden-c5', 'test.harden', '0.1.0', 'Native',  '{}'::jsonb, true, repeat('c', 64)),
   ('d58f0000-0000-4000-8000-0000000000f2', 'd5822222-2222-4222-8222-222222222222', 'harden-r2', 'test.harden', '0.1.0', 'Native',  '{}'::jsonb, true, repeat('d', 64)),
   ('d58d0000-0000-4000-8000-0000000000d2', 'd5811111-1111-4111-8111-111111111111', 'harden-w2', 'test.harden', '0.1.0', 'Wrapped', '{}'::jsonb, true, repeat('a', 64)),
-  ('d58d0000-0000-4000-8000-0000000000d3', 'd5811111-1111-4111-8111-111111111111', 'harden-w3', 'test.harden', '0.1.0', 'Wrapped', '{}'::jsonb, true, repeat('b', 64));
+  ('d58d0000-0000-4000-8000-0000000000d3', 'd5811111-1111-4111-8111-111111111111', 'harden-w3', 'test.harden', '0.1.0', 'Wrapped', '{}'::jsonb, true, repeat('b', 64)),
+  ('d58d0000-0000-4000-8000-0000000000d4', 'd5811111-1111-4111-8111-111111111111', 'harden-w4', 'test.harden', '0.1.0', 'Wrapped', '{}'::jsonb, true, repeat('e', 64));
 
-INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method, evaluator, invalidated_at, invalidation_reason) VALUES
-  ('d58a0000-0000-4000-8000-00000000000a', 'test.harden', 0.5, 'estimated', 'd5811111-1111-4111-8111-111111111111', now(), 'test-data'),
-  ('d58b0000-0000-4000-8000-00000000000b', 'test.harden', 0.4, 'estimated', 'd5811111-1111-4111-8111-111111111111', NULL, NULL),
-  ('d58e0000-0000-4000-8000-00000000000e', 'test.harden', 0.3, 'estimated', 'd5822222-2222-4222-8222-222222222222', NULL, NULL),
-  ('d58f0000-0000-4000-8000-00000000000f', 'test.harden', 0.6, 'binding_runtime', 'binding', NULL, NULL),
-  ('d58f0000-0000-4000-8000-0000000000f2', 'test.harden', 0.6, 'binding_runtime', 'binding', NULL, NULL);
+INSERT INTO arena_entries (gene_id, domain, fitness_value, base_fitness, fidelity_discount, evaluation_method, evaluator, invalidated_at, invalidation_reason) VALUES
+  ('d58a0000-0000-4000-8000-00000000000a', 'test.harden', 0.5, 0.5, 1.0, 'estimated', 'd5811111-1111-4111-8111-111111111111', now(), 'test-data'),
+  ('d58b0000-0000-4000-8000-00000000000b', 'test.harden', 0.4, 0.4, 1.0, 'estimated', 'd5811111-1111-4111-8111-111111111111', NULL, NULL),
+  ('d58e0000-0000-4000-8000-00000000000e', 'test.harden', 0.3, 0.3, 1.0, 'estimated', 'd5822222-2222-4222-8222-222222222222', NULL, NULL),
+  ('d58f0000-0000-4000-8000-00000000000f', 'test.harden', 0.6, 0.6, 1.0, 'binding_runtime', 'binding', NULL, NULL),
+  ('d58f0000-0000-4000-8000-0000000000f2', 'test.harden', 0.6, 0.6, 1.0, 'binding_runtime', 'binding', NULL, NULL);
 
 CREATE TEMP TABLE before_reputation AS
   SELECT id, reputation_score FROM genes WHERE id = 'd58a0000-0000-4000-8000-00000000000a';
@@ -169,14 +170,20 @@ SELECT lives_ok(
 
 SELECT throws_ok(
   $$ INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method)
+     VALUES ('d58d0000-0000-4000-8000-0000000000d4', 'test.harden', 0.9, 'estimated') $$,
+  '42501', NULL,
+  'P7e: a submission without base_fitness / fidelity_discount is refused (a Wrapped gene could record 0.9 undiscounted, A6)');
+
+SELECT throws_ok(
+  $$ INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method)
      VALUES ('d58c0000-0000-4000-8000-0000000000c4', 'test.harden', 0.5, 'unknown-legacy') $$,
   '42501', NULL,
   'P7d: a client cannot write unknown-legacy (the backfill''s marker)');
 
 -- ── P8: a client cannot claim 'sandbox' ─────────────────────
 
-INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method)
-VALUES ('d58c0000-0000-4000-8000-00000000000c', 'test.harden', 0.5, 'sandbox');
+INSERT INTO arena_entries (gene_id, domain, fitness_value, base_fitness, fidelity_discount, evaluation_method)
+VALUES ('d58c0000-0000-4000-8000-00000000000c', 'test.harden', 0.5, 0.5, 1.0, 'sandbox');
 SELECT is(
   (SELECT evaluation_method FROM arena_entries WHERE gene_id = 'd58c0000-0000-4000-8000-00000000000c'),
   'estimated',

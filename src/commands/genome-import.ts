@@ -14,6 +14,7 @@ import {
   resolveCapabilityCandidates,
   type CandidateEvidence,
   type CandidateVerdict,
+  type RejectionCode,
 } from "../cloud/capability-candidates.js";
 import { contentHashWarning, installGeneFromCloud, type ContentHashCheck } from "./install.js";
 import { createAgentCore, type AgentRecord } from "./agent-create.js";
@@ -76,18 +77,78 @@ function isWrapped(fidelity: string): boolean {
   return fidelity.toLowerCase() === "wrapped";
 }
 
+/** Why a role ended up being located by its pinned gene, so a refusal can say what the user can change. */
+export type PinnedVia =
+  | { kind: "flag" }
+  | { kind: "no-query" }
+  | { kind: "no-admissible-candidate"; domain: string; candidates: CandidateVerdict[] }
+  | { kind: "cross-author-not-confirmed"; substitute: { owner: string; name: string; version: string }; isDeclined: boolean };
+
+const REJECTION_WORDS: Record<RejectionCode, string> = {
+  "not-verified": "not in the verified Arena tier",
+  invalidated: "evaluation invalidated",
+  fidelity: "Wrapped",
+  "missing-evidence": "evidence missing",
+  "fitness-below-threshold": "fitness below the threshold",
+  "vg-below-threshold": "V(g) below the threshold",
+  "stale-evidence": "evaluation too old",
+  "no-artifact": "no WASM artifact",
+  "schema-incompatible": "schema differs from the original's",
+  excluded: "excluded by the Blueprint",
+};
+
+/** What capability mode did for this role, in words; empty for --pinned, where it never ran. */
+function capabilityOutcome(role: string, via: PinnedVia): string {
+  switch (via.kind) {
+    case "flag":
+      return "";
+    case "no-query":
+      return (
+        `The Blueprint has no capability query for role '${role}' (it was exported with --lock, or the gene declares no domain), ` +
+        "so no substitute could be searched for. Ask the author to export it again without --lock, from a gene that declares its domain."
+      );
+    case "no-admissible-candidate": {
+      let found = "the Arena lists no candidates there";
+      if (via.candidates.length > 0) {
+        const counts = new Map<RejectionCode, number>();
+        for (const c of via.candidates) for (const r of c.rejections) counts.set(r.code, (counts.get(r.code) ?? 0) + 1);
+        const why = [...counts].map(([code, n]) => `${REJECTION_WORDS[code]} (${n})`).join(", ");
+        found = `${via.candidates.length} candidate${via.candidates.length === 1 ? "" : "s"}, refused as ${why}`;
+      }
+      return (
+        `Capability mode looked for a Native/Hybrid substitute in domain '${via.domain}' and admitted none: ${found}. ` +
+        "Import again once a candidate passes admission, or ask the author to publish a Native/Hybrid build."
+      );
+    }
+    case "cross-author-not-confirmed": {
+      const s = `${via.substitute.owner}/${via.substitute.name}@${via.substitute.version}`;
+      return via.isDeclined
+        ? `You declined the substitute by another author (${s}); import again and accept it, or re-run with --yes.`
+        : `A substitute by another author passed admission (${s}) but was not accepted. Re-run with --yes to accept it.`;
+    }
+  }
+}
+
 /** Lock mode: the exact author + name + version from the hints. */
-export async function locatePinned(role: string, hint: ResolutionHint | undefined): Promise<{ cloudId: string }> {
+export async function locatePinned(
+  role: string,
+  hint: ResolutionHint | undefined,
+  via: PinnedVia = { kind: "flag" },
+): Promise<{ cloudId: string }> {
+  // Only a user who passed --pinned is told to drop it; otherwise say what
+  // capability mode already tried for this role.
   if (!hint) {
     throw new GenomeImportError(
       `Role '${role}' has no resolutionHints, so it cannot be located by gene ID`,
-      "The author's gene was never published; ask them to publish it, or import with capability mode.",
+      via.kind === "flag"
+        ? "The author's gene was never published; ask them to publish it, or drop --pinned so capability mode can look for a substitute."
+        : `The author's gene was never published; ask them to publish it. ${capabilityOutcome(role, via)}`,
     );
   }
   if (isWrapped(hint.fidelity)) {
     throw new GenomeImportError(
       `Role '${role}' is a Wrapped gene: v0.9.2 does not support installing Wrapped genes from the Registry`,
-      "Drop --pinned so capability mode can look for a Native/Hybrid substitute.",
+      via.kind === "flag" ? "Drop --pinned so capability mode can look for a Native/Hybrid substitute." : capabilityOutcome(role, via),
     );
   }
   const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
@@ -134,8 +195,8 @@ export async function resolveRole(role: string, ctx: ResolveContext): Promise<Ro
   const hint = ownEntry(blueprint.resolutionHints, role);
   const query: CapabilityQuery | undefined = ownEntry(blueprint.capabilities, role);
 
-  const pinned = async (mode: RoleMode, extra: Partial<RoleResolution> = {}): Promise<RoleResolution> => {
-    const { cloudId } = await locatePinned(role, hint);
+  const pinned = async (mode: RoleMode, via: PinnedVia, extra: Partial<RoleResolution> = {}): Promise<RoleResolution> => {
+    const { cloudId } = await locatePinned(role, hint, via);
     return {
       role,
       mode,
@@ -151,7 +212,8 @@ export async function resolveRole(role: string, ctx: ResolveContext): Promise<Ro
     };
   };
 
-  if (options.isPinned || !query) return pinned("pinned");
+  if (options.isPinned) return pinned("pinned", { kind: "flag" });
+  if (!query) return pinned("pinned", { kind: "no-query" });
 
   const policy = {
     minFitness: query.minFitness ?? DEFAULT_MIN_FITNESS,
@@ -162,7 +224,7 @@ export async function resolveRole(role: string, ctx: ResolveContext): Promise<Ro
   const { candidates, admitted } = await resolveCapabilityCandidates(query, policy);
 
   if (admitted.length === 0) {
-    return pinned("fallback", { fallback: "no-admissible-candidate", candidates });
+    return pinned("fallback", { kind: "no-admissible-candidate", domain: query.domain, candidates }, { fallback: "no-admissible-candidate", candidates });
   }
 
   const best = admitted[0];
@@ -172,7 +234,8 @@ export async function resolveRole(role: string, ctx: ResolveContext): Promise<Ro
     const question = `Role '${role}': replace ${hint ? `${hint.owner}/${hint.name}@${hint.version}` : "the original gene"} with ${best.owner}/${best.name}@${best.version} (another author)?`;
     const isAccepted = options.confirm ? await options.confirm(question) : false;
     if (!isAccepted) {
-      return pinned("fallback", {
+      const via: PinnedVia = { kind: "cross-author-not-confirmed", substitute: best, isDeclined: options.confirm !== undefined };
+      return pinned("fallback", via, {
         fallback: "cross-author-not-confirmed",
         candidates,
         rejectedSubstitutions: [

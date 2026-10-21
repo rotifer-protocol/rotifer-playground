@@ -1183,3 +1183,72 @@ describe("T-26: a role named after an Object.prototype member is looked up as an
     }
   });
 });
+
+describe("T-42: the hint for a role that must be pinned follows what the user actually passed", () => {
+  /** alpha, hinted as Wrapped: it can only be imported through a Native/Hybrid substitute. */
+  const wrapped = (opts: { withCapabilities?: boolean } = { withCapabilities: true }) => {
+    const bp = blueprint([row("alpha")], {}, opts);
+    bp.resolutionHints!.alpha.fidelity = "Wrapped";
+    return bp;
+  };
+
+  it("with --pinned: tells the user to drop --pinned", async () => {
+    const { code, text } = await runImport(wrapped(), { pinned: true });
+    expect(code).toBe(1);
+    expect(text).toContain("is a Wrapped gene");
+    expect(text).toContain("Drop --pinned so capability mode can look for a Native/Hybrid substitute.");
+  });
+
+  it("without --pinned, nothing on the leaderboard: no mention of --pinned, says the search found no candidate", async () => {
+    vi.mocked(arenaLeaderboard).mockResolvedValue([]);
+    const { code, text } = await runImport(wrapped(), {});
+    expect(code).toBe(1);
+    expect(text).toContain("is a Wrapped gene");
+    expect(text).not.toContain("--pinned");
+    expect(text).toContain("Capability mode looked for a Native/Hybrid substitute in domain 'text.x' and admitted none: the Arena lists no candidates there.");
+    expect(text).toContain("ask the author to publish a Native/Hybrid build");
+    expect(installs).toEqual([]);
+    expect(agents()).toEqual([]);
+  });
+
+  it("without --pinned, candidates all refused: says why, in words", async () => {
+    vi.mocked(arenaLeaderboard).mockResolvedValue([
+      leaderRow(row("alpha", "2.0.0"), { tier: "under_evaluation" }),
+      leaderRow(row("gamma"), { tier: "not_evaluated" }),
+    ]);
+    const { code, text } = await runImport(wrapped(), {});
+    expect(code).toBe(1);
+    expect(text).not.toContain("--pinned");
+    expect(text).toContain("admitted none: 2 candidates, refused as not in the verified Arena tier (2).");
+  });
+
+  it("without --pinned, no capability query in the Blueprint: says no substitute could be searched for", async () => {
+    const { code, text } = await runImport(wrapped({ withCapabilities: false }), {});
+    expect(code).toBe(1);
+    expect(text).not.toContain("--pinned");
+    expect(text).toContain("The Blueprint has no capability query for role 'alpha'");
+    expect(text).toContain("export it again without --lock");
+  });
+
+  it("without --pinned, a cross-author substitute passed but was not accepted: points to --yes", async () => {
+    vi.mocked(arenaLeaderboard).mockResolvedValue([leaderRow(row("gamma"))]);
+    const { code, text } = await runImport(wrapped(), {});
+    expect(code).toBe(1);
+    expect(text).not.toContain("--pinned");
+    expect(text).toContain("A substitute by another author passed admission (carol/gamma@1.0.0) but was not accepted. Re-run with --yes to accept it.");
+  });
+
+  it("a role with no resolutionHints: drop --pinned only when it was passed", async () => {
+    const bp = blueprint([row("alpha")], {}, { withCapabilities: true });
+    delete bp.resolutionHints;
+    const pinnedRun = await runImport(bp, { pinned: true });
+    expect(pinnedRun.text).toContain("has no resolutionHints");
+    expect(pinnedRun.text).toContain("drop --pinned so capability mode can look for a substitute");
+    vi.mocked(arenaLeaderboard).mockResolvedValue([]);
+    const capabilityRun = await runImport(bp, {});
+    expect(capabilityRun.text).toContain("has no resolutionHints");
+    expect(capabilityRun.text).not.toContain("--pinned");
+    expect(capabilityRun.text).not.toContain("import with capability mode");
+    expect(capabilityRun.text).toContain("admitted none: the Arena lists no candidates there.");
+  });
+});

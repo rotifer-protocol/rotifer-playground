@@ -844,6 +844,37 @@ fn fetch_sends_resolved_headers_and_body() {
     assert!(seen.ends_with("\r\n\r\npayload"), "body reached the wire: {seen}");
 }
 
+#[test]
+fn fetch_sends_a_body_with_get_head_and_delete() {
+    // ureq 2 sent a guest-supplied body whatever the method; ureq 3 needs
+    // force_send_body for these three, so each is checked on the wire.
+    for method in ["GET", "HEAD", "DELETE"] {
+        let (port, seen) = spawn_capturing();
+        let req = NetRequest {
+            method: method.into(),
+            url: format!("http://127.0.0.1:{port}/b"),
+            headers: Vec::new(),
+            body: Some(b"payload".to_vec()),
+            timeout_ms: None,
+        };
+        let env = envelope(
+            perform_fetch(&loopback_policy(), true, &req, &[])
+                .unwrap_or_else(|code| panic!("{method} with a body failed: {code}")),
+        );
+        assert_eq!(env["status"], 200, "{method}");
+        let seen = String::from_utf8_lossy(&seen.lock().unwrap()).to_string();
+        assert!(seen.starts_with(&format!("{method} /b ")), "{method}: {seen}");
+        assert!(seen.to_ascii_lowercase().contains("content-length: 7"), "{method}: {seen}");
+        assert!(seen.ends_with("\r\n\r\npayload"), "{method} body reached the wire: {seen}");
+    }
+}
+
+/// Set only by `fetch_ignores_proxy_environment_variables` for its child.
+const PROXY_PROBE_FLAG: &str = "ROTIFER_TEST_PROXY_PROBE";
+/// Printed by the probe once it has really checked, so the parent can tell
+/// a real pass from an early return.
+const PROXY_PROBE_DONE: &str = "proxy-probe: direct request confirmed";
+
 /// Proxy variables must not route gene traffic around the whitelist. Runs the
 /// probe below in a child process so the environment change cannot leak into
 /// other tests running in parallel.
@@ -852,7 +883,8 @@ fn fetch_ignores_proxy_environment_variables() {
     let exe = std::env::current_exe().unwrap();
     let proxy = "http://127.0.0.1:9";
     let out = std::process::Command::new(exe)
-        .args(["--ignored", "--exact", "sandbox::hybrid_wasm_tests::proxy_env_probe", "--nocapture"])
+        .args(["--exact", "sandbox::hybrid_wasm_tests::proxy_env_probe", "--nocapture"])
+        .env(PROXY_PROBE_FLAG, "1")
         .env("HTTP_PROXY", proxy)
         .env("http_proxy", proxy)
         .env("HTTPS_PROXY", proxy)
@@ -863,18 +895,23 @@ fn fetch_ignores_proxy_environment_variables() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        out.status.success() && stdout.contains("1 passed"),
+        out.status.success() && stdout.contains("1 passed") && stdout.contains(PROXY_PROBE_DONE),
         "probe failed:\n{stdout}\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
 }
 
+/// Checks only inside the child process started above; a normal test run,
+/// which does not set PROXY_PROBE_FLAG, returns at once.
 #[test]
-#[ignore = "run by fetch_ignores_proxy_environment_variables with proxy variables set"]
 fn proxy_env_probe() {
-    assert!(std::env::var_os("HTTP_PROXY").is_some(), "only meaningful with proxy variables set");
+    if std::env::var_os(PROXY_PROBE_FLAG).is_none() {
+        return;
+    }
+    assert!(std::env::var_os("HTTP_PROXY").is_some(), "the parent sets the proxy variables");
     let server = TestServer::spawn(200, br#"{"direct":true}"#.to_vec(), None, 0);
     let env = envelope(perform_fetch(&loopback_policy(), true, &get(server.url("/d"), None), &[]).unwrap());
     assert_eq!(env["status"], 200);
     assert_eq!(server.hits.load(Ordering::SeqCst), 1, "request went to the server, not a proxy");
+    println!("{PROXY_PROBE_DONE}");
 }

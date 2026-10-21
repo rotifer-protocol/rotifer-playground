@@ -70,6 +70,9 @@ pub struct HybridConfig {
     /// addresses (and skip the IP-literal rejection for them). Never derived
     /// from a phenotype and never reachable from the CLI.
     pub allow_insecure_loopback: bool,
+    /// Binding-internal override of the cumulative host-time budget; `None`
+    /// is `MAX_TOTAL_HOST_MILLIS`. Never derived from a phenotype.
+    pub host_millis_cap: Option<u64>,
 }
 
 /// Effective network policy for one execution.
@@ -112,6 +115,7 @@ impl HybridConfig {
             env_plain: HashMap::new(),
             env_secret: HashMap::new(),
             allow_insecure_loopback: false,
+            host_millis_cap: None,
         }
     }
 }
@@ -151,6 +155,13 @@ pub struct HybridRuntime {
     pub host_calls: u64,
     pub host_bytes_in: u64,
     pub host_bytes_out: u64,
+    /// Surcharges billed so far (ADR-327 D4), in fuel units. Added to
+    /// `resource_cost`; never deducted from the guest's fuel.
+    pub host_fuel_surcharge: u64,
+    /// When the whole run's wall-clock deadline falls. Host calls do not
+    /// stop for the epoch deadline, so a request has to be bounded by it
+    /// before it is sent; `None` = no deadline known (unit tests).
+    pub run_deadline: Option<Instant>,
 }
 
 impl HybridRuntime {
@@ -158,9 +169,26 @@ impl HybridRuntime {
         Self { config, ..Default::default() }
     }
 
+    /// The run's cumulative host-time budget.
+    pub fn host_millis_cap(&self) -> u64 {
+        self.config.host_millis_cap.unwrap_or(constants::MAX_TOTAL_HOST_MILLIS)
+    }
+
     /// True once cumulative host time has exceeded the run's host budget.
     pub fn host_budget_exhausted(&self) -> bool {
-        self.host_call_millis >= constants::MAX_TOTAL_HOST_MILLIS
+        self.host_call_millis >= self.host_millis_cap()
+    }
+
+    /// Host time still available to this run.
+    pub fn remaining_host_millis(&self) -> u64 {
+        self.host_millis_cap().saturating_sub(self.host_call_millis)
+    }
+
+    /// Wall-clock time left before the run's deadline.
+    pub fn remaining_run_millis(&self) -> u64 {
+        self.run_deadline.map_or(u64::MAX, |d| {
+            d.saturating_duration_since(Instant::now()).as_millis() as u64
+        })
     }
 }
 

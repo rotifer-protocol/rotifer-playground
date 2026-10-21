@@ -637,13 +637,16 @@ impl WasmtimeSandbox {
         ptr >= 0 && memory.write(&mut *caller, ptr as usize, data).is_ok()
     }
 
-    /// Deduct a fuel surcharge (ADR-327 D4). Saturates at zero: an
-    /// underfunded call leaves the guest with no fuel, so its next
-    /// instruction traps as fuel-exhausted — the surcharge is a real bill,
-    /// not advisory.
+    /// Bill a host-call surcharge (ADR-327 D4). It lands in `resource_cost`
+    /// and in `ExecutionMetadata.host.host_fuel_surcharge`, but it is not
+    /// taken out of the guest's wasmtime fuel: the fuel budget caps guest
+    /// computation, and host use is capped by the host-side limits (request
+    /// count, cumulative host time, response size, per-call timeout). A
+    /// surcharge drawn from fuel made one successful fetch (1e9) exhaust the
+    /// CLI's 5e8 budget after the request had already gone out (T-49 C).
     fn hybrid_charge(caller: &mut Caller<'_, HostState>, amount: u64) {
-        let fuel = caller.get_fuel().unwrap_or(0);
-        let _ = caller.set_fuel(fuel.saturating_sub(amount));
+        let rt = &mut caller.data_mut().hybrid;
+        rt.host_fuel_surcharge = rt.host_fuel_surcharge.saturating_add(amount);
     }
 
     fn net_fetch_call(
@@ -702,7 +705,7 @@ impl WasmtimeSandbox {
             return ERR_PERMISSION_DENIED;
         };
 
-        let req = match hybrid::parse_request_envelope(&req_bytes) {
+        let mut req = match hybrid::parse_request_envelope(&req_bytes) {
             Ok(r) => r,
             Err(code) => return code,
         };
@@ -716,6 +719,21 @@ impl WasmtimeSandbox {
             Ok(h) => h,
             Err(code) => return code,
         };
+
+        // Every limit is checked before the request goes out (T-49 D, spec
+        // §5 pre-send checks). The request count and an exhausted host
+        // budget are refused above. The run's wall-clock deadline is refused
+        // here: host code does not stop for the epoch deadline, so a request
+        // sent past it would come back to a run that is already over, and
+        // its result would be lost. The request itself is then bounded by
+        // what is left of both, so one slow request cannot outlast either.
+        let remaining_run_ms = caller.data().hybrid.remaining_run_millis();
+        if remaining_run_ms == 0 {
+            return ERR_TIMEOUT;
+        }
+        let remaining_ms = caller.data().hybrid.remaining_host_millis().min(remaining_run_ms);
+        let requested_ms = req.timeout_ms.unwrap_or(policy.max_timeout_ms);
+        req.timeout_ms = Some(requested_ms.min(remaining_ms.min(u32::MAX as u64) as u32));
 
         caller.data_mut().hybrid.requests_made += 1;
         let envelope = match hybrid::perform_fetch(&policy, loopback, &req, &resolved_headers) {
@@ -1059,6 +1077,8 @@ impl WasmtimeSandbox {
         let epoch_interval_ms = 100u64;
         let ticks_until_deadline = (timeout_ms / epoch_interval_ms).max(1);
         store.set_epoch_deadline(ticks_until_deadline);
+        store.data_mut().hybrid.run_deadline =
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms));
 
         let stop_flag = Arc::new(AtomicBool::new(false));
         let stop_clone = stop_flag.clone();
@@ -1142,15 +1162,17 @@ impl WasmtimeSandbox {
         let duration_ms = start.elapsed().as_millis() as u64;
         let fuel_consumed = self.constraints.max_fuel - store.get_fuel().unwrap_or(0);
 
-        // Host metering (ADR-327 D4): fuel surcharges are already inside
-        // fuel_consumed; the host-side channel is reported alongside.
+        // Host metering (ADR-327 D4): the surcharges are billed on top of the
+        // guest fuel burned, so resource_cost can exceed the run's fuel budget.
         let hy = &store.data().hybrid;
         let host = (hy.host_calls > 0).then_some(HostMetering {
             host_call_millis: hy.host_call_millis,
             host_calls: hy.host_calls,
             host_bytes_in: hy.host_bytes_in,
             host_bytes_out: hy.host_bytes_out,
+            host_fuel_surcharge: hy.host_fuel_surcharge,
         });
+        let resource_cost = fuel_consumed.saturating_add(hy.host_fuel_surcharge);
 
         // ADR-334: a Gene signals refusal by returning an object with exactly one
         // key, `__rotifer_error`. spec §4.2 has defined ErrorCode::INVALID_INPUT
@@ -1172,7 +1194,7 @@ impl WasmtimeSandbox {
             data: output,
             metadata: ExecutionMetadata {
                 duration_ms,
-                resource_cost: fuel_consumed as f64,
+                resource_cost: resource_cost as f64,
                 cache_hit: None,
                 host,
             },

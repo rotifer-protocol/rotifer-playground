@@ -71,6 +71,16 @@ export interface CloudArenaEntry {
 export interface FitnessReport {
   value: number;
   /**
+   * The scale F(g)'s efficiency terms were measured against (ADR-318 D2):
+   * the season median of the gene's domain and fidelity, or the fixed
+   * fallback constants. Sent only when the registry is known to have these
+   * columns (it answered get_fitness_reference); omitted otherwise, and the
+   * columns stay as they were.
+   */
+  fitness_reference?: "season-median" | "fallback";
+  l_ref_ms?: number;
+  cost_ref?: number;
+  /**
    * §5.1 / §33.1 dual-column: the raw base and the FIDELITY_DISCOUNT entry that
    * was applied, so `value = base_fitness × fidelity_discount` is reconstructible
    * from the row after the protocol parameter moves. Optional for the same

@@ -693,6 +693,28 @@ export async function publishEvaluationRuns(
   await handleResponse<unknown>(res);
 }
 
+/**
+ * The current-season median latency and resource cost of published genes in
+ * one domain and fidelity — F(g)'s L_ref / Cost_ref (ADR-318 D2). Null when the
+ * season has too few measured genes in that group. Throws when the registry
+ * cannot answer (unreachable, or too old to have the function), which callers
+ * treat as "fall back to the fixed constants".
+ */
+export async function getFitnessReference(
+  domain: string,
+  fidelity: string,
+  timeoutMs: number = 5_000,
+): Promise<import("../utils/fitness-formula.js").SeasonReferenceRow | null> {
+  const res = await fetch(apiUrl("/rpc/get_fitness_reference"), {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ p_domain: domain, p_fidelity: fidelity }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const rows = await handleResponse<import("../utils/fitness-formula.js").SeasonReferenceRow[]>(res);
+  return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+}
+
 export async function arenaSubmit(
   geneId: string,
   fitness: FitnessReport
@@ -712,6 +734,13 @@ export async function arenaSubmit(
     resource_efficiency: fitness.resource_efficiency,
   };
   if (fitness.evaluation_method) body.evaluation_method = fitness.evaluation_method;
+  // All three or none: the ledger's constraint refuses a source without its
+  // two values.
+  if (fitness.fitness_reference !== undefined && fitness.l_ref_ms !== undefined && fitness.cost_ref !== undefined) {
+    body.fitness_reference = fitness.fitness_reference;
+    body.l_ref_ms = fitness.l_ref_ms;
+    body.cost_ref = fitness.cost_ref;
+  }
   if (fitness.evaluation_n !== undefined) body.evaluation_n = fitness.evaluation_n;
   // Both or neither — the ledger's pair constraint refuses half, and half
   // would reconstruct nothing anyway.

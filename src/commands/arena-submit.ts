@@ -8,7 +8,7 @@ import { contentHash } from "../utils/content-hash.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding } from "../utils/binding.js";
-import { arenaSubmit as cloudArenaSubmit, publishEvaluationRuns } from "../cloud/client.js";
+import { arenaSubmit as cloudArenaSubmit, getFitnessReference, publishEvaluationRuns } from "../cloud/client.js";
 import { requireAuth } from "../cloud/auth.js";
 import {
   FUEL_LADDER,
@@ -19,7 +19,7 @@ import {
 import { compileOutputValidator, isRunSuccessful } from "../utils/arena-success.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { applyFidelityDiscount, estimateBaseFitness, type DiscountedFitness } from "../utils/fidelity-discount.js";
-import { computeBaseFitness } from "../utils/fitness-formula.js";
+import { computeBaseFitness, resolveFitnessReference, type ResolvedReference } from "../utils/fitness-formula.js";
 import { scan } from "../scanner/index.js";
 import type { Severity } from "../scanner/types.js";
 import { mulberry32, generateTestInput } from "../testsuite/generate.js";
@@ -42,9 +42,9 @@ const FITNESS_ROBUSTNESS_PLACEHOLDER = 0.5;
  * the five inputs are the placeholders above. The direction defect is gone —
  * the efficiency scores now multiply, so F(g) falls as latency and cost rise
  * (ADR-318 D2, superseding ADR-215 P1's claim that dividing was equivalent) —
- * but D2's other half is not: L and Cost are still measured against the fixed
- * 1000ms / 10000-fuel constants rather than the season median of the gene's own
- * domain and fidelity, so the number is not yet comparable across bindings.
+ * and L and Cost are measured against the season median of the gene's own
+ * domain and fidelity when the registry has one (falling back to the fixed
+ * constants while a group has too few measured genes).
  *
  * While this is false, ADR-318 D4 requires every submission to be recorded as
  * `estimated` no matter how thoroughly the sandbox ran it. Flip it in the same
@@ -141,6 +141,9 @@ export const arenaSubmitCommand = new Command("submit")
     // produce a base; the discount is applied once, below, so neither path can
     // forget it or apply it twice.
     let discounted: DiscountedFitness;
+    // The scale F(g)'s efficiency terms were measured against. Only the
+    // measuring path has one; an estimate ran nothing to scale.
+    let reference: ResolvedReference | null = null;
 
     if (isNative && hasIrWasm && binding) {
       display.info("Executing gene in WASM sandbox...");
@@ -252,13 +255,28 @@ export const arenaSubmitCommand = new Command("submit")
       // ADR-318 D4 defines both, and v0.9.3 #6 carries the implementation.
       // Until then they are constants, which is why hasCompleteFitnessInputs
       // is false and every score here is recorded as an estimate.
-      const { value: baseValue, latencyScore, resourceEfficiency } = computeBaseFitness({
-        successRate,
-        avgLatencyMs: avgLatency,
-        avgResourceCost: avgCost,
-        coverage: FITNESS_COVERAGE_PLACEHOLDER,
-        robustness: FITNESS_ROBUSTNESS_PLACEHOLDER,
-      });
+      // L_ref / Cost_ref: the season median of this gene's domain and fidelity,
+      // or the fixed constants when the registry has none (ADR-318 D2).
+      reference = await resolveFitnessReference(phenotype.domain, declaredFidelity, getFitnessReference);
+      if (reference.source === "season-median") {
+        display.info(
+          `Reference scale: season ${reference.seasonNumber} median of ${reference.sampleGenes} ` +
+            `${phenotype.domain} / ${declaredFidelity} genes (L_ref ${reference.scale.latencyMs.toFixed(1)} ms, ` +
+            `Cost_ref ${Math.round(reference.scale.resourceCost)} fuel)`,
+        );
+      } else {
+        display.info(`Reference scale: fixed constants — ${reference.reason}`);
+      }
+      const { value: baseValue, latencyScore, resourceEfficiency } = computeBaseFitness(
+        {
+          successRate,
+          avgLatencyMs: avgLatency,
+          avgResourceCost: avgCost,
+          coverage: FITNESS_COVERAGE_PLACEHOLDER,
+          robustness: FITNESS_ROBUSTNESS_PLACEHOLDER,
+        },
+        reference.scale,
+      );
       discounted = applyFidelityDiscount(baseValue, declaredFidelity);
 
       // V(g) = Test_Pass_Rate / Security_Leak_Risk  (Spec §5.1, ADR-215 P0)
@@ -339,6 +357,9 @@ export const arenaSubmitCommand = new Command("submit")
           resource_efficiency: fitness.resourceEfficiency,
           content_hash: geneId,
           method: evaluationMethod,
+          ...(reference
+            ? { fitness_reference: reference.source, l_ref_ms: reference.scale.latencyMs, cost_ref: reference.scale.resourceCost }
+            : {}),
           security_scanned: true,
           evaluated_at: new Date().toISOString(),
         }, null, 2) + "\n",
@@ -463,6 +484,16 @@ export const arenaSubmitCommand = new Command("submit")
             // count is what lets a reader tell that apart from a content-hash
             // estimate that never executed anything (ADR-318 D5).
             evaluation_n: didRunInSandbox ? SANDBOX_RUNS : undefined,
+            // What F(g) was scaled by, so the row can be recomputed on its own.
+            // Only when the registry answered the reference query: that is how
+            // the CLI knows it has the columns to store it.
+            ...(reference?.isRecordable
+              ? {
+                  fitness_reference: reference.source,
+                  l_ref_ms: reference.scale.latencyMs,
+                  cost_ref: reference.scale.resourceCost,
+                }
+              : {}),
           });
           cs.stop();
           display.success("Submitted to cloud Arena");

@@ -66,6 +66,47 @@ pub struct EvaluationResult {
     pub robustness: Option<f64>,
 }
 
+/// The scale F(g)'s efficiency terms are measured against (ADR-318 D2):
+/// `L_score = 1 / (1 + L / L_ref)`, `Cost_score = 1 / (1 + Cost / Cost_ref)`,
+/// so a Gene exactly at the reference scores 1/2 on each.
+///
+/// D2 defines `L_ref` / `Cost_ref` as the current-season median of the Gene's
+/// own domain and fidelity, which the registry computes
+/// (`get_fitness_reference`); [`ReferenceScale::FALLBACK`] holds the fixed
+/// constants used while that sample is too small or unreachable.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ReferenceScale {
+    /// `L_ref`, in milliseconds.
+    pub latency_ms: f64,
+    /// `Cost_ref`, in fuel.
+    pub resource_cost: f64,
+}
+
+impl ReferenceScale {
+    /// Provisional constants (`[N]`, uncalibrated) — the scale used whenever no
+    /// season median is available. Same values as the CLI's
+    /// `LATENCY_SCALE_MS` / `RESOURCE_SCALE_UNITS`.
+    pub const FALLBACK: ReferenceScale = ReferenceScale {
+        latency_ms: 1000.0,
+        resource_cost: 10_000.0,
+    };
+
+    /// Both values finite and positive — otherwise the terms would divide by
+    /// zero or go negative, and the fallback is used instead.
+    pub fn is_usable(&self) -> bool {
+        self.latency_ms.is_finite()
+            && self.latency_ms > 0.0
+            && self.resource_cost.is_finite()
+            && self.resource_cost > 0.0
+    }
+}
+
+/// Compute a [`FitnessScore`] from a batch of evaluation results, against the
+/// fallback reference scale. See [`compute_fitness_with_reference`].
+pub fn compute_fitness(results: &[EvaluationResult]) -> FitnessScore {
+    compute_fitness_with_reference(results, ReferenceScale::FALLBACK)
+}
+
 /// Compute a [`FitnessScore`] from a batch of evaluation results.
 ///
 /// Uses the spec-aligned multiplicative formula (ADR-318 D2):
@@ -76,7 +117,18 @@ pub struct EvaluationResult {
 /// efficiency scores below — they multiply rather than divide, which is what
 /// makes a slower or costlier gene score lower. If success_rate is zero the
 /// entire fitness collapses to zero (no mutual compensation).
-pub fn compute_fitness(results: &[EvaluationResult]) -> FitnessScore {
+///
+/// `reference` scales the two efficiency terms; one that is not usable (zero,
+/// negative or non-finite) is replaced by [`ReferenceScale::FALLBACK`].
+pub fn compute_fitness_with_reference(
+    results: &[EvaluationResult],
+    reference: ReferenceScale,
+) -> FitnessScore {
+    let reference = if reference.is_usable() {
+        reference
+    } else {
+        ReferenceScale::FALLBACK
+    };
     if results.is_empty() {
         return FitnessScore {
             value: 0.0,
@@ -97,10 +149,10 @@ pub fn compute_fitness(results: &[EvaluationResult]) -> FitnessScore {
     let success_rate = successes / total;
 
     let avg_latency = results.iter().map(|r| r.latency_ms as f64).sum::<f64>() / total;
-    let latency_score = 1.0 / (1.0 + avg_latency / 1000.0);
+    let latency_score = 1.0 / (1.0 + avg_latency / reference.latency_ms);
 
     let avg_cost = results.iter().map(|r| r.resource_cost).sum::<f64>() / total;
-    let resource_efficiency = 1.0 / (1.0 + avg_cost / 10_000.0);
+    let resource_efficiency = 1.0 / (1.0 + avg_cost / reference.resource_cost);
 
     let coverage = results
         .iter()
@@ -426,5 +478,114 @@ mod tests {
     fn constants_match_spec() {
         assert!((TAU - 0.3).abs() < f64::EPSILON, "TAU should be 0.3 per §5");
         assert!((V_MIN - 0.7).abs() < f64::EPSILON, "V_MIN should be 0.7 per §5");
+    }
+
+    /// The vectors in `tests/fixtures/fitness-reference-vectors.json` were
+    /// computed independently; `src/utils/fitness-formula.ts` checks the same
+    /// file, so the two implementations cannot drift apart unnoticed.
+    #[test]
+    fn reproduces_the_shared_reference_vectors() {
+        let doc: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/fitness-reference-vectors.json"
+        ))
+        .unwrap();
+        let vectors = doc["vectors"].as_array().unwrap();
+        assert!(vectors.len() >= 5);
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-12;
+        for v in vectors {
+            let name = v["name"].as_str().unwrap();
+            let runs: Vec<EvaluationResult> = v["runs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| EvaluationResult {
+                    success: r["success"].as_bool().unwrap(),
+                    latency_ms: r["latency_ms"].as_u64().unwrap(),
+                    resource_cost: r["resource_cost"].as_f64().unwrap(),
+                    coverage: None,
+                    robustness: None,
+                })
+                .collect();
+            let reference = ReferenceScale {
+                latency_ms: v["reference"]["latency_ms"].as_f64().unwrap(),
+                resource_cost: v["reference"]["resource_cost"].as_f64().unwrap(),
+            };
+            let got = compute_fitness_with_reference(&runs, reference);
+            let want = &v["expected"];
+            let field = |k: &str| want[k].as_f64().unwrap();
+            assert!(close(got.components.success_rate, field("success_rate")), "{name}: S_r");
+            assert!(close(got.components.latency_score, field("latency_score")), "{name}: L_score");
+            assert!(
+                close(got.components.resource_efficiency, field("resource_efficiency")),
+                "{name}: Cost_score"
+            );
+            assert!(close(got.value, field("value")), "{name}: F(g)");
+        }
+    }
+
+    #[test]
+    fn a_gene_at_the_reference_scores_one_half_on_each_term() {
+        let reference = ReferenceScale {
+            latency_ms: 80.0,
+            resource_cost: 3000.0,
+        };
+        let score = compute_fitness_with_reference(&[eval(true, 80, 3000.0)], reference);
+        assert!((score.components.latency_score - 0.5).abs() < 1e-12);
+        assert!((score.components.resource_efficiency - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn the_reference_decides_who_is_cheap() {
+        // The same Gene against a cheap and an expensive peer group: relative
+        // to peers that cost more, it scores higher.
+        let runs = [eval(true, 100, 5000.0)];
+        let cheap_peers = ReferenceScale {
+            latency_ms: 50.0,
+            resource_cost: 1000.0,
+        };
+        let costly_peers = ReferenceScale {
+            latency_ms: 500.0,
+            resource_cost: 50_000.0,
+        };
+        let among_cheap = compute_fitness_with_reference(&runs, cheap_peers);
+        let among_costly = compute_fitness_with_reference(&runs, costly_peers);
+        assert!(among_costly.value > among_cheap.value);
+    }
+
+    #[test]
+    fn compute_fitness_is_the_fallback_scale() {
+        let runs = [eval(true, 120, 4321.0), eval(false, 60, 100.0)];
+        let plain = compute_fitness(&runs);
+        let explicit = compute_fitness_with_reference(&runs, ReferenceScale::FALLBACK);
+        assert_eq!(plain.value, explicit.value);
+        assert_eq!(plain.components.latency_score, explicit.components.latency_score);
+    }
+
+    #[test]
+    fn an_unusable_reference_falls_back_instead_of_dividing_by_zero() {
+        let runs = [eval(true, 120, 4321.0)];
+        let fallback = compute_fitness(&runs).value;
+        for bad in [
+            ReferenceScale {
+                latency_ms: 0.0,
+                resource_cost: 1.0,
+            },
+            ReferenceScale {
+                latency_ms: 1.0,
+                resource_cost: -5.0,
+            },
+            ReferenceScale {
+                latency_ms: f64::NAN,
+                resource_cost: 1.0,
+            },
+            ReferenceScale {
+                latency_ms: 1.0,
+                resource_cost: f64::INFINITY,
+            },
+        ] {
+            let v = compute_fitness_with_reference(&runs, bad).value;
+            assert!(v.is_finite());
+            assert_eq!(v, fallback);
+        }
     }
 }

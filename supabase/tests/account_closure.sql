@@ -14,7 +14,7 @@
 
 BEGIN;
 
-SELECT plan(16);
+SELECT plan(17);
 
 -- A closes. B uses some of A's genes. C owns nothing.
 INSERT INTO auth.users (id, email, raw_user_meta_data) VALUES
@@ -28,12 +28,14 @@ UPDATE profiles SET steward_note = 'runs on my laptop'
 
 -- excl: published, only A invoked it. inv: published, B invoked it.
 -- dl: published, downloaded anonymously. draft: never published.
+-- down: published, invoked by B, then taken down by A before closing.
 -- b-gene: B's, downloaded by A.
 INSERT INTO genes (id, owner_id, name, domain, version, fidelity, phenotype, published, content_hash) VALUES
   ('f68a0000-0000-4000-8000-00000000000a', 'f6811111-1111-4111-8111-111111111111', 'close-excl',  'test.closure', '0.1.0', 'Wrapped', '{}'::jsonb, true,  repeat('a', 64)),
   ('f68b0000-0000-4000-8000-00000000000b', 'f6811111-1111-4111-8111-111111111111', 'close-inv',   'test.closure', '0.1.0', 'Wrapped', '{}'::jsonb, true,  repeat('b', 64)),
   ('f68c0000-0000-4000-8000-00000000000c', 'f6811111-1111-4111-8111-111111111111', 'close-dl',    'test.closure', '0.1.0', 'Wrapped', '{}'::jsonb, true,  repeat('c', 64)),
   ('f68d0000-0000-4000-8000-00000000000d', 'f6811111-1111-4111-8111-111111111111', 'close-draft', 'test.closure', '0.1.0', 'Wrapped', '{}'::jsonb, false, repeat('d', 64)),
+  ('f68f0000-0000-4000-8000-00000000000f', 'f6811111-1111-4111-8111-111111111111', 'close-down',  'test.closure', '0.1.0', 'Wrapped', '{}'::jsonb, true,  repeat('9', 64)),
   ('f68e0000-0000-4000-8000-00000000000e', 'f6822222-2222-4222-8222-222222222222', 'close-bgene', 'test.closure', '0.1.0', 'Wrapped', '{}'::jsonb, true,  repeat('e', 64));
 
 INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method) VALUES
@@ -41,7 +43,8 @@ INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method) VA
 
 INSERT INTO gene_invocation_log (gene_id, caller_agent_id, gene_author_id) VALUES
   ('f68a0000-0000-4000-8000-00000000000a', 'f6811111-1111-4111-8111-111111111111', 'f6811111-1111-4111-8111-111111111111'),
-  ('f68b0000-0000-4000-8000-00000000000b', 'f6822222-2222-4222-8222-222222222222', 'f6811111-1111-4111-8111-111111111111');
+  ('f68b0000-0000-4000-8000-00000000000b', 'f6822222-2222-4222-8222-222222222222', 'f6811111-1111-4111-8111-111111111111'),
+  ('f68f0000-0000-4000-8000-00000000000f', 'f6822222-2222-4222-8222-222222222222', 'f6811111-1111-4111-8111-111111111111');
 
 INSERT INTO downloads (gene_id, user_id) VALUES
   ('f68c0000-0000-4000-8000-00000000000c', NULL),
@@ -51,6 +54,13 @@ INSERT INTO api_keys (owner_id, key_hash, key_prefix, name) VALUES
   ('f6811111-1111-4111-8111-111111111111', repeat('f', 64), 'rk_test_', 'closure test key');
 
 SELECT compute_developer_reputation('f6811111-1111-4111-8111-111111111111');
+
+-- A takes "down" off the registry before closing, the way the CLI does.
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claims = '{"sub":"f6811111-1111-4111-8111-111111111111","role":"authenticated"}';
+SELECT * FROM unpublish_gene('f68f0000-0000-4000-8000-00000000000f', 'superseded');
+RESET ROLE;
+RESET request.jwt.claims;
 
 -- ── Who may close ──────────────────────────────────────────
 SELECT ok(
@@ -106,7 +116,7 @@ SELECT ok(
   'T8: the archive is on the audit trail, as unpublish_gene() would have written it; the kept genes have no entry');
 
 SELECT ok(
-  (SELECT count(*) FROM genes WHERE owner_id = 'f6811111-1111-4111-8111-111111111111') = 4
+  (SELECT count(*) FROM genes WHERE owner_id = 'f6811111-1111-4111-8111-111111111111') = 5
   AND EXISTS (SELECT 1 FROM arena_entries WHERE gene_id = 'f68a0000-0000-4000-8000-00000000000a')
   AND (SELECT count(*) FROM gene_invocation_log
         WHERE gene_id IN ('f68a0000-0000-4000-8000-00000000000a', 'f68b0000-0000-4000-8000-00000000000b')) = 2
@@ -127,13 +137,18 @@ SELECT ok(
 SELECT ok(
   (SELECT termination_reason = 'user_request'
           AND reputation_snapshot IS NOT NULL
-          AND jsonb_array_length(gene_contributions) = 3
-          AND gene_contributions @> '[{"gene_id": "f68a0000-0000-4000-8000-00000000000a", "role": "AUTHOR", "fitness_at_termination": 0.4, "state_after": "ARCHIVED"}]'::jsonb
-          AND gene_contributions @> '[{"gene_id": "f68b0000-0000-4000-8000-00000000000b", "state_after": "PUBLISHED"}]'::jsonb
+          AND jsonb_array_length(gene_contributions) = 4
+          AND gene_contributions @> '[{"gene_id": "f68a0000-0000-4000-8000-00000000000a", "role": "AUTHOR", "fitness_at_termination": 0.4, "state_before": "PUBLISHED", "state_after": "ARCHIVED"}]'::jsonb
+          AND gene_contributions @> '[{"gene_id": "f68b0000-0000-4000-8000-00000000000b", "state_before": "PUBLISHED", "state_after": "PUBLISHED"}]'::jsonb
           AND NOT gene_contributions @> '[{"gene_id": "f68d0000-0000-4000-8000-00000000000d"}]'::jsonb
           AND id = (SELECT legacy_record_id FROM closed)
      FROM account_legacy_records WHERE account_id = 'f6811111-1111-4111-8111-111111111111'),
-  'T11: the legacy record lists the three published genes (not the draft) with their state and fitness, and the reputation at closure');
+  'T11: the legacy record lists every gene the account ever published (not the draft) with its state before and after and its fitness, and the reputation at closure');
+
+SELECT ok(
+  (SELECT gene_contributions @> '[{"gene_id": "f68f0000-0000-4000-8000-00000000000f", "role": "AUTHOR", "state_before": "ARCHIVED", "state_after": "ARCHIVED"}]'::jsonb
+     FROM account_legacy_records WHERE account_id = 'f6811111-1111-4111-8111-111111111111'),
+  'T17: a gene taken down before closure, with another account''s invocations on record, is still in the legacy record (§16.4 "genes contributed by this Agent")');
 
 SELECT throws_ok(
   $$ SELECT * FROM close_account('f6811111-1111-4111-8111-111111111111', 'user_request') $$,

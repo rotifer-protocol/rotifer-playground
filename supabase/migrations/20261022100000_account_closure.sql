@@ -27,7 +27,7 @@
 --        exclusive genes are taken down the way unpublish_gene() does it (the
 --        visibility marker, published = false, a gene_visibility_log
 --        'unpublish' row with the account as actor); shared genes are left
---        published;
+--        published; genes taken down before closure are left as they are;
 --     3. recomputes developer_reputation;
 --     4. removes or anonymizes what identifies the person (§30): username →
 --        'closed_' + the account id without dashes, avatar_url, provider_id,
@@ -87,9 +87,11 @@ COMMENT ON COLUMN profiles.closed_at IS
 -- ------------------------------------------------------------
 -- account_id has no foreign key on purpose: the record is history and must
 -- outlive whatever happens to the profile later.
--- gene_contributions: [{gene_id, role, fitness_at_termination, state_after}],
--- one entry per gene the account had published at closure. Drafts are left
--- out — they were never public and the record is.
+-- gene_contributions: [{gene_id, role, fitness_at_termination, state_before,
+-- state_after}], one entry per gene the account ever published — published
+-- at closure, or taken down earlier (it has a gene_visibility_log row).
+-- Drafts that were never published are left out — they were never public
+-- and the record is.
 -- termination_reason is a code, not free text, because the record is public.
 -- active_genome is not recorded: an agent's genome lives on the client, the
 -- registry never sees it.
@@ -164,14 +166,31 @@ BEGIN
     INTO v_snapshot
     FROM developer_reputation r WHERE r.user_id = p_user_id;
 
+  -- Every gene the account ever published: published now, or taken down
+  -- earlier through unpublish_gene() (which is the only way a published row
+  -- becomes unpublished, and which writes gene_visibility_log). A gene taken
+  -- down before closure is still a contribution (§16.4 "genes contributed by
+  -- this Agent") and is recorded as ARCHIVED both before and after.
   FOR v_gene IN
-    SELECT g.id, a.fitness_value
+    SELECT g.id, g.published, a.fitness_value
       FROM genes g
       LEFT JOIN arena_entries a ON a.gene_id = g.id
-     WHERE g.owner_id = p_user_id AND g.published = true
+     WHERE g.owner_id = p_user_id
+       AND (g.published
+            OR EXISTS (SELECT 1 FROM gene_visibility_log v WHERE v.gene_id = g.id))
      ORDER BY g.created_at, g.id
        FOR UPDATE OF g
   LOOP
+    IF NOT v_gene.published THEN
+      v_contrib := v_contrib || jsonb_build_array(jsonb_build_object(
+        'gene_id', v_gene.id,
+        'role', 'AUTHOR',
+        'fitness_at_termination', v_gene.fitness_value,
+        'state_before', 'ARCHIVED',
+        'state_after', 'ARCHIVED'));
+      CONTINUE;
+    END IF;
+
     v_shared :=
       EXISTS (SELECT 1 FROM gene_invocation_log l
                WHERE l.gene_id = v_gene.id
@@ -196,6 +215,7 @@ BEGIN
       'gene_id', v_gene.id,
       'role', 'AUTHOR',
       'fitness_at_termination', v_gene.fitness_value,
+      'state_before', 'PUBLISHED',
       'state_after', CASE WHEN v_shared THEN 'PUBLISHED' ELSE 'ARCHIVED' END));
   END LOOP;
 

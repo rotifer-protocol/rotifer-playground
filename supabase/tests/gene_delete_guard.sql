@@ -13,7 +13,7 @@
 
 BEGIN;
 
-SELECT plan(8);
+SELECT plan(9);
 
 INSERT INTO auth.users (id, email, raw_user_meta_data) VALUES
   ('f6411111-1111-4111-8111-111111111111', 'delete-guard@example.com', '{"user_name": "delete_guard"}'::jsonb);
@@ -28,7 +28,8 @@ INSERT INTO genes (id, owner_id, name, domain, version, fidelity, phenotype, pub
   ('f64c0000-0000-4000-8000-00000000000c', 'f6411111-1111-4111-8111-111111111111', 'del-runs',  'test.delete', '0.1.0', 'Wrapped', '{}'::jsonb, false, repeat('3', 64)),
   ('f64d0000-0000-4000-8000-00000000000d', 'f6411111-1111-4111-8111-111111111111', 'del-draft', 'test.delete', '0.1.0', 'Wrapped', '{}'::jsonb, false, repeat('4', 64)),
   ('f64e0000-0000-4000-8000-00000000000e', 'f6411111-1111-4111-8111-111111111111', 'del-svc',   'test.delete', '0.1.0', 'Wrapped', '{}'::jsonb, true,  repeat('5', 64)),
-  ('f64f0000-0000-4000-8000-00000000000f', 'f6411111-1111-4111-8111-111111111111', 'del-unpub', 'test.delete', '0.1.0', 'Wrapped', '{}'::jsonb, true,  repeat('6', 64));
+  ('f64f0000-0000-4000-8000-00000000000f', 'f6411111-1111-4111-8111-111111111111', 'del-unpub', 'test.delete', '0.1.0', 'Wrapped', '{}'::jsonb, true,  repeat('6', 64)),
+  ('f6400000-0000-4000-8000-000000000010', 'f6411111-1111-4111-8111-111111111111', 'del-history', 'test.delete', '0.1.0', 'Wrapped', '{}'::jsonb, true, repeat('7', 64));
 
 INSERT INTO arena_entries (gene_id, domain, fitness_value, evaluation_method) VALUES
   ('f64b0000-0000-4000-8000-00000000000b', 'test.delete', 0.4, 'estimated'),
@@ -62,6 +63,16 @@ SELECT lives_ok(
 SELECT lives_ok(
   $$ SELECT * FROM unpublish_gene('f64f0000-0000-4000-8000-00000000000f', 'superseded') $$,
   'T5: unpublish_gene() still takes a published version down');
+
+-- T-64 acceptance: published, invoked, taken down, then deleted. No Arena
+-- row, and it is unpublished by the time of the delete — but it was public,
+-- and its invocation and its take-down are on record.
+SELECT log_gene_invocation('f6400000-0000-4000-8000-000000000010', 'f6411111-1111-4111-8111-111111111111');
+SELECT * FROM unpublish_gene('f6400000-0000-4000-8000-000000000010', 'about to delete');
+SELECT throws_ok(
+  $$ DELETE FROM genes WHERE id = 'f6400000-0000-4000-8000-000000000010' $$,
+  '42501', NULL,
+  'T9: a gene that was published, invoked and taken down cannot be deleted — its history is the evidence, not its current state');
 
 RESET ROLE;
 

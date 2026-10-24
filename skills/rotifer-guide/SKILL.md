@@ -28,7 +28,7 @@ If you prefer MCP integration instead of CLI, add this to your MCP config:
   "mcpServers": {
     "rotifer": {
       "command": "npx",
-      "args": ["@rotifer/mcp-server@0.19.3"]
+      "args": ["@rotifer/mcp-server@0.19.4"]
     }
   }
 }

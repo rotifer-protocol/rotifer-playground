@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.30.0...v0.30.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **deps:** upgrade zod and fast-uri in the lockfile ([#458](https://github.com/rotifer-protocol/rotifer-playground/issues/458)) ([2c4a3ad](https://github.com/rotifer-protocol/rotifer-playground/commit/2c4a3ad01e4a458431cb690298008c19ef04b511))
+* **supabase:** a client cannot delete a gene that carries evidence ([#437](https://github.com/rotifer-protocol/rotifer-playground/issues/437)) ([2e01ff5](https://github.com/rotifer-protocol/rotifer-playground/commit/2e01ff532065886ba6f79c2f425167ef209115b7))
+* **supabase:** a closed account cannot write with a leftover token ([#441](https://github.com/rotifer-protocol/rotifer-playground/issues/441)) ([fb17b79](https://github.com/rotifer-protocol/rotifer-playground/commit/fb17b797d930a457ccd9ad03fc08f5d7fc0ce7d1))
+* **supabase:** close an account without deleting its genes ([#440](https://github.com/rotifer-protocol/rotifer-playground/issues/440)) ([86fd2c1](https://github.com/rotifer-protocol/rotifer-playground/commit/86fd2c1067359ec384a9f29383d2282b3605616a))
+* **supabase:** record a client's invocation report under its own account ([#438](https://github.com/rotifer-protocol/rotifer-playground/issues/438)) ([fc8ed52](https://github.com/rotifer-protocol/rotifer-playground/commit/fc8ed526f7735d64f2b60d672ebe467e63b85ea2))
+* **supabase:** record an MCP call under its account, and drop unsigned ones ([#443](https://github.com/rotifer-protocol/rotifer-playground/issues/443)) ([336315e](https://github.com/rotifer-protocol/rotifer-playground/commit/336315e8bb065ab5b453952aa0e53f90e34eca0b))
+* **supabase:** stop exposing downloaders and duplicate-call timing ([#442](https://github.com/rotifer-protocol/rotifer-playground/issues/442)) ([e21eaac](https://github.com/rotifer-protocol/rotifer-playground/commit/e21eaac1aa3557bac1d0501457acfe8ec22dae34))
+
 ## [0.30.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.29.0...v0.30.0) (2026-10-21)
 
 

@@ -2,12 +2,12 @@
 name: rotifer-self-evolving-agent
 description: Rank an Agent's Rotifer Genes against the Arena and swap in stronger ones. Invoked explicitly via /evolve — scan local capabilities, compare Genes, inspect fitness scores, and replace weak ones with user approval. Not for capabilities outside Rotifer.
 license: Apache-2.0
-compatibility: Requires network access and npx to run @rotifer/mcp-server@0.19.3 for Arena rankings and Gene metadata.
+compatibility: Requires network access and npx to run @rotifer/mcp-server@0.19.4 for Arena rankings and Gene metadata.
 metadata:
   author: rotifer-protocol
-  version: "2.4.10"
+  version: "2.4.11"
   command: /evolve
-  mcp-package: "@rotifer/mcp-server@0.19.3"
+  mcp-package: "@rotifer/mcp-server@0.19.4"
 ---
 
 # Rotifer Self-Evolving Agent
@@ -19,7 +19,7 @@ Your Agent gets stronger by competing, not by configuring. Scan capabilities, be
 This skill is invoked with `/evolve` and uses the Rotifer MCP Server at runtime:
 
 ```bash
-npx -y @rotifer/mcp-server@0.19.3 --tools=evolve
+npx -y @rotifer/mcp-server@0.19.4 --tools=evolve
 ```
 
 `--tools=evolve` is not decoration. The server can expose 31 tools, including
@@ -141,14 +141,14 @@ No Gene is replaced without your confirmation.
 ## Security & Transparency
 
 ### Runtime dependency
-This Skill runs [`@rotifer/mcp-server@0.19.3`](https://www.npmjs.com/package/@rotifer/mcp-server/v/0.19.3) via `npx` at runtime. The package is **fetched from npm on first use** and cached locally. This is a standard MCP Skill pattern but means you are trusting remote code — review the source before use.
+This Skill runs [`@rotifer/mcp-server@0.19.4`](https://www.npmjs.com/package/@rotifer/mcp-server/v/0.19.4) via `npx` at runtime. The package is **fetched from npm on first use** and cached locally. This is a standard MCP Skill pattern but means you are trusting remote code — review the source before use.
 
-`/evolve run-agent` is a second such path: it invokes the `rotifer` CLI, and when that is not on `PATH` it falls back to `npx -y @rotifer/playground@0.27.0`. That fallback lives in the server rather than here; server versions before 0.19.3 left it unpinned, which is why this Skill requires 0.19.3. Installing the CLI at a version you have reviewed (`npm i -g @rotifer/playground@0.27.0`) means `run-agent` never fetches anything.
+`/evolve run-agent` is a second such path: it invokes the `rotifer` CLI, and when that is not on `PATH` it falls back to `npx -y @rotifer/playground@0.27.0`. That fallback lives in the server rather than here; server versions before 0.19.3 left it unpinned. This Skill requires 0.19.4, which also reports usage with your sign-in; older servers' calls are no longer counted. Installing the CLI at a version you have reviewed (`npm i -g @rotifer/playground@0.27.0`) means `run-agent` never fetches anything.
 
-Pinning is the point of the `@0.19.3` above: an unversioned `npx` would resolve to whatever the registry serves at that moment, so the code you run would not be the code you reviewed. A lockfile is stronger than a pinned `npx` call — `npm install --save-dev --save-exact @rotifer/mcp-server@0.19.3`, commit the lockfile, and use `npm ci` in automation. Moving this pin is a deliberate, repository-wide step, not a per-file edit; review what changed first and record what you are accepting with the `npm view` command below.
+Pinning is the point of the `@0.19.4` above: an unversioned `npx` would resolve to whatever the registry serves at that moment, so the code you run would not be the code you reviewed. A lockfile is stronger than a pinned `npx` call — `npm install --save-dev --save-exact @rotifer/mcp-server@0.19.4`, commit the lockfile, and use `npm ci` in automation. Moving this pin is a deliberate, repository-wide step, not a per-file edit; review what changed first and record what you are accepting with the `npm view` command below.
 
 - **Source code**: [github.com/rotifer-protocol/rotifer-mcp-server](https://github.com/rotifer-protocol/rotifer-mcp-server)
-- **Verify**: `npm view @rotifer/mcp-server@0.19.3 dist.integrity`
+- **Verify**: `npm view @rotifer/mcp-server@0.19.4 dist.integrity`
 
 ### Network requests
 Gene, Arena and profile queries go to the Rotifer public API at `rotifer.dev` (hosted on Supabase). Beyond that the MCP server makes one version check per day against `registry.npmjs.org`, caching the answer in `~/.config/rotifer/update-check.json`; `npx` reaches the same registry when it fetches or refreshes a package.
@@ -188,7 +188,7 @@ The other 21 are not listed and are refused if called anyway, so what the assist
 
 The ten cover the whole surface, not just the tool list. The server also serves **resources** — read-only URIs returning the same data as tools of the same name — and those travel with the set: three of the seven (`rotifer://genes/{id}/stats`, `rotifer://developers/{name}`, `rotifer://leaderboard`) are dropped from the listing and refused if read directly, because their tools were not asked for. Until `0.16.1` they were readable whatever the tool set said. **Prompts** are not restricted, and are not meant to be: a prompt returns text and reaches nothing — no query, no file, no process.
 
-You can check rather than take our word for it: `npx -y @rotifer/mcp-server@0.19.3 --tools=evolve` and ask it to list its tools.
+You can check rather than take our word for it: `npx -y @rotifer/mcp-server@0.19.4 --tools=evolve` and ask it to list its tools.
 
 ### Permission justification
 - `network:outbound` — query Arena rankings, Gene metadata and fitness scores from the Rotifer public API, and fetch the MCP server package itself from npm.

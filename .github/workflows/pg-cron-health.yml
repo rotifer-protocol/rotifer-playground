@@ -1,0 +1,125 @@
+name: pg_cron Health
+
+# pg_cron records every run in cron.job_run_details and nothing reads it.
+# check-season-reset failed every night from 2026-08-17 to 2026-10-24 — 68
+# runs, season 1 never ended — and nobody found out for ten weeks (T-82).
+#
+# This job asks Rotifer Cloud once a day, after the 01:00 UTC season job, for
+# cron_job_health() (migration 20261025110000) and keeps one standing issue
+# open while any active job has failed since its last success or is overdue —
+# no run for more than two of the gaps its schedule allows, which is how a
+# stopped scheduler shows up: no failures, just no runs. It closes the issue
+# once every job is healthy again.
+#
+# No new secret: cron_job_health() is callable with the publishable key the
+# CLI already ships (src/cloud/types.ts), and returns job names, schedules and
+# status only — no SQL, no error text. The issue says which job is affected;
+# the error itself is in the Supabase dashboard (Integrations → Cron).
+#
+# Every issue and comment body is written to a file by the Python step and
+# passed with --body-file: no free text goes through shell quoting.
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  health:
+    name: pg_cron jobs on Rotifer Cloud
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Ask cron_job_health()
+        id: check
+        run: |
+          # The same endpoint and publishable key the CLI ships with.
+          ENDPOINT="$(grep -oE 'process\.env\.ROTIFER_CLOUD_ENDPOINT \|\| "[^"]+"' src/cloud/types.ts | grep -oE 'https://[^"]+')"
+          KEY="$(grep -oE 'DEFAULT_CLOUD_ANON_KEY = "sb_publishable_[^"]+"' src/cloud/types.ts | grep -oE 'sb_publishable_[^"]+')"
+          if [ -z "$ENDPOINT" ] || [ -z "$KEY" ]; then
+            echo "::error::could not read the cloud endpoint or publishable key from src/cloud/types.ts — this watcher is watching nothing"
+            exit 1
+          fi
+          CODE="$(curl -sS -o health.json -w '%{http_code}' -X POST \
+            -H "apikey: $KEY" -H "Content-Type: application/json" -d '{}' \
+            "$ENDPOINT/rest/v1/rpc/cron_job_health")"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::cron_job_health() answered HTTP $CODE — this watcher is watching nothing"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import datetime, json, os
+          jobs = json.load(open("health.json"))
+          if not jobs:
+              print("::error::cron_job_health() returned no jobs — this watcher is watching nothing")
+              raise SystemExit(1)
+
+          def problem(j):
+              out = []
+              if (j["failures_since_success"] or 0) > 0:
+                  out.append(f'failed {j["failures_since_success"]} time(s) since its last success ({j["last_succeeded_at"] or "never"})')
+              if j["overdue"] is True:
+                  out.append(f'no run since {j["last_run_at"]}; its schedule allows at most {j["expected_every"]} between runs')
+              return "; ".join(out)
+
+          for j in jobs:
+              print(f'  {j["jobname"]:<32} {j["schedule"]:<14} last {j["last_status"] or "never run"}'
+                    f' at {j["last_run_at"] or "-"}; failed {j["failures_since_success"]} since last success;'
+                    f' overdue {j["overdue"]}')
+          bad = [j for j in jobs if j["active"] and problem(j)]
+          unjudged = [j["jobname"] for j in jobs if j["active"] and j["overdue"] is None]
+          if unjudged:
+              print("::warning::cannot tell whether these jobs are overdue (schedule not understood, or no run recorded): " + ", ".join(unjudged))
+
+          today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+          table = "\n".join(
+              ["| Job | Schedule | Problem | Last run (UTC) |", "|---|---|---|---|"]
+              + [f'| `{j["jobname"]}` | `{j["schedule"]}` | {problem(j)} | {j["last_run_at"] or "never"} |' for j in bad])
+          with open("issue-body.md", "w") as f:
+              f.write("These pg_cron jobs on Rotifer Cloud are failing or have stopped running:\n\n"
+                      + table + "\n\n"
+                      "The error text is in the Supabase dashboard under Integrations, Cron, in the job's run history; "
+                      "it is deliberately not exposed through `cron_job_health()`. "
+                      "If every job is overdue at once, the scheduler itself has stopped.\n\n"
+                      "Refreshed daily by `.github/workflows/pg-cron-health.yml`; it closes this issue once every job is healthy again.\n")
+          with open("issue-comment.md", "w") as f:
+              f.write(f"Still not healthy ({today}):\n\n" + table + "\n")
+          with open("issue-close.md", "w") as f:
+              f.write(f"Every active pg_cron job is succeeding and on schedule ({today}). "
+                      "Closed by `.github/workflows/pg-cron-health.yml`.\n")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"unhealthy={len(bad)}\n")
+          if bad:
+              print(f"::warning::{len(bad)} pg_cron job(s) failing or overdue: " + ", ".join(j["jobname"] for j in bad))
+          else:
+              print("✅ every active job is succeeding and on schedule")
+          PY
+
+      # One standing issue, refreshed in place, closed when everything is
+      # healthy again — a daily duplicate would train everyone to ignore it.
+      - name: Open, refresh or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UNHEALTHY: ${{ steps.check.outputs.unhealthy }}
+        run: |
+          TITLE="pg_cron job failing or stopped on Rotifer Cloud"
+          EXISTING="$(gh issue list --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')"
+          if [ "$UNHEALTHY" = "0" ]; then
+            if [ -n "$EXISTING" ]; then
+              gh issue comment "$EXISTING" --body-file issue-close.md
+              gh issue close "$EXISTING"
+              echo "closed issue #$EXISTING"
+            fi
+            exit 0
+          fi
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file issue-comment.md
+            echo "refreshed issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body-file issue-body.md
+          fi

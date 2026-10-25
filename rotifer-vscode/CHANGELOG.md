@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.3 — 2026-10-24
+
+Version aligned with the `v0.9.3` Rotifer release line (npm `@rotifer/playground` 0.30.x). The extension's code and bundled content are unchanged from 0.9.2. It runs the CLI as `npx -y @rotifer/playground`, which resolves to the latest published CLI, so 0.30.x behaviour (Arena F(g) against the season median, genes run with the permissions their phenotype declares) already applies without an extension update.
+
 ## 0.9.2 — 2026-08-15
 
 - **Security — the CLI is now invoked by its scoped package name.** Every terminal command the extension runs (`test`, `scan`, `init`, …) shelled out to `npx rotifer`. The bare `rotifer` name is unclaimed on npm, so anyone publishing under it would have their code fetched and executed in the user's own terminal and workspace. The extension now runs `npx -y @rotifer/playground`, whose single bin is `rotifer`.

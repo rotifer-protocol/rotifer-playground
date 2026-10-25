@@ -1,0 +1,110 @@
+name: pg_cron Health
+
+# pg_cron records every run in cron.job_run_details and nothing reads it.
+# check-season-reset failed every night from 2026-08-17 to 2026-10-24 — 68
+# runs, season 1 never ended — and nobody found out for ten weeks (T-82).
+#
+# This job asks Rotifer Cloud once a day, after the 01:00 UTC season job, for
+# cron_job_health() (migration 20261025110000) and keeps one standing issue
+# open while any job has failed since its last success; it closes the issue
+# once every job is succeeding again.
+#
+# No new secret: cron_job_health() is callable with the publishable key the
+# CLI already ships (src/cloud/types.ts), and returns job names, schedules and
+# status only — no SQL, no error text. The issue says which job is failing;
+# the error itself is in the Supabase dashboard (Integrations → Cron).
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  health:
+    name: pg_cron jobs on Rotifer Cloud
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Ask cron_job_health()
+        id: check
+        run: |
+          # The same endpoint and publishable key the CLI ships with.
+          ENDPOINT="$(grep -oE 'process\.env\.ROTIFER_CLOUD_ENDPOINT \|\| "[^"]+"' src/cloud/types.ts | grep -oE 'https://[^"]+')"
+          KEY="$(grep -oE 'DEFAULT_CLOUD_ANON_KEY = "sb_publishable_[^"]+"' src/cloud/types.ts | grep -oE 'sb_publishable_[^"]+')"
+          if [ -z "$ENDPOINT" ] || [ -z "$KEY" ]; then
+            echo "::error::could not read the cloud endpoint or publishable key from src/cloud/types.ts — this watcher is watching nothing"
+            exit 1
+          fi
+          CODE="$(curl -sS -o health.json -w '%{http_code}' -X POST \
+            -H "apikey: $KEY" -H "Content-Type: application/json" -d '{}' \
+            "$ENDPOINT/rest/v1/rpc/cron_job_health")"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::cron_job_health() answered HTTP $CODE — this watcher is watching nothing"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json, os
+          jobs = json.load(open("health.json"))
+          if not jobs:
+              print("::error::cron_job_health() returned no jobs — this watcher is watching nothing")
+              raise SystemExit(1)
+          failing = [j for j in jobs if j["active"] and (j["failures_since_success"] or 0) > 0]
+          for j in jobs:
+              print(f'  {j["jobname"]:<32} {j["schedule"]:<14} last {j["last_status"] or "never run"}'
+                    f' at {j["last_run_at"] or "-"}; failed {j["failures_since_success"]} since last success ({j["last_succeeded_at"] or "never"})')
+          lines = [f'| `{j["jobname"]}` | `{j["schedule"]}` | {j["failures_since_success"]} | {j["last_succeeded_at"] or "never"} | {j["last_run_at"]} |'
+                   for j in failing]
+          with open("failing.md", "w") as f:
+              f.write("\n".join(lines))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"failing={len(failing)}\n")
+          if failing:
+              print(f"::warning::{len(failing)} pg_cron job(s) failing: " + ", ".join(j["jobname"] for j in failing))
+          else:
+              print("✅ every active job succeeded on its last run")
+          PY
+
+      # One standing issue, refreshed in place, closed when everything is
+      # green again — a daily duplicate would train everyone to ignore it.
+      - name: Open, refresh or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILING: ${{ steps.check.outputs.failing }}
+        run: |
+          TITLE="pg_cron job failing on Rotifer Cloud"
+          EXISTING="$(gh issue list --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')"
+          if [ "$FAILING" = "0" ]; then
+            if [ -n "$EXISTING" ]; then
+              gh issue close "$EXISTING" --comment "Every active pg_cron job succeeded on its last run ($(date -u +%F)). Closed by \`.github/workflows/pg-cron-health.yml\`."
+              echo "closed issue #$EXISTING"
+            fi
+            exit 0
+          fi
+          TABLE="$(cat failing.md)"
+          BODY="$(cat <<TXT
+          These pg_cron jobs on Rotifer Cloud have failed since their last success:
+
+          | Job | Schedule | Failures since last success | Last success (UTC) | Last run (UTC) |
+          |---|---|---|---|---|
+          ${TABLE}
+
+          The error text is in the Supabase dashboard → Integrations → Cron → the job's run history (it is deliberately not exposed through \`cron_job_health()\`).
+
+          Refreshed daily by \`.github/workflows/pg-cron-health.yml\`; it closes this issue once every job succeeds again.
+          TXT
+          )"
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "Still failing ($(date -u +%F)):
+
+          | Job | Schedule | Failures since last success | Last success (UTC) | Last run (UTC) |
+          |---|---|---|---|---|
+          ${TABLE}"
+            echo "refreshed issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi

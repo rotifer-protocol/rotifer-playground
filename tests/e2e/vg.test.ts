@@ -141,3 +141,48 @@ describe.skipIf(!hasCli)("rotifer vg (V(g) security scan)", () => {
     expect(output).toContain("Static analysis only");
   });
 });
+
+// T-88 item 7 and its follow-ups: say what was scanned, and never grade code
+// that was not read.
+describe.skipIf(!hasCli)("rotifer vg — what it scanned", () => {
+  function runWithStatus(args: string): { output: string; status: number } {
+    try {
+      const output = execSync(`node "${CLI}" ${args} 2>&1`, {
+        cwd: TMP,
+        encoding: "utf-8",
+        timeout: 15_000,
+        env: { ...process.env, NO_COLOR: "1" },
+      });
+      return { output, status: 0 };
+    } catch (e: any) {
+      return { output: (e.stdout?.toString() ?? "") + (e.stderr?.toString() ?? ""), status: e.status ?? 1 };
+    }
+  }
+
+  it("reports a path that does not exist instead of grading it ?", () => {
+    const { output, status } = runWithStatus("vg no-such-gene");
+    expect(output).toContain("No such directory: no-such-gene");
+    expect(status).toBe(1);
+  });
+
+  it("--all over a directory with nothing to scan says so and gives no grade A", () => {
+    const dir = join(TMP, "nothing-to-scan");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "README.md"), "no code here\n");
+    const { output } = runWithStatus(`vg "${dir}" --all`);
+    expect(output).toContain("No code files found");
+    expect(output).not.toMatch(/grade A/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("grades a gene whose index.ts sits at the gene root, as Genesis genes do", () => {
+    const dir = join(TMP, "root-index-gene");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "index.ts"), "export function express(x: string) { return x.trim(); }\n");
+    writeFileSync(join(dir, "phenotype.json"), "{}");
+    const { output } = runWithStatus(`vg "${dir}"`);
+    expect(output).toMatch(/Files scanned:\s+1/);
+    expect(output).toContain("grade A");
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

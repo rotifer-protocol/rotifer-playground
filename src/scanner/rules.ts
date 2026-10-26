@@ -9,7 +9,7 @@ import type { ScanRule } from "./types.js";
  * rulesFingerprint() per version, and the hash of literals.ts, and fails until
  * both are updated.
  */
-export const SCANNER_VERSION = "0.8.2";
+export const SCANNER_VERSION = "0.9.0";
 
 export const SCAN_RULES: ScanRule[] = [
   {
@@ -47,6 +47,14 @@ export const SCAN_RULES: ScanRule[] = [
       /(?<![.\w$])execSync\s*\(/,
       /(?<![.\w$])spawn\s*\(/,
       /(?<![.\w$])spawnSync\s*\(/,
+      // Python. .py files were collected but no pattern described Python, so
+      // a gene that shells out graded A. `import subprocess` is the capability
+      // acquisition, like require("child_process") above; the call forms catch
+      // `import subprocess as sp` and from-imports used through the module.
+      /^\s*import\s+subprocess\b/,
+      /^\s*from\s+subprocess\s+import\b/,
+      /\bsubprocess\.(?:run|call|check_call|check_output|Popen|getoutput|getstatusoutput)\s*\(/,
+      /\bos\.(?:system|popen|exec[lv]p?e?|spawn[lv]p?e?)\s*\(/,
     ],
   },
   {
@@ -112,6 +120,11 @@ export const SCAN_RULES: ScanRule[] = [
       /\bfs\.mkdirSync\b/,
       /\breadFileSync\s*\(/,
       /\bwriteFileSync\s*\(/,
+      // Python. The builtin open() is a bare call; the lookbehind leaves out
+      // method calls such as window.open() and dialog.open().
+      /(?<![.\w$])open\s*\(/,
+      /\bos\.(?:remove|unlink|rmdir|removedirs)\s*\(/,
+      /\bshutil\.(?:rmtree|move|copy|copyfile|copytree)\s*\(/,
     ],
   },
 ];

@@ -177,6 +177,11 @@ const RULES_FINGERPRINTS: Record<string, string> = {
   // S-01 matches code only (string / regex literals and comments blanked).
   // 0.8.1 was an unreleased draft of the same table with a weaker masker.
   "0.8.2": "fcb587526c5a55be4734e08d71544a301f428c55040b9a09a896b01ab40ec258",
+  // S-02 and S-07 gain Python patterns (subprocess, os.system, open(), …).
+  // Same version also covers the file-selection change in scanner.ts: the
+  // gene root's top-level code is read when there is no src/, and a scan
+  // that read no code is graded "?" instead of "A".
+  "0.9.0": "701145bac74c8f5430c482d57ee5fea6d3936f6bb16f609ffbf63d22a99a36d0",
 };
 
 // The fingerprint covers the table, not the masking in literals.ts, which also
@@ -185,6 +190,7 @@ const RULES_FINGERPRINTS: Record<string, string> = {
 // the new hash under the (possibly new) version.
 const MASKER_SHA256: Record<string, string> = {
   "0.8.2": "e4c03b49c2755774d416b76f94473d7ed35d2d621d5f9d961977e5d9bbe7b3fb",
+  "0.9.0": "e4c03b49c2755774d416b76f94473d7ed35d2d621d5f9d961977e5d9bbe7b3fb",
 };
 
 function maskerHash(): string {

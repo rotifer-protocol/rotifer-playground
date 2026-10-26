@@ -58,6 +58,6 @@
         command: npx
         args:
           - '-y'
-          - '@rotifer/mcp-server@0.19.5'
+          - '@rotifer/mcp-server@0.19.6'
           - '--tools=evolve'
         failOnStartupError: false

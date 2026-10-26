@@ -15,7 +15,17 @@ sha2 = "0.10"
 thiserror = "2"
 anyhow = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
-wasmtime = "48.0.7"
+# Every default feature except `cache`: nothing here uses wasmtime's on-disk
+# compilation cache, and that feature alone pulls in zstd (RUSTSEC-2026-0391,
+# -0398, -0403, -0410). The rest of the list is wasmtime 48's `default`
+# unchanged; re-check it when upgrading wasmtime.
+wasmtime = { version = "48.0.7", default-features = false, features = [
+    "anyhow", "async", "backtrace", "gc", "gc-copying", "gc-drc", "gc-null",
+    "wat", "profiling", "parallel-compilation", "cranelift", "pooling-allocator",
+    "demangle", "addr2line", "coredump", "debug-builtins", "runtime",
+    "component-model", "component-model-async", "threads", "stack-switching",
+    "std", "debug", "compile-time-builtins", "wit-parser",
+] }
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["full"] }

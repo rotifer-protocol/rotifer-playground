@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.2](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.30.1...v0.30.2) (2026-10-26)
+
+
+### Bug Fixes
+
+* **supabase:** let seasons roll over, and report failing pg_cron jobs ([#461](https://github.com/rotifer-protocol/rotifer-playground/issues/461)) ([124dd73](https://github.com/rotifer-protocol/rotifer-playground/commit/124dd73624b56d31b79c226067b916d8678955ae))
+* **telemetry:** make `rotifer telemetry off` stop the invocation report too ([#463](https://github.com/rotifer-protocol/rotifer-playground/issues/463)) ([04dc60f](https://github.com/rotifer-protocol/rotifer-playground/commit/04dc60f634109968c68367cf2d4b35534d312de4))
+
 ## [0.30.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.30.0...v0.30.1) (2026-10-24)
 
 

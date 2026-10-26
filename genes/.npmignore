@@ -16,3 +16,11 @@
 !genesis-code-format/**
 !genesis-l0-constraint/
 !genesis-l0-constraint/**
+
+# `hello --template quality-advisor` — the first command the README and the
+# init banner recommend — runs gene-health-scanner, and `init` copies it from
+# here (RECOMMENDED_TEMPLATE_GENES). Leaving it out broke that first run on
+# every published version from 0.30.0 to 0.30.2 (#453).
+# scripts/smoke-packed-package.sh fails if a gene init copies is missing.
+!gene-health-scanner/
+!gene-health-scanner/**

@@ -56,7 +56,7 @@ $ rotifer init my-agent
   ───────────────
   Name                        Domain            Fidelity
   ────────────────────────────────────────────────────────
-  genesis-file-read           filesystem        Native
+  genesis-file-read           filesystem        Wrapped
   hello-world                 general           Wrapped
   gene-health-scanner         meta.diagnostics  Native
   genesis-l0-constraint       safety            Native
@@ -80,7 +80,7 @@ One command scaffolds the workspace and ships the starter genes, including the o
 rotifer init my-agent && cd my-agent
 ```
 
-You see an Arena with 6 genes ranked by fitness. No configuration needed.
+Your workspace already holds the starter genes. `rotifer arena list` shows them in the local Arena, unscored until you evaluate one with `rotifer arena submit <gene>`. No configuration needed.
 
 ### Act 2 — Aha (5 minutes)
 
@@ -234,7 +234,7 @@ Five pre-installed genes ship with every Agent workspace:
 |------|--------|----------|-------------|
 | `genesis-web-search` | search | Native | Full web search with multiple results |
 | `genesis-web-search-lite` | search | Native | Lightweight single-answer search |
-| `genesis-file-read` | filesystem | Native | Read local files (L0 sandbox restricted) |
+| `genesis-file-read` | filesystem | Wrapped | Read local files (L0 sandbox restricted) |
 | `genesis-code-format` | tooling | Native | Format source code (JSON, TS, etc.) |
 | `genesis-l0-constraint` | safety | Native | L0 sandbox constraint checker |
 

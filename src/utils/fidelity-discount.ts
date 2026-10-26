@@ -41,6 +41,36 @@ export function fidelityDiscountFor(fidelity: string | null | undefined): number
   return FIDELITY_DISCOUNT[key] ?? FIDELITY_DISCOUNT.wrapped;
 }
 
+/**
+ * The tier a score is entitled to, given what actually ran.
+ *
+ * §5.1 gives Native 1.00 because "pure WASM execution is fully verifiable".
+ * A Gene that declares Native but did not run in the sandbox — no compiled
+ * artifact, no sandbox on this platform, or an estimate that runs nothing at
+ * all — earned none of that: its logic ran under Node.js or did not run. It
+ * takes the Wrapped discount, the tier that makes no claim about execution.
+ * Hybrid and Wrapped keep their declared tier: Hybrid is defined to run under
+ * Node.js behind the network gateway, and Wrapped already claims nothing.
+ */
+export function effectiveFidelity(declared: string | null | undefined, didRunInSandbox: boolean): string {
+  const tier = (declared ?? "").trim();
+  if (!tier) return "Wrapped";
+  if (tier.toLowerCase() === "native" && !didRunInSandbox) return "Wrapped";
+  return tier;
+}
+
+/**
+ * F(g) for the listings that estimate from the content hash and run nothing
+ * (`arena watch`, `agent create`). Nothing ran, so a declared Native is
+ * discounted as Wrapped (see effectiveFidelity).
+ */
+export function estimateUnexecutedFitness(
+  declared: string | null | undefined,
+  geneId: string,
+): DiscountedFitness {
+  return applyFidelityDiscount(estimateBaseFitness(geneId), effectiveFidelity(declared, false));
+}
+
 /** Apply the discount and return all three numbers the ledger wants. */
 export function applyFidelityDiscount(
   baseFitness: number,

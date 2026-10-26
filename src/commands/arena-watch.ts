@@ -13,7 +13,7 @@ import {
   safetyCell,
 } from "../utils/leaderboard-watch.js";
 import { contentHash } from "../utils/content-hash.js";
-import { applyFidelityDiscount, estimateBaseFitness } from "../utils/fidelity-discount.js";
+import { estimateUnexecutedFitness } from "../utils/fidelity-discount.js";
 
 interface RankEntry {
   rank: number;
@@ -51,7 +51,7 @@ function loadRankings(root: string, genesDir: string, domainFilter?: string): Ra
       const gId = contentHash(phenotype);
 
       const seed = parseInt(gId.slice(0, 8), 16);
-      const { fitness: discountedFitness } = applyFidelityDiscount(estimateBaseFitness(gId), phenotype.fidelity);
+      const { fitness: discountedFitness } = estimateUnexecutedFitness(phenotype.fidelity, gId);
       const fitness = discountedFitness;
       const safety = 0.7 + (seed % 300) / 1000;
 

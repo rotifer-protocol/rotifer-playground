@@ -14,7 +14,7 @@ import { c } from "../utils/palette.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
-import { applyFidelityDiscount, estimateBaseFitness } from "../utils/fidelity-discount.js";
+import { estimateUnexecutedFitness } from "../utils/fidelity-discount.js";
 
 export interface CreateAgentParams {
   root: string;
@@ -231,7 +231,7 @@ function getArenaRankings(
 
       const geneId = contentHash(phenotype);
       const seed = parseInt(geneId.slice(0, 8), 16);
-      const { fitness: discountedFitness } = applyFidelityDiscount(estimateBaseFitness(geneId), phenotype.fidelity);
+      const { fitness: discountedFitness } = estimateUnexecutedFitness(phenotype.fidelity, geneId);
 
       entries.push({
         name,

@@ -449,13 +449,25 @@ jobs:
         with:
           version: 2.67.1
 
+      # setup-cli exports SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io, and
+      # ghcr.io kept answering `toomanyrequests … allowed: 44000/minute`
+      # (#468, #475, #477, #478, main run 40361357905, 2026-10-26) — even to
+      # a logged-in pull (#479's first run 40363550389: "Login Succeeded!",
+      # then the same error). public.ecr.aws is the CLI's own default
+      # registry (supabase/cli internal/utils/docker.go, defaultRegistry) and
+      # serves the same images. A later write to GITHUB_ENV wins.
+      - name: Pull Supabase images from public.ecr.aws
+        run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws" >> "$GITHUB_ENV"
+
       - name: Verify migration chain replays cleanly
         # `supabase start` internally runs `db reset` which applies every
         # migration in supabase/migrations/ from scratch. A clean exit
         # proves dev/prod parity (no SQLSTATE 42P13 return-type drift,
         # missing extensions, etc). Source: v0.8.8 dev/prod parity sprint
         # (rotifer-playground commit 9d8076b + this sprint).
-        run: supabase start
+        # Retried (3 attempts, 30 s / 60 s apart) only when an image pull
+        # fails; see the script.
+        run: scripts/supabase-start-with-retry.sh
 
       - name: Run pgTAP test suite
         run: |

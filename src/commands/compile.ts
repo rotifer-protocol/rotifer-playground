@@ -94,8 +94,8 @@ export const compileCommand = new Command("compile")
     }
 
     // Compile follows the declared fidelity. Only Native goes through Javy to a
-    // WASM artifact. A Hybrid gene runs under Node.js with the network gateway
-    // injected — that is the path the toolchain chose for Hybrid as its interim,
+    // WASM artifact. A Hybrid gene without its own WASM runs under Node.js with
+    // the network gateway injected — that is the path the toolchain chose for it,
     // and it is the path `rotifer run`, `rotifer test` and `rotifer agent run`
     // take for it. Forcing a Hybrid gene through Javy refused every one of them
     // (async express() under QuickJS, E0025), while the error's own hint
@@ -166,7 +166,7 @@ export const compileCommand = new Command("compile")
           display.rustStyleError({
             code: "E0025",
             message: err.message,
-            suggestion: "Javy/QuickJS has no event loop. Either export a synchronous express(), or declare \"fidelity\": \"Hybrid\" with network.allowedDomains in phenotype.json — Hybrid genes skip WASM and run under Node.js through the network gateway.",
+            suggestion: "Javy/QuickJS has no event loop. Either export a synchronous express(), or declare \"fidelity\": \"Hybrid\" with network.allowedDomains in phenotype.json — a Hybrid gene without --wasm skips Javy and runs under Node.js through the network gateway.",
           });
         } else if (err?.name === "ToolchainError") {
           display.rustStyleError({

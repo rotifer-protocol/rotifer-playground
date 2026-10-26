@@ -57,14 +57,14 @@ export const CRITERION_ORDER: readonly CriterionId[] = [
  * Fidelities that promise a published WASM artifact.
  *
  * Native only. The spec's Hybrid tier (L-II, "partially native execution") is
- * headed for a WASM core plus host functions for I/O, and when that lands a
- * Hybrid gene will carry an artifact too. But the shipping Hybrid path is the
- * one the v0.7 plan chose on purpose as an interim: the gene runs under
- * Node.js with a gateway-wrapped fetch injected, and there is no WASM to
- * publish. Holding Hybrid genes to an artifact they were told not to produce
- * would invalidate them for following the toolchain. When the host-function
- * path ships, add "Hybrid" here — and the production rows it then catches
- * will be genuine.
+ * a WASM core plus host functions for I/O. That path now ships as a
+ * nonstandard preview (ADR-327: `compile --wasm`, `rotifer.net`), but next to
+ * it, not instead of it: the v0.7 interim path — the gene runs under Node.js
+ * with a gateway-wrapped fetch injected, and there is no WASM to publish — is
+ * still what `compile` does for a Hybrid gene without --wasm. Holding Hybrid
+ * genes to an artifact would invalidate everything on that path for following
+ * the toolchain. When the Node.js path is retired, add "Hybrid" here — and the
+ * production rows it then catches will be genuine.
  *
  * This is the one criterion whose answer depends on which Hybrid design is
  * in force, which is why the dependency is written down here rather than left

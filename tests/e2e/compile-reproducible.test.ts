@@ -6,12 +6,13 @@
  * gene ID digests every standard section (ADR-340 D1) — so before this, every
  * compile of an unchanged Native gene announced a new identity.
  */
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID, createHash } from "node:crypto";
 import { execSync } from "node:child_process";
+import { hasJavyToolchain, hasSandbox } from "./toolchain.js";
 
 const ROOT = join(__dirname, "..", "..");
 const CLI = join(ROOT, "dist", "index.js");
@@ -33,16 +34,6 @@ function run(args: string, cwd: string): { stdout: string; exitCode: number } {
 
 const sha = (p: string) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
-let javyAvailable = false;
-beforeAll(() => {
-  try {
-    execSync("npx javy-cli --version", { stdio: "pipe", timeout: 45_000 });
-    javyAvailable = true;
-  } catch {
-    javyAvailable = false;
-  }
-}, 60_000);
-
 describe.runIf(existsSync(CLI))("compile is reproducible", () => {
   let projectDir: string;
   let geneDir: string;
@@ -62,9 +53,7 @@ describe.runIf(existsSync(CLI))("compile is reproducible", () => {
     rmSync(projectDir, { recursive: true, force: true });
   });
 
-  it("two compiles of one source: identical gene.wasm, gene.ir.wasm and v2 gene ID, and it still runs", async () => {
-    // Same convention as javy-compile.test.ts: no toolchain, nothing to check.
-    if (!javyAvailable) return;
+  it.skipIf(!hasJavyToolchain)("two compiles of one source: identical gene.wasm, gene.ir.wasm and v2 gene ID, and it still runs", async () => {
 
     const first = run(`compile ${GENE}`, projectDir);
     expect(first.exitCode, first.stdout).toBe(0);
@@ -90,8 +79,9 @@ describe.runIf(existsSync(CLI))("compile is reproducible", () => {
 
     const ran = run(`run ${GENE} --input '{"code":"{\\"a\\":1}","language":"json"}'`, projectDir);
     expect(ran.exitCode, ran.stdout).toBe(0);
-    if (ran.stdout.includes("Running via WASM sandbox")) {
-      expect(ran.stdout).toContain('"changed": true');
+    if (hasSandbox) {
+      expect(ran.stdout).toContain("Running via WASM sandbox");
     }
+    expect(ran.stdout).toContain('"changed": true');
   }, 240_000);
 });

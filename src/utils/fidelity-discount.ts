@@ -49,8 +49,14 @@ export function fidelityDiscountFor(fidelity: string | null | undefined): number
  * artifact, no sandbox on this platform, or an estimate that runs nothing at
  * all — earned none of that: its logic ran under Node.js or did not run. It
  * takes the Wrapped discount, the tier that makes no claim about execution.
- * Hybrid and Wrapped keep their declared tier: Hybrid is defined to run under
- * Node.js behind the network gateway, and Wrapped already claims nothing.
+ * Wrapped keeps its tier: it already claims nothing. Hybrid keeps its declared
+ * tier too, for now. Since ADR-327 a Hybrid gene comes in two shapes — Node.js
+ * behind the network gateway, or its own WASM in the sandbox reaching the
+ * network through `rotifer.net` — and §5.1's 0.85 rests on "the WASM portion
+ * remains verifiable", which a Hybrid that did not run in the sandbox did not
+ * show. Whether that one should drop a tier is not decided yet: `arena submit`
+ * does not run any Hybrid in the sandbox today, so lowering it now would leave
+ * no Hybrid able to earn 0.85.
  */
 export function effectiveFidelity(declared: string | null | undefined, didRunInSandbox: boolean): string {
   const tier = (declared ?? "").trim();

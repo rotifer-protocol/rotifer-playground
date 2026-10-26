@@ -186,6 +186,15 @@ async function resolveDomain(
   return suggestions[0].domain;
 }
 
+/**
+ * The path to put after `rotifer vg` in the hints below. vg takes a path and
+ * resolves it from the current directory; printing the gene's name sent
+ * people to ./<name>, which does not exist from the workspace root.
+ */
+export function vgHintPath(geneDir: string, cwd: string = process.cwd()): string {
+  return relative(cwd, geneDir) || ".";
+}
+
 export const wrapCommand = new Command("wrap")
   .description("Wrap a function or SKILL.md as a gene")
   .argument("<gene-name>", "function/gene directory name, or gene name when using --from-skill/--from-clawhub")
@@ -357,7 +366,7 @@ export const wrapCommand = new Command("wrap")
       console.log();
       display.hint("Next steps:");
       display.hint("  rotifer compile " + geneName + "       # validate phenotype");
-      display.hint("  rotifer vg " + geneName + "            # security scan");
+      display.hint("  rotifer vg " + vgHintPath(geneDir) + "            # security scan");
       display.hint("  rotifer arena submit " + geneName + "  # compete in Arena");
       await offerAutoPublish({ geneName, geneDir, fidelity: resolveWrapFidelity(phenotype, options.fidelity) });
       return;
@@ -432,7 +441,7 @@ export const wrapCommand = new Command("wrap")
       console.log();
       display.hint("Next steps:");
       display.hint("  rotifer compile " + geneName + "       # validate phenotype");
-      display.hint("  rotifer vg " + geneName + "            # security scan");
+      display.hint("  rotifer vg " + vgHintPath(geneDir) + "            # security scan");
       display.hint("  rotifer arena submit " + geneName + "  # compete in Arena");
       await offerAutoPublish({ geneName, geneDir, fidelity: resolveWrapFidelity(phenotype, options.fidelity) });
       return;
@@ -504,7 +513,7 @@ export const wrapCommand = new Command("wrap")
     display.hint("Next steps:");
     display.hint("  rotifer compile " + geneName + "          # Wrapped fidelity");
     display.hint("  rotifer compile " + geneName + " --wasm <file>  # Native fidelity (with WASM)");
-    display.hint("  rotifer vg " + geneName + "               # security scan");
+    display.hint("  rotifer vg " + vgHintPath(geneDir) + "               # security scan");
     display.hint("  rotifer arena submit " + geneName + "     # compete in Arena");
     // Not options.fidelity: when phenotype.json already existed on disk (a
     // re-wrap — e.g. just to change --domain), its fidelity was left as-is

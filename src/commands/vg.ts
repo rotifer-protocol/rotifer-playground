@@ -1,3 +1,4 @@
+import { existsSync, statSync } from "node:fs";
 import { Command } from "commander";
 import { resolve, relative, basename } from "node:path";
 import * as display from "../utils/display.js";
@@ -55,6 +56,12 @@ export const vgCommand = new Command("vg")
   .option("--publish", "publish safety grade to badge.rotifer.dev (requires ROTIFER_BADGE_TOKEN)")
   .action(async (pathArg: string, opts: { id?: string; all?: boolean; publish?: boolean }) => {
     const dir = resolve(pathArg);
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+      display.error(`No such directory: ${pathArg}`);
+      display.hint("vg takes the path to a gene or Skill directory, e.g. rotifer vg genes/my-gene");
+      process.exitCode = 1;
+      return;
+    }
     const result = scan(dir, opts.id, { scanAll: opts.all });
 
     if (opts.publish && display.isJsonMode() && result.grade !== "?" && opts.id) {
@@ -65,7 +72,12 @@ export const vgCommand = new Command("vg")
       display.header("V(g) Security Scan");
 
       if (data.grade === "?") {
-        display.info(`No src/ directory found — grade: ${c.muted("?")}`);
+        display.info(`No code files found — not graded (grade: ${c.muted("?")})`);
+        display.hint(
+          opts.all
+            ? "Looked at every file under this directory; none is .ts/.js/.py/.sh code."
+            : "Looked in src/, or at the top level when there is no src/. Add --all to include subdirectories.",
+        );
         display.hint("Pure-prompt Skills without code receive grade \"?\".");
         return;
       }

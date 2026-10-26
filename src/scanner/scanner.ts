@@ -33,6 +33,28 @@ function hasSrcDirectory(dir: string): boolean {
   return existsSync(join(dir, "src"));
 }
 
+/** Code files directly in `dir`, not in its subdirectories. */
+function collectTopLevelCodeFiles(dir: string): string[] {
+  return readdirSync(dir)
+    .map((entry) => join(dir, entry))
+    .filter((full) => statSync(full).isFile() && CODE_EXTENSIONS.has(extname(full)));
+}
+
+/**
+ * Which files a scan reads:
+ * - `--all`: every code file under `dir`.
+ * - otherwise src/ when it exists — a Skill's code lives there;
+ * - otherwise the code files at the top level of `dir`, not below it. Genes
+ *   keep index.ts at the gene root (every Genesis gene does), and reading
+ *   only src/ left all of them ungraded. Subdirectories stay out so that
+ *   test fixtures and vendored files are not graded as the gene.
+ */
+function selectFiles(dir: string, shouldScanAll: boolean): string[] {
+  if (shouldScanAll) return collectCodeFiles(dir);
+  if (hasSrcDirectory(dir)) return collectCodeFiles(join(dir, "src"));
+  return collectTopLevelCodeFiles(dir);
+}
+
 export function scanFile(filePath: string, rootDir: string): Finding[] {
   const content = readFileSync(filePath, "utf-8");
   const lines = content.split("\n");
@@ -80,8 +102,12 @@ export interface ScanOptions {
 
 export function scan(dir: string, skillId?: string, options?: ScanOptions): ScanResult {
   const shouldScanAll = options?.scanAll ?? false;
+  const files = selectFiles(dir, shouldScanAll);
 
-  if (!shouldScanAll && !hasSrcDirectory(dir)) {
+  // No code read, no grade. computeGrade([]) is "A", and `--all` over a
+  // directory without code used to report exactly that: a clean result for
+  // code that was never looked at.
+  if (files.length === 0) {
     return {
       skill_id: skillId ?? dir,
       scanned_at: new Date().toISOString(),
@@ -91,8 +117,6 @@ export function scan(dir: string, skillId?: string, options?: ScanOptions): Scan
     };
   }
 
-  const scanDir = shouldScanAll ? dir : join(dir, "src");
-  const files = collectCodeFiles(scanDir);
   const allFindings: Finding[] = [];
   let totalLines = 0;
 

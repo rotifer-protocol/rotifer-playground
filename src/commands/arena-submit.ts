@@ -18,7 +18,7 @@ import {
 } from "../utils/run-fuel-ladder.js";
 import { compileOutputValidator, isRunSuccessful } from "../utils/arena-success.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
-import { applyFidelityDiscount, estimateBaseFitness, type DiscountedFitness } from "../utils/fidelity-discount.js";
+import { applyFidelityDiscount, effectiveFidelity, estimateBaseFitness, type DiscountedFitness } from "../utils/fidelity-discount.js";
 import { computeBaseFitness, resolveFitnessReference, type ResolvedReference } from "../utils/fitness-formula.js";
 import { scan } from "../scanner/index.js";
 import type { Severity } from "../scanner/types.js";
@@ -119,6 +119,14 @@ export const arenaSubmitCommand = new Command("submit")
     const irWasmPath = join(geneDir, "gene.ir.wasm");
     const hasIrWasm = existsSync(irWasmPath);
     const binding = tryLoadBinding();
+    // Decided once, before either scoring path: the discount, the label, the
+    // run upload and the cloud submit all follow it.
+    const didRunInSandbox = Boolean(isNative && hasIrWasm && binding);
+    // §5.1 discounts by tier, and Native's 1.00 rests on the WASM having run in
+    // the sandbox. A declared Native that did not (no gene.ir.wasm, or no
+    // sandbox on this platform) is scored as Wrapped and told so (T-95).
+    const scoredFidelity = effectiveFidelity(declaredFidelity, didRunInSandbox);
+    const isScoredBelowDeclared = scoredFidelity !== declaredFidelity;
 
     // How many sandbox runs back a measured submission. Declared out here
     // because the ledger needs it too (ADR-318 D5 evaluation_n), not only the
@@ -145,7 +153,8 @@ export const arenaSubmitCommand = new Command("submit")
     // measuring path has one; an estimate ran nothing to scale.
     let reference: ResolvedReference | null = null;
 
-    if (isNative && hasIrWasm && binding) {
+    // `&& binding` restates didRunInSandbox for the type checker.
+    if (didRunInSandbox && binding) {
       display.info("Executing gene in WASM sandbox...");
       const irWasm = readFileSync(irWasmPath) as Buffer;
       const { irHash: _strip, ...phenotypeForExec } = phenotype;
@@ -277,7 +286,7 @@ export const arenaSubmitCommand = new Command("submit")
         },
         reference.scale,
       );
-      discounted = applyFidelityDiscount(baseValue, declaredFidelity);
+      discounted = applyFidelityDiscount(baseValue, scoredFidelity);
 
       // V(g) = Test_Pass_Rate / Security_Leak_Risk  (Spec §5.1, ADR-215 P0)
       // The discount applies to F(g) only; V(g) is untouched by fidelity.
@@ -299,7 +308,7 @@ export const arenaSubmitCommand = new Command("submit")
       // The estimate is fidelity-agnostic on purpose: the tier penalty is the
       // discount's job. The old `isNative ? 0.70 : 0.45` baked a second,
       // undocumented penalty into the estimate itself.
-      discounted = applyFidelityDiscount(estimateBaseFitness(geneId), declaredFidelity);
+      discounted = applyFidelityDiscount(estimateBaseFitness(geneId), scoredFidelity);
 
       // V(g) still uses real AST scan even in fallback mode (ADR-215 P0)
       const fallbackTestPassRate = 0.9 + (seed % 100) / 1000;
@@ -340,7 +349,6 @@ export const arenaSubmitCommand = new Command("submit")
     // cost are uploaded either way — that is the population D2's L_ref and
     // Cost_ref are the median of, and it cannot exist until submissions like
     // this one create it.
-    const didRunInSandbox = Boolean(isNative && hasIrWasm && binding);
     const evaluationMethod: "sandbox" | "estimated" =
       (didRunInSandbox && hasCompleteFitnessInputs) ? "sandbox" : "estimated";
 
@@ -351,6 +359,9 @@ export const arenaSubmitCommand = new Command("submit")
           fitness: fitness.value,
           base_fitness: discounted.baseFitness,
           fidelity_discount: discounted.fidelityDiscount,
+          // Both, so the row says why the discount is not the declared tier's.
+          declared_fidelity: declaredFidelity,
+          effective_fidelity: scoredFidelity,
           safety: fitness.safetyScore,
           success_rate: fitness.successRate,
           latency_score: fitness.latencyScore,
@@ -401,11 +412,16 @@ export const arenaSubmitCommand = new Command("submit")
     display.success(`Gene '${geneName}' submitted to Arena`);
     display.keyValue("Gene ID", c.warn(geneId));
     display.keyValue("Domain", phenotype.domain);
-    display.keyValue("Fidelity", declaredFidelity);
+    display.keyValue(
+      "Fidelity",
+      isScoredBelowDeclared
+        ? `Declared ${declaredFidelity}, not run in the sandbox this time (counted as ${scoredFidelity})`
+        : declaredFidelity,
+    );
     // §33.1 dual-column: the raw base shows what the gene nominally achieved,
     // the discounted F(g) is what ranks against the other tiers.
     display.keyValue("Base fitness", discounted.baseFitness.toFixed(4));
-    display.keyValue("F(g)", `${fitness.value.toFixed(4)}  (× ${discounted.fidelityDiscount.toFixed(2)} ${declaredFidelity.toLowerCase()} discount)`);
+    display.keyValue("F(g)", `${fitness.value.toFixed(4)}  (× ${discounted.fidelityDiscount.toFixed(2)} ${scoredFidelity.toLowerCase()} discount)`);
     display.keyValue("V(g)", fitness.safetyScore.toFixed(4));
     display.keyValue("Success Rate", `${(fitness.successRate * 100).toFixed(1)}%`);
     display.keyValue("Latency Score", fitness.latencyScore.toFixed(4));
@@ -438,7 +454,20 @@ export const arenaSubmitCommand = new Command("submit")
         );
       }
     }
-    if (options.cloud) {
+    if (options.cloud && isScoredBelowDeclared) {
+      // The cloud Arena takes the discount of the gene's declared tier and
+      // refuses any other (arena_write_hardening, T-58), so the honest number
+      // cannot go up and the declared one is the claim this change removes.
+      display.warn(
+        `Not sent to the cloud Arena: '${geneName}' declares ${declaredFidelity} but did not run in the sandbox, ` +
+        `and the cloud Arena records the ${declaredFidelity} discount for it.`
+      );
+      display.hint(
+        hasIrWasm
+          ? "The sandbox is not available on this platform; submit from macOS, Linux x64 or Windows x64."
+          : `Compile it so it runs in the sandbox, then submit again: rotifer compile ${geneName}`
+      );
+    } else if (options.cloud) {
       try {
         await requireAuth();
         const cs = display.spinner("Submitting to cloud Arena...");

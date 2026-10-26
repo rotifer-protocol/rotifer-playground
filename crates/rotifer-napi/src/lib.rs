@@ -256,6 +256,41 @@ pub struct PlaygroundBinding {
     arena: Mutex<LocalArena>,
 }
 
+/// Where the CLI finds the credentials a gene declares: the environment
+/// variable of the same name, and nowhere else (no key file).
+fn process_env(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
+/// The declared credentials of a gene that gets network access; nothing for
+/// one that does not, since it could not send them anywhere.
+fn credentials_for(
+    phenotype: &rotifer_core::types::gene::Phenotype,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> std::result::Result<std::collections::HashMap<String, String>, Vec<String>> {
+    if !PermissionSet::declared_by(phenotype).network_access {
+        return Ok(std::collections::HashMap::new());
+    }
+    rotifer_core::sandbox::hybrid::resolve_credentials(phenotype, env)
+}
+
+/// Names the unset variables and says where to set them. Never includes a
+/// value: there is none to include, and the caller prints this verbatim.
+fn missing_credentials_message(missing: &[String]) -> String {
+    let (noun, verb, it) = if missing.len() == 1 {
+        ("environment variable", "is", "it")
+    } else {
+        ("environment variables", "are", "them")
+    };
+    format!(
+        "missing credential: the {noun} {} {verb} not set. This gene declares {it} in \
+         externalDependencies[].credentials and needs {it} to call its API. Set {it} in \
+         the shell that runs rotifer and try again; the value is only substituted \
+         into the request headers the gene sends, never printed or logged.",
+        missing.join(", ")
+    )
+}
+
 #[napi]
 impl PlaygroundBinding {
     #[napi(constructor)]
@@ -490,6 +525,8 @@ impl PlaygroundBinding {
     }
 
     /// Execute a gene's WASM bytes in the sandbox with L0 gate enforcement.
+    /// Credentials the gene declares are read from the environment variables
+    /// of the same name.
     #[napi]
     pub fn execute_gene(
         &self,
@@ -497,6 +534,18 @@ impl PlaygroundBinding {
         input_json: String,
         phenotype_json: String,
         constraints_json: Option<String>,
+    ) -> Result<ExecutionResultView> {
+        self.execute_gene_with_env(wasm_bytes, input_json, phenotype_json, constraints_json, &process_env)
+    }
+
+    /// `execute_gene` with the credential lookup injected (tests pass a map).
+    pub fn execute_gene_with_env(
+        &self,
+        wasm_bytes: Buffer,
+        input_json: String,
+        phenotype_json: String,
+        constraints_json: Option<String>,
+        env: &dyn Fn(&str) -> Option<String>,
     ) -> Result<ExecutionResultView> {
         let input: serde_json::Value = serde_json::from_str(&input_json)
             .map_err(|e| Error::from_reason(format!("invalid input JSON: {e}")))?;
@@ -525,8 +574,26 @@ impl PlaygroundBinding {
             binding_extensions: None,
         };
 
-        let sandbox = WasmtimeSandbox::new(constraints)
+        // Network permission is decided first: a gene that gets none is never
+        // asked for a key (spec gate order: fidelity, network, credentials).
+        let secrets = match credentials_for(&phenotype, env) {
+            Ok(secrets) => secrets,
+            Err(missing) => {
+                return Ok(ExecutionResultView {
+                    success: false,
+                    output: serde_json::Value::Null,
+                    error_message: Some(missing_credentials_message(&missing)),
+                    fuel_consumed: 0,
+                    memory_peak_kb: 0,
+                    duration_ms: 0,
+                    sandbox_type: "blocked".to_string(),
+                });
+            }
+        };
+
+        let mut sandbox = WasmtimeSandbox::new(constraints)
             .map_err(|e| Error::from_reason(format!("sandbox init failed: {e}")))?;
+        sandbox.set_hybrid_env(std::collections::HashMap::new(), secrets);
 
         let max_mem_kb = (sandbox.constraints().max_memory_bytes / 1024) as i64;
         let gene_id_short = context.trace_id.as_deref().unwrap_or("unknown");
@@ -668,6 +735,18 @@ impl PlaygroundBinding {
         input_json: String,
         constraints_json: Option<String>,
     ) -> Result<AlgebraResultView> {
+        self.execute_algebra_with_env(algebra_json, gene_entries_json, input_json, constraints_json, &process_env)
+    }
+
+    /// `execute_algebra` with the credential lookup injected (tests pass a map).
+    pub fn execute_algebra_with_env(
+        &self,
+        algebra_json: String,
+        gene_entries_json: String,
+        input_json: String,
+        constraints_json: Option<String>,
+        env: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<AlgebraResultView> {
         use rotifer_core::algebra::{AlgebraExpr, AlgebraExecutor};
         use std::collections::HashMap;
 
@@ -692,7 +771,15 @@ impl PlaygroundBinding {
 
         let mut gene_store: HashMap<rotifer_core::types::GeneId, Gene> = HashMap::new();
         let mut gene_ids: HashMap<rotifer_core::types::GeneId, String> = HashMap::new();
+        // Every gene's credentials are loaded once; the sandbox hands each
+        // gene only the names it declares itself.
+        let mut secrets: HashMap<String, String> = HashMap::new();
+        let mut missing: Vec<String> = Vec::new();
         for (hex_id, entry) in raw_map {
+            match credentials_for(&entry.phenotype, env) {
+                Ok(found) => secrets.extend(found),
+                Err(names) => missing.extend(names),
+            }
             let id = hex_to_gene_id(&hex_id)?;
             if let Some(v2) = entry.v2_id.filter(|v| rotifer_core::gene_id::is_valid(v)) {
                 gene_ids.insert(id, v2);
@@ -711,8 +798,21 @@ impl PlaygroundBinding {
         } else {
             ConstraintSet::default()
         };
-        let sandbox = WasmtimeSandbox::new(constraints)
+        if !missing.is_empty() {
+            missing.sort();
+            missing.dedup();
+            return Ok(AlgebraResultView {
+                success: false,
+                output: serde_json::Value::Null,
+                error_message: Some(missing_credentials_message(&missing)),
+                steps_executed: 0,
+                total_fuel_consumed: 0,
+                total_duration_ms: 0,
+            });
+        }
+        let mut sandbox = WasmtimeSandbox::new(constraints)
             .map_err(|e| Error::from_reason(format!("sandbox init failed: {e}")))?;
+        sandbox.set_hybrid_env(HashMap::new(), secrets);
 
         let context = Context {
             agent_id: "cli-algebra".to_string(),
@@ -911,8 +1011,11 @@ mod permission_tests {
     /// `express(i32, i32) -> i32` that fetches the envelope in its data
     /// segment and returns the host's result code when it is negative.
     fn fetch_gene() -> Vec<u8> {
+        fetch_gene_with(&format!(r#"{{"method":"GET","url":"https://{HOST}/"}}"#))
+    }
+
+    fn fetch_gene_with(envelope: &str) -> Vec<u8> {
         use wasm_encoder::*;
-        let envelope = format!(r#"{{"method":"GET","url":"https://{HOST}/"}}"#);
         let mut module = Module::new();
         let mut types = TypeSection::new();
         types.ty().function(vec![ValType::I32; 4], vec![ValType::I32]);
@@ -982,8 +1085,12 @@ mod permission_tests {
     }
 
     fn binding() -> PlaygroundBinding {
+        binding_in().0
+    }
+
+    fn binding_in() -> (PlaygroundBinding, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("rotifer-napi-perm-{}", uuid::Uuid::new_v4()));
-        PlaygroundBinding::new(dir.to_string_lossy().into_owned()).unwrap()
+        (PlaygroundBinding::new(dir.to_string_lossy().into_owned()).unwrap(), dir)
     }
 
     fn guest_code(message: &str) -> i32 {
@@ -1092,5 +1199,211 @@ mod permission_tests {
             .unwrap();
         assert!(declared.passed);
         assert_eq!(declared.checks_performed, explicit_default.checks_performed + 1);
+    }
+
+    // ── Credentials (T-93) ──────────────────────────────────────────────
+    // A gene names the secrets it needs in `externalDependencies[].credentials`.
+    // The CLI reads each declared name from the environment variable of the
+    // same name and nothing else; the value reaches the gene only through
+    // host-side `${env:NAME}` header substitution (ADR-327 D3). A declared
+    // name that is unset stops the run before the gene executes.
+
+    const SENTINEL: &str = "t93-sentinel-value-never-printed";
+
+    /// Fetches HOST with `Authorization: Bearer ${env:<uses>}`.
+    fn bearer_gene(uses: &str) -> Vec<u8> {
+        fetch_gene_with(&format!(
+            r#"{{"method":"GET","url":"https://{HOST}/","headers":{{"Authorization":"Bearer ${{env:{uses}}}"}}}}"#
+        ))
+    }
+
+    fn declaring(credentials: &[&str]) -> serde_json::Value {
+        let mut p = phenotype(true);
+        p["externalDependencies"][0]["credentials"] = serde_json::json!(credentials);
+        p
+    }
+
+    fn env_of(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |name| pairs.iter().find(|(k, _)| *k == name).map(|(_, v)| v.to_string())
+    }
+
+    fn assert_no_sentinel(dir: &std::path::Path, texts: &[&str]) {
+        for t in texts {
+            assert!(!t.contains(SENTINEL), "credential value leaked into: {t}");
+        }
+        let audit = std::fs::read_to_string(dir.join(".rotifer").join("audit.jsonl")).unwrap_or_default();
+        assert!(!audit.contains(SENTINEL), "credential value leaked into audit.jsonl");
+    }
+
+    #[test]
+    fn a_declared_credential_that_is_unset_stops_the_run_before_the_gene_executes() {
+        let (b, _) = binding_in();
+        let r = b
+            .execute_gene_with_env(
+                Buffer::from(bearer_gene("T93_KEY")),
+                "{}".into(),
+                declaring(&["T93_KEY"]).to_string(),
+                Some(CLI_CONSTRAINTS.into()),
+                &env_of(&[]),
+            )
+            .unwrap();
+        assert!(!r.success);
+        let msg = r.error_message.unwrap();
+        assert!(msg.contains("T93_KEY"), "names the variable: {msg}");
+        assert!(msg.contains("environment variable"), "says where to set it: {msg}");
+        assert!(!msg.contains("error code:"), "the gene must not have run: {msg}");
+        assert_eq!(r.fuel_consumed, 0);
+    }
+
+    #[test]
+    fn an_empty_value_counts_as_unset() {
+        let (b, _) = binding_in();
+        let r = b
+            .execute_gene_with_env(
+                Buffer::from(bearer_gene("T93_KEY")),
+                "{}".into(),
+                declaring(&["T93_KEY"]).to_string(),
+                Some(CLI_CONSTRAINTS.into()),
+                &env_of(&[("T93_KEY", "")]),
+            )
+            .unwrap();
+        assert!(!r.success);
+        assert!(r.error_message.unwrap().contains("T93_KEY"));
+    }
+
+    #[test]
+    fn a_declared_credential_that_is_set_is_substituted_into_the_header() {
+        let (b, dir) = binding_in();
+        let r = b
+            .execute_gene_with_env(
+                Buffer::from(bearer_gene("T93_KEY")),
+                "{}".into(),
+                declaring(&["T93_KEY"]).to_string(),
+                Some(CLI_CONSTRAINTS.into()),
+                &env_of(&[("T93_KEY", SENTINEL)]),
+            )
+            .unwrap();
+        assert!(!r.success);
+        let msg = r.error_message.unwrap();
+        // Substitution succeeded (an unresolved name would be -2); the
+        // request then failed at the network layer on the .invalid host.
+        assert_let_through(guest_code(&msg));
+        assert_no_sentinel(&dir, &[&msg, &r.output.to_string()]);
+    }
+
+    #[test]
+    fn a_name_the_gene_did_not_declare_is_never_read() {
+        // The variable is set, but the gene declares nothing.
+        let (b, _) = binding_in();
+        let r = b
+            .execute_gene_with_env(
+                Buffer::from(bearer_gene("T93_KEY")),
+                "{}".into(),
+                phenotype(true).to_string(),
+                Some(CLI_CONSTRAINTS.into()),
+                &env_of(&[("T93_KEY", SENTINEL)]),
+            )
+            .unwrap();
+        assert!(!r.success);
+        assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2);
+    }
+
+    /// Spec gate order: network permission is decided before credentials.
+    /// A gene that gets no network (here Wrapped, so `declared_by` grants
+    /// none) is never asked for a key: it fails the way it would without
+    /// one declared, with -2 from its fetch, on both paths.
+    #[test]
+    fn a_gene_without_network_permission_is_not_asked_for_credentials() {
+        let mut wrapped = phenotype_of("Wrapped", true);
+        wrapped["externalDependencies"][0]["credentials"] = serde_json::json!(["T93_KEY"]);
+
+        let r = binding()
+            .execute_gene_with_env(
+                Buffer::from(bearer_gene("T93_KEY")),
+                "{}".into(),
+                wrapped.to_string(),
+                Some(CLI_CONSTRAINTS.into()),
+                &env_of(&[]),
+            )
+            .unwrap();
+        assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2, "execute_gene");
+
+        let id = [12u8; 32];
+        let entries = serde_json::json!({
+            hex::encode(id): {"wasm": bearer_gene("T93_KEY"), "phenotype": wrapped}
+        });
+        let (r, _) = algebra_with_env(entries, id, &env_of(&[]));
+        assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2, "execute_algebra");
+    }
+
+    #[test]
+    fn execute_gene_reads_the_process_environment() {
+        // PATH is set wherever these tests run; declaring it proves the
+        // public entry point looks names up in the real environment.
+        let r = binding()
+            .execute_gene(
+                Buffer::from(bearer_gene("PATH")),
+                "{}".into(),
+                declaring(&["PATH"]).to_string(),
+                Some(CLI_CONSTRAINTS.into()),
+            )
+            .unwrap();
+        assert!(!r.success);
+        assert_let_through(guest_code(r.error_message.as_deref().unwrap()));
+    }
+
+    fn algebra_with_env(
+        entries: serde_json::Value,
+        run: [u8; 32],
+        env: &dyn Fn(&str) -> Option<String>,
+    ) -> (AlgebraResultView, std::path::PathBuf) {
+        let (b, dir) = binding_in();
+        let expr = serde_json::json!({"Seq": [{"Gene": run}]});
+        let r = b
+            .execute_algebra_with_env(expr.to_string(), entries.to_string(), "{}".into(), Some(CLI_CONSTRAINTS.into()), env)
+            .unwrap();
+        (r, dir)
+    }
+
+    #[test]
+    fn execute_algebra_stops_on_an_unset_declared_credential() {
+        let id = [8u8; 32];
+        let entries = serde_json::json!({
+            hex::encode(id): {"wasm": bearer_gene("T93_KEY"), "phenotype": declaring(&["T93_KEY"])}
+        });
+        let (r, _) = algebra_with_env(entries, id, &env_of(&[]));
+        assert!(!r.success);
+        let msg = r.error_message.unwrap();
+        assert!(msg.contains("T93_KEY") && msg.contains("environment variable"), "{msg}");
+        assert!(!msg.contains("error code:"), "the gene must not have run: {msg}");
+    }
+
+    #[test]
+    fn execute_algebra_substitutes_a_declared_credential() {
+        let id = [9u8; 32];
+        let entries = serde_json::json!({
+            hex::encode(id): {"wasm": bearer_gene("T93_KEY"), "phenotype": declaring(&["T93_KEY"])}
+        });
+        let (r, dir) = algebra_with_env(entries, id, &env_of(&[("T93_KEY", SENTINEL)]));
+        assert!(!r.success);
+        let msg = r.error_message.unwrap();
+        assert_let_through(guest_code(&msg));
+        assert_no_sentinel(&dir, &[&msg, &r.output.to_string()]);
+    }
+
+    /// In a composition every declared credential is loaded once, so the
+    /// sandbox must still hand each gene only the names it declares itself:
+    /// a gene that borrows another gene's key gets -2.
+    #[test]
+    fn in_algebra_a_gene_cannot_use_another_genes_credential() {
+        let owner = [10u8; 32];
+        let borrower = [11u8; 32];
+        let entries = serde_json::json!({
+            hex::encode(owner): {"wasm": bearer_gene("T93_KEY"), "phenotype": declaring(&["T93_KEY"])},
+            hex::encode(borrower): {"wasm": bearer_gene("T93_KEY"), "phenotype": phenotype(true)},
+        });
+        let (r, _) = algebra_with_env(entries, borrower, &env_of(&[("T93_KEY", SENTINEL)]));
+        assert!(!r.success);
+        assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2);
     }
 }

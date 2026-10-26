@@ -7,6 +7,8 @@ mod wasmtime_sandbox;
 pub mod hybrid;
 #[cfg(test)]
 mod hybrid_wasm_tests;
+#[cfg(test)]
+mod tavily_gene_tests;
 
 pub use wasmtime_sandbox::WasmtimeSandbox;
 

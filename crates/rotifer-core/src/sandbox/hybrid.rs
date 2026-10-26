@@ -390,6 +390,50 @@ pub fn check_url(
     Ok(parsed)
 }
 
+/// Env names a phenotype declares in `externalDependencies[].credentials`
+/// (ADR-327 D3), first occurrence first, without duplicates. Only these
+/// names may be loaded into a gene's secret tier.
+///
+/// **`nonstandard` (spec §25.4):** `credentials` is the ADR-327 Backlog
+/// Tier 1 field, not yet in spec §4.2.
+pub fn declared_credentials(phenotype: &Phenotype) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for name in phenotype
+        .external_dependencies
+        .iter()
+        .flatten()
+        .filter_map(|d| d.credentials.as_ref())
+        .flatten()
+    {
+        if !names.contains(name) {
+            names.push(name.clone());
+        }
+    }
+    names
+}
+
+/// Look up every credential `phenotype` declares through `lookup` (the
+/// binding's source: the CLI reads the environment variable of the same
+/// name). `Err` lists each declared name with no value or an empty one, so
+/// the binding can stop before the gene runs instead of letting the gene
+/// fail mid-request with -2.
+pub fn resolve_credentials(
+    phenotype: &Phenotype,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> Result<HashMap<String, String>, Vec<String>> {
+    let mut found = HashMap::new();
+    let mut missing = Vec::new();
+    for name in declared_credentials(phenotype) {
+        match lookup(&name) {
+            Some(v) if !v.is_empty() => {
+                found.insert(name, v);
+            }
+            _ => missing.push(name),
+        }
+    }
+    if missing.is_empty() { Ok(found) } else { Err(missing) }
+}
+
 /// Host-side `${env:NAME}` substitution in header values (ADR-327 D3).
 /// Secrets resolve here so their bytes never enter guest memory. An
 /// unresolvable name is a permission error (-2) — never a silent passthrough.
@@ -679,6 +723,58 @@ mod tests {
             llm_requirements: None,
             guard_config: None,
         }
+    }
+
+    // ── Credentials ─────────────────────────────────────────────────────
+
+    fn with_credentials(lists: &[&[&str]]) -> Phenotype {
+        let mut p = phenotype_hybrid();
+        let template = p.external_dependencies.take().unwrap().remove(0);
+        p.external_dependencies = Some(
+            lists
+                .iter()
+                .map(|names| ExternalDependency {
+                    credentials: Some(names.iter().map(|n| n.to_string()).collect()),
+                    ..template.clone()
+                })
+                .collect(),
+        );
+        p
+    }
+
+    #[test]
+    fn declared_credentials_collects_every_dependency_once_in_order() {
+        let p = with_credentials(&[&["B_KEY", "A_KEY"], &["A_KEY", "C_KEY"]]);
+        assert_eq!(declared_credentials(&p), vec!["B_KEY", "A_KEY", "C_KEY"]);
+        let mut none = phenotype_hybrid();
+        none.external_dependencies = None;
+        assert!(declared_credentials(&none).is_empty());
+    }
+
+    #[test]
+    fn resolve_credentials_asks_only_for_declared_names() {
+        let p = with_credentials(&[&["A_KEY"]]);
+        let asked = std::cell::RefCell::new(Vec::new());
+        let got = resolve_credentials(&p, &|n| {
+            asked.borrow_mut().push(n.to_string());
+            Some(format!("value-of-{n}"))
+        })
+        .unwrap();
+        assert_eq!(*asked.borrow(), vec!["A_KEY"]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got["A_KEY"], "value-of-A_KEY");
+    }
+
+    #[test]
+    fn resolve_credentials_reports_every_unset_or_empty_name() {
+        let p = with_credentials(&[&["SET", "EMPTY", "UNSET"]]);
+        let missing = resolve_credentials(&p, &|n| match n {
+            "SET" => Some("v".into()),
+            "EMPTY" => Some(String::new()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert_eq!(missing, vec!["EMPTY", "UNSET"]);
     }
 
     // ── KvStore ─────────────────────────────────────────────────────────

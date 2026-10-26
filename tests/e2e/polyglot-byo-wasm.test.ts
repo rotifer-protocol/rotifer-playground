@@ -199,3 +199,46 @@ describe("Polyglot BYO-WASM compilation", () => {
     expect(rustResult.irHash).not.toBe(asResult.irHash);
   });
 });
+
+// A Hybrid gene brings its own WASM when it calls the network from the sandbox
+// through `rotifer.net` (ADR-327) — genes/tavily-web-search is one. compile used
+// to return early for every Hybrid gene ("no WASM artifact is produced"), even
+// with --wasm, so such a gene could never run; and the Native rewrite below it
+// would have turned it into a Native gene the sandbox refuses for importing
+// rotifer.net.
+describe("Hybrid gene with --wasm", () => {
+  let projectDir: string;
+
+  afterEach(() => {
+    if (projectDir && existsSync(projectDir)) {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("compiles to gene.ir.wasm and stays Hybrid", () => {
+    projectDir = makeProject("hybrid-gene");
+    const phenotypePath = join(projectDir, "genes", "hybrid-gene", "phenotype.json");
+    const phenotype = JSON.parse(readFileSync(phenotypePath, "utf-8"));
+    phenotype.fidelity = "Hybrid";
+    phenotype.network = { allowedDomains: ["api.example.com"], maxTimeoutMs: 5000 };
+    phenotype.externalDependencies = [
+      { apiType: "rest", semanticTag: "example", domains: ["api.example.com"], degradationBehavior: "FAIL" },
+    ];
+    writeFileSync(phenotypePath, JSON.stringify(phenotype, null, 2));
+    const wasmTarget = join(projectDir, "hybrid.wasm");
+    copyFileSync(RUST_FIXTURE, wasmTarget);
+
+    const { stdout, exitCode } = run(`compile hybrid-gene --wasm ${wasmTarget}`, projectDir);
+
+    expect(exitCode, stdout).toBe(0);
+    expect(stdout).not.toContain("no WASM artifact is produced");
+    expect(existsSync(join(projectDir, "genes", "hybrid-gene", "gene.ir.wasm"))).toBe(true);
+    const after = JSON.parse(readFileSync(phenotypePath, "utf-8"));
+    expect(after.fidelity).toBe("Hybrid");
+    expect(after.irHash).toMatch(/^[0-9a-f]{64}$/);
+    const result = JSON.parse(
+      readFileSync(join(projectDir, "genes", "hybrid-gene", ".compile-result.json"), "utf-8"),
+    );
+    expect(result).toMatchObject({ fidelity: "Hybrid", wasmAvailable: true });
+  });
+});

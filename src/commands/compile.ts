@@ -101,7 +101,12 @@ export const compileCommand = new Command("compile")
     // (async express() under QuickJS, E0025), while the error's own hint
     // pointed at "a Hybrid Gene" as the way out. The fidelity is left exactly
     // as declared; compile does not promote a tier the author did not claim.
-    if (phenotype.fidelity === "Hybrid") {
+    //
+    // A Hybrid gene that brings its own WASM (--wasm) is the other Hybrid
+    // shape: it runs in the sandbox and reaches the network through the
+    // `rotifer.net` host functions (ADR-327, nonstandard preview). It is
+    // compiled like any BYO-WASM module below, and stays Hybrid.
+    if (phenotype.fidelity === "Hybrid" && !options.wasm) {
       display.info("Hybrid gene — runs under Node.js with the network gateway; no WASM artifact is produced");
       if (!phenotype.network?.allowedDomains?.length) {
         display.warn("phenotype.network.allowedDomains is empty — the gateway will refuse every request");
@@ -280,9 +285,11 @@ export const compileCommand = new Command("compile")
 
     // Reaching here means a WASM artifact was produced, and a gene with an
     // artifact is Native by definition — this is the documented upgrade path
-    // from a Wrapped scaffold. Hybrid never reaches this line (returned above).
+    // from a Wrapped scaffold. A Hybrid gene reaches this line only with
+    // --wasm and keeps its fidelity: its module may import `rotifer.net`, and
+    // the sandbox refuses a Native gene that does (ADR-327 D1).
     // Say so when it actually changes something, so the rewrite is not silent.
-    if (phenotype.fidelity !== "Native") {
+    if (phenotype.fidelity !== "Native" && phenotype.fidelity !== "Hybrid") {
       display.info(`Fidelity ${phenotype.fidelity || "(undeclared)"} → Native: a compiled WASM artifact now exists`);
       phenotype.fidelity = "Native";
     }
@@ -297,7 +304,7 @@ export const compileCommand = new Command("compile")
       name: geneName,
       domain: phenotype.domain,
       compiledAt: new Date().toISOString(),
-      fidelity: "Native",
+      fidelity: phenotype.fidelity,
       wasmAvailable: true,
       irHash,
       wasmSize,
@@ -314,7 +321,7 @@ export const compileCommand = new Command("compile")
     display.success(`Gene '${geneName}' compiled to Rotifer IR`);
     display.keyValue("Gene ID", c.warn(geneId));
     display.keyValue("Domain", phenotype.domain);
-    display.keyValue("Fidelity", "Native");
+    display.keyValue("Fidelity", phenotype.fidelity);
     if (phenotype.network) {
       display.keyValue("Network", phenotype.network.allowedDomains?.join(", ") || "(none)");
     }

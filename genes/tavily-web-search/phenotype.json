@@ -1,0 +1,64 @@
+{
+  "domain": "search.web",
+  "description": "Live web search through the Tavily API: returns real results (title, URL, snippet). Needs your own Tavily API key in the TAVILY_API_KEY environment variable; Tavily's free tier is 1,000 searches a month with no card. Same input and output shape as genesis-web-search. Uses the nonstandard rotifer.net preview (ADR-327).",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Search query string"
+      },
+      "maxResults": {
+        "type": "integer",
+        "default": 5,
+        "minimum": 1,
+        "maximum": 20
+      }
+    },
+    "required": ["query"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "results": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "url": { "type": "string" },
+            "snippet": { "type": "string" }
+          }
+        }
+      },
+      "totalResults": { "type": "integer" },
+      "searchTime": { "type": "number" }
+    }
+  },
+  "version": "0.1.0",
+  "author": "rotifer-protocol",
+  "fidelity": "Hybrid",
+  "transparency": "Open",
+  "tags": ["web-search", "tavily", "live", "results", "snippets", "retrieval"],
+  "dependencies": [],
+  "network": {
+    "allowedDomains": ["api.tavily.com"],
+    "maxTimeoutMs": 15000,
+    "maxResponseBytes": 1048576,
+    "maxRequestsPerMin": 5
+  },
+  "externalDependencies": [
+    {
+      "apiType": "rest",
+      "semanticTag": "tavily-search",
+      "domains": ["api.tavily.com"],
+      "credentials": ["TAVILY_API_KEY"],
+      "degradationBehavior": "FAIL"
+    }
+  ],
+  "semanticRequirements": {
+    "timeModel": "Async",
+    "concurrencyModel": "Stateless",
+    "failureSemantics": "Retry"
+  }
+}

@@ -442,6 +442,11 @@ jobs:
   supabase-migrations:
     name: Supabase Migration Replay
     runs-on: ubuntu-latest
+    # packages: read lets GITHUB_TOKEN log in to ghcr.io below; a job-level
+    # block replaces the workflow's, so contents: read is restated.
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -449,13 +454,26 @@ jobs:
         with:
           version: 2.67.1
 
+      # setup-cli points the CLI at ghcr.io, and anonymous pulls from there
+      # hit `toomanyrequests` (#468, #475, #477, #478 and main run
+      # 40361357905, 2026-10-26). Logged in, pulls count against this
+      # token's quota; the CLI reads the login from ~/.docker/config.json.
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Verify migration chain replays cleanly
         # `supabase start` internally runs `db reset` which applies every
         # migration in supabase/migrations/ from scratch. A clean exit
         # proves dev/prod parity (no SQLSTATE 42P13 return-type drift,
         # missing extensions, etc). Source: v0.8.8 dev/prod parity sprint
         # (rotifer-playground commit 9d8076b + this sprint).
-        run: supabase start
+        # Retried (3 attempts, 30 s / 60 s apart) only when an image pull
+        # fails; see the script.
+        run: scripts/supabase-start-with-retry.sh
 
       - name: Run pgTAP test suite
         run: |

@@ -38,7 +38,7 @@
   "version": "0.1.0",
   "author": "rotifer-protocol",
   "fidelity": "Hybrid",
-  "transparency": "Open",
+  "transparency": "OPEN",
   "tags": ["web-search", "tavily", "live", "results", "snippets", "retrieval"],
   "dependencies": [],
   "network": {

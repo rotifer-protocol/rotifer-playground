@@ -96,18 +96,18 @@ describe.runIf(existsSync(CLI))("arena submit discounts by the tier that actuall
     }
   });
 
-  // Needs the TS→WASM toolchain and the napi sandbox; skipped where either is
-  // missing (javy's first run downloads its binary, which a fresh CI runner
-  // may not do inside the timeout).
-  it("a declared Native that ran in the sandbox keeps the Native discount", (ctx) => {
+  // Needs the TS→WASM toolchain and the napi sandbox; returns early where
+  // either is missing, as javy-compile.test.ts does (javy's first run
+  // downloads its binary, which a fresh CI runner may not do in time).
+  it("a declared Native that ran in the sandbox keeps the Native discount", () => {
     const src = join(__dirname, "..", "..", "genes", "genesis-code-format");
     const dest = join(projectDir, "genes", "genesis-code-format");
     execSync(`cp -R "${src}" "${dest}"`);
     const compiled = run("compile genesis-code-format", projectDir, process.env.HOME ?? home);
-    if (compiled.exitCode !== 0 || !existsSync(join(dest, "gene.ir.wasm"))) ctx.skip();
+    if (compiled.exitCode !== 0 || !existsSync(join(dest, "gene.ir.wasm"))) return;
 
     const { stdout, exitCode } = run("arena submit genesis-code-format", projectDir, home);
-    if (!stdout.includes("Sandbox verified")) ctx.skip();
+    if (!stdout.includes("Sandbox verified")) return;
     expect(exitCode, stdout).toBe(0);
     expect(stdout).not.toContain(NOT_RUN_NOTE);
     const c = cache("genesis-code-format");

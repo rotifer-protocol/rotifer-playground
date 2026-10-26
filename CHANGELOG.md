@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.3](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.30.2...v0.30.3) (2026-10-26)
+
+
+### Bug Fixes
+
+* **genesis:** label the bundled search genes as simulated demos ([#468](https://github.com/rotifer-protocol/rotifer-playground/issues/468)) ([d5ffe2c](https://github.com/rotifer-protocol/rotifer-playground/commit/d5ffe2cb5392440d5fe9bf77204a620e857c3a48))
+* **init:** ship gene-health-scanner so the recommended first command works ([#466](https://github.com/rotifer-protocol/rotifer-playground/issues/466)) ([2f2a8c4](https://github.com/rotifer-protocol/rotifer-playground/commit/2f2a8c4e1611e10616107295a3b38d1c48b89c02))
+* **vg:** grade what it reads, say when it read nothing, and cover Python ([#467](https://github.com/rotifer-protocol/rotifer-playground/issues/467)) ([ff41a57](https://github.com/rotifer-protocol/rotifer-playground/commit/ff41a572c7f0de3e62058867ecbb635357d124ee))
+
 ## [0.30.2](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.30.1...v0.30.2) (2026-10-26)
 
 

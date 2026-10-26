@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadCloudConfig } from "./client.js";
 import { loadCredentials } from "./auth.js";
-import { telemetryOptedOutByEnv } from "../telemetry/consent.js";
+import { telemetryOptedOutByEnv, telemetryExplicitlyOnByEnv } from "../telemetry/consent.js";
+import { readStoredTelemetryChoice } from "../telemetry/config.js";
 
 /**
  * Report one execution of a Cloud-installed Gene to Rotifer Cloud.
@@ -79,15 +80,22 @@ export async function flushInvocationReports(timeoutMs: number = FLUSH_TIMEOUT_M
 }
 
 /**
- * Delegates to the shared check (../telemetry/consent.js) so this and the
- * anonymous heartbeat (ADR-329) can never drift apart on what "off" means.
- * ADR-329's decision is explicit that ROTIFER_TELEMETRY=0 turns off both —
- * a second, slightly different copy of this check here would be exactly the
- * kind of silent divergence that made ADR-319's metrics pipeline sit dead
- * for months without producing an error anyone could see.
+ * Same resolution order as the anonymous heartbeat (ADR-329, and
+ * resolveHeartbeatDecision in ../telemetry/config.js): DO_NOT_TRACK /
+ * ROTIFER_TELEMETRY in this shell, either direction, then the stored choice
+ * from `rotifer telemetry on|off`. ADR-329 is explicit that "off" means both
+ * signals, and TELEMETRY.md promises every switch turns off both.
+ *
+ * Up to 0.30.1 this read only the environment, so `rotifer telemetry off`
+ * stopped the heartbeat and left this report running (T-87) — the silent
+ * divergence the shared env check was written to prevent, one layer up.
+ * The stored choice is read, never written, here; an unreadable file counts
+ * as no choice.
  */
 export function telemetryOptedOut(): boolean {
-  return telemetryOptedOutByEnv();
+  if (telemetryOptedOutByEnv()) return true;
+  if (telemetryExplicitlyOnByEnv()) return false;
+  return readStoredTelemetryChoice() === false;
 }
 
 /**

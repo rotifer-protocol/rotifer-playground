@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +13,18 @@ import { join } from "node:path";
 
 const { loadCredentialsMock } = vi.hoisted(() => ({ loadCredentialsMock: vi.fn() }));
 vi.mock("../../src/cloud/auth.js", () => ({ loadCredentials: loadCredentialsMock }));
+
+// Every test here gets its own empty HOME. The opt-out check reads
+// ~/.rotifer/telemetry.json, and the developer's real one must not decide
+// whether a test sees a report.
+let isolatedHome = "";
+beforeEach(() => {
+  isolatedHome = mkdtempSync(join(tmpdir(), "rotifer-inv-home-"));
+  process.env.HOME = isolatedHome;
+});
+afterEach(() => {
+  rmSync(isolatedHome, { recursive: true, force: true });
+});
 
 const CLOUD_ID = "250243be-4f02-4a29-8d8a-fe8bc3609c76";
 const USER_ID = "3fcaab49-3b61-4e75-9268-5bf90394b947";
@@ -478,6 +490,117 @@ describe("recordGeneInvocation — which RPC it calls", () => {
     const { recordGeneInvocation } = await import("../../src/cloud/invocation.js");
 
     expect(recordGeneInvocation(geneDir)).toEqual({ reported: null, reason: "telemetry-off" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `rotifer telemetry off` must stop the signed-in invocation report too, not
+ * only the heartbeat. TELEMETRY.md has always said each switch "turns off
+ * both signals", and ADR-329 says off means everything — but up to 0.30.1 this
+ * path read only the environment, so a user who ran `rotifer telemetry off`
+ * kept being reported (T-87, found in acceptance of the usage docs).
+ *
+ * The stored choice is read, never written, on this path, and an unreadable
+ * file counts as "no choice": telemetry must never break or block a run.
+ */
+describe("recordGeneInvocation — the stored telemetry choice", () => {
+  const savedEnv = { ...process.env };
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const dirs: string[] = [];
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env.ROTIFER_CLOUD_ENDPOINT = "https://cloud.example.test";
+    process.env.ROTIFER_CLOUD_ANON_KEY = "anon-test-key";
+    delete process.env.ROTIFER_TELEMETRY;
+    delete process.env.DO_NOT_TRACK;
+    delete process.env.VITEST;
+    delete process.env.JEST_WORKER_ID;
+    delete process.env.NODE_ENV;
+    fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    loadCredentialsMock.mockReset();
+    loadCredentialsMock.mockReturnValue({ access_token: "tok", user: { id: USER_ID } });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+    process.env = { ...savedEnv, HOME: isolatedHome };
+  });
+
+  function geneDir(): string {
+    const dir = makeGeneDir({ cloud_id: CLOUD_ID, owner: "x", version: "0.1.0" });
+    dirs.push(join(dir, "..", ".."));
+    return dir;
+  }
+
+  function telemetryFile(): string {
+    return join(isolatedHome, ".rotifer", "telemetry.json");
+  }
+
+  function writeTelemetryFile(content: string): void {
+    mkdirSync(join(isolatedHome, ".rotifer"), { recursive: true });
+    writeFileSync(telemetryFile(), content);
+  }
+
+  it("stays silent after `rotifer telemetry off`, with no environment variable set", async () => {
+    // Exactly what the command writes, not a hand-made approximation of it.
+    const { setHeartbeatEnabled } = await import("../../src/telemetry/config.js");
+    setHeartbeatEnabled(false);
+    const { recordGeneInvocation } = await import("../../src/cloud/invocation.js");
+
+    expect(recordGeneInvocation(geneDir())).toEqual({ reported: null, reason: "telemetry-off" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("stays silent for a hand-written file that only says enabled: false", async () => {
+    writeTelemetryFile(JSON.stringify({ enabled: false }));
+    const { recordGeneInvocation } = await import("../../src/cloud/invocation.js");
+
+    expect(recordGeneInvocation(geneDir())).toEqual({ reported: null, reason: "telemetry-off" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reports after `rotifer telemetry on`", async () => {
+    const { setHeartbeatEnabled } = await import("../../src/telemetry/config.js");
+    setHeartbeatEnabled(true);
+    const { recordGeneInvocation } = await import("../../src/cloud/invocation.js");
+
+    expect(recordGeneInvocation(geneDir()).reported).toBe(CLOUD_ID);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports when there is no file, and does not create one", async () => {
+    const { recordGeneInvocation } = await import("../../src/cloud/invocation.js");
+
+    expect(recordGeneInvocation(geneDir()).reported).toBe(CLOUD_ID);
+    expect(existsSync(telemetryFile())).toBe(false);
+  });
+
+  it.each(["", "{not json", "null", "[]"])("treats an unreadable file (%j) as no choice — reports, never throws", async (content) => {
+    writeTelemetryFile(content);
+    const { recordGeneInvocation } = await import("../../src/cloud/invocation.js");
+
+    expect(() => recordGeneInvocation(geneDir())).not.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("an explicit ROTIFER_TELEMETRY=1 in this shell still wins over a stored off, as for the heartbeat", async () => {
+    writeTelemetryFile(JSON.stringify({ enabled: false }));
+    process.env.ROTIFER_TELEMETRY = "1";
+    const { recordGeneInvocation } = await import("../../src/cloud/invocation.js");
+
+    expect(recordGeneInvocation(geneDir()).reported).toBe(CLOUD_ID);
+  });
+
+  it("DO_NOT_TRACK=1 still stops it over a stored on", async () => {
+    writeTelemetryFile(JSON.stringify({ enabled: true }));
+    process.env.DO_NOT_TRACK = "1";
+    const { recordGeneInvocation } = await import("../../src/cloud/invocation.js");
+
+    expect(recordGeneInvocation(geneDir())).toEqual({ reported: null, reason: "telemetry-off" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

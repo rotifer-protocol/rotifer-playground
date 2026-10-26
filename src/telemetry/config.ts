@@ -67,6 +67,27 @@ function readStoredConfig(): HeartbeatConfig | null {
   }
 }
 
+/**
+ * The stored on/off choice alone, for the signed-in invocation report:
+ * false when telemetry.json says `"enabled": false`, true when it says
+ * anything else, null when there is no readable file. Unlike
+ * loadOrInitHeartbeatConfig() it never writes — a check on the reporting
+ * path must not mint the file — and it does not require a machine_id, so a
+ * hand-written `{"enabled": false}` is honoured. Never throws: an unreadable
+ * file is "no choice", because telemetry must never break or block a run.
+ */
+export function readStoredTelemetryChoice(): boolean | null {
+  try {
+    const p = telemetryConfigPath();
+    if (!existsSync(p)) return null;
+    const parsed: unknown = JSON.parse(readFileSync(p, "utf-8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return (parsed as { enabled?: unknown }).enabled !== false;
+  } catch {
+    return null;
+  }
+}
+
 function writeStoredConfig(config: HeartbeatConfig): void {
   ensurePrivateDir(ROTIFER_HOME);
   const p = telemetryConfigPath();

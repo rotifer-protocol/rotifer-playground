@@ -3,7 +3,7 @@
   "display_name": "Rotifer Arena",
   "description": "Benchmark Rotifer Genes against each other in the Arena — import from ClawHub / local / scratch, compile, match opponents, run Arena evaluation, and produce a Markdown report with F(g) fitness and V(g) security grades. Invoke explicitly to compare or benchmark Rotifer Genes. Do NOT use for general benchmarking, load testing, or comparing anything that is not a Rotifer Gene or Agent.",
   "tagline": "Objective, quantifiable capability evaluation for AI agents",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "author": "rotifer-protocol",
   "license": "Apache-2.0",
   "category": "developer-tools",

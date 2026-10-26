@@ -6,11 +6,13 @@ import { randomUUID } from "node:crypto";
 
 describe("Security: credential file permissions", () => {
   const realCredPath = join(homedir(), ".rotifer", "credentials.json");
+  const rotiferDir = join(homedir(), ".rotifer");
+  // These inspect this machine's own files. Where there are none (a CI runner,
+  // a fresh checkout) there is nothing to check, and the run says "skipped"
+  // rather than reporting a pass that checked nothing.
+  const hasCredFile = existsSync(realCredPath);
 
-  it("credentials.json in ~/.rotifer is not world-readable (if it exists)", () => {
-    if (!existsSync(realCredPath)) {
-      return;
-    }
+  it.skipIf(!hasCredFile)("credentials.json in ~/.rotifer is not world-readable", () => {
     const stats = statSync(realCredPath);
     const mode = stats.mode & 0o777;
     const worldRead = mode & 0o004;
@@ -19,11 +21,7 @@ describe("Security: credential file permissions", () => {
     expect(worldWrite).toBe(0);
   });
 
-  it("~/.rotifer directory is not world-accessible (if it exists)", () => {
-    const rotiferDir = join(homedir(), ".rotifer");
-    if (!existsSync(rotiferDir)) {
-      return;
-    }
+  it.skipIf(!existsSync(rotiferDir))("~/.rotifer directory is not world-accessible", () => {
     const stats = statSync(rotiferDir);
     const mode = stats.mode & 0o777;
     const worldRead = mode & 0o004;
@@ -32,19 +30,13 @@ describe("Security: credential file permissions", () => {
     expect(worldExec).toBe(0);
   });
 
-  it("credentials.json is valid JSON if it exists", () => {
-    if (!existsSync(realCredPath)) {
-      return;
-    }
+  it.skipIf(!hasCredFile)("credentials.json is valid JSON", () => {
     const { readFileSync } = require("node:fs");
     const content = readFileSync(realCredPath, "utf-8");
     expect(() => JSON.parse(content)).not.toThrow();
   });
 
-  it("credential file does not contain plaintext passwords", () => {
-    if (!existsSync(realCredPath)) {
-      return;
-    }
+  it.skipIf(!hasCredFile)("credential file does not contain plaintext passwords", () => {
     const { readFileSync } = require("node:fs");
     const content = readFileSync(realCredPath, "utf-8");
     expect(content).not.toMatch(/"password"\s*:/i);

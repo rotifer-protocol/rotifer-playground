@@ -110,9 +110,10 @@ export const arenaSubmitCommand = new Command("submit")
     }
 
     // The declared tier, carried through to the discount and to every line of
-    // output. Only Native can be measured in the sandbox today — the Hybrid path
-    // that ships runs under Node.js and has no artifact to execute — so the
-    // other two tiers take the estimate path. They keep their own names there:
+    // output. Only Native is run in the sandbox here. A Hybrid gene that brings
+    // its own WASM can run there too (`rotifer run`, ADR-327), but this command
+    // does not run it yet, so Hybrid and Wrapped take the estimate path. They
+    // keep their own names there:
     // a Hybrid gene was being reported back to its author as "Wrapped".
     const declaredFidelity: string = phenotype.fidelity || "Wrapped";
     const isNative = declaredFidelity === "Native";

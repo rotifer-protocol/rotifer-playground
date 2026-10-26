@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   mkdirSync,
   writeFileSync,
@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { execSync } from "node:child_process";
+import { hasJavyToolchain } from "./toolchain.js";
 
 const CLI = join(__dirname, "..", "..", "dist", "index.js");
 
@@ -78,16 +79,6 @@ function writeGeneSource(dir: string, gene: string, code: string) {
   writeFileSync(join(dir, "genes", gene, "index.ts"), code);
 }
 
-let javyAvailable = false;
-
-beforeAll(() => {
-  try {
-    execSync("npx javy-cli --version", { stdio: "pipe", timeout: 45_000 });
-    javyAvailable = true;
-  } catch {
-    javyAvailable = false;
-  }
-}, 60_000);
 
 describe("Javy TS→WASM compilation (v0.3)", () => {
   let projectDir: string;
@@ -102,9 +93,7 @@ describe("Javy TS→WASM compilation (v0.3)", () => {
     }
   });
 
-  it("auto-detects TypeScript gene and compiles to Native WASM", { timeout: 30000 }, () => {
-    if (!javyAvailable) return;
-
+  it.skipIf(!hasJavyToolchain)("auto-detects TypeScript gene and compiles to Native WASM", { timeout: 30000 }, () => {
     writePhenotype(projectDir, "ts-gene");
     writeGeneSource(
       projectDir,
@@ -134,9 +123,7 @@ describe("Javy TS→WASM compilation (v0.3)", () => {
     expect(wasmSize).toBeGreaterThan(100_000); // Javy modules include QuickJS (~1MB)
   });
 
-  it("produces gene.ir.wasm with compile-result.json", { timeout: 30000 }, () => {
-    if (!javyAvailable) return;
-
+  it.skipIf(!hasJavyToolchain)("produces gene.ir.wasm with compile-result.json", { timeout: 30000 }, () => {
     writePhenotype(projectDir, "ts-gene");
     writeGeneSource(
       projectDir,
@@ -161,9 +148,7 @@ describe("Javy TS→WASM compilation (v0.3)", () => {
     }
   });
 
-  it("handles TypeScript with interfaces and type annotations", { timeout: 60000 }, () => {
-    if (!javyAvailable) return;
-
+  it.skipIf(!hasJavyToolchain)("handles TypeScript with interfaces and type annotations", { timeout: 60000 }, () => {
     writePhenotype(projectDir, "ts-gene");
     writeGeneSource(
       projectDir,
@@ -194,9 +179,7 @@ describe("Javy TS→WASM compilation (v0.3)", () => {
     expect(stdout).toContain("Wrapped fidelity");
   });
 
-  it("prefers TS source over a stale existing gene.wasm", { timeout: 60000 }, () => {
-    if (!javyAvailable) return;
-
+  it.skipIf(!hasJavyToolchain)("prefers TS source over a stale existing gene.wasm", { timeout: 60000 }, () => {
     writePhenotype(projectDir, "ts-gene");
     writeGeneSource(
       projectDir,
@@ -219,9 +202,7 @@ describe("Javy TS→WASM compilation (v0.3)", () => {
     expect(readFileSync(join(projectDir, "genes", "ts-gene", "gene.wasm")).length).toBeGreaterThan(100_000);
   });
 
-  it("fails gracefully with invalid TypeScript", { timeout: 30000 }, () => {
-    if (!javyAvailable) return;
-
+  it.skipIf(!hasJavyToolchain)("fails gracefully with invalid TypeScript", { timeout: 30000 }, () => {
     writePhenotype(projectDir, "ts-gene");
     writeGeneSource(
       projectDir,

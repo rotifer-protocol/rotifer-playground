@@ -70,11 +70,12 @@ describe("no-published-artifact", () => {
   /**
    * The first version of this criterion held Hybrid to an artifact too, on the
    * reading that L-II "partially native execution" promises WASM. It does — in
-   * the target design. But the Hybrid path that actually ships was chosen by
-   * the v0.7 plan as an interim: Node.js with a gateway-wrapped fetch, no
-   * WASM at all. Nine production rows are Hybrid-without-artifact, and every
-   * one of them followed the toolchain. When the host-function path lands,
-   * this test flips back — deliberately, with the reason next to it.
+   * the target design, which now ships as a nonstandard preview (ADR-327).
+   * But the v0.7 interim ships alongside it and is still the default for a
+   * Hybrid gene: Node.js with a gateway-wrapped fetch, no WASM at all. Nine
+   * production rows are Hybrid-without-artifact, and every one of them
+   * followed the toolchain. When the Node.js path is retired, this test flips
+   * back — deliberately, with the reason next to it.
    */
   it("does not hold Hybrid to an artifact while the Node path is the shipping design", () => {
     expect(

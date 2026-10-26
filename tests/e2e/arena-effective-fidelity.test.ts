@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { execSync } from "node:child_process";
+import { hasJavyToolchain, hasSandbox } from "./toolchain.js";
 import { FIDELITY_DISCOUNT } from "../../src/types/phenotype.js";
 
 const CLI = join(__dirname, "..", "..", "dist", "index.js");
@@ -96,19 +97,19 @@ describe.runIf(existsSync(CLI))("arena submit discounts by the tier that actuall
     }
   });
 
-  // Needs the TS→WASM toolchain and the napi sandbox; returns early where
-  // either is missing, as javy-compile.test.ts does (javy's first run
-  // downloads its binary, which a fresh CI runner may not do in time).
-  it("a declared Native that ran in the sandbox keeps the Native discount", () => {
+  // Needs the TS→WASM toolchain and the napi sandbox; skipped where either is
+  // missing, so a run without them reads as skipped rather than passed.
+  it.skipIf(!hasJavyToolchain || !hasSandbox)("a declared Native that ran in the sandbox keeps the Native discount", () => {
     const src = join(__dirname, "..", "..", "genes", "genesis-code-format");
     const dest = join(projectDir, "genes", "genesis-code-format");
     execSync(`cp -R "${src}" "${dest}"`);
     const compiled = run("compile genesis-code-format", projectDir, process.env.HOME ?? home);
-    if (compiled.exitCode !== 0 || !existsSync(join(dest, "gene.ir.wasm"))) return;
+    expect(compiled.exitCode, compiled.stdout).toBe(0);
+    expect(existsSync(join(dest, "gene.ir.wasm"))).toBe(true);
 
     const { stdout, exitCode } = run("arena submit genesis-code-format", projectDir, home);
-    if (!stdout.includes("Sandbox verified")) return;
     expect(exitCode, stdout).toBe(0);
+    expect(stdout).toContain("Sandbox verified");
     expect(stdout).not.toContain(NOT_RUN_NOTE);
     const c = cache("genesis-code-format");
     expect(c.fidelity_discount).toBe(FIDELITY_DISCOUNT.native);

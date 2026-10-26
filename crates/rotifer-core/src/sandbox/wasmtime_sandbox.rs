@@ -1237,7 +1237,16 @@ impl Sandbox for WasmtimeSandbox {
         }
         let mut config = HybridConfig::from_phenotype(phenotype, &context.permissions);
         config.env_plain = self.hybrid_env_plain.clone();
-        config.env_secret = self.hybrid_env_secret.clone();
+        // A gene gets only the secrets it declares itself: in a composition
+        // the binding loads every gene's credentials at once, and one gene
+        // must not substitute another's key into its own requests.
+        let declared = hybrid::declared_credentials(phenotype);
+        config.env_secret = self
+            .hybrid_env_secret
+            .iter()
+            .filter(|(name, _)| declared.contains(name))
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
         config.allow_insecure_loopback = self.insecure_loopback;
         self.execute_inner(wasm_bytes, context, input, config)
     }

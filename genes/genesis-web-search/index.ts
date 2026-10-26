@@ -18,8 +18,10 @@ interface SearchOutput {
 /**
  * Genesis Gene: Web Search
  *
- * Full-featured web search gene. In MVP, returns simulated results.
- * Production binding would connect to a real search API.
+ * Demo of a search gene's shape: it returns simulated example.com results and
+ * searches nothing. The phenotype description, the README and every result
+ * title say so (#452), so neither a person nor an agent reading the output can
+ * mistake it for a live search.
  */
 export function express(input: SearchInput): SearchOutput {
   const start = Date.now();
@@ -45,7 +47,7 @@ export function express(input: SearchInput): SearchOutput {
       : 5;
 
   const results: SearchResult[] = Array.from({ length: max }, (_, i) => ({
-    title: `Result ${i + 1} for "${query}"`,
+    title: `[Simulated] Result ${i + 1} for "${query}"`,
     url: `https://example.com/search?q=${encodeURIComponent(query)}&p=${i + 1}`,
     snippet: `This is a simulated search result #${i + 1} for the query "${query}". In production, this gene binds to a real search provider.`,
   }));

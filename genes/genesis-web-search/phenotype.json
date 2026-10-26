@@ -1,6 +1,6 @@
 {
   "domain": "search",
-  "description": "Search the web and return structured results with titles, URLs, and snippets. Supports configurable result count.",
+  "description": "Demo gene: returns simulated search results (example.com URLs), not a live web search. Shows the shape of a search gene: structured results with titles, URLs and snippets, and a configurable result count.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -48,7 +48,7 @@
     }
   },
   "dependencies": [],
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "rotifer-genesis",
   "fidelity": "Native",
   "transparency": "Open",

@@ -262,6 +262,18 @@ fn process_env(name: &str) -> Option<String> {
     std::env::var(name).ok()
 }
 
+/// The declared credentials of a gene that gets network access; nothing for
+/// one that does not, since it could not send them anywhere.
+fn credentials_for(
+    phenotype: &rotifer_core::types::gene::Phenotype,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> std::result::Result<std::collections::HashMap<String, String>, Vec<String>> {
+    if !PermissionSet::declared_by(phenotype).network_access {
+        return Ok(std::collections::HashMap::new());
+    }
+    rotifer_core::sandbox::hybrid::resolve_credentials(phenotype, env)
+}
+
 /// Names the unset variables and says where to set them. Never includes a
 /// value: there is none to include, and the caller prints this verbatim.
 fn missing_credentials_message(missing: &[String]) -> String {
@@ -562,7 +574,9 @@ impl PlaygroundBinding {
             binding_extensions: None,
         };
 
-        let secrets = match rotifer_core::sandbox::hybrid::resolve_credentials(&phenotype, env) {
+        // Network permission is decided first: a gene that gets none is never
+        // asked for a key (spec gate order: fidelity, network, credentials).
+        let secrets = match credentials_for(&phenotype, env) {
             Ok(secrets) => secrets,
             Err(missing) => {
                 return Ok(ExecutionResultView {
@@ -762,7 +776,7 @@ impl PlaygroundBinding {
         let mut secrets: HashMap<String, String> = HashMap::new();
         let mut missing: Vec<String> = Vec::new();
         for (hex_id, entry) in raw_map {
-            match rotifer_core::sandbox::hybrid::resolve_credentials(&entry.phenotype, env) {
+            match credentials_for(&entry.phenotype, env) {
                 Ok(found) => secrets.extend(found),
                 Err(names) => missing.extend(names),
             }
@@ -1292,6 +1306,34 @@ mod permission_tests {
             .unwrap();
         assert!(!r.success);
         assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2);
+    }
+
+    /// Spec gate order: network permission is decided before credentials.
+    /// A gene that gets no network (here Wrapped, so `declared_by` grants
+    /// none) is never asked for a key: it fails the way it would without
+    /// one declared, with -2 from its fetch, on both paths.
+    #[test]
+    fn a_gene_without_network_permission_is_not_asked_for_credentials() {
+        let mut wrapped = phenotype_of("Wrapped", true);
+        wrapped["externalDependencies"][0]["credentials"] = serde_json::json!(["T93_KEY"]);
+
+        let r = binding()
+            .execute_gene_with_env(
+                Buffer::from(bearer_gene("T93_KEY")),
+                "{}".into(),
+                wrapped.to_string(),
+                Some(CLI_CONSTRAINTS.into()),
+                &env_of(&[]),
+            )
+            .unwrap();
+        assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2, "execute_gene");
+
+        let id = [12u8; 32];
+        let entries = serde_json::json!({
+            hex::encode(id): {"wasm": bearer_gene("T93_KEY"), "phenotype": wrapped}
+        });
+        let (r, _) = algebra_with_env(entries, id, &env_of(&[]));
+        assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2, "execute_algebra");
     }
 
     #[test]

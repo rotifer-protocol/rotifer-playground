@@ -1,6 +1,6 @@
 {
   "domain": "search",
-  "description": "Lightweight web search returning a single best-match answer with source attribution.",
+  "description": "Demo gene: returns one simulated answer (example.com source), not a live web search. Shows the shape of a lightweight search gene with source attribution.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -25,7 +25,7 @@
     }
   },
   "dependencies": [],
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "rotifer-genesis",
   "fidelity": "Native",
   "transparency": "Open",

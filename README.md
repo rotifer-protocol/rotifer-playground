@@ -232,8 +232,8 @@ Five pre-installed genes ship with every Agent workspace:
 
 | Gene | Domain | Fidelity | Description |
 |------|--------|----------|-------------|
-| `genesis-web-search` | search | Native | Full web search with multiple results |
-| `genesis-web-search-lite` | search | Native | Lightweight single-answer search |
+| `genesis-web-search` | search | Native | Demo: simulated multi-result search (example.com results, not a live search) |
+| `genesis-web-search-lite` | search | Native | Demo: simulated single-answer search (not a live search) |
 | `genesis-file-read` | filesystem | Wrapped | Read local files (L0 sandbox restricted) |
 | `genesis-code-format` | tooling | Native | Format source code (JSON, TS, etc.) |
 | `genesis-l0-constraint` | safety | Native | L0 sandbox constraint checker |

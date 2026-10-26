@@ -143,7 +143,10 @@ describe("E2E: Genesis gene execution", () => {
       expect(phenotype.domain).toBeTruthy();
       expect(phenotype.inputSchema).toBeTruthy();
       expect(phenotype.outputSchema).toBeTruthy();
-      expect(phenotype.version).toBe("0.2.0");
+      // A well-formed version, not a particular one: genes move independently
+      // (the two search demos went to 0.2.1 when their labels changed), and a
+      // pinned "0.2.0" here failed every such bump without checking anything.
+      expect(phenotype.version, `${name} version`).toMatch(/^\d+\.\d+\.\d+$/);
       // Not all of them are Native, and asserting so hid a real defect until
       // 2026-09-07: genesis-file-read imports node:fs, which WASM cannot
       // provide, so `rotifer compile` fails outright and the Native label it

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import * as display from "./display.js";
@@ -123,6 +124,84 @@ export function isWasmStale(wasmPath: string, sourcePath: string): boolean {
   }
 }
 
+/** Outcome of normalizeJavyClockSeed(); the module is unchanged unless "normalized". */
+export interface ClockSeedResult {
+  wasm: Buffer;
+  status: "normalized" | "absent" | "ambiguous";
+}
+
+const WASM_SECTION_DATA = 11;
+
+function readLeb128(buf: Buffer, offset: number): [value: number, next: number] {
+  let value = 0;
+  let shift = 0;
+  let at = offset;
+  for (;;) {
+    const byte = buf[at++];
+    value += (byte & 0x7f) * 2 ** shift;
+    shift += 7;
+    if (!(byte & 0x80)) return [value, at];
+  }
+}
+
+/** Byte range of the Data section's contents, or null if the module has none. */
+function dataSectionRange(wasm: Buffer): [start: number, end: number] | null {
+  let at = 8; // magic + version
+  while (at < wasm.length) {
+    const id = wasm[at];
+    const [size, bodyStart] = readLeb128(wasm, at + 1);
+    if (id === WASM_SECTION_DATA) return [bodyStart, bodyStart + size];
+    at = bodyStart + size;
+  }
+  return null;
+}
+
+/**
+ * Replace the compile-time clock javy bakes into a module with a fixed seed.
+ *
+ * javy 3.0.1 pre-initialises QuickJS and snapshots its heap; QuickJS seeds
+ * Math.random from gettimeofday() while doing so, and that 8-byte microsecond
+ * value lands in the Data section. It was the only difference between two
+ * compiles of the same source, and the v2 gene ID digests every standard
+ * section (ADR-340 D1), so every compile announced a new identity.
+ *
+ * The field is found by value, not by offset: the one little-endian u64 in the
+ * Data section that falls inside `windowUs`, the span javy was running. Exactly
+ * one match is required. None means this javy build does not do it (or does it
+ * differently); two means the guess is not safe. Either way the module is
+ * returned untouched and the caller says so — a wrong overwrite would corrupt
+ * the heap, an unnormalized module only loses reproducibility.
+ *
+ * Math.random was already fixed per artifact (the snapshot holds its state);
+ * this makes it fixed per source as well.
+ */
+export function normalizeJavyClockSeed(
+  wasm: Buffer,
+  windowUs: [from: number, to: number],
+  seed: Buffer,
+): ClockSeedResult {
+  const range = dataSectionRange(wasm);
+  if (!range) return { wasm, status: "absent" };
+  const [from, to] = [BigInt(Math.floor(windowUs[0])), BigInt(Math.ceil(windowUs[1]))];
+  const hits: number[] = [];
+  for (let at = range[0]; at + 8 <= range[1]; at++) {
+    const value = wasm.readBigUInt64LE(at);
+    if (value >= from && value <= to) hits.push(at);
+  }
+  if (hits.length === 0) return { wasm, status: "absent" };
+  if (hits.length > 1) return { wasm, status: "ambiguous" };
+  const out = Buffer.from(wasm);
+  seed.copy(out, hits[0], 0, 8);
+  return { wasm: out, status: "normalized" };
+}
+
+/** A non-zero 8-byte seed derived from the compiled source (xorshift state must not be 0). */
+function seedFromSource(source: string): Buffer {
+  const seed = createHash("sha256").update(source).digest().subarray(0, 8);
+  if (seed.every((b) => b === 0)) seed[0] = 1;
+  return seed;
+}
+
 const WASI_SHIM_HEADER = `\
 function __readStdin(){var s=1024,c=[],t=0;while(1){var b=new Uint8Array(s);var r=Javy.IO.readSync(0,b);t+=r;if(r===0)break;c.push(b.subarray(0,r))}var o=new Uint8Array(t);var p=0;for(var i=0;i<c.length;i++){o.set(c[i],p);p+=c[i].length}return JSON.parse(new TextDecoder().decode(o))}
 function __writeStdout(v){var b=new TextEncoder().encode(JSON.stringify(v));Javy.IO.writeSync(1,b)}
@@ -194,11 +273,28 @@ export function compileTypeScriptToWasm(
     writeFileSync(shimPath, shimCode);
 
     display.info("  Step 3/3: JavaScript → WASM (Javy / QuickJS)");
+    const javyStartedMs = Date.now();
     execFileSync(toolchain.javy[0], [
       ...toolchain.javy.slice(1), "compile", shimPath, "-o", outputWasmPath,
     ], { stdio: "pipe", timeout: 60_000 });
+    const javyEndedMs = Date.now();
 
-    const wasmSize = readFileSync(outputWasmPath).length;
+    // Same source, same bytes: take javy's compile-time clock out (T-95).
+    const seeded = normalizeJavyClockSeed(
+      readFileSync(outputWasmPath),
+      [(javyStartedMs - 1_000) * 1_000, (javyEndedMs + 1_000) * 1_000],
+      seedFromSource(shimCode),
+    );
+    if (seeded.status === "normalized") {
+      writeFileSync(outputWasmPath, seeded.wasm);
+    } else {
+      display.warn(
+        `    This javy build's output is not reproducible (${seeded.status === "ambiguous" ? "more than one" : "no"} ` +
+        "compile-time clock value found): compiling this gene again will give different bytes and a different v2 gene ID.",
+      );
+    }
+
+    const wasmSize = seeded.wasm.length;
     const durationMs = Date.now() - startTime;
 
     display.success(

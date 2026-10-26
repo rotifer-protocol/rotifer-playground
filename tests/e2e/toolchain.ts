@@ -3,7 +3,7 @@
  *
  * A test whose precondition is missing must show as skipped, not as a pass
  * that checked nothing: an early `return` reports "passed" (T-93/95
- * acceptance). The Regression Guard refuses `.skip(` but allows `skipIf`,
+ * acceptance). The Regression Guard refuses plain skip calls but allows `skipIf`,
  * a skip tied to a runtime precondition, so the precondition has to be known
  * before the tests are collected.
  */

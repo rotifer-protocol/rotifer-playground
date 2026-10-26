@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # `supabase start`, retried when an image pull is rate-limited.
 #
-# CI pulls the local stack's images from ghcr.io (supabase/setup-cli sets
-# SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io), and ghcr answers
-# `toomanyrequests` often enough to fail the job on its own. The CLI retries
-# a pull twice, 4 s and 8 s apart, which is not long enough. It also skips an
+# `supabase start` pulls about a dozen images at once, and a registry can
+# answer `toomanyrequests` (ghcr.io did, all day on 2026-10-26, which is why
+# CI now pulls from public.ecr.aws). The CLI retries a pull itself, but only
+# for a few seconds, which is not long enough. It also skips an
 # image that is already present, so another `supabase start` carries on from
 # where the last one stopped.
 #

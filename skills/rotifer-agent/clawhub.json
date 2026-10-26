@@ -3,7 +3,7 @@
   "display_name": "Rotifer Agent",
   "description": "Build a Rotifer Agent from Genes — decompose intent into capability units, pick Genes by Arena F(g), compose a Rotifer Genome, create the Agent and test it. Use when the user is working with Rotifer specifically: \"Rotifer Agent\", \"compose Genes\", \"Rotifer Genome\", \"Gene composition\", \"rotifer agent create\". Do NOT use for general agent frameworks, or when Seq / Par / Cond / Try are ordinary programming terms (in Rotifer they name Genome composition strategies).",
   "tagline": "From intent to running Agent in seven steps",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "author": "rotifer-protocol",
   "license": "Apache-2.0",
   "category": "developer-tools",

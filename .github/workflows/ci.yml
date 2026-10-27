@@ -449,16 +449,20 @@ jobs:
       contents: read
       packages: read
     env:
-      # The only images this job runs: Postgres for the replay, pg_prove for
-      # `supabase test db`. These are the tags supabase CLI 2.67.1 pins
-      # (pkg/config/templates/Dockerfile); change them with the CLI version.
-      SUPABASE_IMAGES: postgres:17.6.1.064 pg_prove:3.36
+      SUPABASE_CLI_VERSION: 2.67.1
+      # Every image this job's `supabase start` and `supabase test db` pull,
+      # at the tags SUPABASE_CLI_VERSION pins (supabase/cli
+      # pkg/config/templates/Dockerfile); change them with the CLI version.
+      # gotrue, realtime and storage-api are pulled even though `-x` excludes
+      # their services: run 40515384793 (job 122280226571) pulled all three
+      # with postgres and pg_prove cached, and failed on realtime.
+      SUPABASE_IMAGES: postgres:17.6.1.064 pg_prove:3.36 gotrue:v2.184.0 realtime:v2.68.4 storage-api:v1.33.0
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - uses: supabase/setup-cli@b579fc8c7122aa485f1d947120eaeb11ee04d312 # v2.0.0
         with:
-          version: 2.67.1
+          version: ${{ env.SUPABASE_CLI_VERSION }}
 
       # setup-cli exports SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io, and
       # ghcr.io kept answering `toomanyrequests … allowed: 44000/minute`
@@ -473,14 +477,23 @@ jobs:
       # Anonymous pulls are not reliable enough to run on every push: ghcr.io
       # answered `toomanyrequests` all day on 2026-10-26, and public.ecr.aws
       # cut the 17.6.1.064 Postgres download off with "Data limit exceeded"
-      # on six main runs on 2026-10-27 (last: 40511995932). So the two images
-      # are cached; on a hit nothing is pulled at all.
+      # on six main runs on 2026-10-27 (last: 40511995932). So the images are
+      # cached; on a hit nothing is pulled at all.
+      #
+      # The cache key is built from SUPABASE_CLI_VERSION and SUPABASE_IMAGES,
+      # so changing either starts a new cache. Caches are scoped by branch: a
+      # PR reads its own and main's, and main's first run after this merges
+      # misses and fills it through the sources below.
+      - name: Cache key for the Supabase images
+        id: images-key
+        run: echo "key=supabase-images-${RUNNER_OS}-cli${SUPABASE_CLI_VERSION}-$(echo "$SUPABASE_IMAGES" | tr ' :' '+_')" >> "$GITHUB_OUTPUT"
+
       - name: Restore cached Supabase images
         id: images-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/supabase-images.tar
-          key: supabase-images-${{ runner.os }}-cli2.67.1-postgres-17.6.1.064-pg_prove-3.36
+          key: ${{ steps.images-key.outputs.key }}
 
       - name: Load cached Supabase images
         if: steps.images-cache.outputs.cache-hit == 'true'
@@ -497,8 +510,9 @@ jobs:
       # On a miss, each image is pulled from the first source that serves
       # it — public.ecr.aws, then ghcr.io (logged in), then Docker Hub, three
       # tries each — and tagged as the public.ecr.aws name the CLI asks for.
-      # The CLI only pulls an image it cannot find locally, so after this
-      # `supabase start` and `supabase test db` pull nothing.
+      # The CLI only pulls an image it cannot find locally, so with all of
+      # SUPABASE_IMAGES present `supabase start` and `supabase test db` pull
+      # nothing — the replay step's log should have no "Pulling".
       - name: Pull Supabase images (cache miss)
         if: steps.images-cache.outputs.cache-hit != 'true'
         run: |
@@ -546,10 +560,11 @@ jobs:
         # other service starts, and the pgTAP suite uses nothing outside the
         # postgres image (it inserts auth.users (id, email,
         # raw_user_meta_data) and calls auth.uid / auth.role / cron.*, all
-        # present in the image). Excluding the other 13 services means their
-        # images are not pulled: public.ecr.aws refused the full set on
-        # rotifer-dev ("Data limit exceeded", run 40364870856). Retried
-        # (3 attempts, 30 s / 60 s apart) only when an image pull fails.
+        # present in the image). Excluding the other 13 services keeps 10 of
+        # their images from being pulled; gotrue, realtime and storage-api
+        # are pulled anyway, which is why they are in SUPABASE_IMAGES above.
+        # Retried (3 attempts, 30 s / 60 s apart) only when an image pull
+        # fails.
         run: scripts/supabase-start-with-retry.sh -x gotrue,realtime,storage-api,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 
       - name: Run pgTAP test suite

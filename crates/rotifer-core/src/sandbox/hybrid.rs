@@ -162,6 +162,10 @@ pub struct HybridRuntime {
     /// stop for the epoch deadline, so a request has to be bounded by it
     /// before it is sent; `None` = no deadline known (unit tests).
     pub run_deadline: Option<Instant>,
+    /// Cause of the last -5 (`ERR_NETWORK`) this run got, from
+    /// [`perform_fetch_with_cause`]: a category and the host name only. It is
+    /// added to the run's error message; the guest never sees it.
+    pub last_network_failure: Option<String>,
 }
 
 impl HybridRuntime {
@@ -481,6 +485,19 @@ pub fn perform_fetch(
     req: &NetRequest,
     resolved_headers: &[(String, String)],
 ) -> Result<Vec<u8>, i32> {
+    perform_fetch_with_cause(policy, allow_insecure_loopback, req, resolved_headers).map_err(|(code, _)| code)
+}
+
+/// [`perform_fetch`], plus the cause of a -5 (`ERR_NETWORK`) failure: a
+/// category and the target host name, e.g. `"TLS error (api.tavily.com)"`.
+/// Never the path, query, headers or body — the cause ends up in error
+/// messages and logs, and a substituted secret lives in the headers.
+pub fn perform_fetch_with_cause(
+    policy: &NetPolicy,
+    allow_insecure_loopback: bool,
+    req: &NetRequest,
+    resolved_headers: &[(String, String)],
+) -> Result<Vec<u8>, (i32, Option<String>)> {
     use base64::Engine as _;
     use std::io::Read as _;
 
@@ -505,7 +522,8 @@ pub fn perform_fetch(
 
     let mut current_url = req.url.clone();
     for _hop in 0..=constants::MAX_REDIRECT_HOPS {
-        let checked = check_url(policy, &current_url, allow_insecure_loopback)?;
+        let checked = check_url(policy, &current_url, allow_insecure_loopback).map_err(|c| (c, None))?;
+        let host = checked.host_str().unwrap_or("unknown host").to_string();
 
         let result = send(&agent, &req.method, checked.as_str(), resolved_headers, req.body.as_deref());
 
@@ -513,9 +531,9 @@ pub fn perform_fetch(
             Ok(r) => r,
             Err(e) => {
                 return Err(if is_timeout(&e) {
-                    errors::ERR_TIMEOUT
+                    (errors::ERR_TIMEOUT, None)
                 } else {
-                    errors::ERR_NETWORK
+                    (errors::ERR_NETWORK, Some(format!("{} ({host})", network_cause(&e, checked.scheme() == "https"))))
                 });
             }
         };
@@ -528,7 +546,7 @@ pub fn perform_fetch(
         {
             let next = checked
                 .join(location)
-                .map_err(|_| errors::ERR_INVALID_REQUEST)?;
+                .map_err(|_| (errors::ERR_INVALID_REQUEST, None))?;
             current_url = next.to_string();
             continue;
         }
@@ -548,9 +566,9 @@ pub fn perform_fetch(
             .as_reader()
             .take(limit + 1)
             .read_to_end(&mut body)
-            .map_err(|_| errors::ERR_NETWORK)?;
+            .map_err(|_| (errors::ERR_NETWORK, Some(format!("reading the response failed ({host})"))))?;
         if body.len() as u64 > limit {
-            return Err(errors::ERR_RESPONSE_TOO_LARGE);
+            return Err((errors::ERR_RESPONSE_TOO_LARGE, None));
         }
 
         let envelope = serde_json::json!({
@@ -562,7 +580,39 @@ pub fn perform_fetch(
     }
 
     // Redirect chain longer than MAX_REDIRECT_HOPS.
-    Err(errors::ERR_NETWORK)
+    Err((errors::ERR_NETWORK, Some("too many redirects".to_string())))
+}
+
+/// The category of a transport failure, for the -5 cause. Categories only:
+/// a ureq error's own text can quote the URL. Over HTTPS a failed handshake
+/// arrives as an I/O error of kind InvalidData (rustls wrapped by the
+/// transport), not as ureq's own TLS variants.
+fn network_cause(e: &ureq::Error, https: bool) -> &'static str {
+    use std::io::ErrorKind;
+    match e {
+        ureq::Error::HostNotFound => "DNS lookup failed",
+        ureq::Error::ConnectionFailed => "connection failed",
+        // std's resolver reports a failed lookup as a plain I/O error; its
+        // text is only matched here, never shown.
+        ureq::Error::Io(io) if io.to_string().contains("lookup address") => "DNS lookup failed",
+        ureq::Error::Io(io) => match io.kind() {
+            ErrorKind::ConnectionRefused
+            | ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::NotConnected
+            | ErrorKind::AddrNotAvailable
+            | ErrorKind::BrokenPipe => "connection failed",
+            ErrorKind::UnexpectedEof => "connection closed by the server",
+            ErrorKind::InvalidData if https => "TLS error",
+            _ => "I/O error",
+        },
+        ureq::Error::Tls(_) | ureq::Error::Pem(_) | ureq::Error::Rustls(_) | ureq::Error::TlsRequired => {
+            "TLS error"
+        }
+        ureq::Error::Protocol(_) => "HTTP protocol error",
+        ureq::Error::BodyStalled => "response stalled",
+        _ => "other network error",
+    }
 }
 
 /// One HTTP request. `method` is one of the parsed envelope's allowed
@@ -722,6 +772,31 @@ mod tests {
             }]),
             llm_requirements: None,
             guard_config: None,
+        }
+    }
+
+    // ── -5 causes ───────────────────────────────────────────────────────
+
+    #[test]
+    fn network_cause_names_each_category() {
+        use std::io::{Error as IoError, ErrorKind};
+        let io = |kind, msg: &str| ureq::Error::Io(IoError::new(kind, msg.to_string()));
+        let cases = [
+            (ureq::Error::HostNotFound, true, "DNS lookup failed"),
+            (io(ErrorKind::Other, "failed to lookup address information: nodename nor servname provided"), true, "DNS lookup failed"),
+            (ureq::Error::ConnectionFailed, true, "connection failed"),
+            (io(ErrorKind::ConnectionRefused, "refused"), false, "connection failed"),
+            (io(ErrorKind::ConnectionReset, "reset"), true, "connection failed"),
+            (io(ErrorKind::UnexpectedEof, "eof"), true, "connection closed by the server"),
+            (io(ErrorKind::InvalidData, "corrupt message"), true, "TLS error"),
+            (io(ErrorKind::InvalidData, "corrupt message"), false, "I/O error"),
+            (ureq::Error::Tls("handshake"), true, "TLS error"),
+            (ureq::Error::TlsRequired, false, "TLS error"),
+            (ureq::Error::BodyStalled, true, "response stalled"),
+            (ureq::Error::TooManyRedirects, true, "other network error"),
+        ];
+        for (e, https, want) in cases {
+            assert_eq!(network_cause(&e, https), want, "{e:?}");
         }
     }
 

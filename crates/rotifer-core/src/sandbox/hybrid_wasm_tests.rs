@@ -1180,3 +1180,83 @@ fn no_request_is_sent_once_the_run_deadline_has_passed() {
     expect_error_code(run(&sb, &wasm, loopback_config()), errors::ERR_TIMEOUT);
     assert_eq!(other.hits.load(Ordering::SeqCst), 0, "the request after the deadline must not be sent");
 }
+
+// ── -5 says what failed (T-101) ─────────────────────────────────────────
+// ERR_NETWORK covers DNS, TLS and connection failures alike (Hybrid Binding
+// API §5), so a -5 on its own cannot be diagnosed. The host keeps the cause
+// category and the target host name, and the run's error message carries
+// them. Nothing else from the request may appear: not the path, the query,
+// a header (substituted secrets included) or the body.
+
+fn closed_port() -> u16 {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    l.local_addr().unwrap().port()
+}
+
+#[test]
+fn wasm_network_failure_names_cause_and_host_and_nothing_else() {
+    use base64::Engine as _;
+    let port = closed_port();
+    let envelope = format!(
+        r#"{{"method":"POST","url":"http://127.0.0.1:{port}/private/path-sentinel?token=query-sentinel","headers":{{"Authorization":"Bearer ${{env:SECRET}}","X-Trace":"header-sentinel"}},"bodyBase64":"{}"}}"#,
+        base64::engine::general_purpose::STANDARD.encode("body-sentinel")
+    );
+    let wasm = build_fetch_gene(&envelope);
+    let mut config = loopback_config();
+    config.env_secret.insert("SECRET".into(), "key-sentinel".into());
+
+    let msg = run(&sandbox(), &wasm, config).expect_err("must fail").to_string();
+    assert!(msg.contains("error code: -5"), "{msg}");
+    assert!(msg.contains("network failure: connection failed"), "{msg}");
+    assert!(msg.contains("127.0.0.1"), "{msg}");
+    for leaked in [
+        "path-sentinel",
+        "query-sentinel",
+        "token=",
+        "header-sentinel",
+        "key-sentinel",
+        "body-sentinel",
+        "Authorization",
+        "Bearer",
+        "X-Trace",
+    ] {
+        assert!(!msg.contains(leaked), "{leaked} leaked into: {msg}");
+    }
+}
+
+#[test]
+fn a_gene_error_code_without_a_network_failure_carries_no_cause() {
+    let server = TestServer::spawn(200, b"{}".to_vec(), None, 0);
+    let wasm = build_fetch_gene(&envelope_for(&server.url("/")));
+    let mut config = loopback_config();
+    config.net.as_mut().unwrap().allowed_domains = vec!["api.example.com".into()];
+    let msg = run(&sandbox(), &wasm, config).expect_err("must fail").to_string();
+    assert!(msg.contains("error code: -3"), "{msg}");
+    assert!(!msg.contains("network failure"), "{msg}");
+}
+
+#[test]
+fn fetch_failure_causes_are_classified() {
+    use super::hybrid::perform_fetch_with_cause;
+    let refused = get(format!("http://127.0.0.1:{}/x", closed_port()), None);
+    let (code, cause) = perform_fetch_with_cause(&loopback_policy(), true, &refused, &[]).unwrap_err();
+    assert_eq!(code, errors::ERR_NETWORK);
+    assert_eq!(cause.as_deref(), Some("connection failed (127.0.0.1)"));
+
+    // DNS failures depend on the resolver in front of the test (a local DNS
+    // proxy answers every name), so their classification is tested on
+    // constructed errors in hybrid.rs instead.
+
+    // TLS spoken to a plain-HTTP server, which answers before reading.
+    let plain = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = plain.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = plain.accept() {
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        }
+    });
+    let tls = get(format!("https://127.0.0.1:{port}/x"), Some(3_000));
+    let (code, cause) = perform_fetch_with_cause(&loopback_policy(), true, &tls, &[]).unwrap_err();
+    assert_eq!(code, errors::ERR_NETWORK);
+    assert_eq!(cause.as_deref(), Some("TLS error (127.0.0.1)"));
+}

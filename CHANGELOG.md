@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.31.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.30.3...v0.31.0) (2026-10-27)
+
+
+### Features
+
+* live web search with Tavily — Hybrid genes get their declared keys from env (nonstandard preview) ([#470](https://github.com/rotifer-protocol/rotifer-playground/issues/470)) ([374bcc5](https://github.com/rotifer-protocol/rotifer-playground/commit/374bcc5ce701ad6911d6f2bda120e8e703e91df1))
+
+
+### Bug Fixes
+
+* **arena:** discount by the tier that ran, not the one declared ([#471](https://github.com/rotifer-protocol/rotifer-playground/issues/471)) ([6ec52a2](https://github.com/rotifer-protocol/rotifer-playground/commit/6ec52a247e339f765b883077f14ebd96fb001559))
+* **compile:** same source, same bytes — take javy's clock out of the module ([#474](https://github.com/rotifer-protocol/rotifer-playground/issues/474)) ([dc8ecfa](https://github.com/rotifer-protocol/rotifer-playground/commit/dc8ecfa7723f975624319d0ceb22613d7b362f17))
+* **deps:** drop wasmtime's cache feature, and with it zstd ([#473](https://github.com/rotifer-protocol/rotifer-playground/issues/473)) ([6029915](https://github.com/rotifer-protocol/rotifer-playground/commit/6029915051c9e59a9c09f7068f85e0bb860a06f8))
+* **genes:** tavily-web-search transparency is OPEN, not the legacy Open ([#477](https://github.com/rotifer-protocol/rotifer-playground/issues/477)) ([9d39644](https://github.com/rotifer-protocol/rotifer-playground/commit/9d396440a0f545d601e3d0288a047e39c55d1c17))
+* **test:** read an ADR-334 refusal from the sandbox as a refusal, not a crash ([#481](https://github.com/rotifer-protocol/rotifer-playground/issues/481)) ([d0c43ee](https://github.com/rotifer-protocol/rotifer-playground/commit/d0c43ee210d879acca4c58340e97899597356b59))
+* **vg:** say when code was not scanned instead of calling it pure-config ([#482](https://github.com/rotifer-protocol/rotifer-playground/issues/482)) ([4a9d548](https://github.com/rotifer-protocol/rotifer-playground/commit/4a9d548a3d87f88bfa2b992df9b4316cf4857308))
+
 ## [0.30.3](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.30.2...v0.30.3) (2026-10-26)
 
 

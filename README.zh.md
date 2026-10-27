@@ -9,7 +9,7 @@
 
 **Rotifer Protocol** 的开发环境——构建基因、运行 Arena 竞争、通过 Cloud 共享、模拟代理进化。
 
-> **状态：** v0.30.x——Arena 的 F(g) 改为按赛季打分：`rotifer arena submit` 把基因实测的延迟与成本，同「同领域、同 fidelity」基因的赛季中位数比较；这类有实测记录的基因不足 5 个时退回固定常数，并在输出里说明；`estimated` 提交也会上传实测运行记录；同一基因再次提交时更新它的 Arena 行，不再报错。在覆盖度与健壮性两项真正测量之前（计划在 v1.0），分数仍标 `estimated`、不进排名。所有 CLI 路径（`agent run`、`run`、`test`、`arena submit`、发布门）现在都按基因 phenotype 声明的权限运行：带 `network` 块的 Hybrid 基因可以通过 `rotifer.net` 访问它允许的域名，Native 与 Wrapped 基因没有网络；每次出网请求在发出前都会核对请求次数、主机耗时与运行截止时间，费用记入 `resource_cost`，不扣基因的 fuel。Genome Blueprint（`.rgenome`）遵循 format 1：`rotifer genome export`／`import` 导出并从 Registry 重建 agent 的基因组，替代基因须输入输出 schema 完全一致。每个基因都有由内容算出的 `v2:` ID（[docs/gene-id-v2.md](docs/gene-id-v2.md)）；实验性 P2P 层用这个 ID 在已冻结的 protobuf 线格式上公告基因，0.26.x 及更早的节点看不到新节点。发布仍执行规范 §47.5 T1。完整发布历史见 [CHANGELOG.md](CHANGELOG.md)。自动节点发现、跨公网连接与 L4 集体免疫在之后的里程碑，见下方[实现状态](#实现状态)。
+> **状态：** v0.31.x——真实网页搜索：`tavily-web-search`（已上 Rotifer Cloud：`rotifer install tavily-web-search`）用你自己放在 `TAVILY_API_KEY` 里的钥匙，通过 Tavily API 返回真实结果。它是第一个使用「声明式凭证」的基因：Hybrid 基因在 `externalDependencies[].credentials` 里列出需要的环境变量名，CLI 只把这些交出去，而且只交给获得联网权限的基因；基因在请求头里写 `${env:NAME}`，请求离开沙箱时由宿主填入真实值，基因自己始终看不到。这是 `nonstandard` 预览（ADR-327）。内置的 `genesis-web-search` 系列仍是离线演示，现在会写明结果是模拟的。Arena 改为按实际运行的档位打折：声明 Native 却没在沙箱里运行的基因，按 Wrapped 计分。同一份源码编译两次得到相同字节，基因的 `v2:` ID 不再随编译变化。`rotifer vg` 会写明哪些文件没能扫描（目前还没有 Rust 规则），不再把它们说成纯配置。v0.30 起的内容依然成立：Arena 的 F(g) 按赛季中位数打分，在覆盖度与健壮性真正测量之前（计划在 v1.0）仍标 `estimated`、不进排名；所有 CLI 路径都按基因 phenotype 声明的权限运行；Genome Blueprint（`.rgenome`）遵循 format 1；发布执行规范 §47.5 T1。完整发布历史见 [CHANGELOG.md](CHANGELOG.md)。自动节点发现、跨公网连接与 L4 集体免疫在之后的里程碑，见下方[实现状态](#实现状态)。
 
 ---
 

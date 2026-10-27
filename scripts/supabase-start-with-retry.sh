@@ -11,9 +11,9 @@
 # Only a pull failure is retried: a migration or startup error fails at once,
 # so a real problem is not hidden behind three attempts.
 #
-# Usage: supabase-start-with-retry.sh [--workdir DIR]
-# The arguments go to both `supabase start` and the `supabase stop` between
-# attempts, so pass only ones both accept.
+# Usage: supabase-start-with-retry.sh [supabase start args...]
+# Every argument goes to `supabase start`; only `--workdir DIR` also goes to
+# the `supabase stop` between attempts (stop rejects start-only flags like -x).
 # RETRY_DELAY_SECONDS (default 30) sets the backoff unit: waits are 1x, 2x.
 set -uo pipefail
 
@@ -21,6 +21,15 @@ attempts=3
 delay=${RETRY_DELAY_SECONDS:-30}
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
+
+stop_args=()
+args=("$@")
+for i in "${!args[@]}"; do
+  case "${args[$i]}" in
+    --workdir) stop_args=(--workdir "${args[$((i + 1))]}") ;;
+    --workdir=*) stop_args=("${args[$i]}") ;;
+  esac
+done
 
 for attempt in $(seq 1 "$attempts"); do
   if supabase start "$@" 2>&1 | tee "$log"; then
@@ -35,6 +44,6 @@ for attempt in $(seq 1 "$attempts"); do
   fi
   wait=$((delay * attempt))
   echo "::warning::image pull rate-limited (attempt $attempt of $attempts); retrying in ${wait}s"
-  supabase stop --no-backup "$@" >/dev/null 2>&1 || true
+  supabase stop --no-backup ${stop_args[@]+"${stop_args[@]}"} >/dev/null 2>&1 || true
   sleep "$wait"
 done

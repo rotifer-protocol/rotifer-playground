@@ -465,9 +465,15 @@ jobs:
         # proves dev/prod parity (no SQLSTATE 42P13 return-type drift,
         # missing extensions, etc). Source: v0.8.8 dev/prod parity sprint
         # (rotifer-playground commit 9d8076b + this sprint).
-        # Retried (3 attempts, 30 s / 60 s apart) only when an image pull
-        # fails; see the script.
-        run: scripts/supabase-start-with-retry.sh
+        # Only Postgres is started: the replay applies migrations before any
+        # other service starts, and the pgTAP suite uses nothing outside the
+        # postgres image (it inserts auth.users (id, email,
+        # raw_user_meta_data) and calls auth.uid / auth.role / cron.*, all
+        # present in the image). Excluding the other 13 services means their
+        # images are not pulled: public.ecr.aws refused the full set on
+        # rotifer-dev ("Data limit exceeded", run 40364870856). Retried
+        # (3 attempts, 30 s / 60 s apart) only when an image pull fails.
+        run: scripts/supabase-start-with-retry.sh -x gotrue,realtime,storage-api,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 
       - name: Run pgTAP test suite
         run: |

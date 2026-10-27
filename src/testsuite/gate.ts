@@ -83,12 +83,17 @@ export function evaluatePublishGate(input: GateInput): GateVerdict {
     inputSchema: (input.phenotype.inputSchema as Record<string, unknown>) ?? null,
     outputSchema: (input.phenotype.outputSchema as Record<string, unknown>) ?? null,
     run: input.run,
+    fidelity: input.fidelity,
   });
 
   if (report.gatePassed) {
+    // A retried property iteration is part of the verdict: say so.
+    const retried = report.results.find((r) => r.testId === "t1-property-schema-legality" && r.details?.includes("retried"));
     return {
       status: "passed",
-      details: `T1 satisfied — ${report.results.filter((r) => r.passed).length}/${report.results.length} checks`,
+      details:
+        `T1 satisfied — ${report.results.filter((r) => r.passed).length}/${report.results.length} checks` +
+        (retried ? ` (${retried.details})` : ""),
     };
   }
 

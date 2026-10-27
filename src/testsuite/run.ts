@@ -275,11 +275,19 @@ export function runNegative(
  * two runs of an unseeded suite still agree; randomness across runs would make
  * the gate flaky and the flake would be blamed on the Gene.
  */
+/**
+ * Host codes that mean the network failed, not the Gene: -4 timeout, -5
+ * network, -7 the run's request limit (Hybrid Binding API §5). Matched on the
+ * code the sandbox reports, so -50 or a Gene's own -201 never count.
+ */
+const NETWORK_FAILURE = /gene returned error code: (-4|-5|-7)(?![0-9])/;
+
 export function runProperty(
   suite: TestSuite,
   inputSchema: Record<string, unknown> | null,
   run: GeneRunner,
   outputValidator: ValidateFunction | null,
+  options: { retryNetworkFailures?: boolean } = {},
 ): TestResult {
   const started = Date.now();
   const id = "t1-property-schema-legality";
@@ -293,9 +301,30 @@ export function runProperty(
     return fail(id, started, "Gene declares no outputSchema, so schema legality cannot be asserted");
   }
 
+  const retries: string[] = [];
   for (let i = 0; i < iterations; i++) {
     const input = generateTestInput(inputSchema, seed + i);
-    const outcome = run(input);
+    let outcome = run(input);
+    // A Hybrid Gene's request can fail on the network alone, and a run with
+    // no output says nothing about schema legality. Such an iteration gets
+    // one more run with the same input; everything else is final.
+    const network = !outcome.success && options.retryNetworkFailures
+      ? NETWORK_FAILURE.exec(outcome.errorMessage ?? "")
+      : null;
+    if (network) {
+      const first = outcome.errorMessage;
+      outcome = run(input);
+      if (!outcome.success) {
+        return fail(
+          id,
+          started,
+          `iteration ${i + 1}/${iterations} did not produce output after one retry: ` +
+            `first ${first}; then ${outcome.errorMessage ?? "no message"}`,
+          `reproduce with seed ${seed}, input ${JSON.stringify(input).slice(0, 200)}`,
+        );
+      }
+      retries.push(`iteration ${i + 1} was retried once after ${network[1]} (${first})`);
+    }
     if (!outcome.success) {
       return fail(
         id,
@@ -313,7 +342,8 @@ export function runProperty(
       );
     }
   }
-  return pass(id, started, `${iterations} generated inputs all produced schema-legal output (seed ${seed})`);
+  const retried = retries.length > 0 ? `; ${retries.join("; ")}` : "";
+  return pass(id, started, `${iterations} generated inputs all produced schema-legal output (seed ${seed})${retried}`);
 }
 
 export interface T1Report {
@@ -335,6 +365,9 @@ export function runT1(
     inputSchema: Record<string, unknown> | null;
     outputSchema: Record<string, unknown> | null;
     run: GeneRunner;
+    /** The Gene's declared fidelity. A Hybrid Gene's property iterations may
+     * be retried once after a network failure (see runProperty). */
+    fidelity?: string;
   },
 ): T1Report {
   const ajv = new Ajv({ allErrors: true, strict: false });
@@ -362,7 +395,9 @@ export function runT1(
     );
   }
 
-  const property = runProperty(suite, opts.inputSchema, opts.run, outputValidator);
+  const property = runProperty(suite, opts.inputSchema, opts.run, outputValidator, {
+    retryNetworkFailures: opts.fidelity === "Hybrid",
+  });
   results.push(property);
 
   const hasPassingPositive = classified.some(

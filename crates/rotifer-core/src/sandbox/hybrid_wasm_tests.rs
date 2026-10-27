@@ -1260,3 +1260,184 @@ fn fetch_failure_causes_are_classified() {
     assert_eq!(code, errors::ERR_NETWORK);
     assert_eq!(cause.as_deref(), Some("TLS error (127.0.0.1)"));
 }
+
+// ── what a redirect may carry to the next host (T-102) ──────────────────
+// The host fills a gene's `${env:NAME}` into its request headers (ADR-327
+// D3), so the headers that leave the sandbox can hold a real credential.
+// A redirect to another origin must not carry them, and a 301/302/303 turns
+// a request that is not GET/HEAD into a GET without the body — fetch's own
+// rules, made stricter by dropping every header on an origin change.
+
+/// One request as a server saw it.
+#[derive(Debug, Clone)]
+struct Seen {
+    method: String,
+    path: String,
+    head: String,
+    body: String,
+}
+
+/// Records every request (headers and body). `/start` answers `status` with
+/// `Location: location`; every other path answers 200.
+struct Recorder {
+    port: u16,
+    seen: Arc<Mutex<Vec<Seen>>>,
+}
+
+impl Recorder {
+    fn spawn(status: u16, location: Option<String>) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 8192];
+                let start = loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break None;
+                    }
+                    raw.extend_from_slice(&buf[..n]);
+                    if let Some(i) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break Some(i + 4);
+                    }
+                };
+                let Some(start) = start else { continue };
+                let head = String::from_utf8_lossy(&raw[..start]).into_owned();
+                let len: usize = head
+                    .to_ascii_lowercase()
+                    .lines()
+                    .find_map(|l| l.strip_prefix("content-length:").map(|v| v.trim().to_string()))
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                while raw.len() < start + len {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    raw.extend_from_slice(&buf[..n]);
+                }
+                let mut first = head.lines().next().unwrap_or("").split(' ');
+                let method = first.next().unwrap_or("").to_string();
+                let path = first.next().unwrap_or("").to_string();
+                let body = String::from_utf8_lossy(&raw[start..]).into_owned();
+                log.lock().unwrap().push(Seen { method, path: path.clone(), head, body });
+                let reply = match (&location, path.as_str()) {
+                    (Some(loc), "/start") => {
+                        format!("HTTP/1.1 {status} R\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    }
+                    _ => "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_string(),
+                };
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        Self { port, seen }
+    }
+
+    fn landed(&self) -> Seen {
+        self.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|s| s.path == "/landed")
+            .cloned()
+            .expect("the redirect target was not reached")
+    }
+}
+
+/// Two whitelisted origins: `localhost:<a>` (the redirecting host) and
+/// `127.0.0.1:<b>` (the target).
+fn two_host_policy() -> NetPolicy {
+    let mut p = loopback_policy();
+    p.allowed_domains = vec!["localhost".into(), "127.0.0.1".into()];
+    p.dependency_domains = p.allowed_domains.clone();
+    p
+}
+
+fn post_with_key(url: String) -> (NetRequest, Vec<(String, String)>) {
+    let req = NetRequest {
+        method: "POST".into(),
+        url,
+        headers: Vec::new(),
+        body: Some(b"body-sentinel".to_vec()),
+        timeout_ms: Some(5_000),
+    };
+    let headers = vec![
+        ("Authorization".to_string(), "Bearer key-sentinel".to_string()),
+        ("X-Api-Key".to_string(), "key-sentinel-2".to_string()),
+        ("Content-Type".to_string(), "application/json".to_string()),
+    ];
+    (req, headers)
+}
+
+fn carries_key(s: &Seen) -> bool {
+    s.head.contains("key-sentinel") || s.head.to_ascii_lowercase().contains("authorization:")
+}
+
+#[test]
+fn wasm_a_host_filled_key_does_not_follow_a_redirect_to_another_host() {
+    let b = Recorder::spawn(200, None);
+    let a = Recorder::spawn(302, Some(format!("http://127.0.0.1:{}/landed", b.port)));
+    let envelope = format!(
+        r#"{{"method":"POST","url":"http://localhost:{}/start","headers":{{"Authorization":"Bearer ${{env:SECRET}}","X-Api-Key":"${{env:SECRET}}"}},"bodyBase64":"Ym9keS1zZW50aW5lbA=="}}"#,
+        a.port
+    );
+    let wasm = build_fetch_gene(&envelope);
+    let mut config = loopback_config();
+    config.net = Some(two_host_policy());
+    config.env_secret.insert("SECRET".into(), "key-sentinel".into());
+
+    let (data, _) = expect_success(run(&sandbox(), &wasm, config));
+    assert_eq!(data["status"], 200);
+    let first = a.seen.lock().unwrap()[0].clone();
+    assert!(first.head.contains("Bearer key-sentinel"), "the declared host gets the key");
+    let landed = b.landed();
+    assert!(!carries_key(&landed), "the key followed the redirect:\n{}", landed.head);
+    assert_eq!(landed.method, "GET");
+    assert_eq!(landed.body, "");
+}
+
+#[test]
+fn a_301_302_303_to_another_host_becomes_a_get_without_body_or_headers() {
+    use super::hybrid::perform_fetch;
+    for status in [301u16, 302, 303] {
+        let b = Recorder::spawn(200, None);
+        let a = Recorder::spawn(status, Some(format!("http://127.0.0.1:{}/landed", b.port)));
+        let (req, headers) = post_with_key(format!("http://localhost:{}/start", a.port));
+        perform_fetch(&two_host_policy(), true, &req, &headers).unwrap();
+        let landed = b.landed();
+        assert_eq!(landed.method, "GET", "{status}");
+        assert_eq!(landed.body, "", "{status}");
+        assert!(!carries_key(&landed), "{status}: the key followed the redirect:\n{}", landed.head);
+        assert!(!landed.head.to_ascii_lowercase().contains("content-type:"), "{status}");
+    }
+}
+
+#[test]
+fn a_307_308_to_another_host_keeps_method_and_body_but_no_headers() {
+    use super::hybrid::perform_fetch;
+    for status in [307u16, 308] {
+        let b = Recorder::spawn(200, None);
+        let a = Recorder::spawn(status, Some(format!("http://127.0.0.1:{}/landed", b.port)));
+        let (req, headers) = post_with_key(format!("http://localhost:{}/start", a.port));
+        perform_fetch(&two_host_policy(), true, &req, &headers).unwrap();
+        let landed = b.landed();
+        assert_eq!(landed.method, "POST", "{status}");
+        assert_eq!(landed.body, "body-sentinel", "{status}");
+        assert!(!carries_key(&landed), "{status}: the key followed the redirect:\n{}", landed.head);
+    }
+}
+
+#[test]
+fn a_redirect_within_the_same_origin_keeps_the_headers() {
+    use super::hybrid::perform_fetch;
+    let a = Recorder::spawn(307, Some("/landed".into()));
+    let (req, headers) = post_with_key(format!("http://localhost:{}/start", a.port));
+    perform_fetch(&two_host_policy(), true, &req, &headers).unwrap();
+    let landed = a.landed();
+    assert!(landed.head.contains("Bearer key-sentinel"), "{}", landed.head);
+    assert_eq!(landed.method, "POST");
+}

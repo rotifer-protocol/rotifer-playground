@@ -18,7 +18,7 @@ import { createGatewayFetch } from "../runtime/network-gateway.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { loadTestSuite } from "../testsuite/load.js";
 import { runT1 } from "../testsuite/run.js";
-import { loadNodeRunner } from "../testsuite/gate.js";
+import { loadNodeRunner, outcomeFromSandbox } from "../testsuite/gate.js";
 import { scaffoldTestSuite } from "../testsuite/scaffold.js";
 import { TESTSUITE_FILENAME } from "../testsuite/load.js";
 import type { RunOutcome } from "../testsuite/run.js";
@@ -523,14 +523,9 @@ export const testCommand = new Command("test")
             JSON.stringify(phenotypeForT1),
             constraintsForFuel(FUEL_LADDER[0]),
           );
-          if (r.success) return { success: true, output: r.output, durationMs: r.durationMs };
-          // Everything the sandbox reports as a failure is a crash unless it is
-          // a resource ceiling: a Gene has no way to "return an error" through
-          // this boundary, so a thrown validation error and a TypeError arrive
-          // identically. Treating both as crashed is the conservative reading of
-          // "correctly handle" — a Gene that means to reject declares the shape
-          // it rejects with instead (see runNegative).
-          return { success: false, crashed: true, errorMessage: r.errorMessage ?? undefined };
+          // The same reading as `rotifer publish`: an ADR-334 refusal is a
+          // refusal, anything else is a crash (see outcomeFromSandbox).
+          return outcomeFromSandbox(r);
         } catch (e) {
           return { success: false, crashed: true, errorMessage: (e as Error).message };
         }

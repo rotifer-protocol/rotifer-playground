@@ -116,18 +116,27 @@ export function evaluatePublishGate(input: GateInput): GateVerdict {
   };
 }
 
-/** Adapter: the sandbox reports every failure alike, so anything that is not a
- * clean return is reported as crashed. See runNegative for why that is the
- * conservative reading rather than a limitation. */
+/** The prefix the napi binding gives a GeneResult::Error{ INVALID_INPUT }
+ * (`"{code}: {message}"`), which only the ADR-334 envelope produces. */
+const SANDBOX_REFUSAL_PREFIX = "INVALID_INPUT: ";
+
+/** Adapter from the sandbox's result to a RunOutcome, shared by `rotifer test`
+ * and `rotifer publish`. An ADR-334 refusal is a refusal, as on the Node path
+ * (readErrorEnvelope): ADR-334 counts explicit INVALID_INPUT as handling, not a
+ * crash. Every other failure — a trap, a host error code, an L0 block — is
+ * reported as crashed: the caller cannot tell it from a defect. See
+ * runNegative. */
 export function outcomeFromSandbox(r: {
   success: boolean;
   output?: unknown;
   errorMessage?: string | null;
   durationMs?: number;
 }): RunOutcome {
-  return r.success
-    ? { success: true, output: r.output, durationMs: r.durationMs }
-    : { success: false, crashed: true, errorMessage: r.errorMessage ?? undefined };
+  if (r.success) return { success: true, output: r.output, durationMs: r.durationMs };
+  if (r.errorMessage?.startsWith(SANDBOX_REFUSAL_PREFIX)) {
+    return { success: false, errorMessage: r.errorMessage, durationMs: r.durationMs };
+  }
+  return { success: false, crashed: true, errorMessage: r.errorMessage ?? undefined };
 }
 
 /**

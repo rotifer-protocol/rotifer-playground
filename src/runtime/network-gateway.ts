@@ -57,6 +57,15 @@ const DEFAULT_CONFIG: NetworkConfig = {
   maxRequestsPerMin: 10,
 };
 
+/** Headers that describe a request body (fetch's "request-body-header names"),
+ * dropped when a redirect turns the request into a body-less GET. */
+const BODY_HEADERS = new Set(["content-encoding", "content-language", "content-location", "content-type", "content-length"]);
+
+function withoutBodyHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!headers) return headers;
+  return Object.fromEntries(Object.entries(headers).filter(([k]) => !BODY_HEADERS.has(k.toLowerCase())));
+}
+
 /** Binding-internal options, never read from a phenotype. */
 export interface GatewayTestOptions {
   /** Test hook, as rotifer-core's `allow_insecure_loopback`: permit plain
@@ -99,14 +108,25 @@ export class NetworkGateway {
       // Redirects are followed here, not by fetch: fetch would follow a
       // whitelisted host's 302 to anywhere. Every hop is checked before it
       // is requested; the timeout covers the whole chain.
+      //
+      // What a hop carries follows fetch's own redirect rules, made stricter:
+      // - 301/302/303 turn a request that is not GET/HEAD into a GET with no
+      //   body (and no body headers); 307/308 keep the method and body.
+      // - Moving to another origin (scheme, host or port) drops every header
+      //   the gene set, not only Authorization: a key travels just as well in
+      //   X-Api-Key or apikey, and the next host is someone else even when
+      //   it matches the same *.domain wildcard.
       let current = url;
+      let method = options?.method || "POST";
+      let requestHeaders: Record<string, string> | undefined = options?.headers;
+      let body: string | undefined = options?.body;
       let response: Response | undefined;
       for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
         if (hop > 0) this.validateUrl(current);
         response = await fetch(current, {
-          method: options?.method || "POST",
-          headers: options?.headers,
-          body: options?.body,
+          method,
+          headers: requestHeaders,
+          body,
           signal: controller.signal,
           redirect: "manual",
         });
@@ -120,7 +140,14 @@ export class NetworkGateway {
           );
         }
         await response.body?.cancel();
-        current = new URL(location, current).toString();
+        const next = new URL(location, current);
+        if ([301, 302, 303].includes(response.status) && method !== "GET" && method !== "HEAD") {
+          method = "GET";
+          body = undefined;
+          requestHeaders = withoutBodyHeaders(requestHeaders);
+        }
+        if (next.origin !== new URL(current).origin) requestHeaders = undefined;
+        current = next.toString();
       }
       if (!response) throw new Error("no response");
 

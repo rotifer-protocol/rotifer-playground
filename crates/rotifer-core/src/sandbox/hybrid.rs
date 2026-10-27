@@ -520,12 +520,22 @@ pub fn perform_fetch_with_cause(
         .build()
         .into();
 
+    // What each hop carries follows fetch's redirect rules, made stricter:
+    // 301/302/303 turn a request that is not GET/HEAD into a GET without the
+    // body (or its headers); 307/308 keep both. A hop to another origin
+    // drops every header: they hold the credentials the host substituted for
+    // `${env:NAME}` (ADR-327 D3), which were meant for the request the gene
+    // wrote, not for whichever host it is redirected to — and a credential
+    // can sit in any header name, so no fixed list of names is enough.
     let mut current_url = req.url.clone();
+    let mut method = req.method.clone();
+    let mut headers: Vec<(String, String)> = resolved_headers.to_vec();
+    let mut body: Option<Vec<u8>> = req.body.clone();
     for _hop in 0..=constants::MAX_REDIRECT_HOPS {
         let checked = check_url(policy, &current_url, allow_insecure_loopback).map_err(|c| (c, None))?;
         let host = checked.host_str().unwrap_or("unknown host").to_string();
 
-        let result = send(&agent, &req.method, checked.as_str(), resolved_headers, req.body.as_deref());
+        let result = send(&agent, &method, checked.as_str(), &headers, body.as_deref());
 
         let mut response = match result {
             Ok(r) => r,
@@ -547,6 +557,14 @@ pub fn perform_fetch_with_cause(
             let next = checked
                 .join(location)
                 .map_err(|_| (errors::ERR_INVALID_REQUEST, None))?;
+            if matches!(status, 301..=303) && method != "GET" && method != "HEAD" {
+                method = "GET".to_string();
+                body = None;
+                headers.retain(|(name, _)| !is_body_header(name));
+            }
+            if next.origin() != checked.origin() {
+                headers.clear();
+            }
             current_url = next.to_string();
             continue;
         }
@@ -613,6 +631,14 @@ fn network_cause(e: &ureq::Error, https: bool) -> &'static str {
         ureq::Error::BodyStalled => "response stalled",
         _ => "other network error",
     }
+}
+
+/// fetch's "request-body-header names": dropped with the body when a
+/// redirect turns a request into a GET.
+fn is_body_header(name: &str) -> bool {
+    ["content-encoding", "content-language", "content-location", "content-type", "content-length"]
+        .iter()
+        .any(|h| name.eq_ignore_ascii_case(h))
 }
 
 /// One HTTP request. `method` is one of the parsed envelope's allowed

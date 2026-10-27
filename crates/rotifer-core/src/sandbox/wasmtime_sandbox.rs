@@ -736,9 +736,14 @@ impl WasmtimeSandbox {
         req.timeout_ms = Some(requested_ms.min(remaining_ms.min(u32::MAX as u64) as u32));
 
         caller.data_mut().hybrid.requests_made += 1;
-        let envelope = match hybrid::perform_fetch(&policy, loopback, &req, &resolved_headers) {
+        let envelope = match hybrid::perform_fetch_with_cause(&policy, loopback, &req, &resolved_headers) {
             Ok(e) => e,
-            Err(code) => return code,
+            Err((code, cause)) => {
+                if code == ERR_NETWORK {
+                    caller.data_mut().hybrid.last_network_failure = cause;
+                }
+                return code;
+            }
         };
 
         let bytes_out = req_bytes.len() as u64;
@@ -1015,8 +1020,18 @@ impl WasmtimeSandbox {
             Ok(serde_json::from_slice(&result_slice[..null_pos])
                 .unwrap_or(serde_json::Value::Null))
         } else {
+            // A -5 cannot be diagnosed from the code alone (DNS, TLS and
+            // connection failures share it), so the run names the cause the
+            // host recorded: category and host name, nothing from the request.
+            let cause = store
+                .data()
+                .hybrid
+                .last_network_failure
+                .as_ref()
+                .map(|c| format!(" (last network failure: {c})"))
+                .unwrap_or_default();
             Err(SandboxError::ExecutionFailed(format!(
-                "gene returned error code: {result_ptr}"
+                "gene returned error code: {result_ptr}{cause}"
             )))
         }
     }

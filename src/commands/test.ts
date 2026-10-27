@@ -503,6 +503,7 @@ export const testCommand = new Command("test")
             inputSchema: (phenotype.inputSchema as Record<string, unknown>) ?? null,
             outputSchema: (phenotype.outputSchema as Record<string, unknown>) ?? null,
             run: loaded.runner,
+            fidelity: phenotype.fidelity,
           }),
         );
       }
@@ -535,6 +536,7 @@ export const testCommand = new Command("test")
         inputSchema: (phenotype.inputSchema as Record<string, unknown>) ?? null,
         outputSchema: (phenotype.outputSchema as Record<string, unknown>) ?? null,
         run: runOne,
+        fidelity: phenotype.fidelity,
       });
 
       for (const r of report.results) {

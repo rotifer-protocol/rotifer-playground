@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname } from "node:path";
-import { scan } from "../scanner/index.js";
+import { scan, unscannedLanguages } from "../scanner/index.js";
 import type { Grade, ScanResult } from "../scanner/types.js";
 
 export interface CheckItem {
@@ -75,6 +75,19 @@ function collectAllFiles(dir: string): string[] {
 
 function checkVgScan(geneDir: string, geneName: string): { check: CheckItem; scanResult: ScanResult } {
   const result = scan(geneDir, geneName, { scanAll: true });
+
+  if (result.grade === "?" && result.unscanned) {
+    // Code exists but in a language V(g) has no rules for. Not a pass: nothing
+    // was checked. Not a fail either: the gene has done nothing wrong.
+    return {
+      check: {
+        name: "V(g) Security Scan",
+        status: "warn",
+        message: `Not scanned — V(g) has no rules for ${unscannedLanguages(result.unscanned)} yet: ${result.unscanned.join(", ")}`,
+      },
+      scanResult: result,
+    };
+  }
 
   if (result.grade === "?") {
     return {

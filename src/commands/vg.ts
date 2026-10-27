@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { resolve, relative, basename } from "node:path";
 import * as display from "../utils/display.js";
 import { c } from "../utils/palette.js";
-import { scan, SCANNER_VERSION } from "../scanner/index.js";
+import { scan, SCANNER_VERSION, unscannedLanguages } from "../scanner/index.js";
 import type { Finding, ScanResult } from "../scanner/types.js";
 import { uploadSafetyBadge } from "../cloud/badge.js";
 
@@ -70,6 +70,15 @@ export const vgCommand = new Command("vg")
 
     display.renderResult(result, (data) => {
       display.header("V(g) Security Scan");
+
+      if (data.grade === "?" && data.unscanned) {
+        display.warn(
+          `Not scanned — V(g) has no rules for ${unscannedLanguages(data.unscanned)} yet, so this code was not read (grade: ${c.muted("?")})`,
+        );
+        for (const f of data.unscanned) display.hint(`  ${f}`);
+        display.hint("This is not a clean result: nothing in these files was checked.");
+        return;
+      }
 
       if (data.grade === "?") {
         display.info(`No code files found — not graded (grade: ${c.muted("?")})`);

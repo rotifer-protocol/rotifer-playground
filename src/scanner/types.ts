@@ -33,4 +33,7 @@ export interface ScanResult {
     files_scanned: number;
     lines_of_code: number;
   };
+  /** Source files in a language V(g) has no rules for (e.g. Rust), relative to
+   * the scanned directory. They were not read: present only when there are any. */
+  unscanned?: string[];
 }

@@ -6,21 +6,28 @@ import type { Finding, Grade, ScanResult } from "./types.js";
 
 const CODE_EXTENSIONS = new Set([".ts", ".js", ".mts", ".mjs", ".cjs", ".tsx", ".jsx", ".sh", ".py"]);
 
+// Source files V(g) has no rules for. They are not read, but they are named in
+// the result: a gene written only in Rust otherwise looks exactly like a gene
+// with no code at all.
+const UNSUPPORTED_CODE_EXTENSIONS = new Set([
+  ".rs", ".go", ".c", ".h", ".cc", ".cpp", ".hpp", ".zig", ".java", ".kt", ".swift", ".rb", ".cs",
+]);
+
 // Files whose literals maskJsLiterals understands. .tsx/.jsx are left out (JSX
 // text such as `Don't` is not a string literal), as are .sh and .py, whose
 // quoting rules differ; those keep raw-line matching for every rule.
 const JS_EXTENSIONS = new Set([".ts", ".js", ".mts", ".mjs", ".cjs"]);
 
-function collectCodeFiles(dir: string): string[] {
+function collectCodeFiles(dir: string, extensions = CODE_EXTENSIONS, skip: readonly string[] = []): string[] {
   const files: string[] = [];
   const walk = (d: string) => {
     for (const entry of readdirSync(d)) {
-      if (entry === "node_modules" || entry === ".git" || entry === "dist") continue;
+      if (entry === "node_modules" || entry === ".git" || entry === "dist" || skip.includes(entry)) continue;
       const full = join(d, entry);
       const st = statSync(full);
       if (st.isDirectory()) {
         walk(full);
-      } else if (CODE_EXTENSIONS.has(extname(entry))) {
+      } else if (extensions.has(extname(entry))) {
         files.push(full);
       }
     }
@@ -34,10 +41,10 @@ function hasSrcDirectory(dir: string): boolean {
 }
 
 /** Code files directly in `dir`, not in its subdirectories. */
-function collectTopLevelCodeFiles(dir: string): string[] {
+function collectTopLevelCodeFiles(dir: string, extensions = CODE_EXTENSIONS): string[] {
   return readdirSync(dir)
     .map((entry) => join(dir, entry))
-    .filter((full) => statSync(full).isFile() && CODE_EXTENSIONS.has(extname(full)));
+    .filter((full) => statSync(full).isFile() && extensions.has(extname(full)));
 }
 
 /**
@@ -53,6 +60,27 @@ function selectFiles(dir: string, shouldScanAll: boolean): string[] {
   if (shouldScanAll) return collectCodeFiles(dir);
   if (hasSrcDirectory(dir)) return collectCodeFiles(join(dir, "src"));
   return collectTopLevelCodeFiles(dir);
+}
+
+/** The files selectFiles would have read had V(g) rules for their language.
+ * `target/` is skipped: it is Rust's build output, not the gene's source. */
+function selectUnscanned(dir: string, shouldScanAll: boolean): string[] {
+  const files = shouldScanAll
+    ? collectCodeFiles(dir, UNSUPPORTED_CODE_EXTENSIONS, ["target"])
+    : hasSrcDirectory(dir)
+      ? collectCodeFiles(join(dir, "src"), UNSUPPORTED_CODE_EXTENSIONS, ["target"])
+      : collectTopLevelCodeFiles(dir, UNSUPPORTED_CODE_EXTENSIONS);
+  return files.map((f) => relative(dir, f)).sort();
+}
+
+/** ".rs" files → "Rust"; unknown extensions are named by extension. */
+export function unscannedLanguages(files: readonly string[]): string {
+  const names: Record<string, string> = {
+    ".rs": "Rust", ".go": "Go", ".c": "C", ".h": "C", ".cc": "C++", ".cpp": "C++", ".hpp": "C++",
+    ".zig": "Zig", ".java": "Java", ".kt": "Kotlin", ".swift": "Swift", ".rb": "Ruby", ".cs": "C#",
+  };
+  const langs = [...new Set(files.map((f) => names[extname(f)] ?? extname(f)))];
+  return langs.join(", ");
 }
 
 export function scanFile(filePath: string, rootDir: string): Finding[] {
@@ -103,6 +131,8 @@ export interface ScanOptions {
 export function scan(dir: string, skillId?: string, options?: ScanOptions): ScanResult {
   const shouldScanAll = options?.scanAll ?? false;
   const files = selectFiles(dir, shouldScanAll);
+  const unscanned = selectUnscanned(dir, shouldScanAll);
+  const unscannedField = unscanned.length > 0 ? { unscanned } : {};
 
   // No code read, no grade. computeGrade([]) is "A", and `--all` over a
   // directory without code used to report exactly that: a clean result for
@@ -114,6 +144,7 @@ export function scan(dir: string, skillId?: string, options?: ScanOptions): Scan
       grade: "?",
       findings: [],
       stats: { files_scanned: 0, lines_of_code: 0 },
+      ...unscannedField,
     };
   }
 
@@ -135,5 +166,6 @@ export function scan(dir: string, skillId?: string, options?: ScanOptions): Scan
       files_scanned: files.length,
       lines_of_code: totalLines,
     },
+    ...unscannedField,
   };
 }

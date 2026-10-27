@@ -185,4 +185,16 @@ describe.skipIf(!hasCli)("rotifer vg — what it scanned", () => {
     expect(output).toContain("grade A");
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it("says a Rust gene's code was not scanned instead of finding no code", () => {
+    const dir = join(TMP, "rust-gene");
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "lib.rs"), "pub fn express() {}\n");
+    writeFileSync(join(dir, "phenotype.json"), "{}");
+    const { output } = runWithStatus(`vg "${dir}"`);
+    expect(output).not.toContain("No code files found");
+    expect(output).toContain("Not scanned");
+    expect(output).toContain("src/lib.rs");
+    rmSync(dir, { recursive: true, force: true });
+  });
 });

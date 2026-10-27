@@ -455,20 +455,14 @@ export const arenaSubmitCommand = new Command("submit")
         );
       }
     }
-    if (options.cloud && isScoredBelowDeclared) {
-      // The cloud Arena takes the discount of the gene's declared tier and
-      // refuses any other (arena_write_hardening, T-58), so the honest number
-      // cannot go up and the declared one is the claim this change removes.
-      display.warn(
-        `Not sent to the cloud Arena: '${geneName}' declares ${declaredFidelity} but did not run in the sandbox, ` +
-        `and the cloud Arena records the ${declaredFidelity} discount for it.`
-      );
-      display.hint(
-        hasIrWasm
-          ? "The sandbox is not available on this platform; submit from macOS, Linux x64 or Windows x64."
-          : `Compile it so it runs in the sandbox, then submit again: rotifer compile ${geneName}`
-      );
-    } else if (options.cloud) {
+    // A lower tier than declared is sent as such: the cloud Arena accepts a
+    // discount at or below the gene's declared tier and records which tier it
+    // was (supabase/migrations/20261027100000, T-100). Until that migration is
+    // live it refuses anything but the declared tier's, and says so.
+    const sandboxHint = hasIrWasm
+      ? "The sandbox is not available on this platform; submit from macOS, Linux x64 or Windows x64."
+      : `Compile it so it runs in the sandbox, then submit again: rotifer compile ${geneName}`;
+    if (options.cloud) {
       try {
         await requireAuth();
         const cs = display.spinner("Submitting to cloud Arena...");
@@ -539,10 +533,21 @@ export const arenaSubmitCommand = new Command("submit")
           cs.stop();
           display.success("Submitted to cloud Arena");
           display.keyValue("Cloud Rank", `#${cloudEntry.rank || "pending"}`);
+          if (isScoredBelowDeclared) {
+            display.info(`Recorded at the ${scoredFidelity} tier: '${geneName}' declares ${declaredFidelity} but did not run in the sandbox.`);
+          }
         }
       } catch (err: any) {
-        display.error(`Cloud submit failed: ${err.message}`);
-        display.hint("Check your network connection and login status with 'rotifer whoami'.");
+        if (isScoredBelowDeclared && /does not match the gene's fidelity/.test(String(err.message))) {
+          display.error(
+            `Not accepted by the cloud Arena: it does not accept a score below the declared tier yet ` +
+            `('${geneName}' declares ${declaredFidelity}; this run counts as ${scoredFidelity}).`
+          );
+          display.hint(sandboxHint);
+        } else {
+          display.error(`Cloud submit failed: ${err.message}`);
+          display.hint("Check your network connection and login status with 'rotifer whoami'.");
+        }
       }
     }
 

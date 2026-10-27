@@ -10,7 +10,8 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { hasJavyToolchain, hasSandbox } from "./toolchain.js";
 import { FIDELITY_DISCOUNT } from "../../src/types/phenotype.js";
 
@@ -116,13 +117,110 @@ describe.runIf(existsSync(CLI))("arena submit discounts by the tier that actuall
     expect(c.effective_fidelity).toBe("Native");
   }, 120_000);
 
-  it("--cloud does not send a Native score that ran nothing, and says why before asking for a login", () => {
+  // --cloud against a stand-in for the cloud API: what the CLI sends, and
+  // what it says when the server answers. Spawned, not execSync'd: the stub
+  // lives in this process and has to keep answering while the CLI runs.
+  const CLOUD_GENE_ID = "e71a0000-0000-4000-8000-00000000000a";
+  type Stub = { url: string; posts: Record<string, unknown>[]; close: () => Promise<void> };
+  async function startCloudStub(answer: "accept" | "refuse-old-guard"): Promise<Stub> {
+    const posts: Record<string, unknown>[] = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        res.setHeader("Content-Type", "application/json");
+        if (req.method === "GET" && req.url?.startsWith("/rest/v1/genes")) {
+          res.end(JSON.stringify([{
+            id: CLOUD_GENE_ID, name: "native-uncompiled", domain: "general", version: "0.1.0",
+            fidelity: "Native", owner_id: "e7111111-1111-4111-8111-111111111111",
+            profiles: { username: "eff_a" }, phenotype: {}, published: true,
+          }]));
+        } else if (req.method === "POST" && req.url?.startsWith("/rest/v1/arena_entries")) {
+          const row = JSON.parse(body);
+          posts.push(row);
+          if (answer === "accept") {
+            res.statusCode = 201;
+            res.end(JSON.stringify([{ ...row, total_calls: 0, effective_fidelity: "Wrapped" }]));
+          } else {
+            // What the guard before 20261027100000 answers.
+            res.statusCode = 403;
+            res.end(JSON.stringify({
+              code: "42501",
+              message: `arena_entries: fidelity_discount ${row.fidelity_discount} does not match the gene's fidelity Native (spec §5.1: 1)`,
+            }));
+          }
+        } else {
+          res.end("[]");
+        }
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const { port } = server.address() as { port: number };
+    return { url: `http://127.0.0.1:${port}`, posts, close: () => new Promise((r) => server.close(() => r())) };
+  }
+
+  function runAsync(args: string[], env: Record<string, string>): Promise<{ stdout: string; exitCode: number | null }> {
+    return new Promise((resolve) => {
+      const child = spawn(process.execPath, [CLI, ...args], {
+        cwd: projectDir,
+        env: { ...process.env, HOME: home, FORCE_COLOR: "0", ROTIFER_TELEMETRY: "0", DO_NOT_TRACK: "1", ...env },
+      });
+      let out = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (out += d));
+      child.on("exit", (code) => resolve({ stdout: out, exitCode: code }));
+    });
+  }
+
+  /** A signed-in user with the gene published, inside the test's own HOME. */
+  function signInAndPublish(): void {
+    mkdirSync(join(home, ".rotifer"), { recursive: true });
+    writeFileSync(
+      join(home, ".rotifer", "credentials.json"),
+      JSON.stringify({ access_token: "test-token-not-real", expires_at: Date.now() + 3_600_000 }),
+    );
+    writeFileSync(
+      join(projectDir, "genes", "native-uncompiled", ".cloud-manifest.json"),
+      JSON.stringify({ cloud_id: CLOUD_GENE_ID }),
+    );
+  }
+
+  it("--cloud sends a Native score that ran nothing at the Wrapped discount", async () => {
     writeGene("native-uncompiled", "Native");
-    const { stdout, exitCode } = run("arena submit native-uncompiled --cloud", projectDir, home);
-    expect(exitCode, stdout).toBe(0);
-    expect(stdout).toContain("Not sent to the cloud Arena");
-    expect(stdout).toContain("rotifer compile native-uncompiled");
-    expect(stdout).not.toContain("Submitting to cloud Arena");
-    expect(stdout).not.toMatch(/not logged in|rotifer login/i);
-  });
+    signInAndPublish();
+    const stub = await startCloudStub("accept");
+    try {
+      const { stdout, exitCode } = await runAsync(["arena", "submit", "native-uncompiled", "--cloud"], {
+        ROTIFER_CLOUD_ENDPOINT: stub.url, ROTIFER_CLOUD_ANON_KEY: "anon-test-key",
+      });
+      expect(exitCode, stdout).toBe(0);
+      expect(stub.posts, stdout).toHaveLength(1);
+      const sent = stub.posts[0] as { fidelity_discount: number; base_fitness: number; fitness_value: number; evaluation_n?: number };
+      expect(sent.fidelity_discount).toBe(FIDELITY_DISCOUNT.wrapped);
+      expect(sent.fitness_value).toBeCloseTo(sent.base_fitness * FIDELITY_DISCOUNT.wrapped, 12);
+      // The tier is the server's reading of the discount, not a field the client sends.
+      expect(sent).not.toHaveProperty("effective_fidelity");
+      expect(sent.evaluation_n).toBeUndefined();
+      expect(stdout).toContain("Submitted to cloud Arena");
+    } finally {
+      await stub.close();
+    }
+  }, 60_000);
+
+  it("--cloud against a cloud Arena that still refuses a lower tier says so, and what to do", async () => {
+    writeGene("native-uncompiled", "Native");
+    signInAndPublish();
+    const stub = await startCloudStub("refuse-old-guard");
+    try {
+      const { stdout } = await runAsync(["arena", "submit", "native-uncompiled", "--cloud"], {
+        ROTIFER_CLOUD_ENDPOINT: stub.url, ROTIFER_CLOUD_ANON_KEY: "anon-test-key",
+      });
+      expect(stub.posts, stdout).toHaveLength(1);
+      expect(stdout).toContain("does not accept a score below the declared tier yet");
+      expect(stdout).toContain("rotifer compile native-uncompiled");
+      expect(stdout).not.toContain("Check your network connection");
+    } finally {
+      await stub.close();
+    }
+  }, 60_000);
 });

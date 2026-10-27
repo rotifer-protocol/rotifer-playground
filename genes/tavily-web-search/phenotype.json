@@ -6,6 +6,7 @@
     "properties": {
       "query": {
         "type": "string",
+        "minLength": 1,
         "description": "Search query string"
       },
       "maxResults": {

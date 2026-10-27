@@ -36,6 +36,18 @@
         }
       },
       "timeout": 20000
+    },
+    {
+      "input": { "maxResults": 3 }
+    },
+    {
+      "input": { "query": "" }
+    },
+    {
+      "input": { "query": "rotifer", "maxResults": 0 }
+    },
+    {
+      "input": { "query": "rotifer", "maxResults": 21 }
     }
   ]
 }

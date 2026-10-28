@@ -301,6 +301,25 @@ jobs:
       - name: Cargo clippy (all crates)
         run: cargo clippy --workspace -- -D warnings
 
+  # release.yml runs rotifer-core's tests on macos-14 as well, after the tag
+  # is pushed; without this job a macOS-only failure first shows up there and
+  # holds the publish (0.32.0, Release run 40650688154). Same command, so the
+  # release has nothing left to find.
+  rust-test-macos:
+    name: Rust Test (macos-14)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+
+      - name: Cargo test (core)
+        run: cargo test -p rotifer-core
+
   p2p-integration:
     name: P2P Integration Tests
     runs-on: ubuntu-latest

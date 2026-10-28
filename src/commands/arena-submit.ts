@@ -19,7 +19,7 @@ import {
 import { compileOutputValidator, isRunSuccessful } from "../utils/arena-success.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { applyFidelityDiscount, effectiveFidelity, estimateBaseFitness, type DiscountedFitness } from "../utils/fidelity-discount.js";
-import { computeBaseFitness, resolveFitnessReference, type ResolvedReference } from "../utils/fitness-formula.js";
+import { computeBaseFitness, resolveFitnessReference, FITNESS_FORMULA_VERSION, type ResolvedReference } from "../utils/fitness-formula.js";
 import { scan } from "../scanner/index.js";
 import type { Severity } from "../scanner/types.js";
 import { mulberry32, generateTestInput } from "../testsuite/generate.js";
@@ -520,6 +520,9 @@ export const arenaSubmitCommand = new Command("submit")
             // count is what lets a reader tell that apart from a content-hash
             // estimate that never executed anything (ADR-318 D5).
             evaluation_n: didRunInSandbox ? SANDBOX_RUNS : undefined,
+            // Which formula scored it, so the registry can tell the
+            // unnormalized (2) and normalized (3) scales apart (ADR-345 D5).
+            formula_version: FITNESS_FORMULA_VERSION,
             // What F(g) was scaled by, so the row can be recomputed on its own.
             // Only when the registry answered the reference query: that is how
             // the CLI knows it has the columns to store it.

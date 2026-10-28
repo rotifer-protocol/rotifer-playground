@@ -35,6 +35,15 @@
  */
 
 /**
+ * Which formula `computeBaseFitness` implements, numbered as rotifer-core's
+ * `fitness::FORMULA_VERSION`: 1 additive, 2 multiplicative in (0, 2·ln 2]
+ * (ADR-318 D2), 3 multiplicative normalized to [0, 1] (ADR-345). Sent with
+ * every Arena upload as `formula_version`, so the registry can tell the scales
+ * apart.
+ */
+export const FITNESS_FORMULA_VERSION = 3;
+
+/**
  * Fallback L_ref: latency at which L_score halves when no season median is
  * available. `[N]` — provisional, uncalibrated.
  *

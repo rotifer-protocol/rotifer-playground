@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.32.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.31.0...v0.32.0) (2026-10-28)
+
+
+### Features
+
+* **fitness:** normalize F(g) to [0, 1] and record the formula version (ADR-346) ([#491](https://github.com/rotifer-protocol/rotifer-playground/issues/491)) ([a7eaabf](https://github.com/rotifer-protocol/rotifer-playground/commit/a7eaabf29f15507b2f89e65b87ece9fec9cf0fa4))
+
+
+### Bug Fixes
+
+* **arena:** the cloud Arena accepts a score below the declared tier, never above ([#486](https://github.com/rotifer-protocol/rotifer-playground/issues/486)) ([95d560c](https://github.com/rotifer-protocol/rotifer-playground/commit/95d560ccf8cbeb04d80ede6fde7a6a2cdff4dc08))
+* **gateway:** check every redirect hop, allow https only, refuse IP literals ([#488](https://github.com/rotifer-protocol/rotifer-playground/issues/488)) ([55fa467](https://github.com/rotifer-protocol/rotifer-playground/commit/55fa46713fc61e03d598078afa1b16b1fa2940fd))
+* **sandbox:** a host-filled key does not follow a redirect to another host ([#489](https://github.com/rotifer-protocol/rotifer-playground/issues/489)) ([0ba74cb](https://github.com/rotifer-protocol/rotifer-playground/commit/0ba74cb9a3eb736b79526c1228825f68cedb6b8c))
+
 ## [0.31.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.30.3...v0.31.0) (2026-10-27)
 
 

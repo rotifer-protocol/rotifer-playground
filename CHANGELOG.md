@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.32.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.32.0...v0.32.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **release:** say in CHANGELOG.md that 0.32.0 never reached npm ([#496](https://github.com/rotifer-protocol/rotifer-playground/issues/496)) ([18bbd97](https://github.com/rotifer-protocol/rotifer-playground/commit/18bbd9722979c183731d218293ed2032955885d6))
+
 ## [0.32.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.31.0...v0.32.0) (2026-10-28)
 
 **Not published to npm.** The release run stopped on a macOS-only test failure before publishing; these changes ship in 0.32.1.

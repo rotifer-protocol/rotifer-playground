@@ -1,5 +1,5 @@
 {
-  "description": "F(g) with a reference scale (ADR-318 D2): phi = 1/(1+L/L_ref), psi = 1/(1+Cost/Cost_ref), F = S_r * log2(1+C_util) * (1+R_rob)/2 * phi * psi (normalized to [0, 1], ADR-345) with C_util = R_rob = 0.5 (the transitional values, ADR-318 D4). Expected values computed independently in Python; both crates/rotifer-core/src/fitness and src/utils/fitness-formula.ts must reproduce them.",
+  "description": "F(g) with a reference scale (ADR-318 D2): phi = 1/(1+L/L_ref), psi = 1/(1+Cost/Cost_ref), F = S_r * log2(1+C_util) * (1+R_rob)/2 * phi * psi (normalized to [0, 1], ADR-346) with C_util = R_rob = 0.5 (the transitional values, ADR-318 D4). Expected values computed independently in Python; both crates/rotifer-core/src/fitness and src/utils/fitness-formula.ts must reproduce them.",
   "coverage": 0.5,
   "robustness": 0.5,
   "vectors": [

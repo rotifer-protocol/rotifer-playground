@@ -724,16 +724,6 @@ export async function getFitnessReference(
   return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
 }
 
-/** PostgREST's answer to a column it does not know (PGRST204). */
-function isMissingColumn(responseText: string, column: string): boolean {
-  try {
-    const parsed = JSON.parse(responseText) as { code?: string; message?: string };
-    return parsed.code === "PGRST204" && (parsed.message ?? "").includes(`'${column}'`);
-  } catch {
-    return false;
-  }
-}
-
 export async function arenaSubmit(
   geneId: string,
   fitness: FitnessReport
@@ -761,7 +751,6 @@ export async function arenaSubmit(
     body.cost_ref = fitness.cost_ref;
   }
   if (fitness.evaluation_n !== undefined) body.evaluation_n = fitness.evaluation_n;
-  if (fitness.formula_version !== undefined) body.formula_version = fitness.formula_version;
   // Both or neither — the ledger's pair constraint refuses half, and half
   // would reconstruct nothing anyway.
   if (fitness.base_fitness !== undefined && fitness.fidelity_discount !== undefined) {
@@ -773,29 +762,23 @@ export async function arenaSubmit(
   // conflict on the primary key unless told otherwise, and the body carries no
   // id — so without on_conflict=gene_id every re-submission of a gene hit
   // arena_entries_gene_id_key with a 409 and the row kept its first values.
-  const post = (row: Record<string, unknown>) =>
-    fetch(apiUrl("/arena_entries?on_conflict=gene_id"), {
-      method: "POST",
-      headers: {
-        ...authHeaders(true),
-        Prefer: "return=representation,resolution=merge-duplicates",
-      },
-      body: JSON.stringify(row),
-    });
-  let res = await post(body);
-
-  // A registry without the formula_version column (migration 20261027200000
-  // not applied yet) answers PGRST204 for it. Send the same row once more
-  // without it, so this CLI does not depend on the migration having landed:
-  // the score is stored, only its formula label is not. Any other refusal is
-  // final.
-  if (res.status === 400 && "formula_version" in body) {
-    const text = await res.clone().text();
-    if (isMissingColumn(text, "formula_version")) {
-      const { formula_version: _unrecorded, ...withoutVersion } = body;
-      res = await post(withoutVersion);
-    }
-  }
+  //
+  // The formula version goes in a header, not the row: the registry's write
+  // guard records it in arena_entries.formula_version on every client write
+  // and clears it when a write carries none, so a row's label always
+  // describes the write that put its score there (migration 20261027200000).
+  // A registry without that migration ignores the header.
+  const res = await fetch(apiUrl("/arena_entries?on_conflict=gene_id"), {
+    method: "POST",
+    headers: {
+      ...authHeaders(true),
+      Prefer: "return=representation,resolution=merge-duplicates",
+      ...(fitness.formula_version !== undefined
+        ? { "X-Rotifer-Formula-Version": String(fitness.formula_version) }
+        : {}),
+    },
+    body: JSON.stringify(body),
+  });
 
   const data = await handleResponse<any[]>(res);
   const row = data[0];

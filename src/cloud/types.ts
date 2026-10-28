@@ -107,9 +107,10 @@ export interface FitnessReport {
   /** Runs behind the numbers (ADR-318 D5). Omitted means unknown, not 1. */
   evaluation_n?: number;
   /**
-   * Which F(g) formula produced `value` (FITNESS_FORMULA_VERSION). Omitted
-   * means not recorded — the column stays NULL, as it is for every CLI before
-   * ADR-345.
+   * Which F(g) formula produced `value` (FITNESS_FORMULA_VERSION). Sent as the
+   * X-Rotifer-Formula-Version header, from which the registry labels the row.
+   * Omitted means not declared: the row's label is cleared, as it is for every
+   * CLI before ADR-346.
    */
   formula_version?: number;
 }

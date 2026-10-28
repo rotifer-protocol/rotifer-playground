@@ -3,7 +3,7 @@
  *
  * F(g) = S_r · log₂(1 + C_util) · (1 + R_rob)/2 · L_score · Cost_score
  *
- * Each factor is in [0, 1], so F(g) is in [0, 1] (ADR-345).
+ * Each factor is in [0, 1], so F(g) is in [0, 1] (ADR-346).
  */
 
 import * as path from "path";

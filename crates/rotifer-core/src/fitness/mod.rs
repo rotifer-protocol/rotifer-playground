@@ -1,11 +1,11 @@
 //! Fitness scoring and admission gate per Rotifer spec §5.
 //!
-//! Multiplicative model, normalized to [0, 1] (ADR-345):
+//! Multiplicative model, normalized to [0, 1] (ADR-346):
 //! F(g) = S_r · log₂(1 + C_util) · (1 + R_rob)/2 · L_score · Cost_score
 //! Five factors, each in [0, 1]; any single zero-valued factor drives the
 //! whole score to zero, and the product stays in [0, 1] with no cap applied.
 //! Admission thresholds: V_min = 0.7; τ = 0.3 is the unnormalized-era default,
-//! to be recalibrated for the [0, 1] range (ADR-345 D4).
+//! to be recalibrated for the [0, 1] range (ADR-346 D4).
 
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,7 @@ const V_MIN: f64 = 0.7;
 
 /// Formula version tag for backward-compatible Arena coexistence.
 /// 1 = legacy additive, 2 = multiplicative (ADR-318 D2, range (0, 2·ln 2]),
-/// 3 = multiplicative normalized to [0, 1] (ADR-345).
+/// 3 = multiplicative normalized to [0, 1] (ADR-346).
 pub const FORMULA_VERSION: u32 = 3;
 
 /// Composite fitness score for a gene, combining performance and safety.
@@ -117,7 +117,7 @@ pub fn compute_fitness(results: &[EvaluationResult]) -> FitnessScore {
 /// Compute a [`FitnessScore`] from a batch of evaluation results.
 ///
 /// Uses the multiplicative formula (ADR-318 D2), normalized to [0, 1]
-/// (ADR-345):
+/// (ADR-346):
 /// ```text
 /// F(g) = S_r · log₂(1 + C_util) · (1 + R_rob)/2 · L_score · Cost_score
 /// ```
@@ -184,7 +184,7 @@ pub fn compute_fitness_with_reference(
         0.5
     };
 
-    // Multiplicative formula, normalized (ADR-345):
+    // Multiplicative formula, normalized (ADR-346):
     // F(g) = S_r · log₂(1 + C) · (1 + R)/2 · L_score · Cost_score
     //
     // The efficiency scores multiply. Dividing by them, as this did until
@@ -357,13 +357,13 @@ mod tests {
             coverage: Some(1.0),
             robustness: Some(1.0),
         }]);
-        // ADR-345: five factors each in [0, 1], so the theoretical maximum is
+        // ADR-346: five factors each in [0, 1], so the theoretical maximum is
         // exactly 1 — reached by the factors themselves, no min(1.0).
         assert_eq!(best.value, 1.0);
         assert!(best.value <= 1.0);
     }
 
-    /// ADR-345: no input may score above 1.0, compared exactly — the registry's
+    /// ADR-346: no input may score above 1.0, compared exactly — the registry's
     /// chk_fitness_value rejects 1.0000000000000002. Deterministic LCG, so a
     /// failure reproduces; edges (exactly 1, and 0 latency / cost) included.
     #[test]

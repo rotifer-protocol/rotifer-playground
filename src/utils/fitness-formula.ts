@@ -1,5 +1,5 @@
 /**
- * The §5.1 fitness formula, in one place, normalized to [0, 1] (ADR-345):
+ * The §5.1 fitness formula, in one place, normalized to [0, 1] (ADR-346):
  *
  *   F(g) = S_r · log₂(1 + C_util) · (1 + R_rob)/2 · L_score · Cost_score
  *
@@ -37,7 +37,7 @@
 /**
  * Which formula `computeBaseFitness` implements, numbered as rotifer-core's
  * `fitness::FORMULA_VERSION`: 1 additive, 2 multiplicative in (0, 2·ln 2]
- * (ADR-318 D2), 3 multiplicative normalized to [0, 1] (ADR-345). Sent with
+ * (ADR-318 D2), 3 multiplicative normalized to [0, 1] (ADR-346). Sent with
  * every Arena upload as `formula_version`, so the registry can tell the scales
  * apart.
  */
@@ -195,7 +195,7 @@ export interface FitnessInputs {
 
 export interface FitnessBreakdown {
   /**
-   * F(g), in [0, 1] (ADR-345).
+   * F(g), in [0, 1] (ADR-346).
    *
    * Not capped. The old `min(1.0)` was there because dividing by the
    * efficiency scores made the value unbounded — with them multiplied the

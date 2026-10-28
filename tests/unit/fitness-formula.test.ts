@@ -90,7 +90,7 @@ describe("multiplicative collapse", () => {
   });
 
   it("is bounded by its own factors, with no cap applied", () => {
-    // ADR-345: each of the five factors is in [0, 1], so the product is too,
+    // ADR-346: each of the five factors is in [0, 1], so the product is too,
     // without the old min(1.0) — which erased every difference above 1.0 and
     // is how six leaderboard genes came to tie at a perfect 1.000.
     const best = computeBaseFitness({
@@ -112,12 +112,12 @@ describe("multiplicative collapse", () => {
 });
 
 /**
- * ADR-345: F(g) = S_r · log₂(1 + C_util) · (1 + R_rob)/2 · φ(L/L_ref) · ψ(Cost/Cost_ref),
+ * ADR-346: F(g) = S_r · log₂(1 + C_util) · (1 + R_rob)/2 · φ(L/L_ref) · ψ(Cost/Cost_ref),
  * five factors each in [0, 1]. The theoretical maximum is exactly 1, and no
  * input may produce more — a value of 1.0000000000000002 is rejected by the
  * registry's chk_fitness_value, so "close to 1" is not good enough.
  */
-describe("F(g) is normalized to [0, 1] (ADR-345)", () => {
+describe("F(g) is normalized to [0, 1] (ADR-346)", () => {
   it("is exactly 1 at the theoretical maximum", () => {
     const top = computeBaseFitness({
       successRate: 1,

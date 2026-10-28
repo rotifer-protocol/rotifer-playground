@@ -259,7 +259,7 @@ export const arenaSubmitCommand = new Command("submit")
       const avgCost = results.reduce((s, r) => s + r.resourceCost, 0) / total;
 
       // F(g) = S_r · log₂(1 + C_util) · (1 + R_rob)/2 · L_score · Cost_score,
-      // in [0, 1] (ADR-318 D2, normalized by ADR-345)
+      // in [0, 1] (ADR-318 D2, normalized by ADR-346)
       // The efficiency terms multiply; see utils/fitness-formula.ts for why
       // dividing by them inverted the penalty into a reward.
       // C_util and R_rob need fuzzing and property-based testing to measure;
@@ -383,14 +383,16 @@ export const arenaSubmitCommand = new Command("submit")
     const vMin = 0.7;
 
     // V(g) always gates. F(g) does not, while `hasCompleteFitnessInputs` is
-    // false: τ is a threshold on the D2 range, and this F(g) is not on it yet.
-    // Two of its five inputs are placeholders, and the efficiency terms are
-    // scaled by the provisional constants in utils/fitness-formula.ts — against
-    // which the bundled Native corpus scores ~0.003, so comparing to τ = 0.3
-    // would reject every gene ever measured. Rejecting on a number the same run
+    // false: τ is a threshold for a calibrated F(g) on the normalized [0, 1]
+    // range (ADR-346 D4), and this F(g) is not one yet. Two of its five inputs
+    // are placeholders, and the efficiency terms are scaled by the provisional
+    // constants in utils/fitness-formula.ts — against which the bundled Native
+    // corpus scores ~0.002, so comparing to τ = 0.3 would reject every gene
+    // ever measured. Rejecting on a number the same run
     // files as `estimated` and excludes from ranking is not an admission
     // decision, it is an artifact of an uncalibrated scale. Restore the τ gate
-    // in the change that lands D2's reference scale and D4's real C_util/R_rob.
+    // in the change that lands ADR-318 D2's reference scale and D4's real
+    // C_util/R_rob.
     const doesPassSafety = fitness.safetyScore >= vMin;
     const doesPassFitness = fitness.value >= tau;
 
@@ -451,7 +453,7 @@ export const arenaSubmitCommand = new Command("submit")
       if (!doesPassFitness) {
         display.warn(
           `F(g)=${fitness.value.toFixed(4)} is below τ=${tau}, and did not block this submission: τ is still ` +
-          "to be recalibrated for F(g)'s normalized [0, 1] range (ADR-345), and the efficiency terms use " +
+          "to be recalibrated for F(g)'s normalized [0, 1] range (ADR-346), and the efficiency terms use " +
           "provisional scales. V(g) is what gated here. The τ gate returns once both are calibrated."
         );
       }
@@ -521,7 +523,7 @@ export const arenaSubmitCommand = new Command("submit")
             // estimate that never executed anything (ADR-318 D5).
             evaluation_n: didRunInSandbox ? SANDBOX_RUNS : undefined,
             // Which formula scored it, so the registry can tell the
-            // unnormalized (2) and normalized (3) scales apart (ADR-345 D5).
+            // unnormalized (2) and normalized (3) scales apart (ADR-346 D5).
             formula_version: FITNESS_FORMULA_VERSION,
             // What F(g) was scaled by, so the row can be recomputed on its own.
             // Only when the registry answered the reference query: that is how

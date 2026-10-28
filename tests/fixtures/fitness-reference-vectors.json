@@ -1,5 +1,5 @@
 {
-  "description": "F(g) with a reference scale (ADR-318 D2): phi = 1/(1+L/L_ref), psi = 1/(1+Cost/Cost_ref), F = S_r * ln(1+C_util) * (1+R_rob) * phi * psi with C_util = R_rob = 0.5 (the transitional values, ADR-318 D4). Expected values computed independently in Python; both crates/rotifer-core/src/fitness and src/utils/fitness-formula.ts must reproduce them.",
+  "description": "F(g) with a reference scale (ADR-318 D2): phi = 1/(1+L/L_ref), psi = 1/(1+Cost/Cost_ref), F = S_r * log2(1+C_util) * (1+R_rob)/2 * phi * psi (normalized to [0, 1], ADR-345) with C_util = R_rob = 0.5 (the transitional values, ADR-318 D4). Expected values computed independently in Python; both crates/rotifer-core/src/fitness and src/utils/fitness-formula.ts must reproduce them.",
   "coverage": 0.5,
   "robustness": 0.5,
   "vectors": [
@@ -25,7 +25,7 @@
         "success_rate": 1.0,
         "latency_score": 0.8333333333333334,
         "resource_efficiency": 0.8333333333333334,
-        "value": 0.4223594876126713
+        "value": 0.30466796912560223
       }
     },
     {
@@ -50,7 +50,7 @@
         "success_rate": 1.0,
         "latency_score": 0.5,
         "resource_efficiency": 0.5,
-        "value": 0.15204941554056164
+        "value": 0.10968046888521679
       }
     },
     {
@@ -75,7 +75,7 @@
         "success_rate": 1.0,
         "latency_score": 0.6666666666666666,
         "resource_efficiency": 0.8333333333333334,
-        "value": 0.337887590090137
+        "value": 0.24373437530048175
       }
     },
     {
@@ -100,7 +100,7 @@
         "success_rate": 1.0,
         "latency_score": 0.2,
         "resource_efficiency": 0.2,
-        "value": 0.024327906486489866
+        "value": 0.01754887502163469
       }
     },
     {
@@ -130,7 +130,7 @@
         "success_rate": 0.6666666666666666,
         "latency_score": 0.5,
         "resource_efficiency": 0.6666666666666666,
-        "value": 0.13515503603605478
+        "value": 0.0974937501201927
       }
     }
   ]

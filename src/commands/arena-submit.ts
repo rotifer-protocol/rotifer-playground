@@ -258,7 +258,8 @@ export const arenaSubmitCommand = new Command("submit")
       const avgLatency = results.reduce((s, r) => s + r.latencyMs, 0) / total;
       const avgCost = results.reduce((s, r) => s + r.resourceCost, 0) / total;
 
-      // F(g) = S_r · ln(1+C_util) · (1+R_rob) · L_score · Cost_score  (ADR-318 D2)
+      // F(g) = S_r · log₂(1 + C_util) · (1 + R_rob)/2 · L_score · Cost_score,
+      // in [0, 1] (ADR-318 D2, normalized by ADR-345)
       // The efficiency terms multiply; see utils/fitness-formula.ts for why
       // dividing by them inverted the penalty into a reward.
       // C_util and R_rob need fuzzing and property-based testing to measure;
@@ -449,9 +450,9 @@ export const arenaSubmitCommand = new Command("submit")
       );
       if (!doesPassFitness) {
         display.warn(
-          `F(g)=${fitness.value.toFixed(4)} is below τ=${tau}, and did not block this submission: the ` +
-          "efficiency terms are scaled by provisional constants that every measured Gene scores far under. " +
-          "V(g) is what gated here. The τ gate returns with the calibrated scale."
+          `F(g)=${fitness.value.toFixed(4)} is below τ=${tau}, and did not block this submission: τ is still ` +
+          "to be recalibrated for F(g)'s normalized [0, 1] range (ADR-345), and the efficiency terms use " +
+          "provisional scales. V(g) is what gated here. The τ gate returns once both are calibrated."
         );
       }
     }

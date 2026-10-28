@@ -1,9 +1,9 @@
 /**
  * Fitness Calculator for Native Genes
  *
- * F(g) = [S_r · ln(1+C_util) · (1+R_rob)] / [L · Resource_Cost]
+ * F(g) = S_r · log₂(1 + C_util) · (1 + R_rob)/2 · L_score · Cost_score
  *
- * Normalized to 0–1 range for display.
+ * Each factor is in [0, 1], so F(g) is in [0, 1] (ADR-345).
  */
 
 import * as path from "path";

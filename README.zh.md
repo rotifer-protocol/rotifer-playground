@@ -9,7 +9,7 @@
 
 **Rotifer Protocol** 的开发环境——构建基因、运行 Arena 竞争、通过 Cloud 共享、模拟代理进化。
 
-> **状态：** v0.31.x——真实网页搜索：`tavily-web-search`（已上 Rotifer Cloud：`rotifer install tavily-web-search`）用你自己放在 `TAVILY_API_KEY` 里的钥匙，通过 Tavily API 返回真实结果。它是第一个使用「声明式凭证」的基因：Hybrid 基因在 `externalDependencies[].credentials` 里列出需要的环境变量名，CLI 只把这些交出去，而且只交给获得联网权限的基因；基因在请求头里写 `${env:NAME}`，请求离开沙箱时由宿主填入真实值，基因自己始终看不到。这是 `nonstandard` 预览（ADR-327）。内置的 `genesis-web-search` 系列仍是离线演示，现在会写明结果是模拟的。Arena 改为按实际运行的档位打折：声明 Native 却没在沙箱里运行的基因，按 Wrapped 计分。同一份源码编译两次得到相同字节，基因的 `v2:` ID 不再随编译变化。`rotifer vg` 会写明哪些文件没能扫描（目前还没有 Rust 规则），不再把它们说成纯配置。v0.30 起的内容依然成立：Arena 的 F(g) 按赛季中位数打分，在覆盖度与健壮性真正测量之前（计划在 v1.0）仍标 `estimated`、不进排名；所有 CLI 路径都按基因 phenotype 声明的权限运行；Genome Blueprint（`.rgenome`）遵循 format 1；发布执行规范 §47.5 T1。完整发布历史见 [CHANGELOG.md](CHANGELOG.md)。自动节点发现、跨公网连接与 L4 集体免疫在之后的里程碑，见下方[实现状态](#实现状态)。
+> **状态：** v0.32.x——Arena 的 F(g) 改为 0 到 1 的分数：五个因子各在 0 到 1 之间，连乘得出（ADR-346），完美的基因正好得 1 分。之前版本算出的分数是现在的 2·ln 2 ≈ 1.386 倍，不做换算，本机缓存里的旧分数也一样；注册表现在会记下每条成绩是哪一版公式算的。`arena submit --cloud` 上传实际运行的档位：声明 Native 却没在沙箱里运行的基因，按 Wrapped 折扣收下，不再被拒。Hybrid 基因的联网更严格：只许 https，拒绝 IP 地址，每一次重定向都要重新对照基因允许的域名，所以还在调用 `http://` 地址的基因现在会失败；宿主代填的钥匙不会被转发到别的主机。v0.31 起的内容依然成立：`tavily-web-search`（已上 Rotifer Cloud：`rotifer install tavily-web-search`）用你自己放在 `TAVILY_API_KEY` 里的钥匙返回真实网页结果，钥匙经声明式凭证交出、基因自己看不到（`nonstandard` 预览，ADR-327）；同一份源码编译两次得到相同字节，基因的 `v2:` ID 不随编译变化。v0.30 起的内容依然成立：F(g) 按赛季中位数打分，在覆盖度与健壮性真正测量之前（计划在 v1.0）仍标 `estimated`、不进排名；所有 CLI 路径都按基因 phenotype 声明的权限运行；Genome Blueprint（`.rgenome`）遵循 format 1；发布执行规范 §47.5 T1。完整发布历史见 [CHANGELOG.md](CHANGELOG.md)。自动节点发现、跨公网连接与 L4 集体免疫在之后的里程碑，见下方[实现状态](#实现状态)。
 
 ---
 

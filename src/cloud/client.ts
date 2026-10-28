@@ -762,11 +762,20 @@ export async function arenaSubmit(
   // conflict on the primary key unless told otherwise, and the body carries no
   // id — so without on_conflict=gene_id every re-submission of a gene hit
   // arena_entries_gene_id_key with a 409 and the row kept its first values.
+  //
+  // The formula version goes in a header, not the row: the registry's write
+  // guard records it in arena_entries.formula_version on every client write
+  // and clears it when a write carries none, so a row's label always
+  // describes the write that put its score there (migration 20261027200000).
+  // A registry without that migration ignores the header.
   const res = await fetch(apiUrl("/arena_entries?on_conflict=gene_id"), {
     method: "POST",
     headers: {
       ...authHeaders(true),
       Prefer: "return=representation,resolution=merge-duplicates",
+      ...(fitness.formula_version !== undefined
+        ? { "X-Rotifer-Formula-Version": String(fitness.formula_version) }
+        : {}),
     },
     body: JSON.stringify(body),
   });

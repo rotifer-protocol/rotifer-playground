@@ -1,5 +1,13 @@
 /**
- * The §5.1 fitness formula, in one place.
+ * The §5.1 fitness formula, in one place, normalized to [0, 1] (ADR-346):
+ *
+ *   F(g) = S_r · log₂(1 + C_util) · (1 + R_rob)/2 · L_score · Cost_score
+ *
+ * Five factors, each in [0, 1], so F(g) is in [0, 1] with no cap; the maximum,
+ * exactly 1, is S_r = C_util = R_rob = 1 at zero latency and cost. This equals
+ * the ADR-318 D2 form divided by 2·ln 2, but is written as the product so the
+ * maximum comes out as exactly 1 rather than as a quotient that could round
+ * past it. The spec's original statement was
  *
  *   F(g) = [S_r · ln(1 + C_util) · (1 + R_rob)] / [L · Resource_Cost]
  *
@@ -27,6 +35,15 @@
  */
 
 /**
+ * Which formula `computeBaseFitness` implements, numbered as rotifer-core's
+ * `fitness::FORMULA_VERSION`: 1 additive, 2 multiplicative in (0, 2·ln 2]
+ * (ADR-318 D2), 3 multiplicative normalized to [0, 1] (ADR-346). Sent with
+ * every Arena upload as `formula_version`, so the registry can tell the scales
+ * apart.
+ */
+export const FITNESS_FORMULA_VERSION = 3;
+
+/**
  * Fallback L_ref: latency at which L_score halves when no season median is
  * available. `[N]` — provisional, uncalibrated.
  *
@@ -47,8 +64,8 @@ export const LATENCY_SCALE_MS = 1000;
  * sandbox runs each over the bundled Native corpus burn 1.2M–83M fuel
  * (url-extractor 1.22M, debugger 1.44M, citation-manager 1.80M,
  * particle-spatial 83.3M), so at a 10k scale every real gene lands at a
- * Cost_score of 0.008 or below and F(g) collapses to ~0.003 — far under
- * τ = 0.3. While it divided, the same mismatch was invisible: it inflated F(g)
+ * Cost_score of 0.008 or below and F(g) collapses to ~0.002 — far under
+ * any admission threshold. While it divided, the same mismatch was invisible: it inflated F(g)
  * past the 1.0 cap instead. This is why `arena submit` does not gate on F(g)
  * while `hasCompleteFitnessInputs` is false: a threshold comparison against a
  * provisional scale is not an admission decision. Picking new values is a
@@ -178,7 +195,7 @@ export interface FitnessInputs {
 
 export interface FitnessBreakdown {
   /**
-   * F(g), in (0, 2·ln 2] ≈ (0, 1.386].
+   * F(g), in [0, 1] (ADR-346).
    *
    * Not capped. The old `min(1.0)` was there because dividing by the
    * efficiency scores made the value unbounded — with them multiplied the
@@ -217,11 +234,13 @@ export function computeBaseFitness(
   const scale = isUsableReference(reference) ? reference : FALLBACK_REFERENCE;
   const latencyScore = latencyScoreFor(inputs.avgLatencyMs, scale.latencyMs);
   const resourceEfficiency = resourceEfficiencyFor(inputs.avgResourceCost, scale.resourceCost);
+  // Each factor is in [0, 1]: log₂(1 + C) is 1 at C = 1 and (1 + R)/2 is 1 at
+  // R = 1 — exactly, which keeps the product's maximum at exactly 1.
   const quality =
-    inputs.successRate * Math.log1p(inputs.coverage) * (1 + inputs.robustness);
+    inputs.successRate * Math.log2(1 + inputs.coverage) * ((1 + inputs.robustness) / 2);
   // Multiplied, not divided: L_score and Cost_score are already inverted, so
   // multiplying by them is what makes slower and costlier score lower. No cap —
-  // every factor is bounded, so the product is too.
+  // every factor is in [0, 1], so the product is too.
   const value = quality * latencyScore * resourceEfficiency;
   return { value, latencyScore, resourceEfficiency };
 }

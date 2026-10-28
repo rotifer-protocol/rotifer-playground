@@ -1,9 +1,11 @@
 //! Fitness scoring and admission gate per Rotifer spec §5.
 //!
-//! v0.5.5: Multiplicative model — F(g) = S_r · ln(1+C_util) · (1+R_rob) · L_score · Cost_score
-//! Any single zero-valued factor drives the entire score to zero.
-//! Bounded by its own factors — (0, 2·ln 2] — so no cap is applied.
-//! Admission thresholds: τ = 0.3, V_min = 0.7.
+//! Multiplicative model, normalized to [0, 1] (ADR-346):
+//! F(g) = S_r · log₂(1 + C_util) · (1 + R_rob)/2 · L_score · Cost_score
+//! Five factors, each in [0, 1]; any single zero-valued factor drives the
+//! whole score to zero, and the product stays in [0, 1] with no cap applied.
+//! Admission thresholds: V_min = 0.7; τ = 0.3 is the unnormalized-era default,
+//! to be recalibrated for the [0, 1] range (ADR-346 D4).
 
 use serde::{Deserialize, Serialize};
 
@@ -11,23 +13,28 @@ const TAU: f64 = 0.3;
 const V_MIN: f64 = 0.7;
 
 /// Formula version tag for backward-compatible Arena coexistence.
-pub const FORMULA_VERSION: u32 = 2;
+/// 1 = legacy additive, 2 = multiplicative (ADR-318 D2, range (0, 2·ln 2]),
+/// 3 = multiplicative normalized to [0, 1] (ADR-346).
+pub const FORMULA_VERSION: u32 = 3;
 
 /// Composite fitness score for a gene, combining performance and safety.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FitnessScore {
-    /// Overall fitness value in (0, 2·ln 2] ≈ (0, 1.386]; higher is better.
+    /// Overall fitness value in [0, 1]; higher is better.
     pub value: f64,
     /// Safety sub-score in \[0, 1\]; must meet V_min for admission.
     pub safety_score: f64,
     pub components: FitnessComponents,
-    /// Which formula produced this score (1 = legacy additive, 2 = multiplicative).
+    /// Which formula produced this score (see [`FORMULA_VERSION`]).
     #[serde(default = "default_formula_version")]
     pub formula_version: u32,
 }
 
+/// A stored score without a `formula_version` field predates the field, and
+/// so the normalization: version 2. Pinned rather than tracking
+/// `FORMULA_VERSION`, which would read old scores as the current scale.
 fn default_formula_version() -> u32 {
-    FORMULA_VERSION
+    2
 }
 
 /// Breakdown of fitness into individual components.
@@ -109,9 +116,10 @@ pub fn compute_fitness(results: &[EvaluationResult]) -> FitnessScore {
 
 /// Compute a [`FitnessScore`] from a batch of evaluation results.
 ///
-/// Uses the spec-aligned multiplicative formula (ADR-318 D2):
+/// Uses the multiplicative formula (ADR-318 D2), normalized to [0, 1]
+/// (ADR-346):
 /// ```text
-/// F(g) = S_r · ln(1 + C_util) · (1 + R_rob) · L_score · Cost_score
+/// F(g) = S_r · log₂(1 + C_util) · (1 + R_rob)/2 · L_score · Cost_score
 /// ```
 /// where `L_score` and `Cost_score` are the normalized, already-inverted
 /// efficiency scores below — they multiply rather than divide, which is what
@@ -176,21 +184,29 @@ pub fn compute_fitness_with_reference(
         0.5
     };
 
-    // Multiplicative formula: F(g) = S_r · ln(1+C) · (1+R) · L_score · Cost_score
+    // Multiplicative formula, normalized (ADR-346):
+    // F(g) = S_r · log₂(1 + C) · (1 + R)/2 · L_score · Cost_score
     //
     // The efficiency scores multiply. Dividing by them, as this did until
     // ADR-318 D2, inverted the penalty into a reward: because both are already
     // inverted (lower latency → score nearer 1), dividing made F(g) *rise* with
     // latency, and everything past ~1s pinned at the 1.0 cap below. The
     // `latency_penalized_below_fast_gene` tests hold the direction.
-    let quality = success_rate * coverage.ln_1p().max(0.001) * (1.0 + robustness);
+    //
+    // Each factor is in [0, 1]: log₂(1 + C) is 1 at C = 1 and (1 + R)/2 is 1 at
+    // R = 1, so the maximum is exactly 1 — not computed as ln(1 + C)·(1 + R)
+    // and divided by 2·ln 2 afterwards, which could round to just above 1.
+    // The 0.001 floor on the coverage term is the old ln-scale floor in the
+    // new unit (÷ ln 2), so the result equals the old formula ÷ 2·ln 2.
+    let coverage_term = (1.0 + coverage).log2().max(0.001 / std::f64::consts::LN_2);
+    let quality = success_rate * coverage_term * ((1.0 + robustness) / 2.0);
     let value = quality * latency_score * resource_efficiency;
 
     // No cap. `min(1.0)` was there because dividing by the efficiency scores
     // made the value unbounded; multiplying by them bounds it by its own
-    // factors — (0, 2·ln 2] ≈ (0, 1.386] — and ADR-318 D2 drops the cap for
-    // exactly that reason: it erased every difference above 1.0, which is how
-    // six leaderboard genes came to tie at a perfect 1.000.
+    // factors, and ADR-318 D2 drops the cap for exactly that reason: it erased
+    // every difference above 1.0, which is how six leaderboard genes came to
+    // tie at a perfect 1.000.
 
     let safety_score = if successes == total {
         1.0
@@ -341,9 +357,42 @@ mod tests {
             coverage: Some(1.0),
             robustness: Some(1.0),
         }]);
-        // ADR-318 D2 range: (0, 2·ln 2] ≈ (0, 1.386], no min(1.0).
-        assert!((best.value - 2.0 * std::f64::consts::LN_2).abs() < 1e-12);
-        assert!(best.value > 1.0, "the cap must be gone, got {}", best.value);
+        // ADR-346: five factors each in [0, 1], so the theoretical maximum is
+        // exactly 1 — reached by the factors themselves, no min(1.0).
+        assert_eq!(best.value, 1.0);
+        assert!(best.value <= 1.0);
+    }
+
+    /// ADR-346: no input may score above 1.0, compared exactly — the registry's
+    /// chk_fitness_value rejects 1.0000000000000002. Deterministic LCG, so a
+    /// failure reproduces; edges (exactly 1, and 0 latency / cost) included.
+    #[test]
+    fn random_inputs_never_score_above_one() {
+        let mut state: u64 = 0x5eed;
+        let mut rnd = || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut worst = 0.0_f64;
+        for _ in 0..200_000 {
+            let pick = rnd();
+            let unit = if pick < 0.1 { 1.0 } else { rnd() };
+            let coverage = if rnd() < 0.1 { 1.0 } else { rnd() };
+            let robustness = if rnd() < 0.1 { 1.0 } else { rnd() };
+            let runs: Vec<EvaluationResult> = (0..(1 + (rnd() * 4.0) as usize))
+                .map(|_| EvaluationResult {
+                    success: rnd() < unit.max(0.05),
+                    latency_ms: if rnd() < 0.2 { 0 } else { (rnd() * 5000.0) as u64 },
+                    resource_cost: if rnd() < 0.2 { 0.0 } else { rnd() * 1e8 },
+                    coverage: Some(coverage),
+                    robustness: Some(robustness),
+                })
+                .collect();
+            let v = compute_fitness(&runs).value;
+            assert!(v <= 1.0, "scored {v} for {runs:?}");
+            worst = worst.max(v);
+        }
+        assert!(worst <= 1.0);
     }
 
     #[test]
@@ -398,9 +447,19 @@ mod tests {
     }
 
     #[test]
-    fn formula_version_is_two() {
+    fn formula_version_is_three() {
         let results = vec![eval(true, 100, 1000.0)];
         let score = compute_fitness(&results);
+        assert_eq!(score.formula_version, 3);
+    }
+
+    /// A score stored before `formula_version` existed was computed by the
+    /// version-2 formula (ADR-318 D2, unnormalized). Reading it as the current
+    /// version would mix the two scales without a trace.
+    #[test]
+    fn a_stored_score_without_a_version_reads_as_two() {
+        let json = r#"{"value":1.2,"safety_score":1.0,"components":{"success_rate":1.0,"latency_score":1.0,"resource_efficiency":1.0,"coverage":1.0,"robustness":1.0}}"#;
+        let score: FitnessScore = serde_json::from_str(json).unwrap();
         assert_eq!(score.formula_version, 2);
     }
 

@@ -1247,12 +1247,21 @@ fn fetch_failure_causes_are_classified() {
     // proxy answers every name), so their classification is tested on
     // constructed errors in hybrid.rs instead.
 
-    // TLS spoken to a plain-HTTP server, which answers before reading.
+    // TLS spoken to a plain-HTTP server. The server reads the ClientHello
+    // before answering and holds the connection until the client hangs up:
+    // closing a socket with unread bytes sends a reset, and on macOS that
+    // reset could reach the client before the answer did, making the cause
+    // "I/O error" (Release run 40650688154).
     let plain = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = plain.local_addr().unwrap().port();
     std::thread::spawn(move || {
         if let Ok((mut stream, _)) = plain.accept() {
+            let mut hello = [0u8; 4096];
+            let _ = stream.read(&mut hello);
             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+            let mut rest = [0u8; 4096];
+            while matches!(stream.read(&mut rest), Ok(n) if n > 0) {}
         }
     });
     let tls = get(format!("https://127.0.0.1:{port}/x"), Some(3_000));

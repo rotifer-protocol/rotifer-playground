@@ -8,6 +8,7 @@ import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding } from "../utils/binding.js";
 import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
+import { toRustPhenotype } from "../utils/rust-phenotype.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import {
   FUEL_LADDER,
@@ -401,11 +402,20 @@ export const testCommand = new Command("test")
       // C3: L0Gate check
       display.info("C3: L0Gate Pre-execution Check");
       if (binding) {
-        const l0Result = binding.l0Check(JSON.stringify(phenotype));
-        if (l0Result.passed) {
+        // In rotifer-core's shape: compile writes irHash as hex and wrap writes
+        // createdAt as ISO 8601, and l0Check rejected both (#449). A phenotype
+        // it still cannot read is this check failing, not the run crashing.
+        let l0Result: ReturnType<typeof binding.l0Check> | undefined;
+        try {
+          l0Result = binding.l0Check(JSON.stringify(toRustPhenotype(phenotype)));
+        } catch (err: any) {
+          failed++;
+          display.error(`  L0Gate could not read phenotype.json: ${err?.message ?? err}`);
+        }
+        if (l0Result?.passed) {
           passed++;
           display.success(`  L0Gate: PASS (${l0Result.checksPerformed} checks)`);
-        } else {
+        } else if (l0Result) {
           failed++;
           display.error(`  L0Gate violations: ${l0Result.violations.join("; ")}`);
         }
@@ -457,6 +467,13 @@ export const testCommand = new Command("test")
         if (verifyResult === "PASS") {
           passed++;
           display.success("  IR module contains all required custom sections");
+        } else if (verifyResult.startsWith("WARN")) {
+          // The verifier accepted the module and noted something, as Test 8
+          // and compile already treat it. Every Javy build carries SIMD and
+          // unbounded memory, so counting this as a failure failed C6 for
+          // every compiled TypeScript gene.
+          passed++;
+          display.warn("  IR verification: " + verifyResult);
         } else {
           failed++;
           display.error("  IR verification: " + verifyResult);

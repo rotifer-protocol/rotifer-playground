@@ -22,6 +22,14 @@ export function findProjectRoot(startDir: string = process.cwd()): string | null
   return null;
 }
 
+/**
+ * rotifer.json exists but cannot be read as a config. The CLI entry point
+ * reports it as a message, not a stack (#456); the file is never rewritten.
+ */
+export class ConfigError extends Error {
+  override name = "ConfigError";
+}
+
 export function loadConfig(projectDir?: string): RotiferConfig {
   const root = projectDir || findProjectRoot();
   if (!root) {
@@ -32,7 +40,11 @@ export function loadConfig(projectDir?: string): RotiferConfig {
 
   const configPath = join(root, CONFIG_FILE);
   const content = readFileSync(configPath, "utf-8");
-  return JSON.parse(content) as RotiferConfig;
+  try {
+    return JSON.parse(content) as RotiferConfig;
+  } catch (err) {
+    throw new ConfigError(`${configPath} is not valid JSON: ${(err as Error).message}`);
+  }
 }
 
 export function saveConfig(config: RotiferConfig, projectDir: string): void {

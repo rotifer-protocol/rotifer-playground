@@ -103,8 +103,10 @@ rotifer arena submit my-gene
 Your gene will be evaluated against others in the same domain using the fitness function:
 
 ```
-F(g) = (S_r × log(1+C_util) × (1+R_rob)) / (L × R_cost)
+F(g) = S_r × log₂(1 + C_util) × (1 + R_rob)/2 × L_score × Cost_score
 ```
+
+Each of the five factors lies in [0, 1], so F(g) does too: a perfect score is 1. The admission threshold on F(g), τ, is paused until it is recalibrated for that range; V(g) is what gates admission for now.
 
 ### Watch Live Rankings
 

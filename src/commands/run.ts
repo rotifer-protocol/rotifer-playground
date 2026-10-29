@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import * as display from "../utils/display.js";
 import { getProjectRoot, loadConfig } from "../utils/config.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
@@ -180,7 +181,9 @@ export const runCommand = new Command("run")
         try {
           recordGeneInvocation(geneDir);
           recordHeartbeat();
-          const mod = await import(sourcePath);
+          // A file: URL, not the path: on Windows a raw C:\... path parses as a
+          // URL with scheme "c:" and the ESM loader refuses it (T-112).
+          const mod = await import(pathToFileURL(sourcePath).href);
           const fn = mod.express || mod.default || mod.main;
           if (typeof fn !== "function") {
             display.error("No exported express/default/main function found in index.ts");

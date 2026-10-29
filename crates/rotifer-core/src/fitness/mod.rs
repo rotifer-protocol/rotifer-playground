@@ -228,7 +228,9 @@ pub fn compute_fitness_with_reference(
     }
 }
 
-/// Check whether a fitness score meets the admission gate (§5: τ ≥ 0.3, V ≥ 0.7).
+/// Check a fitness score against the pre-normalization admission gate
+/// (τ ≥ 0.3, V ≥ 0.7). Spec §5.1 now pauses τ until it is recalibrated for the
+/// [0, 1] range (ADR-346 D4); this keeps the old value until then.
 pub fn passes_admission(score: &FitnessScore) -> bool {
     score.value >= TAU && score.safety_score >= V_MIN
 }

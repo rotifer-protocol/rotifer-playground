@@ -609,7 +609,11 @@ impl PlaygroundBinding {
         }
 
         // L0 gate + sandbox execution via execute_gated()
+        let started = std::time::Instant::now();
         let result = sandbox.execute_gated(&wasm_bytes, &context, input, &phenotype);
+        // A run that fails still ran: a gene stopped at its time limit ran for
+        // the whole limit, and reporting 0 hid that (#455).
+        let elapsed_ms = started.elapsed().as_millis() as i64;
 
         let view = match result {
             Ok(GeneResult::Success { data, metadata }) => {
@@ -656,7 +660,7 @@ impl PlaygroundBinding {
                     error_message: Some(format!("{code}: {message}")),
                     fuel_consumed: 0,
                     memory_peak_kb: 0,
-                    duration_ms: 0,
+                    duration_ms: elapsed_ms,
                     sandbox_type: "wasm".to_string(),
                 }
             }
@@ -679,7 +683,7 @@ impl PlaygroundBinding {
                     error_message: Some(err_msg),
                     fuel_consumed: 0,
                     memory_peak_kb: 0,
-                    duration_ms: 0,
+                    duration_ms: elapsed_ms,
                     sandbox_type: sandbox_type.to_string(),
                 }
             }
@@ -1140,6 +1144,86 @@ mod permission_tests {
         binding()
             .execute_algebra(expr.to_string(), entries.to_string(), "{}".into(), Some(CLI_CONSTRAINTS.into()))
             .unwrap()
+    }
+
+    /// `express(i32, i32) -> i32` that never returns.
+    fn spinning_gene() -> Vec<u8> {
+        use wasm_encoder::*;
+        let mut module = Module::new();
+        let mut types = TypeSection::new();
+        types.ty().function(vec![ValType::I32; 2], vec![ValType::I32]);
+        module.section(&types);
+        let mut functions = FunctionSection::new();
+        functions.function(0);
+        module.section(&functions);
+        let mut memories = MemorySection::new();
+        memories.memory(MemoryType { minimum: 1, maximum: None, memory64: false, shared: false, page_size_log2: None });
+        module.section(&memories);
+        let mut exports = ExportSection::new();
+        exports.export("express", ExportKind::Func, 0);
+        exports.export("memory", ExportKind::Memory, 0);
+        module.section(&exports);
+        let mut code = CodeSection::new();
+        let mut body = Function::new(vec![]);
+        body.instruction(&Instruction::Loop(BlockType::Empty));
+        body.instruction(&Instruction::Br(0));
+        body.instruction(&Instruction::End);
+        body.instruction(&Instruction::I32Const(0));
+        body.instruction(&Instruction::End);
+        code.function(&body);
+        module.section(&code);
+        module.finish()
+    }
+
+    /// Fuel enough to outlast the wall-clock limit, so the limit is what stops
+    /// it. 30 s, not less: a gene's declared time budget is a fixed 30 s
+    /// (ResourceLimits::default), and L0 refuses a run whose limit is below
+    /// it before anything executes — a budget rejection, not the running
+    /// interruption #455 is about. The two tests run in parallel.
+    const DEADLINE: &str = r#"{"max_fuel":9000000000000000000,"max_memory_bytes":268435456,"max_execution_time_ms":30000,"allowed_host_functions":[],"denied_host_functions":[]}"#;
+
+    fn native_phenotype() -> serde_json::Value {
+        serde_json::json!({
+            "domain": "test.deadline",
+            "inputSchema": {"type": "object"},
+            "outputSchema": {"type": "object"},
+            "version": "0.1.0",
+            "fidelity": "Native",
+        })
+    }
+
+    /// #455: a gene stopped by its time limit says so, and says how long it ran.
+    #[test]
+    fn a_gene_past_its_time_limit_reports_a_timeout_and_its_duration() {
+        let r = binding()
+            .execute_gene(
+                Buffer::from(spinning_gene()),
+                "{}".into(),
+                native_phenotype().to_string(),
+                Some(DEADLINE.into()),
+            )
+            .unwrap();
+        assert!(!r.success);
+        let message = r.error_message.as_deref().unwrap();
+        assert!(message.contains(rotifer_core::sandbox::TIMEOUT_MESSAGE_PREFIX), "not a timeout: {message}");
+        assert!(r.duration_ms >= 29_000, "ran ~30 s, reported {} ms", r.duration_ms);
+    }
+
+    /// #455: a Try handler learns the primary timed out, not that it failed.
+    #[test]
+    fn a_try_handler_receives_timeout_for_a_primary_past_its_limit() {
+        let spin = [1u8; 32];
+        let echo = [2u8; 32];
+        let entries = serde_json::json!({
+            hex::encode(spin): {"wasm": spinning_gene(), "phenotype": native_phenotype()},
+            hex::encode(echo): {"wasm": rotifer_core::compiler::genesis::build_echo_gene_wasm(), "phenotype": native_phenotype()},
+        });
+        let expr = serde_json::json!({"Try": {"primary": {"Gene": spin}, "fallback": {"Gene": echo}}});
+        let r = binding()
+            .execute_algebra(expr.to_string(), entries.to_string(), "{}".into(), Some(DEADLINE.into()))
+            .unwrap();
+        assert!(r.success, "the handler should have run: {:?}", r.error_message);
+        assert_eq!(r.output["error"]["errorCode"], "TIMEOUT", "handler input: {}", r.output);
     }
 
     #[test]

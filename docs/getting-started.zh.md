@@ -94,7 +94,7 @@ interface Output {
   greeting: string;
 }
 
-export async function express(input: Input): Promise<Output> {
+export function express(input: Input): Output {
   return {
     greeting: `你好，${input.name}！欢迎来到 Rotifer Protocol。`,
   };

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { NativeBinding } from "./binding.js";
+import { toRustPhenotype } from "./rust-phenotype.js";
 
 /**
  * L0 门控的判定结果。
@@ -35,8 +36,10 @@ export function evaluateL0(
     return { kind: "unavailable", detail: "native addon failed to load" };
   }
   try {
+    // In rotifer-core's shape: wrap's ISO createdAt made every wrapped gene's
+    // gate "unavailable" before (#448), which runs a local gene unchecked.
     const { irHash: _strip, ...phenotypeForL0 } = phenotype;
-    const result = binding.l0Check(JSON.stringify(phenotypeForL0));
+    const result = binding.l0Check(JSON.stringify(toRustPhenotype(phenotypeForL0)));
     return result.passed
       ? { kind: "pass" }
       : { kind: "violation", detail: result.violations.join("; ") };

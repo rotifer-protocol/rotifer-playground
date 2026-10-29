@@ -151,6 +151,28 @@ describe("rotifer hello", () => {
     }
   });
 
+  it("code-security does not report a file-read error as a finished scan (#454)", () => {
+    // A fresh workspace has no security-scanner. code-security used to fall
+    // back to genesis-file-read — its `path` input matched the template's —
+    // which read the directory, returned "[error] EISDIR …" as content, and
+    // the run ended "Execution complete", exit 0. Neither fallback scans.
+    const ws = join(tmpdir(), "rotifer-fresh-" + randomUUID());
+    mkdirSync(ws, { recursive: true });
+    try {
+      expect(run("init fresh", ws).exitCode).toBe(0);
+      const { stdout, exitCode } = run(
+        `hello --template code-security --input '{"path":"./genes","includeTests":false}'`,
+        join(ws, "fresh"),
+      );
+      expect(stdout).not.toContain("EISDIR");
+      expect(stdout).not.toContain("Execution complete");
+      expect(exitCode).toBe(1);
+      expect(stdout).toContain("security-scanner");
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
   it("fails gracefully when no genes are installed", () => {
     const { stdout, exitCode } = run(
       `hello --template quality-advisor --input '{"query":"test"}'`,

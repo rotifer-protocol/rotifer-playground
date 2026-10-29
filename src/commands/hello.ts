@@ -65,7 +65,11 @@ const TEMPLATES: HelloTemplate[] = [
     name: "Code Security Scan",
     description: "Find vulnerabilities before hackers do",
     genes: ["security-scanner"],
-    fallbackGenes: ["genesis-code-format", "genesis-file-read"],
+    // No fallback: neither code-format nor file-read scans anything, and
+    // file-read accepted this template's `path` input, read the directory and
+    // returned an EISDIR error that ended as "Execution complete" (#454).
+    // Without security-scanner the template says so and stops.
+    fallbackGenes: [],
     composition: "Seq",
     exampleInput: { path: "./genes", includeTests: false },
     section: "quick",

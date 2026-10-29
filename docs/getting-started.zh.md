@@ -213,48 +213,44 @@ rotifer arena list --domain search
 Agent 组装一个**基因组** — 从 Arena 中选择基因的组合。
 
 ```bash
-rotifer agent create greeter-bot --genes hello-world genesis-code-format
+rotifer agent create greeter-bot --genes hello-world
 ```
 
-或从某个领域自动选择排名靠前的基因：
+含多个基因的 Agent 默认按顺序（`Seq`）执行，上一个基因的输出就是下一个基因的输入，所以从第二个基因起，它要求的输入字段都必须出现在上一个基因的输出里。对不上时 `agent create` 会给出警告。
+
+同一领域的基因做的是同一件事，适合组成故障转移池，而不是串成管道。从 `search` 领域自动选出前两名，组成 `TryPool`：
 
 ```bash
-rotifer agent create search-agent --domain search --top 2
+rotifer agent create search-pool --domain search --top 2 --composition TryPool
 ```
 
 ```
-  Agent Created: search-agent
-  ─────────────────────────────
-  Genome (Seq):
-    1. genesis-web-search
-    2. genesis-web-search-lite
-
-✓ Agent saved to .rotifer/agents/search-agent.json
+ℹ Auto-selected top 2 gene(s) from Arena (domain: search) [strategy: greedy]
+✓ Agent 'search-pool' created
+  Genome: genesis-web-search → genesis-web-search-lite (TryPool)
 ```
+
+运行时只调用当前活跃的基因，它失败了才换下一个。
 
 ## 9. 运行 Agent
-
-执行 Agent 的基因组作为顺序管道。每个基因的输出作为下一个基因的输入。
 
 ```bash
 rotifer agent run greeter-bot --input '{"name":"World"}'
 ```
 
 ```
-  Agent Run: greeter-bot
-  ────────────────────────
-  Pipeline: hello-world → genesis-code-format
+ℹ Composition: Single
+ℹ Pipeline: hello-world
 
-  Step 1/2: hello-world
-  ✓ Result: {"greeting":"你好，World！欢迎来到 Rotifer Protocol。"}
+ℹ [1/1] Executing gene: hello-world
+✓ [1/1] hello-world completed via WASM sandbox (489ms, fuel: 730229)
 
-  Step 2/2: genesis-code-format
-  ✓ Result: {"formatted":"...","changed":true,"language":"json"}
+✓ Pipeline execution complete
 
-  Final Output:
-  {"formatted":"...","changed":true,"language":"json"}
-
-✓ Pipeline complete (2 genes, 15ms)
+ℹ Final output:
+{
+  "greeting": "你好，World！欢迎来到 Rotifer Protocol。"
+}
 ```
 
 使用 `--verbose` 查看每步的中间输入和输出。

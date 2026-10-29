@@ -126,7 +126,9 @@ Choose a composition strategy based on relationships between capability units.
 | **Par(A, B)** | Parallel: run simultaneously | Independent tasks, merge results | Grammar check + Readability analysis |
 | **Cond(p, A, B)** | Branch: if p then A else B | Input characteristics determine path | Chinese → Chinese proofing / English → English proofing |
 | **Try(A, B)** | Fallback: A fails → B | Primary path unreliable | Main API → Backup API |
-| **TryPool(A, B, C)** | Race: all try, first success wins | Multiple equivalent implementations | Multiple translation services racing |
+| **TryPool(A, B, C)** | Failover: per domain, the active Gene runs; the others are tried one at a time, best running fitness first, only if it fails | Interchangeable implementations of one capability | Main translation service, with backups that take over when it fails |
+
+Par, Cond and Try run in the sandbox on compiled Genes: `rotifer compile` each Gene first. `agent run` refuses them otherwise, rather than running them as Seq.
 
 ### Par Merge Strategies
 
@@ -138,32 +140,15 @@ When using Par, specify `--par-merge`:
 | `concat` | Concatenate all results (array) | Results are complementary |
 | `merge` | Deep-merge objects | Same structure, merge fields |
 
-### Seq Schema Compatibility Warning
+### Seq Schema Compatibility
 
-> **Known limitation**: Seq composition requires the previous Gene's outputSchema to be compatible with the next Gene's inputSchema. The current version does not auto-validate — schema mismatches cause runtime errors.
+> In a Seq, each Gene's output is the next Gene's input, so every field the next Gene's inputSchema requires must be in the previous Gene's outputSchema. `rotifer agent create` compares them and prints a warning such as `FAIL — missing: [text]`, but still creates the Agent; run it anyway and a Gene can get empty input and return empty output without an error.
 >
-> **Recommendation**: Before creating a Seq composition, manually compare adjacent Genes' inputSchema / outputSchema in phenotype.json to confirm field names and types match.
+> **Treat the warning as a blocker**: choose Genes whose fields meet, or put a Gene in between that turns one shape into the other.
 
 ### Nested Composition
 
-Strategies can be nested:
-
-```text
-Seq(
-  Par(grammar-checker, readability-analyzer),
-  tone-analyzer
-)
-```
-
-Corresponding CLI:
-
-```bash
-rotifer agent create doc-qa \
-  --genes grammar-checker readability-analyzer tone-analyzer \
-  --composition Seq
-```
-
-> The current CLI only supports top-level composition strategies. Nested compositions require manual editing of `.rotifer/agents/<id>.json`.
+Not supported yet. An Agent has one top-level strategy: `agent create` writes only that, and `agent run` reads only that, so `Seq(Par(A, B), C)` cannot be expressed. To get close, run `Par(A, B)` as one Agent and pass its output to C yourself.
 
 ---
 
@@ -247,6 +232,10 @@ If results are unsatisfactory, proceed to Phase 7.
 **Composition**: All three accept `text` input, no dependencies → Par + concat.
 
 ```bash
+rotifer compile grammar-checker
+rotifer compile readability-analyzer
+rotifer compile tone-analyzer
+
 rotifer agent create doc-quality \
   --genes grammar-checker readability-analyzer tone-analyzer \
   --composition Par \
@@ -257,47 +246,46 @@ rotifer agent run doc-quality --input '{"text": "Document content to check..."}'
 
 ### Scenario 2: Code Review Agent
 
-**Goal**: Input code file, output security vulnerabilities + complexity report + documentation suggestions.
+**Goal**: Input code, output security findings + a complexity report (documentation suggestions as a separate step).
 
 | # | Capability | Gene | Domain |
 |---|-----------|------|--------|
-| 1 | Security audit | security-auditor | security.audit |
-| 2 | Complexity analysis | code-complexity | code.analysis |
-| 3 | Documentation generation | docs-writer | content.docs |
+| 1 | Security audit | security-auditor | code.security |
+| 2 | Complexity analysis | code-complexity | code.analyze |
+| 3 | Documentation generation | docs-writer | docs.technical |
 
-**Composition**: Security audit and complexity analysis can run in parallel, documentation depends on both → Seq(Par(1,2), 3).
+**Composition**: Security audit and complexity analysis both read the code, so they run side by side → Par(1, 2), results merged. Documentation would follow both, Seq(Par(1, 2), 3), which needs nesting (not supported yet); docs-writer also takes a `subject`, which neither result carries, so run it as a separate step.
 
 ```bash
+rotifer compile security-auditor
+rotifer compile code-complexity
+
 rotifer agent create code-review \
-  --genes security-auditor code-complexity docs-writer \
-  --composition Seq
+  --genes security-auditor code-complexity \
+  --composition Par \
+  --par-merge merge
 
 rotifer agent run code-review --input '{"code": "...", "language": "typescript"}'
 ```
 
-> Note: The Par(security-auditor, code-complexity) merged output must be compatible with docs-writer's inputSchema. Manual verification required.
+### Scenario 3: Content Review Agent
 
-### Scenario 3: Search & Summarize Agent
-
-**Goal**: Input a search query, search → summarize → format output.
+**Goal**: Input an article, get a quality analysis and then a prioritized list of edits.
 
 | # | Capability | Gene | Domain |
 |---|-----------|------|--------|
-| 1 | Web search | genesis-web-search | search.web |
-| 2 | Text summarization | text-summarizer | content.summarize |
-| 3 | Markdown formatting | markdown-formatter | content.format |
+| 1 | Quality analysis | content-quality-analyzer | quality.content |
+| 2 | Optimization plan | content-optimizer | quality.content |
 
-**Composition**: Strict serial pipeline → Seq.
+**Composition**: The analysis is exactly what the optimizer reads (readability, virality, sentiment, structure) → Seq.
 
 ```bash
-rotifer agent create search-digest \
-  --genes genesis-web-search text-summarizer markdown-formatter \
+rotifer agent create content-review \
+  --genes content-quality-analyzer content-optimizer \
   --composition Seq
 
-rotifer agent run search-digest --input '{"query": "Rotifer Protocol agent framework"}'
+rotifer agent run content-review --input '{"text": "# My article\n\n...", "platform": "dev.to"}'
 ```
-
-> Note the Seq schema chain: genesis-web-search output field names must match text-summarizer's inputSchema. Run `cat genes/*/phenotype.json | jq '.inputSchema, .outputSchema'` to verify before creating.
 
 ---
 

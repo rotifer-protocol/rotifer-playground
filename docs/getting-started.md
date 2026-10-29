@@ -213,48 +213,44 @@ rotifer arena list --domain search
 An Agent assembles a **genome** — a composition of genes selected from the Arena.
 
 ```bash
-rotifer agent create greeter-bot --genes hello-world genesis-code-format
+rotifer agent create greeter-bot --genes hello-world
 ```
 
-Or auto-select the top genes from a domain:
+An agent with several genes runs them in sequence (`Seq`), each gene's output becoming the next gene's input, so every gene after the first must find its required input fields in the previous gene's output. `agent create` warns when it will not.
+
+Genes from the same domain do the same job, so they make a failover pool rather than a pipeline. Auto-select the top two `search` genes into a `TryPool`:
 
 ```bash
-rotifer agent create search-agent --domain search --top 2
+rotifer agent create search-pool --domain search --top 2 --composition TryPool
 ```
 
 ```
-  Agent Created: search-agent
-  ─────────────────────────────
-  Genome (Seq):
-    1. genesis-web-search
-    2. genesis-web-search-lite
-
-✓ Agent saved to .rotifer/agents/search-agent.json
+ℹ Auto-selected top 2 gene(s) from Arena (domain: search) [strategy: greedy]
+✓ Agent 'search-pool' created
+  Genome: genesis-web-search → genesis-web-search-lite (TryPool)
 ```
+
+When it runs, only the active gene is called; the next one is tried only if it fails.
 
 ## 9. Run the Agent
-
-Execute the agent's genome as a sequential pipeline. Each gene's output feeds as input to the next gene.
 
 ```bash
 rotifer agent run greeter-bot --input '{"name":"World"}'
 ```
 
 ```
-  Agent Run: greeter-bot
-  ────────────────────────
-  Pipeline: hello-world → genesis-code-format
+ℹ Composition: Single
+ℹ Pipeline: hello-world
 
-  Step 1/2: hello-world
-  ✓ Result: {"greeting":"Hello, World! Welcome to the Rotifer Protocol."}
+ℹ [1/1] Executing gene: hello-world
+✓ [1/1] hello-world completed via WASM sandbox (489ms, fuel: 730229)
 
-  Step 2/2: genesis-code-format
-  ✓ Result: {"formatted":"...","changed":true,"language":"json"}
+✓ Pipeline execution complete
 
-  Final Output:
-  {"formatted":"...","changed":true,"language":"json"}
-
-✓ Pipeline complete (2 genes, 15ms)
+ℹ Final output:
+{
+  "greeting": "Hello, World! Welcome to the Rotifer Protocol."
+}
 ```
 
 Use `--verbose` to see intermediate inputs and outputs at each step.

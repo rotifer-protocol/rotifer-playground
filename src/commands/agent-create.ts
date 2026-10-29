@@ -52,7 +52,10 @@ export function createAgentCore(params: CreateAgentParams): AgentRecord {
     }
   }
 
-  if (genome.length >= 2) {
+  // Only Seq hands one gene's output to the next; Par, Cond and Try give
+  // every gene the same input, and TryPool runs one gene per domain at a
+  // time. Checking those as a chain warned about fields nothing passes (#446).
+  if (genome.length >= 2 && params.compositionType === "Seq") {
     const warnings = checkSchemaCompatibility(root, params.genesDir, genome);
     if (params.onSchemaWarnings) {
       params.onSchemaWarnings(warnings);

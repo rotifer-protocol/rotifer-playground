@@ -95,6 +95,10 @@ locate:
 rotifer run <gene-name> --input '{"...": "..."}'
 ```
 
+`run` checks the input against the Gene's inputSchema before running it and the
+output against its outputSchema after; a mismatch fails the run and names the
+field (an input mismatch is `INVALID_INPUT`, and the Gene does not run).
+
 Show the user candidate Genes' F(g) fitness and fidelity, let them confirm the selection.
 
 ---

@@ -169,7 +169,7 @@ Run `rotifer --help` for the grouped command list. The commands below cover the 
 | `rotifer wrap <gene-name>` | Wrap a function or SKILL.md as a gene (offers to publish, default yes — see [Publishing by default](#publishing-by-default)) |
 | `rotifer test [gene-name]` | Test a gene (WASM sandbox preferred, `--compliance` for structural checks) |
 | `rotifer compile [gene-name]` | Compile gene to Rotifer IR (auto TS→WASM) |
-| `rotifer run <gene-name>` | Execute a single local gene directly |
+| `rotifer run <gene-name>` | Execute a single local gene directly; input and output are checked against the gene's schema (`--no-validate` skips that) |
 | `rotifer list` | List local genes in the current Agent workspace |
 | `rotifer login` | Log in to Rotifer Cloud (OAuth) |
 | `rotifer logout` | Log out from Rotifer Cloud |

@@ -9,18 +9,21 @@ import { validateGeneName } from "../utils/validate-gene-name.js";
 import { flushInvocationReports, recordGeneInvocation } from "../cloud/invocation.js";
 import { recordHeartbeat, flushHeartbeat } from "../telemetry/heartbeat.js";
 import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
+import { compileSchemaCheck } from "../utils/arena-success.js";
+import { readErrorEnvelope } from "../testsuite/gate.js";
 
 export const runCommand = new Command("run")
-  .description("Execute a single gene directly")
+  .description("Execute a single gene directly, checking its input and output against the gene's schema")
   .argument("<gene-name>", "gene name to execute")
   .option("--input <json>", "input JSON string", '{"name":"world"}')
   .option("--verbose", "show detailed execution output", false)
   .option("--no-sandbox", "run without WASM sandbox (Node.js only)")
   .option("--trust-unsigned", "allow Node.js execution for Cloud-installed genes", false)
+  .option("--no-validate", "skip checking the input and output against the gene's inputSchema / outputSchema")
   .action(
     async (
       geneName: string,
-      options: { input: string; verbose: boolean; sandbox: boolean; trustUnsigned: boolean }
+      options: { input: string; verbose: boolean; sandbox: boolean; trustUnsigned: boolean; validate: boolean }
     ) => {
       display.header(`Run Gene: ${geneName}`);
       validateGeneName(geneName);
@@ -63,6 +66,36 @@ export const runCommand = new Command("run")
         process.exit(1);
         return;
       }
+
+      // The gene's own schema is the contract (#451): an input it does not
+      // accept is refused before anything runs, as INVALID_INPUT (spec §4.2),
+      // and an output it did not promise fails the run, as the Arena counts it
+      // (utils/arena-success.ts — the same check). Both paths, WASM and Node.js.
+      const checkOutput = options.validate ? compileSchemaCheck(phenotype.outputSchema) : null;
+      if (options.validate) {
+        const inputViolation = compileSchemaCheck(phenotype.inputSchema)?.(input) ?? null;
+        if (inputViolation) {
+          display.error(`INVALID_INPUT: the input does not match ${geneName}'s inputSchema: ${inputViolation}`);
+          display.hint("Nothing was run. Fix --input, or pass --no-validate to run it anyway.");
+          process.exit(1);
+          return;
+        }
+      } else {
+        display.warn("Schema validation is off (--no-validate): input and output are not checked against the gene's schema.");
+      }
+      /** Fails the run when the output breaks outputSchema; true when it may stand. */
+      const acceptOutput = async (output: unknown): Promise<boolean> => {
+        const violation = checkOutput?.(output) ?? null;
+        if (!violation) return true;
+        display.error(`The output does not match ${geneName}'s outputSchema: ${violation}`);
+        display.info("Output returned:");
+        console.log(JSON.stringify(output, null, 2));
+        display.hint("The run counts as failed, as it would in the Arena.");
+        await flushInvocationReports();
+        await flushHeartbeat();
+        process.exit(1);
+        return false;
+      };
 
       const isSandboxEnabled = options.sandbox;
 
@@ -115,6 +148,7 @@ export const runCommand = new Command("run")
             // report anything.
             recordHeartbeat();
             if (execResult.success) {
+              if (!(await acceptOutput(execResult.output))) return;
               display.success("Output:");
               console.log(JSON.stringify(execResult.output, null, 2));
             } else {
@@ -210,6 +244,18 @@ export const runCommand = new Command("run")
             output = await fn(input);
           }
           console.log();
+          // A lone __rotifer_error is the gene refusing (ADR-334). The sandbox
+          // reports it as INVALID_INPUT; read it the same way here, rather than
+          // as output that breaks outputSchema.
+          const refusal = readErrorEnvelope(output);
+          if (refusal) {
+            display.error("Execution failed: " + refusal);
+            await flushInvocationReports();
+            await flushHeartbeat();
+            process.exit(1);
+            return;
+          }
+          if (!(await acceptOutput(output))) return;
           display.success("Output:");
           console.log(JSON.stringify(output, null, 2));
           // See the WASM branch above: success falls through without

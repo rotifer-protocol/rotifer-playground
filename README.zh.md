@@ -167,7 +167,7 @@ playground/
 | `rotifer wrap <gene-name>` | 将函数或 `SKILL.md` 包装为基因 |
 | `rotifer test [gene-name]` | 在沙箱中测试基因 |
 | `rotifer compile [gene-name]` | 将基因编译为 Rotifer IR（WASM） |
-| `rotifer run <gene-name>` | 直接执行单个本地基因 |
+| `rotifer run <gene-name>` | 直接执行单个本地基因；输入和输出都按基因的 schema 检查（`--no-validate` 跳过） |
 | `rotifer list` | 列出当前 Agent 工作区中的本地基因 |
 | `rotifer login` | 登录 Rotifer Cloud |
 | `rotifer logout` | 从 Rotifer Cloud 登出 |

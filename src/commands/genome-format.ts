@@ -20,7 +20,11 @@ export const BLUEPRINT_FORMAT = 1;
 /** Protocol version whose Blueprint layout this command writes. */
 export const BLUEPRINT_PROTOCOL_VERSION = { major: 0, minor: 9, patch: 2 } as const;
 
-/** Default `minFitness` for a CapabilityQuery: the recommended τ of §5.1. */
+/**
+ * Default `minFitness` for a CapabilityQuery: 0.3, the τ §5.1 recommended
+ * before F(g) was normalized. §5.1 now pauses τ until it is recalibrated for
+ * the [0, 1] range (ADR-346 D4); this default stays 0.3 until then.
+ */
 export const DEFAULT_MIN_FITNESS = 0.3;
 
 /** §5.1: V_min MUST lie in [0.5, 1.0). */

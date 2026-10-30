@@ -267,22 +267,28 @@ Admission:
 
 | Metric | Threshold | Meaning |
 |--------|-----------|---------|
-| F(g) | ≥ 0.3 (τ) | fitness floor |
+| F(g) | τ, paused | no fitness floor for now: τ is paused until it is recalibrated for the normalized [0, 1] range |
 | V(g) | ≥ 0.7 | security floor |
 
-Fitness is multiplicative:
+Fitness is multiplicative, and normalized to [0, 1]:
 
 ```
-F(g) = [S_r × ln(1 + C_util) × (1 + R_rob)] / [L × R_cost]
+F(g) = S_r × log₂(1 + C_util) × (1 + R_rob)/2 × L × R_cost
 ```
+
+Each of the five factors lies in [0, 1], so F(g) does too: a perfect score is 1.
 
 | Factor | What it measures |
 |--------|------------------|
 | S_r | success rate |
 | C_util | coverage — how completely the output is populated |
 | R_rob | robustness against malformed input |
-| L | latency score, 1/(1 + avg_latency_ms/1000) |
-| R_cost | resource efficiency, 1/(1 + avg_cost/10000) |
+| L | latency score, 1/(1 + avg_latency_ms/L_ref) |
+| R_cost | resource efficiency, 1/(1 + avg_cost/Cost_ref) |
+
+L_ref and Cost_ref are the season median for the Gene's domain and fidelity, so a
+Gene exactly at its peers' median scores 1/2 on each. Until a group has enough
+measured Genes, fixed fallbacks stand in (1000 ms, 10,000 fuel).
 
 **Why multiplicative matters:** any factor at zero eliminates the Gene. There is
 no averaging your way past a failure mode.
@@ -375,7 +381,6 @@ rotifer agent run my-agent --input '{"text": "Hello wrold"}'
 | `No express function exported` | index.ts does not export it | `export async function express(...)` |
 | `WASM compilation failed` | Javy could not compile it | check the syntax, and that no Node-only API is used |
 | `Hybrid gene missing allowedDomains` | no network allowlist | add the `network` block to phenotype.json |
-| `Arena admission denied: F(g) < τ` | fitness below the floor | raise the success rate, cut latency, populate more of the output |
 | `localhost in allowedDomains` | a Hybrid Gene pointing at a local address | use the production host |
 | `Fidelity mismatch` | declared Native, but there is a network call | declare Hybrid, or remove the call |
 

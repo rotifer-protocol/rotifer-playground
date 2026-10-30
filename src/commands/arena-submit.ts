@@ -379,36 +379,23 @@ export const arenaSubmitCommand = new Command("submit")
       );
     } catch { /* best-effort cache */ }
 
-    const tau = 0.3;
     const vMin = 0.7;
 
-    // V(g) always gates. F(g) does not, while `hasCompleteFitnessInputs` is
-    // false: τ is a threshold for a calibrated F(g) on the normalized [0, 1]
-    // range (ADR-346 D4), and this F(g) is not one yet. Two of its five inputs
-    // are placeholders, and the efficiency terms are scaled by the provisional
-    // constants in utils/fitness-formula.ts — against which the bundled Native
-    // corpus scores ~0.002, so comparing to τ = 0.3 would reject every gene
-    // ever measured. Rejecting on a number the same run
-    // files as `estimated` and excludes from ranking is not an admission
-    // decision, it is an artifact of an uncalibrated scale. Restore the τ gate
-    // in the change that lands ADR-318 D2's reference scale and D4's real
-    // C_util/R_rob.
+    // V(g) gates; F(g) does not. Spec §5.1 pauses the admission threshold τ
+    // while it is recalibrated for F(g)'s normalized [0, 1] range (ADR-346 D4),
+    // so there is no τ to compare against. This F(g) could not be held to one
+    // yet either: two of its five inputs are placeholders, and the efficiency
+    // terms are scaled by the provisional constants in utils/fitness-formula.ts,
+    // against which the bundled Native corpus scores ~0.002. The F(g) gate comes
+    // back with the recalibrated τ, alongside ADR-318 D2's reference scale and
+    // D4's real C_util/R_rob.
     const doesPassSafety = fitness.safetyScore >= vMin;
-    const doesPassFitness = fitness.value >= tau;
 
     if (!doesPassSafety) {
       display.error(
         `Gene does not meet admission threshold (V(g)=${fitness.safetyScore.toFixed(3)} < V_min=${vMin})`
       );
       display.hint("Improve gene security, then try again.");
-      process.exit(1);
-    }
-
-    if (!doesPassFitness && hasCompleteFitnessInputs) {
-      display.error(
-        `Gene does not meet admission threshold (F(g)=${fitness.value.toFixed(3)} < τ=${tau})`
-      );
-      display.hint("Improve gene quality, then try again.");
       process.exit(1);
     }
 
@@ -429,7 +416,7 @@ export const arenaSubmitCommand = new Command("submit")
     display.keyValue("V(g)", fitness.safetyScore.toFixed(4));
     display.keyValue("Success Rate", `${(fitness.successRate * 100).toFixed(1)}%`);
     display.keyValue("Latency Score", fitness.latencyScore.toFixed(4));
-    display.keyValue("Admission", doesPassFitness ? "PASSED" : "PASSED (V(g) only)");
+    display.keyValue("Admission", "PASSED on V(g); the F(g) threshold τ is paused until it is recalibrated");
     if (didRunInSandbox) {
       display.keyValue("Execution", `Sandbox verified (${SANDBOX_RUNS} runs)`);
     } else {
@@ -450,13 +437,6 @@ export const arenaSubmitCommand = new Command("submit")
           : "with --cloud, each run's outcome, schema check, latency and fuel go to the public run ledger; " +
             "this local submission keeps them on this machine only.")
       );
-      if (!doesPassFitness) {
-        display.warn(
-          `F(g)=${fitness.value.toFixed(4)} is below τ=${tau}, and did not block this submission: τ is still ` +
-          "to be recalibrated for F(g)'s normalized [0, 1] range (ADR-346), and the efficiency terms use " +
-          "provisional scales. V(g) is what gated here. The τ gate returns once both are calibrated."
-        );
-      }
     }
     // A lower tier than declared is sent as such: the cloud Arena accepts a
     // discount at or below the gene's declared tier and records which tier it

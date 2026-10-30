@@ -104,7 +104,7 @@ describe("#29-a Blueprint structure", () => {
     expect(bp!.resolutionHints!.beta).toEqual({ owner: "bob", name: "beta", version: "0.3.0", fidelity: "Hybrid" });
   });
 
-  it("writes a CapabilityQuery per role from phenotype.json, minFitness defaulting to τ = 0.3", () => {
+  it("writes a CapabilityQuery per role from phenotype.json, minFitness defaulting to 0.3", () => {
     const { bp } = exportAgent("pipeline");
     expect(DEFAULT_MIN_FITNESS).toBe(0.3);
     expect(Object.keys(bp!.capabilities!.alpha).sort()).toEqual(
@@ -119,7 +119,7 @@ describe("#29-a Blueprint structure", () => {
     expect(bp!.capabilities!.beta.domain).toBe("text.summarize");
   });
 
-  it("--min-fitness overrides τ; --min-vg goes to bindingExtensions as the author's suggestion", () => {
+  it("--min-fitness overrides the default; --min-vg goes to bindingExtensions as the author's suggestion", () => {
     const { bp } = exportAgent("pipeline", { minFitness: "0.6", minVg: "0.8" });
     expect(bp!.capabilities!.alpha.minFitness).toBe(0.6);
     expect(bp!.bindingExtensions!["rotifer-playground"]).toEqual({ minVg: 0.8 });

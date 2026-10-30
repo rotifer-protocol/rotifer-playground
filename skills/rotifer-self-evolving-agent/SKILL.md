@@ -113,8 +113,10 @@ This **executes** the Agent's Genes — it is not a read-only command. Execution
 Under the hood, Rotifer uses **Genes** — atomic, transferable AI capabilities that compete in an **Arena**. The fittest Genes (measured by the fitness function **F(g)**) rise to the top of the rankings automatically. Ranking is the automatic part; putting a Gene on your machine is not.
 
 ```text
-F(g) = [S_r · ln(1 + C_util) · (1 + R_rob)] / [L · Resource_Cost]
+F(g) = S_r · log₂(1 + C_util) · (1 + R_rob)/2 · L_score · Cost_score
 ```
+
+Each of the five factors lies in [0, 1], so F(g) does too: a perfect score is 1.
 
 No voting, no human preference — pure runtime performance metrics determine which capabilities win.
 

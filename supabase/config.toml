@@ -13,3 +13,9 @@ project_id = "vihbmpuqlamhxbmahcje"
 
 [functions.chat]
 verify_jwt = false
+
+# agent-memory (v0.9.4) serves signed-in accounts only. The gateway check
+# stays on; the function also refuses a token whose role is not
+# "authenticated", and RLS limits every query to the caller's own rows.
+[functions.agent-memory]
+verify_jwt = true

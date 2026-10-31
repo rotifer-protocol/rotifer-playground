@@ -1,0 +1,55 @@
+{
+  "testCases": [
+    {
+      "input": {
+        "user": "suite-ada",
+        "set": {
+          "language": "zh-CN"
+        }
+      },
+      "expectedOutput": {
+        "user": "suite-ada",
+        "preferences": {
+          "language": "zh-CN"
+        },
+        "updated": [
+          "language"
+        ]
+      }
+    },
+    {
+      "input": {
+        "user": "suite-ada"
+      },
+      "expectedOutput": {
+        "user": "suite-ada",
+        "preferences": {
+          "language": "zh-CN"
+        },
+        "updated": []
+      }
+    },
+    {
+      "input": {
+        "user": "suite-nobody"
+      },
+      "expectedOutput": {
+        "user": "suite-nobody",
+        "preferences": {},
+        "updated": []
+      }
+    },
+    {
+      "input": {}
+    },
+    {
+      "input": {
+        "user": 42
+      }
+    }
+  ],
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  }
+}

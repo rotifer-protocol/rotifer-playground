@@ -302,6 +302,33 @@ jobs:
           npm install -g @napi-rs/cli
           cd crates/rotifer-napi && napi build --release --platform
 
+      # AgentMemory, TS ↔ the napi just built. The memory
+      # suites must run on this addon, not the published one: the published
+      # platform package is removed from node_modules, so the loader falls
+      # back to the copy at the repository root. Both changes stay inside this
+      # job's checkout; the TS test job installs as usual. With
+      # ROTIFER_REQUIRE_NATIVE_MEMORY=1 an addon without memory fails here
+      # instead of skipping.
+      - name: Memory e2e on the freshly built napi
+        env:
+          ROTIFER_REQUIRE_NATIVE_MEMORY: "1"
+        run: |
+          npm ci
+          npm run build
+          rm -rf node_modules/@rotifer/playground-linux-x64-gnu
+          test -f crates/rotifer-napi/index.linux-x64-gnu.node
+          cp crates/rotifer-napi/index.linux-x64-gnu.node index.linux-x64.node
+          npx vitest run \
+            tests/unit/memory-parity.test.ts \
+            tests/unit/memory-retention-napi.test.ts \
+            tests/e2e/agent-run-memory.test.ts \
+            tests/e2e/agent-run-memory-wasm.test.ts \
+            tests/e2e/agent-memory-survives-genome-change.test.ts \
+            tests/e2e/agent-create-memory-quota.test.ts \
+            tests/e2e/agent-memory-list.test.ts \
+            tests/e2e/rotifer-test-memory.test.ts \
+            tests/e2e/memory-subpath-export.test.ts
+
       - name: Cargo clippy (all crates)
         run: cargo clippy --workspace -- -D warnings
 

@@ -6,14 +6,14 @@ use rotifer_core::arena::{ArenaEngine, ArenaEntry, LocalArena};
 use rotifer_core::compiler::{self, CandidateFunction};
 use rotifer_core::fitness;
 use rotifer_core::l0::{L0Gate, AuditLog};
-use rotifer_core::sandbox::{ConstraintSet, Sandbox, WasmtimeSandbox};
+use rotifer_core::sandbox::{memory_calls, ConstraintSet, MemoryLink, MemoryOp, Sandbox, WasmtimeSandbox};
 use rotifer_core::types::{Context, GeneResult, PermissionSet};
 
 use rotifer_core::storage::{AgentStore, ArenaStore, GeneStore, SqliteStore};
 use rotifer_core::types::agent::Agent;
 use rotifer_core::types::gene::Gene;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 // P2P node bridge (libp2p) — exposes the real Node to the CLI (§3.1 phase 1).
 // Kept at the crate root, not a submodule: the cdylib linker strips an
@@ -254,6 +254,38 @@ pub struct PlaygroundBinding {
     project_dir: PathBuf,
     store: SqliteStore,
     arena: Mutex<LocalArena>,
+    /// AgentMemory (§38), in the same database; events to `.rotifer/`.
+    memory: Arc<rotifer_core::memory::MemoryStore>,
+    /// The memory clock in ms since the epoch; `REAL_TIME` until a test sets it.
+    #[cfg(feature = "test-clock")]
+    test_clock: Arc<std::sync::atomic::AtomicI64>,
+}
+
+#[cfg(feature = "test-clock")]
+const REAL_TIME: i64 = i64::MIN;
+
+#[cfg(feature = "test-clock")]
+fn system_ms() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+}
+
+/// `memoryContextJson` of executeGene / executeAlgebra: the agent a run
+/// belongs to, and for executeGene the running gene's v2 id. executeAlgebra
+/// takes each gene's id from its entry's `v2Id`.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MemoryContextArg {
+    agent_id: String,
+    #[serde(default)]
+    gene_id: Option<String>,
+}
+
+fn parse_memory_context(json: Option<String>) -> Result<Option<MemoryContextArg>> {
+    json.map(|j| {
+        serde_json::from_str::<MemoryContextArg>(&j)
+            .map_err(|e| Error::from_reason(format!("MEMORY_INVALID_INPUT: invalid memoryContext JSON: {e}")))
+    })
+    .transpose()
 }
 
 /// Where the CLI finds the credentials a gene declares: the environment
@@ -291,10 +323,10 @@ fn missing_credentials_message(missing: &[String]) -> String {
     )
 }
 
-#[napi]
 impl PlaygroundBinding {
-    #[napi(constructor)]
-    pub fn new(project_dir: String) -> Result<Self> {
+    /// [`Self::new`] with the environment supplied by `env`; it decides
+    /// whether memory telemetry is written.
+    fn open(project_dir: String, env: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let project_path = PathBuf::from(&project_dir);
         let db_path = project_path.join(".rotifer").join("playground.db");
 
@@ -305,12 +337,70 @@ impl PlaygroundBinding {
 
         let store = SqliteStore::new(&db_path)
             .map_err(|e| Error::from_reason(format!("failed to init storage: {e}")))?;
+        let memory = rotifer_core::memory::MemoryStore::open(
+            &db_path,
+            Arc::new(rotifer_core::memory::JsonlSink::from_env(&project_path.join(".rotifer"), env)),
+        )
+        .map_err(|e| Error::from_reason(format!("failed to init agent memory: {e}")))?;
+        #[cfg(feature = "test-clock")]
+        let test_clock = Arc::new(std::sync::atomic::AtomicI64::new(REAL_TIME));
+        #[cfg(feature = "test-clock")]
+        let memory = {
+            let clock = test_clock.clone();
+            memory.with_clock(move || match clock.load(std::sync::atomic::Ordering::SeqCst) {
+                REAL_TIME => system_ms(),
+                ms => ms,
+            })
+        };
 
         Ok(Self {
             project_dir: project_path,
             store,
             arena: Mutex::new(LocalArena::new()),
+            memory: Arc::new(memory),
+            #[cfg(feature = "test-clock")]
+            test_clock,
         })
+    }
+}
+
+/// Test-only clock for AgentMemory, so cross-binding tests can reach an
+/// expiry without waiting days. Compiled only with the
+/// `test-clock` feature; a release build has neither method.
+#[cfg(feature = "test-clock")]
+#[napi]
+impl PlaygroundBinding {
+    /// Memory's clock is now `epoch_ms` (ms since the Unix epoch) until set
+    /// again. Nothing else in the binding uses it.
+    #[napi]
+    pub fn memory_test_set_clock(&self, epoch_ms: f64) -> Result<()> {
+        if !epoch_ms.is_finite() || epoch_ms.fract() != 0.0 || epoch_ms < 0.0 || epoch_ms > i64::MAX as f64 {
+            return Err(Error::from_reason(format!("epochMs {epoch_ms} is not a whole number of ms")));
+        }
+        self.test_clock.store(epoch_ms as i64, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Move memory's clock by `ms` (from real time, if it was not set).
+    #[napi]
+    pub fn memory_test_advance_clock(&self, ms: f64) -> Result<()> {
+        if !ms.is_finite() || ms.fract() != 0.0 || ms.abs() > i64::MAX as f64 {
+            return Err(Error::from_reason(format!("ms {ms} is not a whole number of ms")));
+        }
+        let now = match self.test_clock.load(std::sync::atomic::Ordering::SeqCst) {
+            REAL_TIME => system_ms(),
+            t => t,
+        };
+        self.test_clock.store(now.saturating_add(ms as i64), std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[napi]
+impl PlaygroundBinding {
+    #[napi(constructor)]
+    pub fn new(project_dir: String) -> Result<Self> {
+        Self::open(project_dir, |name| std::env::var(name).ok())
     }
 
     #[napi]
@@ -528,14 +618,20 @@ impl PlaygroundBinding {
     /// Credentials the gene declares are read from the environment variables
     /// of the same name.
     #[napi]
+    ///
+    /// `memoryContextJson` (`{"agentId", "geneId"}`) links the run to that
+    /// agent's AgentMemory, acting as the gene with that v2 id; without it the
+    /// gene's memory calls are denied.
     pub fn execute_gene(
         &self,
         wasm_bytes: Buffer,
         input_json: String,
         phenotype_json: String,
         constraints_json: Option<String>,
+        memory_context_json: Option<String>,
     ) -> Result<ExecutionResultView> {
-        self.execute_gene_with_env(wasm_bytes, input_json, phenotype_json, constraints_json, &process_env)
+        let memory = parse_memory_context(memory_context_json)?;
+        self.execute_gene_inner(wasm_bytes, input_json, phenotype_json, constraints_json, &process_env, memory)
     }
 
     /// `execute_gene` with the credential lookup injected (tests pass a map).
@@ -546,6 +642,18 @@ impl PlaygroundBinding {
         phenotype_json: String,
         constraints_json: Option<String>,
         env: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<ExecutionResultView> {
+        self.execute_gene_inner(wasm_bytes, input_json, phenotype_json, constraints_json, env, None)
+    }
+
+    fn execute_gene_inner(
+        &self,
+        wasm_bytes: Buffer,
+        input_json: String,
+        phenotype_json: String,
+        constraints_json: Option<String>,
+        env: &dyn Fn(&str) -> Option<String>,
+        memory: Option<MemoryContextArg>,
     ) -> Result<ExecutionResultView> {
         let input: serde_json::Value = serde_json::from_str(&input_json)
             .map_err(|e| Error::from_reason(format!("invalid input JSON: {e}")))?;
@@ -562,7 +670,7 @@ impl PlaygroundBinding {
         };
 
         let context = Context {
-            agent_id: "cli".to_string(),
+            agent_id: memory.as_ref().map_or_else(|| "cli".to_string(), |m| m.agent_id.clone()),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -571,7 +679,12 @@ impl PlaygroundBinding {
             // phenotype declares, and nothing it does not (v0.9.3 §3.5).
             permissions: PermissionSet::declared_by(&phenotype),
             trace_id: Some(uuid::Uuid::new_v4().to_string()),
-            binding_extensions: None,
+            binding_extensions: memory.as_ref().and_then(|m| m.gene_id.as_ref()).map(|id| {
+                std::collections::HashMap::from([(
+                    rotifer_core::sandbox::CALLER_GENE_ID_EXTENSION.to_string(),
+                    serde_json::Value::String(id.clone()),
+                )])
+            }),
         };
 
         // Network permission is decided first: a gene that gets none is never
@@ -594,6 +707,13 @@ impl PlaygroundBinding {
         let mut sandbox = WasmtimeSandbox::new(constraints)
             .map_err(|e| Error::from_reason(format!("sandbox init failed: {e}")))?;
         sandbox.set_hybrid_env(std::collections::HashMap::new(), secrets);
+        // Without a memoryContext the gene runs outside any agent; the store
+        // is attached only to record its "no agent context" denials.
+        if memory.is_some() {
+            sandbox.set_memory_store(self.memory.clone());
+        } else {
+            sandbox.set_memory_store_without_agent(self.memory.clone());
+        }
 
         let max_mem_kb = (sandbox.constraints().max_memory_bytes / 1024) as i64;
         let gene_id_short = context.trace_id.as_deref().unwrap_or("unknown");
@@ -692,6 +812,207 @@ impl PlaygroundBinding {
         Ok(view)
     }
 
+    // ── AgentMemory (spec §38, v0.9.4) ─────────────────────────────────────
+    // Entries, filters and errors are the AgentMemory wire JSON. Errors are
+    // thrown with the error code first: "MEMORY_ACCESS_DENIED: …".
+
+    /// Create an agent's memory with a quota in bytes (default 10 MB). Throws
+    /// MEMORY_INVALID_INPUT if it already exists or the quota is not a
+    /// positive whole number.
+    #[napi]
+    pub fn memory_create(&self, agent_id: String, quota_bytes: Option<f64>) -> Result<serde_json::Value> {
+        let quota = match quota_bytes {
+            Some(q) => quota_from_js(q)?,
+            None => rotifer_core::memory::DEFAULT_QUOTA_BYTES,
+        };
+        let memory = self.memory.create_memory(&agent_id, quota).map_err(memory_error)?;
+        serde_json::to_value(memory).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// Change an agent's quota; a lower one evicts at the next write.
+    #[napi]
+    pub fn memory_set_quota(&self, agent_id: String, quota_bytes: f64) -> Result<()> {
+        self.memory.set_quota(&agent_id, quota_from_js(quota_bytes)?).map_err(memory_error)
+    }
+
+    /// The whole AgentMemory, every entry: the deployer's view.
+    #[napi]
+    pub fn memory_get(&self, agent_id: String) -> Result<serde_json::Value> {
+        let memory = self.memory.get_memory(&agent_id).map_err(memory_error)?;
+        serde_json::to_value(memory).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// §38.4 export for a MigrationBundle: CACHE left out unless asked.
+    #[napi]
+    pub fn memory_export(&self, agent_id: String, include_cache: Option<bool>) -> Result<serde_json::Value> {
+        let memory = self.memory.export(&agent_id, include_cache.unwrap_or(false)).map_err(memory_error)?;
+        serde_json::to_value(memory).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// §38.4 import: the counterpart of memoryExport. `bundleJson` is an
+    /// AgentMemory as memoryExport returns it; `optionsJson` is
+    /// `{"includeCache"?: bool, "creatorDomains"?: {"<v2 id>": "<domain>"}}`.
+    /// Keeps createdBy and both policies even when the creator gene is not in
+    /// the target agent; drops CACHE unless asked; obeys the target's quota
+    /// and never overwrites a key (all-or-nothing). Returns the target's
+    /// AgentMemory.
+    #[napi]
+    pub fn memory_import(
+        &self,
+        agent_id: String,
+        bundle_json: String,
+        options_json: Option<String>,
+    ) -> Result<serde_json::Value> {
+        #[derive(serde::Deserialize, Default)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Options {
+            #[serde(default)]
+            include_cache: bool,
+            #[serde(default)]
+            creator_domains: std::collections::HashMap<String, String>,
+        }
+        let bundle: rotifer_core::memory::AgentMemory = serde_json::from_str(&bundle_json)
+            .map_err(|e| Error::from_reason(format!("MEMORY_INVALID_INPUT: invalid bundle JSON: {e}")))?;
+        let options: Options = match options_json {
+            Some(j) => serde_json::from_str(&j)
+                .map_err(|e| Error::from_reason(format!("MEMORY_INVALID_INPUT: invalid import options JSON: {e}")))?,
+            None => Options::default(),
+        };
+        let memory = self
+            .memory
+            .import(
+                &agent_id,
+                &bundle,
+                &rotifer_core::memory::ImportOptions {
+                    include_cache: options.include_cache,
+                    creator_domains: options.creator_domains,
+                },
+            )
+            .map_err(memory_error)?;
+        serde_json::to_value(memory).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// readMemory as the gene `callerGeneId` (a v2 id) of domain
+    /// `callerDomain`. Request `{key, category?}`; the entry or null.
+    #[napi]
+    pub fn memory_read(
+        &self,
+        agent_id: String,
+        caller_gene_id: String,
+        caller_domain: String,
+        request_json: String,
+    ) -> Result<serde_json::Value> {
+        self.memory_call(MemoryOp::Read, agent_id, caller_gene_id, caller_domain, request_json)
+    }
+
+    /// writeMemory. Request `{key, value (base64), category, accessPolicy?,
+    /// retentionPolicy?}`; the entry as stored.
+    #[napi]
+    pub fn memory_write(
+        &self,
+        agent_id: String,
+        caller_gene_id: String,
+        caller_domain: String,
+        request_json: String,
+    ) -> Result<serde_json::Value> {
+        self.memory_call(MemoryOp::Write, agent_id, caller_gene_id, caller_domain, request_json)
+    }
+
+    /// queryMemory. Request: a MemoryFilter; the readable matching entries.
+    #[napi]
+    pub fn memory_query(
+        &self,
+        agent_id: String,
+        caller_gene_id: String,
+        caller_domain: String,
+        request_json: String,
+    ) -> Result<serde_json::Value> {
+        self.memory_call(MemoryOp::Query, agent_id, caller_gene_id, caller_domain, request_json)
+    }
+
+    /// deleteMemory. Request `{key}`; null. A missing key is MEMORY_NOT_FOUND.
+    #[napi]
+    pub fn memory_delete(
+        &self,
+        agent_id: String,
+        caller_gene_id: String,
+        caller_domain: String,
+        request_json: String,
+    ) -> Result<serde_json::Value> {
+        self.memory_call(MemoryOp::Delete, agent_id, caller_gene_id, caller_domain, request_json)
+    }
+
+    /// The agent's DataPolicy retention in days (§30.2 `maxRetentionDays`),
+    /// or null for unlimited (the default). Entries without their own
+    /// retentionPolicy expire by it; the SDK passes it from
+    /// the agent's DataPolicy. Throws MEMORY_INVALID_INPUT unless an integer
+    /// 1..2147483647 or null, MEMORY_NOT_FOUND when the agent has no memory.
+    #[napi]
+    pub fn memory_set_data_policy_retention(&self, agent_id: String, days: Option<f64>) -> Result<()> {
+        let days = match days {
+            None => None,
+            Some(d) if d.is_finite() && d.fract() == 0.0 && (1.0..=i32::MAX as f64).contains(&d) => Some(d as u32),
+            Some(d) => {
+                return Err(Error::from_reason(format!(
+                    "MEMORY_INVALID_INPUT: maxRetentionDays {d} is not an integer from 1 to 2147483647"
+                )))
+            }
+        };
+        self.memory.set_retention_days(&agent_id, days).map_err(memory_error)
+    }
+
+    /// `rotifer agent memory delete <agent> (--key K | --category C)`: the
+    /// deployer removes entries whatever their access scopes. `selectorJson`
+    /// is `{"key": K}` or `{"category": C}` (UPPERCASE), exactly one. Returns
+    /// how many entries were removed; each is an audit line with
+    /// `actor: "deployer"`.
+    #[napi]
+    pub fn memory_admin_delete(&self, agent_id: String, selector_json: String) -> Result<f64> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Selector {
+            key: Option<String>,
+            category: Option<rotifer_core::memory::MemoryCategory>,
+        }
+        let invalid = |why: String| Error::from_reason(format!("MEMORY_INVALID_INPUT: {why}"));
+        let selector: Selector = serde_json::from_str(&selector_json)
+            .map_err(|e| invalid(format!("selector is not {{key}} or {{category}}: {e}")))?;
+        let target = match (&selector.key, selector.category) {
+            (Some(k), None) => rotifer_core::memory::AdminDelete::Key(k),
+            (None, Some(c)) => rotifer_core::memory::AdminDelete::Category(c),
+            _ => return Err(invalid("the selector needs exactly one of key or category".into())),
+        };
+        self.memory.admin_delete(&agent_id, target).map(|n| n as f64).map_err(memory_error)
+    }
+
+    /// The four gene calls go through the same body as the WASM host
+    /// functions, so request validation and error codes cannot drift apart.
+    fn memory_call(
+        &self,
+        op: MemoryOp,
+        agent_id: String,
+        caller_gene_id: String,
+        caller_domain: String,
+        request_json: String,
+    ) -> Result<serde_json::Value> {
+        let caller = rotifer_core::gene_id::is_valid(&caller_gene_id)
+            .then_some(rotifer_core::memory::CallerGene { gene_id: caller_gene_id, domain: caller_domain });
+        let agent_id = (!agent_id.is_empty()).then_some(agent_id);
+        let link = MemoryLink { store: self.memory.clone(), agent_id, caller };
+        let r = memory_calls::handle(Some(&link), op, request_json.as_bytes(), usize::MAX);
+        if r.code < 0 {
+            let message = serde_json::from_slice::<serde_json::Value>(&r.out)
+                .ok()
+                .and_then(|v| v["__rotifer_error"]["message"].as_str().map(str::to_string))
+                .unwrap_or_else(|| format!("{} failed with code {}", op.host_name(), r.code));
+            return Err(Error::from_reason(message));
+        }
+        if r.out.is_empty() {
+            return Ok(serde_json::Value::Null);
+        }
+        serde_json::from_slice(&r.out).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
     /// Run L0 gate pre-execution checks without executing the gene.
     #[napi]
     pub fn l0_check(
@@ -738,8 +1059,10 @@ impl PlaygroundBinding {
         gene_entries_json: String,
         input_json: String,
         constraints_json: Option<String>,
+        memory_context_json: Option<String>,
     ) -> Result<AlgebraResultView> {
-        self.execute_algebra_with_env(algebra_json, gene_entries_json, input_json, constraints_json, &process_env)
+        let memory = parse_memory_context(memory_context_json)?;
+        self.execute_algebra_inner(algebra_json, gene_entries_json, input_json, constraints_json, &process_env, memory)
     }
 
     /// `execute_algebra` with the credential lookup injected (tests pass a map).
@@ -750,6 +1073,18 @@ impl PlaygroundBinding {
         input_json: String,
         constraints_json: Option<String>,
         env: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<AlgebraResultView> {
+        self.execute_algebra_inner(algebra_json, gene_entries_json, input_json, constraints_json, env, None)
+    }
+
+    fn execute_algebra_inner(
+        &self,
+        algebra_json: String,
+        gene_entries_json: String,
+        input_json: String,
+        constraints_json: Option<String>,
+        env: &dyn Fn(&str) -> Option<String>,
+        memory: Option<MemoryContextArg>,
     ) -> Result<AlgebraResultView> {
         use rotifer_core::algebra::{AlgebraExpr, AlgebraExecutor};
         use std::collections::HashMap;
@@ -817,9 +1152,14 @@ impl PlaygroundBinding {
         let mut sandbox = WasmtimeSandbox::new(constraints)
             .map_err(|e| Error::from_reason(format!("sandbox init failed: {e}")))?;
         sandbox.set_hybrid_env(HashMap::new(), secrets);
+        if memory.is_some() {
+            sandbox.set_memory_store(self.memory.clone());
+        } else {
+            sandbox.set_memory_store_without_agent(self.memory.clone());
+        }
 
         let context = Context {
-            agent_id: "cli-algebra".to_string(),
+            agent_id: memory.as_ref().map_or_else(|| "cli-algebra".to_string(), |m| m.agent_id.clone()),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -871,6 +1211,20 @@ impl PlaygroundBinding {
             }
         }
     }
+}
+
+fn memory_error(e: rotifer_core::memory::MemoryError) -> Error {
+    Error::from_reason(e.to_string())
+}
+
+/// A JS number as a quota in bytes: a positive whole number.
+fn quota_from_js(q: f64) -> Result<u64> {
+    if !q.is_finite() || q < 1.0 || q.fract() != 0.0 || q > i64::MAX as f64 {
+        return Err(Error::from_reason(format!(
+            "MEMORY_INVALID_INPUT: quota {q} is not a positive whole number of bytes"
+        )));
+    }
+    Ok(q as u64)
 }
 
 /// Gene ID v2 of the gene `name` under `genes_root` (docs/gene-id-v2.md),
@@ -1127,6 +1481,7 @@ mod permission_tests {
                 "{}".into(),
                 phenotype.to_string(),
                 Some(CLI_CONSTRAINTS.into()),
+                None,
             )
             .unwrap()
     }
@@ -1142,7 +1497,7 @@ mod permission_tests {
         });
         let expr = serde_json::json!({"Seq": [{"Gene": id}]});
         binding()
-            .execute_algebra(expr.to_string(), entries.to_string(), "{}".into(), Some(CLI_CONSTRAINTS.into()))
+            .execute_algebra(expr.to_string(), entries.to_string(), "{}".into(), Some(CLI_CONSTRAINTS.into()), None)
             .unwrap()
     }
 
@@ -1201,6 +1556,7 @@ mod permission_tests {
                 "{}".into(),
                 native_phenotype().to_string(),
                 Some(DEADLINE.into()),
+                None,
             )
             .unwrap();
         assert!(!r.success);
@@ -1220,7 +1576,7 @@ mod permission_tests {
         });
         let expr = serde_json::json!({"Try": {"primary": {"Gene": spin}, "fallback": {"Gene": echo}}});
         let r = binding()
-            .execute_algebra(expr.to_string(), entries.to_string(), "{}".into(), Some(DEADLINE.into()))
+            .execute_algebra(expr.to_string(), entries.to_string(), "{}".into(), Some(DEADLINE.into()), None)
             .unwrap();
         assert!(r.success, "the handler should have run: {:?}", r.error_message);
         assert_eq!(r.output["error"]["errorCode"], "TIMEOUT", "handler input: {}", r.output);
@@ -1430,6 +1786,7 @@ mod permission_tests {
                 "{}".into(),
                 declaring(&["PATH"]).to_string(),
                 Some(CLI_CONSTRAINTS.into()),
+                None,
             )
             .unwrap();
         assert!(!r.success);
@@ -1489,5 +1846,422 @@ mod permission_tests {
         let (r, _) = algebra_with_env(entries, borrower, &env_of(&[("T93_KEY", SENTINEL)]));
         assert!(!r.success);
         assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2);
+    }
+}
+
+#[cfg(test)]
+mod memory_tests {
+    //! AgentMemory through the binding the CLI calls.
+
+    use super::*;
+
+    const AGENT: &str = "agent-napi";
+
+    fn v2(n: u8) -> String {
+        format!("v2:{}", hex::encode([n; 32]))
+    }
+
+    /// A binding in a fresh project directory with telemetry on, whatever
+    /// this machine's DO_NOT_TRACK / ROTIFER_TELEMETRY say.
+    fn binding_in() -> (PlaygroundBinding, std::path::PathBuf) {
+        binding_with_env(&[])
+    }
+
+    fn binding_with_env(vars: &[(&str, &str)]) -> (PlaygroundBinding, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("rotifer-napi-mem-{}", uuid::Uuid::new_v4()));
+        let vars: Vec<(String, String)> = vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let b = PlaygroundBinding::open(dir.to_string_lossy().into_owned(), move |name| {
+            vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
+        })
+        .unwrap();
+        (b, dir)
+    }
+
+    fn native(domain: &str) -> serde_json::Value {
+        serde_json::json!({
+            "domain": domain,
+            "inputSchema": {"type": "object"},
+            "outputSchema": {},
+            "version": "0.1.0",
+            "fidelity": "Native",
+        })
+    }
+
+    /// `express` makes one host call with `request` and returns its response
+    /// buffer (zeroed memory, so NUL-terminated). Import 0 is readMemory,
+    /// 1 writeMemory.
+    fn guest(import: u32, request: &str) -> Vec<u8> {
+        use wasm_encoder::*;
+        let mut module = Module::new();
+        let mut types = TypeSection::new();
+        types.ty().function(vec![ValType::I32; 4], vec![ValType::I32]);
+        types.ty().function(vec![ValType::I32; 2], vec![ValType::I32]);
+        module.section(&types);
+        let mut imports = ImportSection::new();
+        imports.import("rotifer", "readMemory", EntityType::Function(0));
+        imports.import("rotifer", "writeMemory", EntityType::Function(0));
+        module.section(&imports);
+        let mut functions = FunctionSection::new();
+        functions.function(1);
+        module.section(&functions);
+        let mut memories = MemorySection::new();
+        memories.memory(MemoryType { minimum: 1, maximum: None, memory64: false, shared: false, page_size_log2: None });
+        module.section(&memories);
+        let mut exports = ExportSection::new();
+        exports.export("express", ExportKind::Func, 2);
+        exports.export("memory", ExportKind::Memory, 0);
+        module.section(&exports);
+        let mut code = CodeSection::new();
+        let mut body = Function::new(vec![]);
+        body.instruction(&Instruction::I32Const(8192));
+        body.instruction(&Instruction::I32Const(request.len() as i32));
+        body.instruction(&Instruction::I32Const(16384));
+        body.instruction(&Instruction::I32Const(16384));
+        body.instruction(&Instruction::Call(import));
+        body.instruction(&Instruction::Drop);
+        body.instruction(&Instruction::I32Const(16384));
+        body.instruction(&Instruction::End);
+        code.function(&body);
+        module.section(&code);
+        let mut data = DataSection::new();
+        data.active(0, &ConstExpr::i32_const(8192), request.bytes());
+        module.section(&data);
+        module.finish()
+    }
+
+    const WRITE_LANG: &str = r#"{"key":"lang","value":"emgtQ04=","category":"PREFERENCE"}"#;
+    const READ_LANG: &str = r#"{"key":"lang"}"#;
+
+    /// The constraints the CLI passes (`DEFAULT_SANDBOX_CONSTRAINTS_JSON`,
+    /// 5e8 fuel). Without them the binding falls back to 1e6, which cannot
+    /// pay for one memory call.
+    fn cli_constraints() -> Option<String> {
+        Some(serde_json::to_string(&ConstraintSet { max_fuel: 500_000_000, ..Default::default() }).unwrap())
+    }
+
+    fn ctx(agent: &str, gene: Option<&str>) -> Option<String> {
+        Some(match gene {
+            Some(g) => serde_json::json!({"agentId": agent, "geneId": g}).to_string(),
+            None => serde_json::json!({"agentId": agent}).to_string(),
+        })
+    }
+
+    #[test]
+    fn create_get_set_quota_and_export() {
+        let (b, dir) = binding_in();
+        let m = b.memory_create(AGENT.into(), None).unwrap();
+        assert_eq!(m["quota"], 10 * 1024 * 1024);
+        assert_eq!(m["agentId"], AGENT);
+        assert!(b.memory_create(AGENT.into(), Some(10.0)).unwrap_err().reason.starts_with("MEMORY_INVALID_INPUT: "));
+        for bad in [0.0, -1.0, 1.5, f64::NAN] {
+            assert!(b.memory_create("other".into(), Some(bad)).is_err(), "{bad}");
+        }
+        b.memory_set_quota(AGENT.into(), 4096.0).unwrap();
+        assert_eq!(b.memory_get(AGENT.into()).unwrap()["quota"], 4096);
+        assert!(b.memory_get("nobody".into()).unwrap_err().reason.starts_with("MEMORY_NOT_FOUND: "));
+
+        b.memory_write(AGENT.into(), v2(1), "text.x".into(), WRITE_LANG.into()).unwrap();
+        b.memory_write(AGENT.into(), v2(1), "text.x".into(), r#"{"key":"tmp","value":"","category":"CACHE"}"#.into())
+            .unwrap();
+        assert_eq!(b.memory_export(AGENT.into(), None).unwrap()["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(b.memory_export(AGENT.into(), Some(true)).unwrap()["entries"].as_array().unwrap().len(), 2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_four_gene_calls_and_their_errors() {
+        let (b, dir) = binding_in();
+        let w = b.memory_write(AGENT.into(), v2(1), "text.x".into(), WRITE_LANG.into()).unwrap();
+        assert_eq!(w["createdBy"], v2(1));
+        let r = b.memory_read(AGENT.into(), v2(2), "text.x".into(), READ_LANG.into()).unwrap();
+        assert_eq!(r["lastAccessedBy"], v2(2));
+        assert_eq!(b.memory_read(AGENT.into(), v2(2), "text.x".into(), r#"{"key":"nope"}"#.into()).unwrap(), serde_json::Value::Null);
+        let q = b.memory_query(AGENT.into(), v2(2), "text.x".into(), "{}".into()).unwrap();
+        assert_eq!(q.as_array().unwrap().len(), 1);
+
+        let denied = b.memory_read(AGENT.into(), v2(3), "search.web".into(), READ_LANG.into()).unwrap_err();
+        assert!(denied.reason.starts_with("MEMORY_ACCESS_DENIED: "), "{}", denied.reason);
+        let anonymous = b.memory_read(AGENT.into(), "not-v2".into(), "text.x".into(), READ_LANG.into()).unwrap_err();
+        assert!(anonymous.reason.starts_with("MEMORY_ACCESS_DENIED: "));
+        let invalid = b.memory_write(AGENT.into(), v2(1), "text.x".into(), "{".into()).unwrap_err();
+        assert!(invalid.reason.starts_with("MEMORY_INVALID_INPUT: "));
+
+        assert_eq!(b.memory_delete(AGENT.into(), v2(1), "text.x".into(), READ_LANG.into()).unwrap(), serde_json::Value::Null);
+        let gone = b.memory_delete(AGENT.into(), v2(1), "text.x".into(), READ_LANG.into()).unwrap_err();
+        assert!(gone.reason.starts_with("MEMORY_NOT_FOUND: "));
+
+        // Lifecycle lines and the denial event land in the project's .rotifer/.
+        let audit = std::fs::read_to_string(dir.join(".rotifer").join("audit.jsonl")).unwrap();
+        assert!(audit.lines().any(|l| l.contains("\"action\":\"delete\"")));
+        let telemetry = std::fs::read_to_string(dir.join(".rotifer").join("telemetry.jsonl")).unwrap();
+        assert!(telemetry.contains("MEMORY_ACCESS_DENIED"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn execute_gene_links_memory_only_with_a_memory_context() {
+        let (b, dir) = binding_in();
+        let run = |context: Option<String>| {
+            b.execute_gene(
+                Buffer::from(guest(1, WRITE_LANG)),
+                "{}".into(),
+                native("text.x").to_string(),
+                cli_constraints(),
+                context,
+            )
+            .unwrap()
+        };
+
+        // An old-style call (no memoryContext) still runs the gene; its
+        // memory call is denied with "no agent context".
+        let without = run(None);
+        assert!(!without.success);
+        assert!(without.error_message.unwrap().contains("MEMORY_ACCESS_DENIED: no agent context"));
+        assert!(b.memory_get(AGENT.into()).is_err());
+
+        let with = run(ctx(AGENT, Some(&v2(7))));
+        assert!(with.success, "{:?}", with.error_message);
+        assert_eq!(with.output["createdBy"], v2(7));
+        assert_eq!(b.memory_get(AGENT.into()).unwrap()["entries"][0]["createdBy"], v2(7));
+
+        let bad = b.execute_gene(Buffer::from(guest(0, READ_LANG)), "{}".into(), native("text.x").to_string(), None, Some("{".into()));
+        match bad {
+            Err(e) => assert!(e.reason.starts_with("MEMORY_INVALID_INPUT: "), "{}", e.reason),
+            Ok(_) => panic!("a malformed memoryContext was accepted"),
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn execute_algebra_runs_each_gene_as_its_v2_id() {
+        let (b, dir) = binding_in();
+        let writer = [1u8; 32];
+        let reader = [2u8; 32];
+        let entries = serde_json::json!({
+            hex::encode(writer): {"wasm": guest(1, WRITE_LANG), "phenotype": native("text.x"), "v2Id": v2(1)},
+            hex::encode(reader): {"wasm": guest(0, READ_LANG), "phenotype": native("text.x"), "v2Id": v2(2)},
+        });
+        let expr = serde_json::json!({"Seq": [{"Gene": writer}, {"Gene": reader}]});
+        let r = b
+            .execute_algebra(expr.to_string(), entries.to_string(), "{}".into(), cli_constraints(), ctx(AGENT, None))
+            .unwrap();
+        assert!(r.success, "{:?}", r.error_message);
+        assert_eq!(r.output["createdBy"], v2(1));
+        assert_eq!(r.output["lastAccessedBy"], v2(2));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn memory_survives_a_new_binding_on_the_same_project() {
+        let (b, dir) = binding_in();
+        b.memory_write(AGENT.into(), v2(1), "text.x".into(), WRITE_LANG.into()).unwrap();
+        drop(b);
+        let again = PlaygroundBinding::new(dir.to_string_lossy().into_owned()).unwrap();
+        let r = again.memory_read(AGENT.into(), v2(1), "text.x".into(), READ_LANG.into()).unwrap();
+        assert_eq!(r["value"], "emgtQ04=");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn export_then_import_round_trips_through_json() {
+        let (b, dir) = binding_in();
+        b.memory_create(AGENT.into(), Some(4096.0)).unwrap();
+        b.memory_write(AGENT.into(), v2(1), "text.x".into(), WRITE_LANG.into()).unwrap();
+        b.memory_write(
+            AGENT.into(),
+            v2(1),
+            "text.x".into(),
+            r#"{"key":"tmp","value":"AA==","category":"CACHE"}"#.into(),
+        )
+        .unwrap();
+        let bundle = b.memory_export(AGENT.into(), None).unwrap();
+
+        let (target, target_dir) = binding_in();
+        let options = serde_json::json!({"creatorDomains": {v2(1): "text.x"}}).to_string();
+        let imported = target.memory_import("agent-new".into(), bundle.to_string(), Some(options)).unwrap();
+        assert_eq!(imported["agentId"], "agent-new");
+        assert_eq!(imported["quota"], 4096);
+        let entries = imported["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1, "CACHE is dropped");
+        let (got, want) = (&entries[0], &bundle["entries"][0]);
+        for field in ["category", "key", "value", "createdBy", "lastAccessedBy", "createdAt", "updatedAt", "accessPolicy", "retentionPolicy"] {
+            assert_eq!(got[field], want[field], "{field}");
+        }
+        assert_ne!(got["entryId"], want["entryId"]);
+        // The creator (absent from the new agent) keeps SAME_DOMAIN access via its mapped domain.
+        let r = target.memory_read("agent-new".into(), v2(2), "text.x".into(), READ_LANG.into()).unwrap();
+        assert_eq!(r["value"], "emgtQ04=");
+
+        let refused = target.memory_import("agent-new".into(), bundle.to_string(), None).unwrap_err();
+        assert!(refused.reason.starts_with("MEMORY_INVALID_INPUT: "), "{}", refused.reason);
+        let bad = target.memory_import("x".into(), "{}".into(), None).unwrap_err();
+        assert!(bad.reason.starts_with("MEMORY_INVALID_INPUT: "));
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(target_dir).unwrap();
+    }
+
+    #[test]
+    fn size_limits_hold_through_the_binding() {
+        use base64::Engine as _;
+        let (b, dir) = binding_in();
+        b.memory_create(AGENT.into(), Some(20.0 * 1024.0 * 1024.0)).unwrap();
+        let write = |key: &str, n: usize| {
+            b.memory_write(
+                AGENT.into(),
+                v2(1),
+                "text.x".into(),
+                format!(
+                    r#"{{"key":"{key}","value":"{}","category":"CACHE"}}"#,
+                    base64::engine::general_purpose::STANDARD.encode(vec![5u8; n])
+                ),
+            )
+        };
+        const MIB: usize = 1024 * 1024;
+        write("at", MIB).unwrap();
+        let over = write("over", MIB + 1).unwrap_err();
+        assert!(over.reason.starts_with("MEMORY_INVALID_INPUT: "), "{}", over.reason);
+        for i in 0..4 {
+            write(&format!("big{i}"), MIB).unwrap();
+        }
+        let big = b.memory_query(AGENT.into(), v2(1), "text.x".into(), "{}".into()).unwrap_err();
+        assert!(
+            big.reason.starts_with("MEMORY_INVALID_INPUT: ")
+                && big.reason.contains("result too large; lower limit or narrow the filter"),
+            "{}",
+            big.reason
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_binding_honours_the_telemetry_opt_out_but_always_audits() {
+        // DO_NOT_TRACK and ROTIFER_TELEMETRY, as the CLI reads them.
+        for (vars, telemetry) in [(&[][..], true), (&[("ROTIFER_TELEMETRY", "0")][..], false), (&[("DO_NOT_TRACK", "1")][..], false)] {
+            let (b, dir) = binding_with_env(vars);
+            b.memory_write(AGENT.into(), v2(1), "text.x".into(), WRITE_LANG.into()).unwrap();
+            assert!(b.memory_read(AGENT.into(), v2(3), "search.web".into(), READ_LANG.into()).is_err());
+            let rotifer = dir.join(".rotifer");
+            let audit = std::fs::read_to_string(rotifer.join("audit.jsonl")).unwrap();
+            assert!(audit.contains("\"action\":\"access_denied\""), "{vars:?}");
+            assert_eq!(rotifer.join("telemetry.jsonl").exists(), telemetry, "{vars:?}");
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_deployer_deletes_through_the_binding() {
+        // `rotifer agent memory delete <agent> (--key K | --category C)`.
+        let (b, dir) = binding_in();
+        b.memory_write(AGENT.into(), v2(1), "text.x".into(), WRITE_LANG.into()).unwrap();
+        b.memory_write(AGENT.into(), v2(1), "text.x".into(), r#"{"key":"tmp","value":"","category":"CACHE"}"#.into())
+            .unwrap();
+        assert_eq!(b.memory_admin_delete(AGENT.into(), r#"{"key":"lang"}"#.into()).unwrap(), 1.0);
+        assert_eq!(b.memory_admin_delete(AGENT.into(), r#"{"category":"CACHE"}"#.into()).unwrap(), 1.0);
+        assert_eq!(b.memory_get(AGENT.into()).unwrap()["entries"].as_array().unwrap().len(), 0);
+        for bad in ["{}", r#"{"key":"k","category":"CACHE"}"#, r#"{"category":"cache"}"#, r#"{"keyPrefix":"k"}"#, r#"{"key":""}"#, "[]", "not json"] {
+            let err = b.memory_admin_delete(AGENT.into(), bad.into()).unwrap_err();
+            assert!(err.reason.starts_with("MEMORY_INVALID_INPUT: "), "{bad}: {}", err.reason);
+        }
+        let gone = b.memory_admin_delete(AGENT.into(), r#"{"key":"lang"}"#.into()).unwrap_err();
+        assert!(gone.reason.starts_with("MEMORY_NOT_FOUND: "), "{}", gone.reason);
+        let audit = std::fs::read_to_string(dir.join(".rotifer").join("audit.jsonl")).unwrap();
+        assert_eq!(audit.lines().filter(|l| l.contains("\"actor\":\"deployer\"")).count(), 2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn denials_are_recorded_through_the_binding() {
+        // Inside an agent a denial is audit + telemetry, a gene
+        // with no usable v2 id included. Outside any agent (no
+        // memoryContext) it is telemetry only: no agent to audit it under.
+        let (b, dir) = binding_in();
+        let rotifer = dir.join(".rotifer");
+        b.memory_read(AGENT.into(), "not-v2".into(), "text.x".into(), READ_LANG.into()).unwrap_err();
+        let audit = std::fs::read_to_string(rotifer.join("audit.jsonl")).unwrap();
+        let line: serde_json::Value = serde_json::from_str(audit.lines().last().unwrap()).unwrap();
+        assert_eq!((line["action"].as_str(), line["agentId"].as_str()), (Some("access_denied"), Some(AGENT)));
+        assert!(line["geneId"].is_null());
+
+        let audit_before = std::fs::read_to_string(rotifer.join("audit.jsonl")).unwrap();
+        let telemetry_before = std::fs::read_to_string(rotifer.join("telemetry.jsonl")).unwrap().lines().count();
+        let run = b
+            .execute_gene(Buffer::from(guest(1, WRITE_LANG)), "{}".into(), native("text.x").to_string(), cli_constraints(), None)
+            .unwrap();
+        assert!(run.error_message.unwrap().contains("MEMORY_ACCESS_DENIED: no agent context"));
+        let telemetry = std::fs::read_to_string(rotifer.join("telemetry.jsonl")).unwrap();
+        assert_eq!(telemetry.lines().count(), telemetry_before + 1);
+        let event: serde_json::Value = serde_json::from_str(telemetry.lines().last().unwrap()).unwrap();
+        assert!(event["metadata"]["agentId"].is_null());
+        let audit_after = std::fs::read_to_string(rotifer.join("audit.jsonl")).unwrap();
+        assert!(
+            !audit_after[audit_before.len()..].contains("agent_memory"),
+            "a run outside an agent wrote a memory audit line"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_data_policy_retention_is_set_through_the_binding() {
+        // Entries without their own retentionPolicy expire by
+        // it. Expiry itself is tested in rotifer-core with an injected clock.
+        let (b, dir) = binding_in();
+        assert!(b.memory_set_data_policy_retention(AGENT.into(), Some(1.0)).unwrap_err().reason.starts_with("MEMORY_NOT_FOUND: "));
+        b.memory_create(AGENT.into(), None).unwrap();
+        b.memory_set_data_policy_retention(AGENT.into(), Some(30.0)).unwrap();
+        b.memory_set_data_policy_retention(AGENT.into(), None).unwrap();
+        for bad in [0.0, -1.0, 1.5, 2147483648.0, f64::NAN] {
+            let err = b.memory_set_data_policy_retention(AGENT.into(), Some(bad)).unwrap_err();
+            assert!(err.reason.starts_with("MEMORY_INVALID_INPUT: "), "{bad}: {}", err.reason);
+        }
+        let audit = std::fs::read_to_string(dir.join(".rotifer").join("audit.jsonl")).unwrap();
+        assert_eq!(audit.lines().filter(|l| l.contains("\"action\":\"retention_changed\"")).count(), 2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(feature = "test-clock")]
+    #[test]
+    fn the_test_clock_reaches_an_expiry_through_the_binding() {
+        // `cargo test -p rotifer-napi --features test-clock`.
+        let (b, dir) = binding_in();
+        b.memory_test_set_clock(1_761_800_000_000.0).unwrap();
+        let day = r#"{"maxRetentionDays":1,"autoDeleteOnTermination":false,"anonymizationSupported":false}"#;
+        b.memory_write(AGENT.into(), v2(1), "text.x".into(), format!(r#"{{"key":"lang","value":"","category":"CONTEXT","retentionPolicy":{day}}}"#))
+            .unwrap();
+        b.memory_test_advance_clock(86_400_000.0 - 1000.0).unwrap();
+        assert!(!b.memory_read(AGENT.into(), v2(1), "text.x".into(), READ_LANG.into()).unwrap().is_null());
+        b.memory_test_advance_clock(1000.0).unwrap();
+        assert!(b.memory_read(AGENT.into(), v2(1), "text.x".into(), READ_LANG.into()).unwrap().is_null());
+        let audit = std::fs::read_to_string(dir.join(".rotifer").join("audit.jsonl")).unwrap();
+        assert_eq!(audit.lines().filter(|l| l.contains("\"action\":\"expired\"")).count(), 1);
+        for bad in [f64::NAN, 1.5, -1.0] {
+            assert!(b.memory_test_set_clock(bad).is_err(), "{bad}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn retention_policy_is_validated_strictly_through_the_binding() {
+        // The §30.2 shape exactly, on write and on import.
+        let (b, dir) = binding_in();
+        let write = |retention: &str| {
+            b.memory_write(
+                AGENT.into(),
+                v2(1),
+                "text.x".into(),
+                format!(r#"{{"key":"k","value":"","category":"CONTEXT","retentionPolicy":{retention}}}"#),
+            )
+        };
+        let full = r#"{"maxRetentionDays":7,"autoDeleteOnTermination":true,"anonymizationSupported":false}"#;
+        assert_eq!(write(full).unwrap()["retentionPolicy"]["maxRetentionDays"], 7);
+        for bad in [r#"{"maxRetentionDays":7}"#, r#"{"maxRetentionDays":0,"autoDeleteOnTermination":true,"anonymizationSupported":false}"#] {
+            let err = write(bad).unwrap_err();
+            assert!(err.reason.starts_with("MEMORY_INVALID_INPUT: "), "{bad}: {}", err.reason);
+        }
+
+        let mut bundle = b.memory_export(AGENT.into(), None).unwrap();
+        bundle["entries"][0]["retentionPolicy"] = serde_json::json!({"maxRetentionDays": 7});
+        let err = b.memory_import("agent-new".into(), bundle.to_string(), None).unwrap_err();
+        assert!(err.reason.starts_with("MEMORY_INVALID_INPUT: "), "{}", err.reason);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

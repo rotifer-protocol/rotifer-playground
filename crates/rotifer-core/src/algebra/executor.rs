@@ -178,6 +178,25 @@ impl<'a> AlgebraExecutor<'a> {
             ))
         })?;
 
+        // The running gene's content-derived id travels with its context, so
+        // its AgentMemory calls record it as createdBy / lastAccessedBy
+        // (§38.2). Whatever id the incoming context carried is removed first:
+        // a gene without an id of its own is denied memory, never run as
+        // whichever gene the context named.
+        let mut extensions = context.binding_extensions.clone().unwrap_or_default();
+        extensions.remove(crate::sandbox::CALLER_GENE_ID_EXTENSION);
+        if let Some(v2) = self.gene_ids.get(gene_id) {
+            extensions.insert(
+                crate::sandbox::CALLER_GENE_ID_EXTENSION.to_string(),
+                serde_json::Value::String(v2.clone()),
+            );
+        }
+        let with_caller = Context {
+            binding_extensions: (!extensions.is_empty()).then_some(extensions),
+            ..context.clone()
+        };
+        let context = &with_caller;
+
         match &gene.wasm_bytes {
             // execute_gated, not execute: a gene running as one step of a genome must
             // clear the same L0 gate it clears when run on its own. Using the ungated

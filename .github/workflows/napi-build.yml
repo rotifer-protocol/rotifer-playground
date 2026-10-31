@@ -19,11 +19,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
             artifact: index.darwin-arm64.node
             npm-dir: darwin-arm64
-          - os: macos-14
+          - os: macos-15
             target: x86_64-apple-darwin
             artifact: index.darwin-x64.node
             npm-dir: darwin-x64

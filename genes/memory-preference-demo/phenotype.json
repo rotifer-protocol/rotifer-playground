@@ -1,0 +1,37 @@
+{
+  "domain": "memory.demo",
+  "description": "Remembers a user's stated preferences (language, tone) across runs in AgentMemory, category PREFERENCE. Needs to run inside an agent.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "user": { "type": "string", "description": "Who the preferences belong to" },
+      "set": {
+        "type": "object",
+        "properties": {
+          "language": { "type": "string" },
+          "tone": { "type": "string" }
+        }
+      }
+    },
+    "required": ["user"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "user": { "type": "string" },
+      "preferences": {
+        "type": "object",
+        "properties": {
+          "language": { "type": "string" },
+          "tone": { "type": "string" }
+        }
+      },
+      "updated": { "type": "array", "items": { "type": "string" } }
+    },
+    "required": ["user", "preferences", "updated"]
+  },
+  "version": "0.1.0",
+  "fidelity": "Wrapped",
+  "transparency": "OPEN",
+  "sources": ["index.ts"]
+}

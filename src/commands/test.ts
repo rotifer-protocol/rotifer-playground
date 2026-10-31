@@ -16,6 +16,8 @@ import {
   constraintsForFuel,
 } from "../utils/run-fuel-ladder.js";
 import { createGatewayFetch } from "../runtime/network-gateway.js";
+import { MemoryError } from "../memory/index.js";
+import { scratchGeneMemory } from "../memory/host.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { loadTestSuite } from "../testsuite/load.js";
 import { runT1 } from "../testsuite/run.js";
@@ -171,7 +173,11 @@ export const testCommand = new Command("test")
     if (hasIrWasm && binding) {
       // WASM sandbox path — preferred for compiled genes
       display.info("Test 6: WASM Sandbox — executeGene() Execution");
+      // A gene that uses agent memory gets a throwaway one (as on the Node path below).
+      let scratch: ReturnType<typeof scratchGeneMemory> | null = null;
       try {
+        scratch = scratchGeneMemory({ genesRoot: join(root, config.genes_dir), geneName, phenotype });
+        const { wasm } = scratch;
         const irWasm = readFileSync(irWasmPath) as Buffer;
         const { irHash: _strip, ...phenotypeForExec } = phenotype;
         // Same fuel ladder as arena submit: a run that dies of fuel alone
@@ -179,11 +185,12 @@ export const testCommand = new Command("test")
         // about what a compute-heavy Gene is.
         let result!: ReturnType<typeof binding.executeGene>;
         for (let rung = 0; rung < FUEL_LADDER.length; rung++) {
-          result = binding.executeGene(
+          result = (wasm?.binding ?? binding).executeGene(
             irWasm,
             JSON.stringify(testInput),
             JSON.stringify(phenotypeForExec),
             constraintsForFuel(FUEL_LADDER[rung]),
+            wasm?.geneContext(geneName),
           );
           if (result.success) break;
           if (classifyRunFailure(result.errorMessage) !== "fuel-exhausted") break;
@@ -233,6 +240,8 @@ export const testCommand = new Command("test")
       } catch (err: any) {
         failed++;
         display.error("  WASM sandbox execution error: " + err.message);
+      } finally {
+        scratch?.dispose();
       }
     } else if (srcFile) {
       // Node.js fallback path — for uncompiled (Wrapped) genes
@@ -264,6 +273,9 @@ export const testCommand = new Command("test")
         display.error("  L0 gate blocked: " + l0.detail);
         display.info("  The Node.js fallback would run this gene with full host privileges.");
       } else {
+      // ctx.memory is never undefined: a gene that uses agent
+      // memory gets a throwaway one, removed when the test is done.
+      let scratch: ReturnType<typeof scratchGeneMemory> | null = null;
       try {
         const absPath = resolve(geneDir, srcFile);
         const mod = await import(pathToFileURL(absPath).href);
@@ -275,14 +287,16 @@ export const testCommand = new Command("test")
           let result: unknown;
           let gatewayStats: { totalRequests: number; totalBytes: number } | null = null;
 
+          scratch = scratchGeneMemory({ genesRoot: join(root, config.genes_dir), geneName, phenotype });
+          const { memory } = scratch;
           const start = performance.now();
           if (isHybrid) {
             const { gatewayFetch, gateway } = createGatewayFetch(phenotype.network);
             display.info(`  Hybrid Gene — gateway active (domains: ${phenotype.network.allowedDomains?.join(", ") || "none"})`);
-            result = await mod.express(testInput, { gatewayFetch });
+            result = await mod.express(testInput, { gatewayFetch, memory });
             gatewayStats = gateway.stats;
           } else {
-            result = await mod.express(testInput);
+            result = await mod.express(testInput, { memory });
           }
           const elapsed = performance.now() - start;
 
@@ -321,7 +335,10 @@ export const testCommand = new Command("test")
         }
       } catch (err: any) {
         failed++;
-        display.error("  express() threw an error: " + err.message);
+        const code = err instanceof MemoryError ? `${err.code}: ` : "";
+        display.error("  express() threw an error: " + code + err.message);
+      } finally {
+        scratch?.dispose();
       }
       }
       }
@@ -510,19 +527,26 @@ export const testCommand = new Command("test")
       // would leave an author unable to see locally what publish is about to
       // refuse — and the gate's whole exit is "run rotifer test".
       display.info("T1 TestSuite (spec §47.5, via Node)");
-      const loaded = await loadNodeRunner(resolve(geneDir, srcFile), evaluateL0(binding, phenotype));
-      if ("refusal" in loaded) {
-        failed++;
-        display.error("  could not run the gene: " + loaded.refusal);
-      } else {
-        reportT1(
-          runT1(suiteLoad.suite, {
-            inputSchema: (phenotype.inputSchema as Record<string, unknown>) ?? null,
-            outputSchema: (phenotype.outputSchema as Record<string, unknown>) ?? null,
-            run: loaded.runner,
-            fidelity: phenotype.fidelity,
-          }),
-        );
+      // One throwaway agent memory for the whole suite: a later case can read
+      // what an earlier one stored, as across runs of one agent.
+      const scratch = scratchGeneMemory({ genesRoot: join(root, config.genes_dir), geneName, phenotype });
+      try {
+        const loaded = await loadNodeRunner(resolve(geneDir, srcFile), evaluateL0(binding, phenotype), { memory: scratch.memory });
+        if ("refusal" in loaded) {
+          failed++;
+          display.error("  could not run the gene: " + loaded.refusal);
+        } else {
+          reportT1(
+            runT1(suiteLoad.suite, {
+              inputSchema: (phenotype.inputSchema as Record<string, unknown>) ?? null,
+              outputSchema: (phenotype.outputSchema as Record<string, unknown>) ?? null,
+              run: loaded.runner,
+              fidelity: phenotype.fidelity,
+            }),
+          );
+        }
+      } finally {
+        scratch.dispose();
       }
     } else if (!hasIrWasm || !binding) {
       // A suite exists but nothing can run it. That is a skip, not a pass —
@@ -533,13 +557,16 @@ export const testCommand = new Command("test")
       display.info("T1 TestSuite (spec §47.5)");
       const irWasmForT1 = readFileSync(irWasmPath) as Buffer;
       const { irHash: _t1strip, ...phenotypeForT1 } = phenotype;
+      // As on the Node path: one throwaway agent memory for the suite.
+      const t1Memory = scratchGeneMemory({ genesRoot: join(root, config.genes_dir), geneName, phenotype });
       const runOne = (input: unknown): RunOutcome => {
         try {
-          const r = binding.executeGene(
+          const r = (t1Memory.wasm?.binding ?? binding).executeGene(
             irWasmForT1,
             JSON.stringify(input),
             JSON.stringify(phenotypeForT1),
             constraintsForFuel(FUEL_LADDER[0]),
+            t1Memory.wasm?.geneContext(geneName),
           );
           // The same reading as `rotifer publish`: an ADR-334 refusal is a
           // refusal, anything else is a crash (see outcomeFromSandbox).
@@ -549,12 +576,17 @@ export const testCommand = new Command("test")
         }
       };
 
-      const report = runT1(suiteLoad.suite, {
-        inputSchema: (phenotype.inputSchema as Record<string, unknown>) ?? null,
-        outputSchema: (phenotype.outputSchema as Record<string, unknown>) ?? null,
-        run: runOne,
-        fidelity: phenotype.fidelity,
-      });
+      let report: ReturnType<typeof runT1>;
+      try {
+        report = runT1(suiteLoad.suite, {
+          inputSchema: (phenotype.inputSchema as Record<string, unknown>) ?? null,
+          outputSchema: (phenotype.outputSchema as Record<string, unknown>) ?? null,
+          run: runOne,
+          fidelity: phenotype.fidelity,
+        });
+      } finally {
+        t1Memory.dispose();
+      }
 
       for (const r of report.results) {
         if (r.passed) {

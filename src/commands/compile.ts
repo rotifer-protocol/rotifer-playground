@@ -13,6 +13,7 @@ import { createdAtProblem, toRustPhenotype } from "../utils/rust-phenotype.js";
 import { validateLlmNativePhenotype } from "../utils/phenotype-validator.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { checkNativeArtifact } from "../utils/artifact-consistency.js";
+import { showContentHash, showGeneIdV2 } from "../utils/gene-id-display.js";
 
 export const compileCommand = new Command("compile")
   .description("Compile a gene to Rotifer IR (WASM)")
@@ -103,7 +104,8 @@ export const compileCommand = new Command("compile")
 
     if (options.check) {
       display.success(`Validation passed for '${geneName}'`);
-      display.keyValue("Gene ID", c.warn(geneId));
+      showGeneIdV2(geneDir);
+      showContentHash(phenotype);
       return;
     }
 
@@ -145,7 +147,8 @@ export const compileCommand = new Command("compile")
       );
 
       display.success(`Gene '${geneName}' validated (Hybrid fidelity)`);
-      display.keyValue("Gene ID", c.warn(geneId));
+      showGeneIdV2(geneDir);
+      showContentHash(phenotype);
       display.keyValue("Domain", phenotype.domain);
       display.keyValue("Fidelity", "Hybrid");
       display.keyValue("Gateway domains", phenotype.network?.allowedDomains?.join(", ") || "(none)");
@@ -252,7 +255,8 @@ export const compileCommand = new Command("compile")
       );
 
       display.success(`Gene '${geneName}' validated (Wrapped fidelity)`);
-      display.keyValue("Gene ID", c.warn(geneId));
+      showGeneIdV2(geneDir);
+      showContentHash(phenotype);
       display.keyValue("Domain", phenotype.domain);
       display.keyValue("Fidelity", "Wrapped");
       return;
@@ -340,7 +344,8 @@ export const compileCommand = new Command("compile")
 
     console.log();
     display.success(`Gene '${geneName}' compiled to Rotifer IR`);
-    display.keyValue("Gene ID", c.warn(geneId));
+    showGeneIdV2(geneDir);
+    showContentHash(phenotype);
     display.keyValue("Domain", phenotype.domain);
     display.keyValue("Fidelity", phenotype.fidelity);
     if (phenotype.network) {

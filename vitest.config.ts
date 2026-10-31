@@ -16,6 +16,7 @@ export default defineConfig({
       reporter: ["text", "json-summary", "lcov"],
       include: [
         "src/cloud/**/*.ts",
+        "src/memory/**/*.ts",
         "src/publish/**/*.ts",
         "src/runtime/**/*.ts",
         "src/scanner/**/*.ts",
@@ -27,6 +28,14 @@ export default defineConfig({
         functions: 60,
         branches: 55,
         statements: 60,
+        // AgentMemory (v0.9.4) on its own as well: inside the aggregate a
+        // regression there would be diluted by everything else.
+        "src/memory/**/*.ts": {
+          lines: 60,
+          functions: 60,
+          branches: 55,
+          statements: 60,
+        },
       },
     },
   },

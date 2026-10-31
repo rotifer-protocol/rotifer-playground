@@ -1,0 +1,92 @@
+{
+  "testCases": [
+    {
+      "input": {
+        "topic": "suite-travel",
+        "note": "prefers trains"
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "topic",
+          "notes",
+          "topics"
+        ],
+        "properties": {
+          "topic": {
+            "const": "suite-travel"
+          },
+          "notes": {
+            "const": [
+              "prefers trains"
+            ]
+          },
+          "topics": {
+            "contains": {
+              "const": "suite-travel"
+            }
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "topic": "suite-travel",
+        "note": "window seat"
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "topic",
+          "notes",
+          "topics"
+        ],
+        "properties": {
+          "notes": {
+            "const": [
+              "prefers trains",
+              "window seat"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "topic": "suite-travel"
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "topic",
+          "notes",
+          "topics"
+        ],
+        "properties": {
+          "notes": {
+            "const": [
+              "prefers trains",
+              "window seat"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "input": {}
+    },
+    {
+      "input": {
+        "topic": [
+          "not",
+          "a",
+          "string"
+        ]
+      }
+    }
+  ],
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  }
+}

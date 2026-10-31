@@ -29,9 +29,7 @@ export const NATIVE_MEMORY_AVAILABLE = (() => {
 
 /** describe() that runs with the native store, is skipped without it, and fails without it when required. */
 export function describeWithNativeMemory(name: string, body: () => void): void {
-  if (NATIVE_MEMORY_AVAILABLE) {
-    describe(name, body);
-  } else if (NATIVE_MEMORY_REQUIRED) {
+  if (!NATIVE_MEMORY_AVAILABLE && NATIVE_MEMORY_REQUIRED) {
     describe(name, () => {
       it("needs rotifer-napi with AgentMemory (ROTIFER_REQUIRE_NATIVE_MEMORY=1)", () => {
         expect.fail(
@@ -39,7 +37,11 @@ export function describeWithNativeMemory(name: string, body: () => void): void {
         );
       });
     });
-  } else {
-    describe.skip(`${name} (skipped: the loaded rotifer native addon has no AgentMemory)`, body);
+    return;
   }
+  // A conditional skip on a runtime precondition — the addon's memory functions.
+  describe.skipIf(!NATIVE_MEMORY_AVAILABLE)(
+    NATIVE_MEMORY_AVAILABLE ? name : `${name} (skipped: the loaded rotifer native addon has no AgentMemory)`,
+    body,
+  );
 }

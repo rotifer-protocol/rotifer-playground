@@ -1,6 +1,6 @@
 /**
- * loadNodeRunner hands express() a context whose memory is never undefined
- *: the caller's memory when it has one, otherwise
+ * loadNodeRunner hands express() a context whose memory is never undefined:
+ * the caller's memory when it has one, otherwise
  * one that refuses every call with "no agent context" — a refusal the T1
  * runner reads as a crash of that case, not a TypeError on `undefined`.
  */

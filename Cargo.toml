@@ -19,7 +19,7 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 # compilation cache, and that feature alone pulls in zstd (RUSTSEC-2026-0391,
 # -0398, -0403, -0410). The rest of the list is wasmtime 48's `default`
 # unchanged; re-check it when upgrading wasmtime.
-wasmtime = { version = "48.0.7", default-features = false, features = [
+wasmtime = { version = "48.0.8", default-features = false, features = [
     "anyhow", "async", "backtrace", "gc", "gc-copying", "gc-drc", "gc-null",
     "wat", "profiling", "parallel-compilation", "cranelift", "pooling-allocator",
     "demangle", "addr2line", "coredump", "debug-builtins", "runtime",

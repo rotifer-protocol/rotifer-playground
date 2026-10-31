@@ -148,7 +148,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14]
+        # macos-15, not macos-14: GitHub retires the macOS 14 image on
+        # 2026-11-02 and fails its jobs during scheduled brownouts before
+        # that (actions/runner-images#13518). Pinned rather than
+        # macos-latest so the image changes only when this line does.
+        os: [ubuntu-latest, macos-15]
         # Node floor is 22.18 (#269/#270): genes are TypeScript and the CLI
         # imports them from source, which needs built-in type stripping. A
         # Node 20 job can only ever exercise the .js fixtures, so it guards
@@ -301,13 +305,13 @@ jobs:
       - name: Cargo clippy (all crates)
         run: cargo clippy --workspace -- -D warnings
 
-  # release.yml runs rotifer-core's tests on macos-14 as well, after the tag
+  # release.yml runs rotifer-core's tests on macos-15 as well, after the tag
   # is pushed; without this job a macOS-only failure first shows up there and
   # holds the publish (0.32.0, Release run 40650688154). Same command, so the
   # release has nothing left to find.
   rust-test-macos:
-    name: Rust Test (macos-14)
-    runs-on: macos-14
+    name: Rust Test (macos-15)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 

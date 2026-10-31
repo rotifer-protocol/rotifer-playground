@@ -5,12 +5,21 @@
 
 mod wasmtime_sandbox;
 pub mod hybrid;
+pub mod memory_calls;
 #[cfg(test)]
 mod hybrid_wasm_tests;
 #[cfg(test)]
 mod tavily_gene_tests;
+#[cfg(test)]
+mod memory_wasm_tests;
 
 pub use wasmtime_sandbox::WasmtimeSandbox;
+pub use memory_calls::{MemoryLink, MemoryOp, ERR_MEMORY_NOT_FOUND};
+
+/// `Context.binding_extensions` key carrying the running gene's
+/// content-derived id (v2). AgentMemory records it as `createdBy` /
+/// `lastAccessedBy`; without it a gene's memory calls are denied.
+pub const CALLER_GENE_ID_EXTENSION: &str = "rotifer.callerGeneId";
 
 use crate::types::gene::Phenotype;
 use crate::types::{Context, GeneResult};

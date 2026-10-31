@@ -130,7 +130,7 @@ export function needsNetworkConfigBeforePublish(geneDir: string, fidelity: strin
  * independent cursor-agent pyramid test run, 2026-08-31, which is also why
  * this is a pure function rather than a PTY-driven E2E test: reproducing it
  * needs a real TTY, and this repo's CI matrix runs both ubuntu-latest and
- * macos-14, whose `script` binaries take incompatible arguments — a
+ * macOS, whose `script` binaries take incompatible arguments — a
  * behavioural test for a one-line data-selection bug was the wrong layer.
  *
  * The on-disk phenotype wins whenever one was actually loaded; the CLI flag

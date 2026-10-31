@@ -86,7 +86,7 @@ rotifer agent run my-auditor --input '{"source": "..."}' --json  # Machine outpu
 | `Par` | A ∥ B ∥ C | Independent analysis |
 | `Cond` | if P then A else B | Branching logic |
 | `Try` | A catch B | Graceful degradation |
-| `TryPool` | Best of {A, B, C} | Competitive selection |
+| `TryPool` | A, else B, else C (same domain) | Backups for one capability |
 
 → Want to compare performance? Try **/challenge**
 

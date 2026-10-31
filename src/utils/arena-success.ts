@@ -21,21 +21,49 @@ import Ajv, { type ValidateFunction } from "ajv";
 
 export type OutputValidator = (output: unknown) => boolean;
 
+/** null when the value conforms; otherwise the first violation, naming the field. */
+export type SchemaCheck = (value: unknown) => string | null;
+
+/**
+ * Compile one of a phenotype's schemas into a check. Returns null when the
+ * schema is absent, empty, or not compilable — the schema constrains nothing,
+ * and the caller says so if it matters. The Arena's verdict
+ * (compileOutputValidator) and `rotifer run`'s (#451) both come from here, so
+ * they cannot disagree about what violates a Gene's contract.
+ */
+export function compileSchemaCheck(schema: unknown): SchemaCheck | null {
+  if (!schema || typeof schema !== "object" || Object.keys(schema as object).length === 0) return null;
+  let validate: ValidateFunction;
+  try {
+    validate = new Ajv({ allErrors: false, strict: false }).compile(schema as object);
+  } catch {
+    return null;
+  }
+  return (value: unknown) => {
+    if (validate(value) === true) return null;
+    const err = validate.errors?.[0];
+    if (!err) return "does not match the schema";
+    const path = err.instancePath.replace(/^\//, "").replace(/\//g, ".");
+    if (err.keyword === "required") {
+      const missing = (err.params as { missingProperty?: string }).missingProperty;
+      return `${path ? path + "." : ""}${missing} is required`;
+    }
+    if (err.keyword === "additionalProperties") {
+      const extra = (err.params as { additionalProperty?: string }).additionalProperty;
+      return `${path ? path + "." : ""}${extra} is not allowed`;
+    }
+    return `${path || "(the value)"} ${err.message ?? "does not match the schema"}`;
+  };
+}
+
 /**
  * Compile a phenotype's outputSchema into a validator. Returns null when the
  * schema is absent, empty, or not compilable — in which case the caller falls
  * back to sandbox success alone, and should say so.
  */
 export function compileOutputValidator(phenotype: { outputSchema?: unknown }): OutputValidator | null {
-  const schema = phenotype.outputSchema;
-  if (!schema || typeof schema !== "object" || Object.keys(schema as object).length === 0) return null;
-  try {
-    const ajv = new Ajv({ allErrors: false, strict: false });
-    const validate: ValidateFunction = ajv.compile(schema as object);
-    return (output: unknown) => validate(output) === true;
-  } catch {
-    return null;
-  }
+  const check = compileSchemaCheck(phenotype.outputSchema);
+  return check ? (output: unknown) => check(output) === null : null;
 }
 
 export interface RunOutcome {

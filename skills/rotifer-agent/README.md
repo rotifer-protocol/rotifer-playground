@@ -37,7 +37,7 @@ Say what the Agent should do **in Rotifer terms**, and this Skill handles the ar
 | **Par(A, B)** | Parallel: run simultaneously | Independent tasks, merge results |
 | **Cond(p, A, B)** | Branch: if p then A else B | Input determines the path |
 | **Try(A, B)** | Fallback: A fails → B | Primary path unreliable |
-| **TryPool(A, B, C)** | Race: all try, first wins | Multiple equivalent implementations |
+| **TryPool(A, B, C)** | Failover: the active Gene runs; the next is tried only if it fails | Interchangeable implementations of one capability |
 
 ## Quick Start
 

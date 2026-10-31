@@ -124,6 +124,21 @@ impl WasmtimeSandbox {
         self.insecure_loopback = on;
     }
 
+    /// The run hit its wall-clock limit: the epoch deadline set in `execute`
+    /// traps with `Trap::Interrupt`. Read from the trap itself, because the
+    /// error's message is only "error while executing at wasm backtrace"
+    /// (#455) — the text check after the call never saw "interrupt", and a
+    /// timeout reached the algebra executor as EXECUTION_FAILURE.
+    fn timeout_error(&self, e: &wasmtime::Error) -> Option<SandboxError> {
+        matches!(e.downcast_ref::<wasmtime::Trap>(), Some(wasmtime::Trap::Interrupt)).then(|| {
+            SandboxError::ResourceLimitExceeded(format!(
+                "{} after {}ms",
+                super::TIMEOUT_MESSAGE_PREFIX,
+                self.constraints.max_execution_time_ms
+            ))
+        })
+    }
+
     /// Create a sandbox with protocol-default constraints (64 MB, 1M fuel, 30 s).
     pub fn with_defaults() -> Result<Self, SandboxError> {
         Self::new(ConstraintSet::default())
@@ -933,6 +948,9 @@ impl WasmtimeSandbox {
         match start_fn.call(&mut *store, ()) {
             Ok(()) => {}
             Err(e) => {
+                if let Some(timeout) = self.timeout_error(&e) {
+                    return Err(timeout);
+                }
                 let msg = e.to_string();
                 if !msg.contains("proc_exit") {
                     let fuel_remaining = store.get_fuel().unwrap_or(0);
@@ -1002,6 +1020,9 @@ impl WasmtimeSandbox {
         let result_ptr = express_fn
             .call(&mut *store, (input_ptr, input_bytes.len() as i32))
             .map_err(|e| {
+                if let Some(timeout) = self.timeout_error(&e) {
+                    return timeout;
+                }
                 let fuel_remaining = store.get_fuel().unwrap_or(0);
                 if fuel_remaining == 0 {
                     SandboxError::ResourceLimitExceeded(super::FUEL_EXHAUSTED_MESSAGE.into())
@@ -1819,5 +1840,89 @@ mod tests {
             GeneResult::Success { data, .. } => assert_eq!(data, input),
             GeneResult::Error { message, .. } => panic!("expected success: {message}"),
         }
+    }
+
+    /// A module that never returns from its entry point: `express(i32, i32)
+    /// -> i32` (the direct path) or `_start` (the WASI path), plus memory.
+    fn build_spinning_wasm(entry_is_start: bool) -> Vec<u8> {
+        use wasm_encoder::*;
+
+        let mut module = Module::new();
+        let mut types = TypeSection::new();
+        if entry_is_start {
+            types.ty().function(vec![], vec![]);
+        } else {
+            types
+                .ty()
+                .function(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        }
+        module.section(&types);
+
+        let mut functions = FunctionSection::new();
+        functions.function(0);
+        module.section(&functions);
+
+        let mut memories = MemorySection::new();
+        memories.memory(MemoryType {
+            minimum: 1,
+            maximum: None,
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        });
+        module.section(&memories);
+
+        let mut exports = ExportSection::new();
+        exports.export(if entry_is_start { "_start" } else { "express" }, ExportKind::Func, 0);
+        exports.export("memory", ExportKind::Memory, 0);
+        module.section(&exports);
+
+        let mut code = CodeSection::new();
+        let mut body = Function::new(vec![]);
+        body.instruction(&Instruction::Loop(BlockType::Empty));
+        body.instruction(&Instruction::Br(0));
+        body.instruction(&Instruction::End);
+        if !entry_is_start {
+            body.instruction(&Instruction::I32Const(0));
+        }
+        body.instruction(&Instruction::End);
+        code.function(&body);
+        module.section(&code);
+
+        module.finish()
+    }
+
+    /// #455: a gene stopped by the wall-clock limit reports a timeout. The
+    /// epoch interrupt arrives as a wasmtime Trap, and `e.to_string()` keeps
+    /// only "error while executing at wasm backtrace", so the run came back
+    /// as an execution failure and a Try handler saw EXECUTION_FAILURE.
+    fn assert_times_out(entry_is_start: bool) {
+        let constraints = ConstraintSet {
+            max_fuel: u64::MAX / 2,
+            max_execution_time_ms: 300,
+            ..ConstraintSet::default()
+        };
+        let sb = WasmtimeSandbox::new(constraints).unwrap();
+        let wasm = build_spinning_wasm(entry_is_start);
+        let started = std::time::Instant::now();
+        let result = sb.execute(&wasm, &test_context(), serde_json::json!({}));
+        assert!(started.elapsed() < std::time::Duration::from_secs(10), "the limit did not stop it");
+        match result {
+            Err(SandboxError::ResourceLimitExceeded(m)) => assert!(
+                m.starts_with(crate::sandbox::TIMEOUT_MESSAGE_PREFIX),
+                "not reported as a timeout: {m}"
+            ),
+            other => panic!("expected a timeout, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_direct_express_gene_past_its_time_limit_times_out() {
+        assert_times_out(false);
+    }
+
+    #[test]
+    fn a_wasi_gene_past_its_time_limit_times_out() {
+        assert_times_out(true);
     }
 }

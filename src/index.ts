@@ -3,6 +3,8 @@
 import { Command, Help } from "commander";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ConfigError } from "./utils/config.js";
+import * as display from "./utils/display.js";
 import { initCommand } from "./commands/init.js";
 import { scanCommand } from "./commands/scan.js";
 import { wrapCommand } from "./commands/wrap.js";
@@ -151,4 +153,13 @@ if (userConfig["update-check"] !== false) {
     .catch(() => {});
 }
 
-program.parse();
+// A broken rotifer.json is the user's to fix, not a crash: say which file and
+// what is wrong with it (#456). Every other error surfaces as before.
+program.parseAsync().catch((err: unknown) => {
+  if (err instanceof ConfigError) {
+    display.error(err.message);
+    display.hint("Fix the JSON in rotifer.json, then run the command again.");
+    process.exit(1);
+  }
+  throw err;
+});

@@ -9,6 +9,7 @@ import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding } from "../utils/binding.js";
 import { compileTypeScriptToWasm, findGeneSource } from "../utils/javy-compiler.js";
 import { contentHash, canonicalSerialize } from "../utils/content-hash.js";
+import { createdAtProblem, toRustPhenotype } from "../utils/rust-phenotype.js";
 import { validateLlmNativePhenotype } from "../utils/phenotype-validator.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { checkNativeArtifact } from "../utils/artifact-consistency.js";
@@ -76,6 +77,19 @@ export const compileCommand = new Command("compile")
         message: `Invalid version format: "${phenotype.version}"`,
         file: phenotypePath,
         suggestion: "Use semver format (e.g., \"1.0.0\", \"0.1.0-beta.1\")",
+      });
+      process.exit(1);
+    }
+    // rotifer-core reads createdAt as epoch ms; `wrap` writes ISO 8601, which
+    // toRustPhenotype converts below. Anything that is neither would be
+    // defaulted to 0 there, so it is reported here, by name (#448).
+    const createdAtError = createdAtProblem(phenotype);
+    if (createdAtError) {
+      display.rustStyleError({
+        code: "E0023",
+        message: `Invalid phenotype field: ${createdAtError}`,
+        file: phenotypePath,
+        suggestion: "Fix or remove createdAt in phenotype.json (rotifer wrap writes an ISO 8601 timestamp)",
       });
       process.exit(1);
     }
@@ -258,15 +272,22 @@ export const compileCommand = new Command("compile")
     if (binding) {
       display.info("  Engine: native IR compiler");
       try {
-        const result = binding.compileGeneToFile(wasmBytes, phenoStr, outputPath);
+        // The IR compiler deserializes rotifer-core's Phenotype, which wants
+        // createdAt as epoch ms; phenotype.json keeps what wrap wrote (#448).
+        const phenoForCore = canonicalSerialize(toRustPhenotype(phenotypeForCompile));
+        const result = binding.compileGeneToFile(wasmBytes, phenoForCore, outputPath);
         irHash = result.irHash;
         wasmSize = result.totalSize;
         codeSectionSize = result.codeSectionSize;
       } catch (err: any) {
+        const isPhenotypeError = String(err.message).includes("invalid phenotype JSON");
         display.rustStyleError({
           code: "E0023",
           message: `IR compilation failed: ${err.message}`,
-          suggestion: "Ensure the WASM module exports `express(i32,i32)->i32` + `memory`, or `_start` + `memory` (WASI)",
+          ...(isPhenotypeError ? { file: phenotypePath } : {}),
+          suggestion: isPhenotypeError
+            ? "A phenotype.json field has a type rotifer-core does not accept; the message above names the value"
+            : "Ensure the WASM module exports `express(i32,i32)->i32` + `memory`, or `_start` + `memory` (WASI)",
         });
         process.exit(1);
       }

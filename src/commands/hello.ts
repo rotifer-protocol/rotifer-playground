@@ -10,6 +10,7 @@ import { createAgentCore } from "./agent-create.js";
 import { findAgent, printProtocolInsights } from "./agent-run.js";
 import { tryLoadBinding } from "../utils/binding.js";
 import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
+import { createGatewayFetch } from "../runtime/network-gateway.js";
 
 interface HelloTemplate {
   id: string;
@@ -64,7 +65,11 @@ const TEMPLATES: HelloTemplate[] = [
     name: "Code Security Scan",
     description: "Find vulnerabilities before hackers do",
     genes: ["security-scanner"],
-    fallbackGenes: ["genesis-code-format", "genesis-file-read"],
+    // No fallback: neither code-format nor file-read scans anything, and
+    // file-read accepted this template's `path` input, read the directory and
+    // returned an EISDIR error that ended as "Execution complete" (#454).
+    // Without security-scanner the template says so and stops.
+    fallbackGenes: [],
     composition: "Seq",
     exampleInput: { path: "./genes", includeTests: false },
     section: "quick",
@@ -737,7 +742,14 @@ export async function executeGenomePipeline(
         continue;
       }
 
-      current = await mod.express(current);
+      // A Hybrid gene reaches the network only through the gateway on its
+      // second argument, as `run`, `test` and `agent run` give it (#444).
+      if (phenotype.fidelity === "Hybrid" && phenotype.network) {
+        const { gatewayFetch } = createGatewayFetch(phenotype.network);
+        current = await mod.express(current, { gatewayFetch });
+      } else {
+        current = await mod.express(current);
+      }
       display.success(`${step} ${geneName} completed`);
     } catch (err: any) {
       display.error(`${step} ${geneName} failed: ${err.message}`);

@@ -101,12 +101,40 @@ export const agentRunCommand = new Command("run")
       return;
     }
 
-    // For non-Seq compositions with WASM support, use executeAlgebra()
-    if (compositionType !== "Single" && compositionType !== "Seq" && binding) {
+    // Par, Cond and Try run only on the Rust algebra executor, which needs the
+    // sandbox and every gene compiled. Where it cannot run, the agent is
+    // refused before any gene executes: the sequential loop below would run
+    // a different workflow under the same label — Seq's result for Par and
+    // Cond, a Try that never reaches its handler, a branch that should not
+    // have run (#450).
+    if (compositionType !== "Single" && compositionType !== "Seq") {
+      const refuse = (reason: string, hint: string) => {
+        display.error(`${compositionType} cannot run here: ${reason}. No gene was run.`);
+        display.hint(hint);
+        process.exit(1);
+      };
+      if (!binding) {
+        if (!isSandboxEnabled) {
+          refuse(
+            "--no-sandbox runs genes as Node.js modules one after another, which is Seq, not " + compositionType,
+            "Run it without --no-sandbox, or create a Seq agent for the Node.js path.",
+          );
+        } else {
+          refuse(
+            "it runs on the sandbox's algebra executor, and the native addon did not load",
+            "Run 'rotifer doctor' to see what is missing.",
+          );
+        }
+        return;
+      }
       const algebra = executeViaAlgebra(
         agent, genesDir, binding, input, compositionType, options.verbose
       );
       if (algebra.kind === "failed") return;
+      if (algebra.kind === "unavailable") {
+        refuse(algebra.reason, algebra.hint);
+        return;
+      }
       if (algebra.kind === "done") {
         const totalElapsed = performance.now() - startTime;
         console.log();
@@ -119,7 +147,6 @@ export const agentRunCommand = new Command("run")
         console.log(JSON.stringify(algebra.output, null, 2));
         return;
       }
-      display.warn("Falling back to sequential execution (some genes not compiled)");
     }
 
     // Pipeline execution log
@@ -134,7 +161,7 @@ export const agentRunCommand = new Command("run")
     }
     const pipelineLog: StepLog[] = [];
 
-    // Sequential execution (Seq / Single / fallback)
+    // Sequential execution (Seq / Single)
     let current: unknown = input;
 
     for (let i = 0; i < agent.genome.length; i++) {
@@ -716,10 +743,11 @@ function geneNameToId(geneName: string): string {
 }
 
 // "failed": the error is already reported and exit(1) is scheduled; the
-// caller must not print anything else.
+// caller must not print anything else. "unavailable": the executor cannot
+// run this agent, decided before any gene executed.
 type AlgebraOutcome =
   | { kind: "done"; output: unknown }
-  | { kind: "fallback" }
+  | { kind: "unavailable"; reason: string; hint: string }
   | { kind: "failed" };
 
 function executeViaAlgebra(
@@ -731,7 +759,13 @@ function executeViaAlgebra(
   isVerbose: boolean,
 ): AlgebraOutcome {
   const comp = agent.composition;
-  if (!comp) return { kind: "fallback" };
+  if (!comp) {
+    return {
+      kind: "unavailable",
+      reason: "this agent has no composition record",
+      hint: `Re-create it: rotifer agent create ${agent.name} --genes ${agent.genome.join(" ")} --composition ${compositionType}`,
+    };
+  }
 
   const geneEntries: Record<string, { wasm: number[]; phenotype: Record<string, unknown>; v2Id?: string }> = {};
 
@@ -741,8 +775,11 @@ function executeViaAlgebra(
     const phenotypePath = join(geneDir, "phenotype.json");
 
     if (!existsSync(irWasmPath)) {
-      display.warn(`  Gene '${geneName}' not compiled — cannot use ${compositionType} via Rust executor`);
-      return { kind: "fallback" };
+      return {
+        kind: "unavailable",
+        reason: `gene '${geneName}' is not compiled, and the algebra executor runs compiled genes only`,
+        hint: `Compile it first: rotifer compile ${geneName}`,
+      };
     }
 
     const wasmBytes = readFileSync(irWasmPath);
@@ -789,7 +826,13 @@ function executeViaAlgebra(
       break;
     }
     case "Cond": {
-      if (geneIds.length < 2) return { kind: "fallback" };
+      if (geneIds.length < 2) {
+        return {
+          kind: "unavailable",
+          reason: `it needs two genes and this agent has ${geneIds.length}`,
+          hint: "Re-create the agent with two genes.",
+        };
+      }
       const pred = comp?.predicate;
       algebraExpr = {
         Cond: {
@@ -806,7 +849,13 @@ function executeViaAlgebra(
       break;
     }
     case "Try": {
-      if (geneIds.length < 2) return { kind: "fallback" };
+      if (geneIds.length < 2) {
+        return {
+          kind: "unavailable",
+          reason: `it needs two genes and this agent has ${geneIds.length}`,
+          hint: "Re-create the agent with two genes.",
+        };
+      }
       algebraExpr = {
         Try: {
           primary: { Gene: hexToGeneIdArray(geneIds[0]) },
@@ -817,7 +866,11 @@ function executeViaAlgebra(
       break;
     }
     default:
-      return { kind: "fallback" };
+      return {
+        kind: "unavailable",
+        reason: `'${compositionType}' is not a composition agent run knows`,
+        hint: "Use Seq, Par, Cond, Try or TryPool.",
+      };
   }
 
   try {

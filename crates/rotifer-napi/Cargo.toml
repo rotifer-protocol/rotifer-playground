@@ -18,8 +18,14 @@ serde_json.workspace = true
 hex.workspace = true
 uuid.workspace = true
 
+[features]
+# memoryTestSetClock / memoryTestAdvanceClock, for cross-binding expiry
+# tests. Off by default: a release build has neither method.
+test-clock = []
+
 [build-dependencies]
 napi-build = "2"
 
 [dev-dependencies]
 wasm-encoder.workspace = true
+base64.workspace = true

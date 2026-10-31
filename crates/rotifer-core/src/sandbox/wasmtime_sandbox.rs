@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use wasmtime::*;
 
 use super::hybrid::{self, HybridConfig};
+use super::memory_calls::{self, MemoryLink, MemoryOp};
 use super::{ConstraintSet, Sandbox, SandboxError};
 use crate::types::gene::{Fidelity, Phenotype};
 use crate::types::{Context, ErrorCode, ExecutionMetadata, GeneResult, HostMetering};
@@ -43,6 +44,9 @@ struct HostState {
     /// Hybrid capability state (ADR-327). `HybridRuntime::default()` denies
     /// everything, which is what the ungated `execute()` path carries.
     hybrid: hybrid::HybridRuntime,
+    /// AgentMemory this run's memory calls act on (§38.2). None outside an
+    /// agent, and on the ungated `execute()` path: every call is then denied.
+    memory: Option<MemoryLink>,
 }
 
 impl ResourceLimiter for HostState {
@@ -88,6 +92,11 @@ pub struct WasmtimeSandbox {
     /// Test hook: admit plain-http loopback URLs in `rotifer.net.fetch`.
     /// Never derived from a phenotype and never wired to the CLI.
     insecure_loopback: bool,
+    /// AgentMemory store for `rotifer.*Memory` calls (§38.2). Linked per run
+    /// to the context's agent and the running gene; with `memory_agent`
+    /// false, only to record "no agent context" denials.
+    memory_store: Option<Arc<crate::memory::MemoryStore>>,
+    memory_agent: bool,
 }
 
 impl WasmtimeSandbox {
@@ -105,7 +114,42 @@ impl WasmtimeSandbox {
             hybrid_env_plain: Default::default(),
             hybrid_env_secret: Default::default(),
             insecure_loopback: false,
+            memory_store: None,
+            memory_agent: false,
         })
+    }
+
+    /// Give gated executions access to AgentMemory (binding wiring). A run
+    /// is linked to the memory of `Context.agent_id`, acting as the gene
+    /// named by `Context.binding_extensions[CALLER_GENE_ID_EXTENSION]`.
+    pub fn set_memory_store(&mut self, store: Arc<crate::memory::MemoryStore>) {
+        self.memory_store = Some(store);
+        self.memory_agent = true;
+    }
+
+    /// A run that belongs to no agent, whatever `Context.agent_id` says: its
+    /// memory calls are denied ("no agent context") and `store` only
+    /// receives the telemetry for them. No entry can be read or written.
+    pub fn set_memory_store_without_agent(&mut self, store: Arc<crate::memory::MemoryStore>) {
+        self.memory_store = Some(store);
+        self.memory_agent = false;
+    }
+
+    /// The memory link for one gated run, if this sandbox has a store. Its
+    /// agent is the context's, unless the store was attached without one or
+    /// the context names none.
+    fn memory_link(&self, context: &Context, phenotype: &Phenotype) -> Option<MemoryLink> {
+        let store = self.memory_store.clone()?;
+        let agent_id =
+            (self.memory_agent && !context.agent_id.is_empty()).then(|| context.agent_id.clone());
+        let caller = context
+            .binding_extensions
+            .as_ref()
+            .and_then(|m| m.get(super::CALLER_GENE_ID_EXTENSION))
+            .and_then(|v| v.as_str())
+            .filter(|id| crate::gene_id::is_valid(id))
+            .map(|id| crate::memory::CallerGene { gene_id: id.to_string(), domain: phenotype.domain.clone() });
+        Some(MemoryLink { store, agent_id, caller })
     }
 
     /// Grant env values to hybrid executions (binding deployment wiring).
@@ -503,6 +547,28 @@ impl WasmtimeSandbox {
             )
             .map_err(map_err)?;
 
+        // AgentMemory (§38.2). Host time, not guest fuel: timed
+        // into the run's host budget like the hybrid calls.
+        for op in [MemoryOp::Read, MemoryOp::Write, MemoryOp::Query, MemoryOp::Delete] {
+            linker
+                .func_wrap(
+                    "rotifer",
+                    op.host_name(),
+                    move |mut caller: Caller<'_, HostState>,
+                          req_ptr: i32,
+                          req_len: i32,
+                          out_ptr: i32,
+                          out_cap: i32|
+                          -> i32 {
+                        let timer = hybrid::HostCallTimer::start();
+                        let code = Self::memory_call(&mut caller, op, req_ptr, req_len, out_ptr, out_cap);
+                        timer.stop_into(&mut caller.data_mut().hybrid);
+                        code
+                    },
+                )
+                .map_err(map_err)?;
+        }
+
         linker
             .func_wrap(
                 "rotifer",
@@ -619,6 +685,71 @@ impl WasmtimeSandbox {
             .map_err(map_err)?;
 
         Ok(())
+    }
+
+    fn memory_call(
+        caller: &mut Caller<'_, HostState>,
+        op: MemoryOp,
+        req_ptr: i32,
+        req_len: i32,
+        out_ptr: i32,
+        out_cap: i32,
+    ) -> i32 {
+        use hybrid::errors::*;
+
+        // Host calls do not stop for the epoch deadline, so a call checks
+        // the run's wall clock and host budget before it starts. -4 without
+        // an envelope, as rotifer.kv and rotifer.net.
+        let rt = &caller.data().hybrid;
+        if rt.host_budget_exhausted() || rt.remaining_run_millis() == 0 {
+            return ERR_TIMEOUT;
+        }
+        let Some(memory) = Self::hybrid_memory(caller) else {
+            return ERR_INVALID_REQUEST;
+        };
+        // Every call takes MEMORY_CALL_FUEL out of the guest's own fuel, so
+        // looping on host calls is not free.
+        // Unlike the ADR-327 surcharges this is drawn from the budget: a
+        // call the fuel cannot pay for is not run, and the rest of the fuel
+        // is drained so the run cannot carry on computing for free.
+        match caller.get_fuel() {
+            Ok(fuel) if fuel >= memory_calls::MEMORY_CALL_FUEL => {
+                if caller
+                    .set_fuel(fuel - memory_calls::MEMORY_CALL_FUEL)
+                    .is_err()
+                {
+                    return ERR_TIMEOUT;
+                }
+            }
+            _ => {
+                let _ = caller.set_fuel(0);
+                return ERR_TIMEOUT;
+            }
+        }
+        // Bounds before allocation: a length past the cap or a
+        // range past the guest's memory is refused before anything is copied.
+        // The out buffer is checked here too, before the store is touched: a
+        // write must not land when its response cannot be delivered.
+        let size = memory.data_size(&*caller) as u64;
+        let in_bounds = req_ptr >= 0
+            && req_len >= 0
+            && (req_len as usize) <= memory_calls::MAX_REQUEST_BYTES
+            && (req_ptr as u64 + req_len as u64) <= size
+            && out_ptr >= 0
+            && out_cap >= 0
+            && (out_ptr as u64 + out_cap as u64) <= size;
+        if !in_bounds {
+            return ERR_INVALID_REQUEST;
+        }
+        let Some(request) = Self::hybrid_read(caller, &memory, req_ptr, req_len) else {
+            return ERR_INVALID_REQUEST;
+        };
+        let link = caller.data().memory.clone();
+        let result = memory_calls::handle(link.as_ref(), op, &request, out_cap as usize);
+        if !result.out.is_empty() && !Self::hybrid_write(caller, &memory, out_ptr, &result.out) {
+            return ERR_INVALID_REQUEST;
+        }
+        result.code
     }
 
     // ── hybrid host call bodies ─────────────────────────────────────────
@@ -1069,6 +1200,7 @@ impl WasmtimeSandbox {
         context: &Context,
         input: serde_json::Value,
         hybrid_config: HybridConfig,
+        memory: Option<MemoryLink>,
     ) -> Result<GeneResult, SandboxError> {
         let start = std::time::Instant::now();
 
@@ -1083,7 +1215,21 @@ impl WasmtimeSandbox {
 
         let module = Module::new(&self.engine, wasm_bytes)
             .map_err(|e| SandboxError::CompilationFailed(e.to_string()))?;
+        self.run_module(&module, start, context, input, hybrid_config, memory)
+    }
 
+    /// Run a compiled module. The reported `duration_ms` counts from
+    /// `start`: [`Self::execute_inner`] passes the moment before it compiled,
+    /// so a run's reported time includes compilation.
+    fn run_module(
+        &self,
+        module: &Module,
+        start: std::time::Instant,
+        context: &Context,
+        input: serde_json::Value,
+        hybrid_config: HybridConfig,
+        memory: Option<MemoryLink>,
+    ) -> Result<GeneResult, SandboxError> {
         let input_bytes = serde_json::to_vec(&input)
             .map_err(|e| SandboxError::ExecutionFailed(e.to_string()))?;
 
@@ -1101,6 +1247,7 @@ impl WasmtimeSandbox {
                 max_table_elements: 10_000,
             },
             hybrid: hybrid::HybridRuntime::new(hybrid_config),
+            memory,
         };
 
         let mut store = Store::new(&self.engine, host_state);
@@ -1157,7 +1304,7 @@ impl WasmtimeSandbox {
         }
 
         let instance = linker
-            .instantiate(&mut store, &module)
+            .instantiate(&mut store, module)
             .map_err(|e| SandboxError::ExecutionFailed(e.to_string()))?;
 
         let is_wasi = instance
@@ -1249,7 +1396,7 @@ impl Sandbox for WasmtimeSandbox {
         context: &Context,
         input: serde_json::Value,
     ) -> Result<GeneResult, SandboxError> {
-        self.execute_inner(wasm_bytes, context, input, HybridConfig::disabled())
+        self.execute_inner(wasm_bytes, context, input, HybridConfig::disabled(), None)
     }
 
     /// Phenotype-aware entry: fidelity honesty gate (ADR-327 D1) + policy
@@ -1284,7 +1431,8 @@ impl Sandbox for WasmtimeSandbox {
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
         config.allow_insecure_loopback = self.insecure_loopback;
-        self.execute_inner(wasm_bytes, context, input, config)
+        let memory = self.memory_link(context, phenotype);
+        self.execute_inner(wasm_bytes, context, input, config, memory)
     }
 
     fn validate(
@@ -1641,13 +1789,53 @@ mod tests {
         let sb = WasmtimeSandbox::with_defaults().unwrap();
         let wasm = genesis::build_echo_gene_wasm();
         let input = serde_json::json!({"hello": "world"});
+        let called = std::time::Instant::now();
         let result = sb.execute(&wasm, &test_context(), input.clone());
+        let around_ms = called.elapsed().as_millis() as u64;
         assert!(result.is_ok());
         match result.unwrap() {
             GeneResult::Success { data, metadata } => {
                 assert_eq!(data, input);
-                assert!(metadata.duration_ms < 5000);
+                // duration_ms is this call's own wall time, compilation
+                // included, so it never exceeds what the caller measures
+                // around it. A fixed bound ("< 5 s") measured machine load
+                // instead: with 500+ tests compiling modules in one process
+                // under `cargo llvm-cov`, compiling this ~200-byte module took
+                // 1.6–12.3 s (measured 2026-10-31); alone it takes ~0.1 s.
+                assert!(
+                    metadata.duration_ms <= around_ms,
+                    "reported {} ms for a call that took {around_ms} ms",
+                    metadata.duration_ms
+                );
                 assert!(metadata.resource_cost > 0.0);
+            }
+            GeneResult::Error { message, .. } => panic!("expected success: {message}"),
+        }
+
+        // Executing it is fast: compiled before the clock starts, the run
+        // itself stays under 5 s whatever the load on compilation.
+        let module = Module::new(&sb.engine, &wasm).unwrap();
+        let started = std::time::Instant::now();
+        let run = sb
+            .run_module(
+                &module,
+                started,
+                &test_context(),
+                input.clone(),
+                HybridConfig::disabled(),
+                None,
+            )
+            .unwrap();
+        let around_ms = started.elapsed().as_millis() as u64;
+        match run {
+            GeneResult::Success { data, metadata } => {
+                assert_eq!(data, input);
+                assert!(
+                    metadata.duration_ms < 5000,
+                    "executing the echo gene took {} ms",
+                    metadata.duration_ms
+                );
+                assert!(metadata.duration_ms <= around_ms);
             }
             GeneResult::Error { message, .. } => panic!("expected success: {message}"),
         }

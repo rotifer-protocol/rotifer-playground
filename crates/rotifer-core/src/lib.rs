@@ -12,6 +12,7 @@
 //! - [`gene_id`] — Gene ID v2: content-derived gene identity (`docs/gene-id-v2.md`).
 //! - [`storage`] — Persistent gene, agent, and arena storage (SQLite).
 //! - [`agent`] — Agent lifecycle management.
+//! - [`memory`] — AgentMemory (§38): per-agent memory that outlives genome changes.
 
 pub mod types;
 pub mod sandbox;
@@ -26,3 +27,4 @@ pub mod agent;
 pub mod reputation;
 pub mod p2p;
 pub mod l0;
+pub mod memory;

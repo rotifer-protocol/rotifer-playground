@@ -249,7 +249,7 @@ fn run(
     wasm: &[u8],
     config: HybridConfig,
 ) -> Result<GeneResult, super::SandboxError> {
-    sb.execute_inner(wasm, &ctx(true), serde_json::json!({}), config)
+    sb.execute_inner(wasm, &ctx(true), serde_json::json!({}), config, None)
 }
 
 fn expect_success(result: Result<GeneResult, super::SandboxError>) -> (serde_json::Value, crate::types::ExecutionMetadata) {

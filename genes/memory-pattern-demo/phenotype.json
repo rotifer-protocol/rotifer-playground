@@ -1,0 +1,33 @@
+{
+  "domain": "memory.demo",
+  "description": "Counts how often each query is seen and reports the most frequent ones, kept across runs in AgentMemory, category PATTERN. Needs to run inside an agent.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string", "description": "The query this run handled" }
+    },
+    "required": ["query"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string" },
+      "count": { "type": "integer" },
+      "top": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "query": { "type": "string" },
+            "count": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "required": ["query", "count", "top"]
+  },
+  "version": "0.1.0",
+  "fidelity": "Wrapped",
+  "transparency": "OPEN",
+  "sources": ["index.ts"]
+}

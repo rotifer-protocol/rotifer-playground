@@ -1,0 +1,75 @@
+{
+  "testCases": [
+    {
+      "input": {
+        "query": "Suite Weather"
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "query",
+          "count",
+          "top"
+        ],
+        "properties": {
+          "query": {
+            "const": "suite weather"
+          },
+          "count": {
+            "const": 1
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "query": "suite weather"
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "query",
+          "count",
+          "top"
+        ],
+        "properties": {
+          "query": {
+            "const": "suite weather"
+          },
+          "count": {
+            "const": 2
+          },
+          "top": {
+            "contains": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "const": "suite weather"
+                },
+                "count": {
+                  "const": 2
+                }
+              },
+              "required": [
+                "query",
+                "count"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "input": {}
+    },
+    {
+      "input": {
+        "query": 7
+      }
+    }
+  ],
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  }
+}

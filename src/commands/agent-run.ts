@@ -10,6 +10,8 @@ import { requireProjectRoot } from "../utils/project-root.js";
 import { geneIdV2, tryLoadBinding, type NativeBinding } from "../utils/binding.js";
 import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
 import { createGatewayFetch, type GatewayFetchOptions, type GatewayResponse } from "../runtime/network-gateway.js";
+import type { GeneMemoryAccess } from "../memory/index.js";
+import { openAgentMemory, type AgentMemoryHandle, type WasmMemory } from "../memory/host.js";
 import { DomainFailoverEngine, type GeneExecutionResult } from "../runtime/domain-failover.js";
 import { flushInvocationReports } from "../cloud/invocation.js";
 import { flushHeartbeat } from "../telemetry/heartbeat.js";
@@ -94,10 +96,13 @@ export const agentRunCommand = new Command("run")
     const l0Binding = tryLoadBinding();
     const binding = isSandboxEnabled ? l0Binding : null;
     const startTime = performance.now();
+    // The agent's memory for this run (spec §38.2): ctx.memory on the Node
+    // path, and the project binding + memoryContext on the WASM path.
+    const agentMemory = openAgentMemory({ root, genesRoot: genesDir, agent });
 
     // TryPool: domain-based failover with fitness tracking
     if (compositionType === "TryPool") {
-      await executeTryPool(agent, genesDir, binding, l0Binding, input, root, options.verbose, options.trustUnsigned);
+      await executeTryPool(agent, genesDir, binding, l0Binding, input, root, options.verbose, options.trustUnsigned, agentMemory);
       return;
     }
 
@@ -128,7 +133,7 @@ export const agentRunCommand = new Command("run")
         return;
       }
       const algebra = executeViaAlgebra(
-        agent, genesDir, binding, input, compositionType, options.verbose
+        agent, genesDir, binding, input, compositionType, options.verbose, agentMemory.wasm
       );
       if (algebra.kind === "failed") return;
       if (algebra.kind === "unavailable") {
@@ -184,11 +189,14 @@ export const agentRunCommand = new Command("run")
             : {};
           const { irHash: _strip, ...phenotypeForExec } = rawPhenotype;
 
-          const result = binding.executeGene(
+          // With native memory, run on the project binding so the gene's
+          // memory calls reach the agent's store.
+          const result = (agentMemory.wasm?.binding ?? binding).executeGene(
             irWasm,
             JSON.stringify(current),
             JSON.stringify(phenotypeForExec),
             DEFAULT_SANDBOX_CONSTRAINTS_JSON,
+            agentMemory.wasm?.geneContext(geneName),
           );
 
           const stepElapsed = performance.now() - stepStart;
@@ -344,17 +352,19 @@ export const agentRunCommand = new Command("run")
           }
 
           let result: unknown;
+          // The agent's memory (spec §38.2; ctx.memory), bound to this gene.
+          const memory = agentMemory.forGene(geneName, phenotypeData);
 
           if (phenotypeData.fidelity === "Hybrid" && phenotypeData.network) {
             const { gatewayFetch, gateway } = createGatewayFetch(phenotypeData.network);
             display.info(`  ${geneName} is Hybrid — gateway active (domains: ${phenotypeData.network.allowedDomains?.join(", ") || "none"})`);
-            result = await mod.express(current, { gatewayFetch });
+            result = await mod.express(current, { gatewayFetch, memory });
             if (options.verbose) {
               const stats = gateway.stats;
               display.info(`  Gateway stats: ${stats.totalRequests} requests, ${stats.totalBytes} bytes`);
             }
           } else {
-            result = await mod.express(current);
+            result = await mod.express(current, { memory });
           }
 
           const stepElapsed = performance.now() - stepStart;
@@ -470,6 +480,7 @@ async function executeTryPool(
   root: string,
   isVerbose: boolean,
   isTrustUnsigned: boolean,
+  agentMemory: AgentMemoryHandle,
 ): Promise<void> {
   const engine = new DomainFailoverEngine();
   const startTime = performance.now();
@@ -485,7 +496,9 @@ async function executeTryPool(
     const hasWasm = existsSync(irWasmPath);
 
     const executor = await buildGeneExecutor(
-      geneName, geneDir, irWasmPath, hasWasm, phenotype, binding, l0Binding, isTrustUnsigned
+      geneName, geneDir, irWasmPath, hasWasm, phenotype, binding, l0Binding, isTrustUnsigned,
+      agentMemory.forGene(geneName, phenotype),
+      agentMemory.wasm,
     );
     engine.registerGene(geneName, domain, executor);
   }
@@ -600,6 +613,10 @@ async function buildGeneExecutor(
   binding: NativeBinding | null,
   l0Binding: NativeBinding | null,
   isTrustUnsigned: boolean,
+  /** The agent's memory for this gene, handed to a Node-path gene as ctx.memory. */
+  memory?: GeneMemoryAccess,
+  /** The same memory for the WASM path: project binding + memoryContext. */
+  wasmMemory?: WasmMemory | null,
 ): Promise<(input: unknown) => Promise<GeneExecutionResult>> {
   if (hasWasm && binding) {
     const wasmBytes = readFileSync(irWasmPath) as Buffer;
@@ -608,11 +625,12 @@ async function buildGeneExecutor(
     return async (input: unknown): Promise<GeneExecutionResult> => {
       const start = performance.now();
       try {
-        const result = binding.executeGene(
+        const result = (wasmMemory?.binding ?? binding).executeGene(
           wasmBytes,
           JSON.stringify(input),
           phenoStr,
           DEFAULT_SANDBOX_CONSTRAINTS_JSON,
+          wasmMemory?.geneContext(geneName),
         );
         const elapsed = performance.now() - start;
         logGeneExecution({ geneDir,
@@ -705,9 +723,9 @@ async function buildGeneExecutor(
       let result: unknown;
       if (isHybrid) {
         const { gatewayFetch } = createGatewayFetch(phenotype.network as any);
-        result = await mod.express(input, { gatewayFetch });
+        result = await mod.express(input, { gatewayFetch, memory });
       } else {
-        result = await mod.express(input);
+        result = await mod.express(input, { memory });
       }
       const elapsed = performance.now() - start;
       logGeneExecution({ geneDir,
@@ -757,6 +775,8 @@ function executeViaAlgebra(
   input: unknown,
   compositionType: string,
   isVerbose: boolean,
+  /** With native memory: run on the project binding with {"agentId"}; each gene acts as its entry's v2Id. */
+  wasmMemory: WasmMemory | null,
 ): AlgebraOutcome {
   const comp = agent.composition;
   if (!comp) {
@@ -878,11 +898,12 @@ function executeViaAlgebra(
     // them the binding falls back to ConstraintSet::default() (1M fuel),
     // below what one compiled gene of ordinary size needs. A binding older
     // than this argument ignores it.
-    const result = binding.executeAlgebra(
+    const result = (wasmMemory?.binding ?? binding).executeAlgebra(
       JSON.stringify(algebraExpr),
       JSON.stringify(geneEntries),
       JSON.stringify(input),
       DEFAULT_SANDBOX_CONSTRAINTS_JSON,
+      wasmMemory?.agentContext,
     );
 
     if (result.success) {

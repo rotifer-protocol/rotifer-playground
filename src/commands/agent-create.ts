@@ -15,6 +15,10 @@ import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { estimateUnexecutedFitness } from "../utils/fidelity-discount.js";
+import { DEFAULT_DATA_POLICY, type DataPolicy } from "../memory/data-policy.js";
+import { parseMemoryQuota } from "../memory/codec.js";
+import { DEFAULT_MEMORY_QUOTA_BYTES, MemoryError } from "../memory/types.js";
+import { ensureAgentMemory, projectNativeMemory } from "../memory/host.js";
 
 export interface CreateAgentParams {
   root: string;
@@ -28,6 +32,10 @@ export interface CreateAgentParams {
   predicate?: { field: string; op?: string; value?: unknown };
   /** Receives schema-compatibility warnings instead of printing them (for --json callers). */
   onSchemaWarnings?: (warnings: string[]) => void;
+  /** AgentMemory quota in bytes (spec §38.1); omitted → 10 MB. */
+  memoryQuota?: number;
+  /** §30.2 DataPolicy; omitted → DEFAULT_DATA_POLICY, written into the record. */
+  dataPolicy?: DataPolicy;
 }
 
 export interface AgentRecord {
@@ -39,10 +47,18 @@ export interface AgentRecord {
   strategy: string;
   createdAt: string;
   reputation: number;
+  /** AgentMemory quota in bytes (v0.9.4). Absent on older records → 10 MB. */
+  memoryQuota?: number;
+  /** §30.2 DataPolicy (v0.9.4). Absent on older records → DEFAULT_DATA_POLICY. */
+  dataPolicy?: DataPolicy;
 }
 
 export function createAgentCore(params: CreateAgentParams): AgentRecord {
   const { root, agentName, genome, parMerge } = params;
+  const memoryQuota = params.memoryQuota ?? DEFAULT_MEMORY_QUOTA_BYTES;
+  if (!Number.isSafeInteger(memoryQuota) || memoryQuota <= 0) {
+    throw new MemoryError("MEMORY_INVALID_INPUT", `memory quota must be a positive number of bytes (got ${memoryQuota})`);
+  }
 
   for (const geneName of genome) {
     validateGeneName(geneName);
@@ -87,6 +103,11 @@ export function createAgentCore(params: CreateAgentParams): AgentRecord {
   }
 
   const agentId = randomUUID();
+  // The agent's memory, with its quota, in the project's native store — before
+  // the record, so a store that refuses leaves no half-created agent. Without
+  // the native store there is nothing to create; memory calls will say so.
+  const dataPolicy = structuredClone(params.dataPolicy ?? DEFAULT_DATA_POLICY);
+  ensureAgentMemory(projectNativeMemory(root), { id: agentId, memoryQuota, dataPolicy });
   const agent: AgentRecord = {
     id: agentId,
     name: agentName,
@@ -96,6 +117,8 @@ export function createAgentCore(params: CreateAgentParams): AgentRecord {
     strategy: params.strategy || "manual",
     createdAt: new Date().toISOString(),
     reputation: 0.0,
+    memoryQuota,
+    dataPolicy,
   };
 
   const agentsDir = join(root, ".rotifer", "agents");
@@ -121,6 +144,20 @@ export const agentCreateCommand = new Command("create")
     "Seq"
   )
   .option("--par-merge <strategy>", "merge strategy for Par: first, concat, merge", "first")
+  .option(
+    "--memory-quota <size>",
+    "AgentMemory quota (spec §38.1): a size in KB, MB or GB",
+    "10MB"
+  )
+  .addHelpText(
+    "after",
+    [
+      "",
+      "Examples:",
+      "  $ rotifer agent create my-agent --genes hello-world --memory-quota=50MB",
+      "  $ rotifer agent create searcher --domain search --top 2",
+    ].join("\n")
+  )
   .action(
     async (
       agentName: string,
@@ -131,12 +168,26 @@ export const agentCreateCommand = new Command("create")
         strategy: string;
         composition: string;
         parMerge: string;
+        memoryQuota: string;
       }
     ) => {
       const root = requireProjectRoot();
       const config = loadConfig(root);
 
       display.header("Agent Creation");
+
+      // Checked before anything is created, so a bad size leaves no agent behind.
+      let memoryQuota: number;
+      try {
+        memoryQuota = parseMemoryQuota(options.memoryQuota);
+      } catch (err: any) {
+        display.rustStyleError({
+          code: "E0040",
+          message: err.message,
+          suggestion: "Give the memory quota as a size in KB, MB or GB, e.g. --memory-quota=10MB",
+        });
+        process.exit(1);
+      }
 
       let genome: string[] = [];
       let selectionMode = "manual";
@@ -174,12 +225,14 @@ export const agentCreateCommand = new Command("create")
           compositionType: options.composition || "Seq",
           parMerge: options.parMerge,
           strategy: selectionMode,
+          memoryQuota,
         });
 
         const compositionType = agent.composition.type as string;
         display.success(`Agent '${agentName}' created`);
         display.keyValue("Agent ID", c.warn(agent.id));
         display.keyValue("State", agent.state);
+        display.keyValue("Memory quota", formatQuota(memoryQuota));
         display.keyValue("Strategy", selectionMode);
         const separator = compositionType === "Par" ? " ∥ " : " → ";
         display.keyValue(
@@ -368,4 +421,12 @@ function checkSchemaCompatibility(
   }
 
   return warnings;
+}
+
+/** 10485760 → "10 MB"; 524288 → "512 KB"; 1610612736 → "1.5 GB". */
+export function formatQuota(bytes: number): string {
+  for (const [unit, size] of [["GB", 1024 ** 3], ["MB", 1024 ** 2], ["KB", 1024]] as const) {
+    if (bytes >= size) return `${Number((bytes / size).toFixed(2))} ${unit}`;
+  }
+  return `${bytes} B`;
 }

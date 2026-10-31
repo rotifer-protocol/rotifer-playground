@@ -49,7 +49,9 @@ export interface NativeBinding {
     wasmBytes: Buffer,
     inputJson: string,
     phenotypeJson: string,
-    constraintsJson?: string
+    constraintsJson?: string,
+    /** v0.9.4 AgentMemory: {"agentId","geneId"}; omitted → the gene has no agent memory. */
+    memoryContextJson?: string
   ): ExecutionResultView;
   l0Check(
     phenotypeJson: string,
@@ -60,7 +62,9 @@ export interface NativeBinding {
     algebraJson: string,
     geneEntriesJson: string,
     inputJson: string,
-    constraintsJson?: string
+    constraintsJson?: string,
+    /** v0.9.4 AgentMemory: {"agentId"}; each gene runs as its entry's v2Id. */
+    memoryContextJson?: string
   ): AlgebraResultView;
 }
 

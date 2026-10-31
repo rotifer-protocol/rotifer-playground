@@ -18,6 +18,7 @@ import { arenaAuditCommand } from "./commands/arena-audit.js";
 import { agentCreateCommand } from "./commands/agent-create.js";
 import { agentListCommand } from "./commands/agent-list.js";
 import { agentRunCommand } from "./commands/agent-run.js";
+import { agentMemoryCommand } from "./commands/agent-memory.js";
 import { genomeCommand } from "./commands/genome.js";
 import { genomeImportCommand } from "./commands/genome-import.js";
 import { loginCommand } from "./commands/login.js";
@@ -110,6 +111,7 @@ const agent = program.command("agent").description("Agent lifecycle commands");
 agent.addCommand(agentCreateCommand);
 agent.addCommand(agentListCommand);
 agent.addCommand(agentRunCommand);
+agent.addCommand(agentMemoryCommand);
 
 genomeCommand.addCommand(genomeImportCommand);
 program.addCommand(genomeCommand);

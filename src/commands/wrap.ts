@@ -15,6 +15,7 @@ import { parseSkillFrontmatter } from "./scan.js";
 import { suggestDomains } from "../utils/domain-suggest.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { offerAutoPublish, resolveWrapFidelity } from "../publish/auto-publish.js";
+import { showGeneIdV2 } from "../utils/gene-id-display.js";
 
 const CLAWHUB_API = "https://clawhub.ai/api/skill";
 const CLAWHUB_DOWNLOAD = "https://wry-manatee-359.convex.site/api/v1/download";
@@ -524,9 +525,3 @@ export const wrapCommand = new Command("wrap")
     await offerAutoPublish({ geneName, geneDir, fidelity: resolveWrapFidelity(phenotype, options.fidelity) });
   });
 
-/** Print the gene's v2 ID, or why it has none (docs/gene-id-v2.md). */
-function showGeneIdV2(geneDir: string): void {
-  const r = geneIdV2(dirname(geneDir), basename(geneDir));
-  if ("id" in r) display.keyValue("Gene ID (v2)", c.warn(r.id));
-  else display.keyValue("Gene ID (v2)", `not computable — ${r.reason}`);
-}

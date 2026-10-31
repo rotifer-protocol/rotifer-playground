@@ -2,6 +2,7 @@ import { pathToFileURL } from "node:url";
 import { loadTestSuite } from "./load.js";
 import { runT1 } from "./run.js";
 import type { GeneRunner, RunOutcome } from "./run.js";
+import { noAgentMemory, type GeneMemoryAccess } from "../memory/index.js";
 
 /**
  * spec §47.5 publishing gate, as decided in ADR-333.
@@ -185,21 +186,27 @@ export function readErrorEnvelope(output: unknown): string | null {
   return `INVALID_INPUT: ${message}`;
 }
 
+/**
+ * `ctx` is what express() gets as its second argument. ctx.memory is never
+ * undefined: without an agent memory to hand over,
+ * every memory call is MEMORY_ACCESS_DENIED "no agent context".
+ */
 export async function loadNodeRunner(
   absSourcePath: string,
   l0: { kind: string; detail?: string },
+  ctx: { memory: GeneMemoryAccess } = { memory: noAgentMemory() },
 ): Promise<{ runner: GeneRunner } | { refusal: string }> {
   if (l0.kind === "violation") {
     return { refusal: `L0 gate blocked this gene: ${l0.detail ?? "no detail"}` };
   }
 
-  let expressFn: (input: unknown) => unknown;
+  let expressFn: (input: unknown, context: { memory: GeneMemoryAccess }) => unknown;
   try {
     const mod = await import(pathToFileURL(absSourcePath).href);
     if (typeof mod.express !== "function") {
       return { refusal: "gene does not export an express() function" };
     }
-    expressFn = mod.express as (input: unknown) => unknown;
+    expressFn = mod.express as typeof expressFn;
   } catch (e) {
     return { refusal: `could not load the gene module: ${(e as Error).message}` };
   }
@@ -207,7 +214,7 @@ export async function loadNodeRunner(
   const runner: GeneRunner = (input) => {
     const started = Date.now();
     try {
-      const output = expressFn(input);
+      const output = expressFn(input, ctx);
 
       // ADR-334: the WASM sandbox turns a lone `__rotifer_error` key into
       // GeneResult::Error, and this path has to agree with it. It does not go

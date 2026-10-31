@@ -1,0 +1,25 @@
+{
+  "domain": "memory.demo",
+  "description": "Keeps notes per topic that later runs build on, in AgentMemory, category CONTEXT. Needs to run inside an agent.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "topic": { "type": "string", "description": "The topic the notes belong to" },
+      "note": { "type": "string", "description": "A note to add (optional)" }
+    },
+    "required": ["topic"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "topic": { "type": "string" },
+      "notes": { "type": "array", "items": { "type": "string" } },
+      "topics": { "type": "array", "items": { "type": "string" } }
+    },
+    "required": ["topic", "notes", "topics"]
+  },
+  "version": "0.1.0",
+  "fidelity": "Wrapped",
+  "transparency": "OPEN",
+  "sources": ["index.ts"]
+}

@@ -1,0 +1,53 @@
+{
+  "about": "Contract section 10 (retention enforced) across bindings. 'advance' moves the clock forward: the local runner advances rotifer-napi's test clock; the Cloud runner shifts this agent's updated_at back by the same amount (expiry depends only on now - updated_at). Each result also carries the entry ids purged for expiry during that step: from the response's 'expired' on the Cloud, from the new 'expired' audit lines on the local side. 20-byte entries (4-byte key, 16-byte value) unless noted.",
+  "agentId": "parity-agent-expiry",
+  "quota": 100,
+  "dataPolicyRetentionDays": null,
+  "genes": {
+    "A": { "geneId": "v2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "domain": "ui.theme" },
+    "B": { "geneId": "v2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "domain": "ui.theme" },
+    "X": { "geneId": "v2:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "domain": "finance.quote" }
+  },
+  "retention1d": { "maxRetentionDays": 1, "autoDeleteOnTermination": false, "anonymizationSupported": false },
+  "steps": [
+    { "id": "X00", "op": "create", "quota": 100 },
+    { "id": "X01", "as": "A", "op": "write", "request": { "key": "ret1", "value": { "fill": 49, "length": 16 }, "category": "CONTEXT", "retentionPolicy": "$retention1d" } },
+    { "id": "X02", "as": "A", "op": "write", "request": { "key": "keep", "value": { "fill": 75, "length": 16 }, "category": "PREFERENCE" }, "note": "no policy: inherits; never expires" },
+    { "id": "X03", "as": "A", "op": "write", "request": { "key": "ret2", "value": { "fill": 50, "length": 16 }, "category": "PATTERN", "retentionPolicy": "$retention1d" } },
+    { "id": "X04", "as": "A", "op": "write", "request": { "key": "ret3", "value": { "fill": 51, "length": 16 }, "category": "CACHE", "retentionPolicy": "$retention1d" } },
+    { "id": "X05", "as": "A", "op": "write", "request": { "key": "unl1", "value": { "fill": 85, "length": 16 }, "category": "CONTEXT", "retentionPolicy": { "maxRetentionDays": null, "autoDeleteOnTermination": false, "anonymizationSupported": false } }, "note": "now exactly 100 of 100 bytes" },
+
+    { "id": "X06", "op": "advance", "seconds": 86399, "note": "1 day - 1 s" },
+    { "id": "X07", "as": "A", "op": "read", "request": { "key": "ret1" }, "note": "1 s before expiry: still there" },
+    { "id": "X08", "as": "A", "op": "query", "request": {} },
+    { "id": "X09", "op": "usage" },
+
+    { "id": "X10", "op": "advance", "seconds": 2, "note": "now 1 day + 1 s" },
+    { "id": "X11", "as": "B", "op": "write", "request": { "key": "ret3", "value": { "fill": 66, "length": 36 }, "category": "CACHE" }, "note": "purges ret1-3 first: a fresh create by B, 40 bytes fit without eviction" },
+    { "id": "X12", "as": "A", "op": "read", "request": { "key": "ret1" }, "note": "gone" },
+    { "id": "X13", "as": "A", "op": "query", "request": {} },
+    { "id": "X14", "op": "usage", "note": "quota freed" },
+    { "id": "X15", "as": "A", "op": "delete", "request": { "key": "ret2" }, "note": "expired = not found" },
+
+    { "id": "X16", "as": "A", "op": "write", "request": { "key": "rd01", "value": { "fill": 1, "length": 1 }, "category": "CONTEXT", "retentionPolicy": "$retention1d" } },
+    { "id": "X17", "op": "advance", "seconds": 86401 },
+    { "id": "X18", "as": "A", "op": "read", "request": { "key": "keep" }, "note": "a read purges rd01 on the way and reports it" },
+
+    { "id": "X19", "as": "A", "op": "write", "request": { "key": "qy01", "value": { "fill": 1, "length": 1 }, "category": "CONTEXT", "retentionPolicy": "$retention1d" } },
+    { "id": "X20", "op": "advance", "seconds": 86401 },
+    { "id": "X21", "as": "A", "op": "query", "request": { "category": "PREFERENCE" }, "note": "a query purges qy01 on the way and reports it" },
+
+    { "id": "X22", "as": "A", "op": "write", "request": { "key": "dl01", "value": { "fill": 1, "length": 1 }, "category": "CONTEXT", "retentionPolicy": "$retention1d" } },
+    { "id": "X23", "op": "advance", "seconds": 86401 },
+    { "id": "X24", "as": "A", "op": "delete", "request": { "key": "unl1" }, "note": "a delete purges dl01 on the way and reports it" },
+
+    { "id": "X25", "as": "A", "op": "write", "request": { "key": "dn01", "value": { "fill": 1, "length": 1 }, "category": "CONTEXT", "retentionPolicy": "$retention1d" } },
+    { "id": "X26", "op": "advance", "seconds": 86401 },
+    { "id": "X27", "as": "X", "op": "read", "request": { "key": "keep" }, "note": "a denied read: does the purge stand?" },
+    { "id": "X28", "as": "A", "op": "query", "request": {}, "note": "which step reported dn01" },
+
+    { "id": "X29", "op": "advance", "seconds": 3153600000, "note": "100 years" },
+    { "id": "X30", "as": "A", "op": "query", "request": {}, "note": "no policy and maxRetentionDays null never expire" },
+    { "id": "X31", "op": "usage" }
+  ]
+}

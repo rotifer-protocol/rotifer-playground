@@ -1,0 +1,62 @@
+{
+  "about": "v0.9.4 cross-binding consistency: the same steps run on the local napi store and on the Cloud agent-memory function; results are normalized and compared step by step. Keys are 4 bytes and values 16 bytes unless noted, so most entries are 20 bytes of quota.",
+  "agentId": "parity-agent-1",
+  "quota": 120,
+  "genes": {
+    "A": { "geneId": "v2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "domain": "ui.theme" },
+    "B": { "geneId": "v2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "domain": "ui.theme" },
+    "X": { "geneId": "v2:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "domain": "finance.quote" },
+    "PLAIN": { "geneId": "gene-plain", "domain": "ui.theme" }
+  },
+  "steps": [
+    { "id": "S00", "op": "create", "quota": 120, "note": "agent with a 120-byte quota" },
+
+    { "id": "S01", "as": "A", "op": "write", "request": { "key": "pref", "value": { "fill": 112, "length": 16 }, "category": "PREFERENCE" }, "note": "default policy" },
+    { "id": "S02", "as": "B", "op": "read", "request": { "key": "pref" }, "note": "same domain reads" },
+    { "id": "S03", "as": "X", "op": "read", "request": { "key": "pref" }, "note": "other domain is denied" },
+
+    { "id": "S04", "as": "A", "op": "write", "request": { "key": "cch1", "value": { "fill": 99, "length": 16 }, "category": "CACHE" } },
+    { "id": "S05", "as": "A", "op": "write", "request": { "key": "pat1", "value": { "fill": 116, "length": 16 }, "category": "PATTERN" } },
+    { "id": "S06", "as": "A", "op": "write", "request": { "key": "pat2", "value": { "fill": 116, "length": 16 }, "category": "PATTERN" } },
+    { "id": "S07", "as": "A", "op": "write", "request": { "key": "ctx1", "value": { "fill": 120, "length": 16 }, "category": "CONTEXT" }, "note": "now exactly 100 of 120 bytes" },
+
+    { "id": "S08", "as": "A", "op": "write", "request": { "key": "ctx2", "value": { "fill": 120, "length": 26 }, "category": "CONTEXT" }, "note": "30 bytes: 10 over, CACHE goes first" },
+    { "id": "S09", "as": "A", "op": "query", "request": {}, "note": "survivors, newest first" },
+    { "id": "S10", "as": "A", "op": "write", "request": { "key": "ctx3", "value": { "fill": 120, "length": 26 }, "category": "CONTEXT" }, "note": "20 over: the oldest PATTERN goes" },
+    { "id": "S11", "as": "A", "op": "query", "request": {} },
+    { "id": "S12", "as": "A", "op": "write", "request": { "key": "big1", "value": { "fill": 98, "length": 106 }, "category": "PREFERENCE" }, "note": "110 bytes; evicting everything but PREFERENCE frees only 100: refused" },
+    { "id": "S13", "as": "A", "op": "query", "request": {}, "note": "a refused write changed nothing" },
+
+    { "id": "S14", "as": "A", "op": "write", "request": { "key": "huge", "value": { "fill": 104, "length": 1048577 }, "category": "CACHE" }, "note": "1 MiB + 1 byte" },
+    { "id": "S15", "as": "A", "op": "write", "request": { "key": "xtra", "value": { "fill": 1, "length": 1 }, "category": "CACHE", "extra": 1 }, "note": "unknown field" },
+    { "id": "S16", "as": "A", "op": "write", "request": { "key": "lowr", "value": { "fill": 1, "length": 1 }, "category": "cache" }, "note": "lowercase enum" },
+    { "id": "S17", "as": "A", "op": "write", "request": { "key": "", "value": { "fill": 1, "length": 1 }, "category": "CACHE" }, "note": "empty key" },
+    { "id": "S18", "as": "A", "op": "write", "request": { "key": "b64x", "value": "ZGFyaw", "category": "CACHE" }, "note": "unpadded base64" },
+
+    { "id": "S19", "as": "A", "op": "query", "request": { "category": "CONTEXT" } },
+    { "id": "S20", "as": "A", "op": "query", "request": { "keyPrefix": "ctx", "limit": 1 } },
+    { "id": "S21", "as": "A", "op": "query", "request": { "from": "2026-01-01T00:00:00Z" }, "note": "alias field name" },
+    { "id": "S22", "as": "A", "op": "query", "request": { "since": "2000-01-01T00:00:00Z", "until": "2999-01-01T00:00:00Z" } },
+
+    { "id": "S23", "as": "B", "op": "write", "request": { "key": "ctx3", "value": { "fill": 66, "length": 26 }, "category": "CONTEXT", "accessPolicy": { "readScope": "CREATOR_GENE_ONLY", "writeScope": "CREATOR_GENE_ONLY", "sharePolicy": "PRIVATE" } }, "note": "non-creator changes the policy" },
+    { "id": "S24", "as": "B", "op": "write", "request": { "key": "ctx3", "value": { "fill": 66, "length": 26 }, "category": "CONTEXT" }, "note": "non-creator in the same domain writes the value only" },
+    { "id": "S25", "as": "A", "op": "read", "request": { "key": "ctx3" } },
+
+    { "id": "S26", "as": "A", "op": "write", "request": { "key": "ret1", "value": { "fill": 1, "length": 1 }, "category": "CONTEXT", "retentionPolicy": { "maxRetentionDays": 30 } }, "note": "retentionPolicy missing fields" },
+    { "id": "S27", "as": "A", "op": "write", "request": { "key": "ret1", "value": { "fill": 1, "length": 1 }, "category": "CONTEXT", "retentionPolicy": { "maxRetentionDays": 30, "autoDeleteOnTermination": true, "anonymizationSupported": false } } },
+    { "id": "S28", "as": "B", "op": "write", "request": { "key": "ret1", "value": { "fill": 1, "length": 1 }, "category": "CONTEXT", "retentionPolicy": null }, "note": "non-creator resets retention to inherit" },
+
+    { "id": "S29", "as": "A", "op": "write", "request": { "key": "shr1", "value": { "fill": 1, "length": 1 }, "category": "CONTEXT", "accessPolicy": { "readScope": "SAME_DOMAIN", "writeScope": "SAME_DOMAIN", "sharePolicy": "ANONYMIZED_SHARE" } }, "note": "sharePolicy other than PRIVATE" },
+    { "id": "S30", "as": "A", "op": "write", "request": { "key": "dep1", "value": { "fill": 1, "length": 1 }, "category": "CONTEXT", "accessPolicy": { "readScope": "DEPLOYER_CONFIGURED", "writeScope": "SAME_DOMAIN", "sharePolicy": "PRIVATE" } } },
+    { "id": "S31", "as": "A", "op": "read", "request": { "key": "dep1" }, "note": "DEPLOYER_CONFIGURED denies even the creator" },
+
+    { "id": "S32", "as": "X", "op": "delete", "request": { "key": "ctx3" }, "note": "other domain cannot delete" },
+    { "id": "S33", "as": "A", "op": "delete", "request": { "key": "ctx3" } },
+    { "id": "S34", "as": "A", "op": "delete", "request": { "key": "ctx3" }, "note": "already gone" },
+    { "id": "S35", "as": "A", "op": "read", "request": { "key": "nope" }, "note": "missing key reads as null" },
+    { "id": "S36", "as": "A", "op": "read", "request": { "key": "pref", "category": "CACHE" }, "note": "other category reads as null" },
+    { "id": "S37", "as": "PLAIN", "op": "read", "request": { "key": "pref" }, "note": "caller id that is not a v2 gene id" },
+
+    { "id": "S38", "as": "A", "op": "query", "request": {}, "note": "final state" }
+  ]
+}

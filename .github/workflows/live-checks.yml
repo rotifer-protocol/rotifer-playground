@@ -20,6 +20,21 @@ on:
   schedule:
     - cron: "41 4 * * *"
   workflow_dispatch:
+    # The issue path only runs when a real service fails. To check it on
+    # purpose: simulate_failure makes that lane really fail, against a local
+    # stand-in (tests/live/simulate.ts), so the CLI prints its real error
+    # lines; with issue_dry_run the step prints the issue and the gh command
+    # instead of filing it. Scheduled runs have no inputs and are unaffected.
+    inputs:
+      simulate_failure:
+        description: "Make one lane fail on purpose (clawhub: HTTP 500 stand-in; cloud: refused connection)"
+        type: choice
+        options: [none, clawhub, cloud]
+        default: none
+      issue_dry_run:
+        description: "With a simulated failure, print the issue instead of filing it"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -35,12 +50,16 @@ jobs:
       matrix:
         include:
           - service: ClawHub
+            key: clawhub
+            simulate: http-500
             suite: tests/live/clawhub-live.test.ts
             # The CLI's own error lines: they name the HTTP status or the
             # timeout / network cause.
             excerpt: 'error\[E00(10|11|12)\]|ClawHub:|AssertionError|FAIL '
             fix: "If ClawHub changed shape (fields, redirects, host), update src/utils/clawhub-client.ts and the recorded fixture in tests/fixtures/clawhub/."
           - service: Rotifer Cloud
+            key: cloud
+            simulate: refused
             suite: tests/live/cloud-live.test.ts
             excerpt: 'Cannot reach Rotifer Cloud|Cloud API error|No API key found|Legacy API keys|AssertionError|FAIL '
             fix: "If the API changed shape (columns, types), update the recorded fixture in tests/fixtures/cloud/. If the shipped key was refused, see DEFAULT_CLOUD_ANON_KEY in src/cloud/types.ts."
@@ -63,6 +82,8 @@ jobs:
         env:
           SERVICE: ${{ matrix.service }}
           SUITE: ${{ matrix.suite }}
+          # Set only when this lane is the one simulate_failure names.
+          ROTIFER_LIVE_SIMULATE: ${{ inputs.simulate_failure == matrix.key && matrix.simulate || '' }}
         run: |
           set -o pipefail
           if npm run test:live -- "$SUITE" 2>&1 | tee live.log; then
@@ -83,10 +104,19 @@ jobs:
           SUITE: ${{ matrix.suite }}
           EXCERPT: ${{ matrix.excerpt }}
           FIX: ${{ matrix.fix }}
+          # "true" only for a simulated failure with issue_dry_run on.
+          DRY_RUN: ${{ inputs.simulate_failure != '' && inputs.simulate_failure != 'none' && inputs.issue_dry_run }}
+          SIMULATED: ${{ inputs.simulate_failure == matrix.key && matrix.simulate || '' }}
         run: |
           TITLE="$SERVICE live check is failing"
-          grep -E "$EXCERPT" live.log | head -20 > excerpt.txt || true
+          # The CLI's lines, without vitest's source excerpts ("  99| expect(…)")
+          # and with its "+ " diff copies folded back into the line they repeat.
+          grep -E "$EXCERPT" live.log | grep -vE '^ *[0-9]+\| ' | sed -E 's/^[+-] //' | awk '!seen[$0]++' | head -20 > excerpt.txt || true
           {
+            if [ -n "$SIMULATED" ]; then
+              echo "**Simulated failure** (simulate_failure, ROTIFER_LIVE_SIMULATE=$SIMULATED): not a real outage."
+              echo
+            fi
             echo "\`npm run test:live -- $SUITE\` failed against the real $SERVICE."
             echo
             echo "What the CLI reported:"
@@ -101,15 +131,28 @@ jobs:
             echo
             echo "Refreshed automatically by \`.github/workflows/live-checks.yml\`."
           } > issue-body.md
+          {
+            echo "Still failing ($(date -u +%F)): $RUN_URL"
+            echo
+            echo '```'
+            cat excerpt.txt
+            echo '```'
+          } > comment.md
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run: no issue is filed. A real failure would run:"
+            echo "  gh issue list --state open --search \"in:title \\\"$TITLE\\\"\" --json number --jq '.[0].number // empty'"
+            echo "  then, with none open: gh issue create --title \"$TITLE\" --body-file issue-body.md"
+            echo "  or, with one open:    gh issue comment <number> --body-file comment.md"
+            echo
+            echo "Title: $TITLE"
+            echo "----- issue-body.md -----"
+            cat issue-body.md
+            echo "----- comment.md -----"
+            cat comment.md
+            exit 1
+          fi
           EXISTING="$(gh issue list --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')"
           if [ -n "$EXISTING" ]; then
-            {
-              echo "Still failing ($(date -u +%F)): $RUN_URL"
-              echo
-              echo '```'
-              cat excerpt.txt
-              echo '```'
-            } > comment.md
             gh issue comment "$EXISTING" --body-file comment.md
             echo "refreshed issue #$EXISTING"
           else

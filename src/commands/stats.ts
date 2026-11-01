@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as display from "../utils/display.js";
 import { c } from "../utils/palette.js";
-import { getGeneStats } from "../cloud/client.js";
+import { cloudFailureHint, getGeneStats } from "../cloud/client.js";
 
 export const statsCommand = new Command("stats")
   .description("View download statistics for a gene")
@@ -29,7 +29,8 @@ export const statsCommand = new Command("stats")
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to fetch stats";
       display.error(msg);
-      display.hint("Check the gene name/ID and try again, or run 'rotifer search' to find genes.");
+      const hint = cloudFailureHint(err, "Check the gene name/ID and try again, or run 'rotifer search' to find genes.");
+      if (hint) display.hint(hint);
       process.exit(1);
     }
   });

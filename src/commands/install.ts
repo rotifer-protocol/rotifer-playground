@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import * as display from "../utils/display.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
-import { getGene, downloadGeneWasm, trackDownload } from "../cloud/client.js";
+import { cloudFailureHint, getGene, downloadGeneWasm, trackDownload } from "../cloud/client.js";
 import type { CloudGene } from "../cloud/types.js";
 import { refreshDomainCacheFromCloud } from "../utils/domain-suggest.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
@@ -251,7 +251,8 @@ export const installCommand = new Command("install")
         process.exit(1);
       }
       display.error(err.message || "Install failed");
-      display.hint("Check the gene name/ID and try again, or run 'rotifer search' to find genes.");
+      const hint = cloudFailureHint(err, "Check the gene name/ID and try again, or run 'rotifer search' to find genes.");
+      if (hint) display.hint(hint);
       process.exit(1);
     }
   });

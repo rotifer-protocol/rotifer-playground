@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as display from "../utils/display.js";
 import { c, icon } from "../utils/palette.js";
-import { CloudNetworkError, listGeneVersions } from "../cloud/client.js";
+import { cloudFailureHint, listGeneVersions } from "../cloud/client.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { parseGeneRef } from "../cloud/gene-ref.js";
 
@@ -104,11 +104,9 @@ export const versionsCommand = new Command("versions")
       s.stop();
       const msg = err instanceof Error ? err.message : "Failed to fetch version history";
       display.error(msg);
-      display.hint(
-        err instanceof CloudNetworkError
-          ? "Check your network connection, or retry when Rotifer Cloud is reachable."
-          : "Check the gene name/ID and try again.",
-      );
+      // A gene with no versions is an empty list, not an error: no name hint here.
+      const hint = cloudFailureHint(err, "Check the gene name/ID and try again.");
+      if (hint) display.hint(hint);
       process.exit(1);
     }
   });

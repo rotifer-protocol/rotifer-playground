@@ -138,6 +138,26 @@ export function toCloudNetworkError(url: string, err: TypeError): CloudNetworkEr
   return new CloudNetworkError(endpoint, code, reason, { cause: err });
 }
 
+/** The registry answered and has no gene for this ref. */
+export class GeneNotFoundError extends Error {
+  constructor(readonly ref: string) {
+    super(`Gene '${ref}' not found`);
+    this.name = "GeneNotFoundError";
+  }
+}
+
+/**
+ * What to tell the user after a failed cloud call. A hint about the gene's
+ * name (`notFound`) only when the registry said there is no such gene: with
+ * the cloud unreachable the name was never checked, and an error status says
+ * nothing about it either. Undefined means the error message stands alone.
+ */
+export function cloudFailureHint(err: unknown, notFound: string): string | undefined {
+  if (err instanceof CloudNetworkError) return "Check your network connection, or retry when Rotifer Cloud is reachable.";
+  if (err instanceof GeneNotFoundError) return notFound;
+  return undefined;
+}
+
 /** `fetch`, with "fetch failed" turned into a CloudNetworkError that names its cause. */
 async function cloudFetch(url: string, init?: RequestInit): Promise<Response> {
   try {
@@ -331,7 +351,7 @@ export async function getGene(idOrName: string): Promise<CloudGene> {
     headers: authHeaders(),
   });
   const data = await handleResponse<any[]>(res);
-  if (data.length === 0) throw new Error(`Gene '${idOrName}' not found`);
+  if (data.length === 0) throw new GeneNotFoundError(idOrName);
 
   const row = data[0];
   const config = loadCloudConfig();

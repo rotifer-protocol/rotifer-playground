@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import * as display from "../utils/display.js";
 import { scoreColor, c, fidelityColor } from "../utils/palette.js";
-import { getGene } from "../cloud/client.js";
+import { cloudFailureHint, getGene } from "../cloud/client.js";
 import { getProjectRoot, loadConfig } from "../utils/config.js";
 import { contentHash } from "../utils/content-hash.js";
 
@@ -164,7 +164,8 @@ export const infoCommand = new Command("info")
       s.stop();
       const msg = err instanceof Error ? err.message : "Failed to fetch gene details";
       display.error(msg);
-      display.hint("Check the gene name/ID, or run 'rotifer search' to find genes.");
+      const hint = cloudFailureHint(err, "Check the gene name/ID, or run 'rotifer search' to find genes.");
+      if (hint) display.hint(hint);
       process.exit(1);
     }
   });

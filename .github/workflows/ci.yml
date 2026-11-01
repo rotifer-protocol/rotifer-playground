@@ -197,7 +197,20 @@ jobs:
       # the other lanes stay plain cross-platform test runs.
       - name: Run coverage gate
         if: matrix.os == 'ubuntu-latest'
-        run: npm run test:coverage
+        run: npm run test:coverage -- --reporter=default --reporter=json --outputFile.json=test-results.json
+
+      # What report-quality sends to the Quality Observatory: this gate's own
+      # results, uploaded whether it passed or failed.
+      - name: Upload the results for the Quality Observatory
+        if: always() && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quality-test-results
+          path: |
+            test-results.json
+            coverage/coverage-summary.json
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Run cross-platform tests
         if: matrix.os != 'ubuntu-latest'
@@ -725,8 +738,8 @@ jobs:
     needs: [test, vscode-extension, security-check]
     # always(): telemetry must record red main runs too. Without it, any
     # upstream failure skips this job and the Observatory never sees the
-    # failure it exists to observe. The steps themselves stay best-effort
-    # (|| true), so a broken upload never blocks the pipeline.
+    # failure it exists to observe. The steps themselves stay best-effort,
+    # so a broken upload never blocks the pipeline.
     if: always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -734,14 +747,17 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "22"
-          cache: "npm"
 
-      - run: npm ci
-
-      - name: Run tests with JSON reporter + coverage
-        run: |
-          npm run build
-          npx vitest run --reporter=json --outputFile=test-results.json --coverage 2>/dev/null || true
+      # The Test job's own results, not a second run: that run had none of the
+      # Test job's set-up (the napi addon built from this commit) and on a
+      # release merge reported failures the gate never had.
+      # tests/unit/quality-report-counts.test.ts
+      - name: Download the Test job's results
+        id: results
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+        with:
+          name: quality-test-results
 
       - name: Report test results to Supabase
         if: env.QUALITY_SUPABASE_URL != ''
@@ -751,16 +767,14 @@ jobs:
           QUALITY_CI_REPORTER_TOKEN: ${{ secrets.QUALITY_CI_REPORTER_TOKEN }}
         run: |
           if [ ! -f test-results.json ]; then
-            echo "No test results file found, skipping report"
+            echo "::warning::The Test job left no results (it failed before running the suite); nothing reported"
             exit 0
           fi
 
           VERSION=$(node -p "require('./package.json').version")
           RELEASE_LINE_VERSION="v${VERSION}"
-          TOTAL=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numTotalTests || 0")
-          PASSED=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numPassedTests || 0")
-          FAILED=$(node -p "JSON.parse(require('fs').readFileSync('test-results.json','utf8')).numFailedTests || 0")
-          DURATION=$(node -p "Math.round(JSON.parse(require('fs').readFileSync('test-results.json','utf8')).testResults?.reduce((s,r) => s + (r.endTime - r.startTime), 0) || 0)")
+          COUNTS=$(node scripts/quality-test-counts.mjs test-results.json) || { echo "::warning::Unreadable test results; nothing reported"; exit 0; }
+          eval "$COUNTS"
 
           COVERAGE_PCT=0
           if [ -f coverage/coverage-summary.json ]; then
@@ -780,10 +794,11 @@ jobs:
               \"total_tests\": ${TOTAL},
               \"passed\": ${PASSED},
               \"failed\": ${FAILED},
-              \"duration_ms\": ${DURATION},
+              \"skipped\": ${SKIPPED},
+              \"duration_ms\": ${DURATION_MS},
               \"coverage_pct\": ${COVERAGE_PCT},
               \"ci_run_url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"
-            }" && echo "✅ Reported to Quality Observatory (coverage: ${COVERAGE_PCT}%)" || echo "⚠️ Report failed (non-blocking)"
+            }" && echo "✅ Reported to Quality Observatory (${PASSED} passed, ${FAILED} failed, ${SKIPPED} skipped of ${TOTAL}; coverage: ${COVERAGE_PCT}%)" || echo "⚠️ Report failed (non-blocking)"
 
   regression-guard:
     if: github.event_name == 'pull_request'

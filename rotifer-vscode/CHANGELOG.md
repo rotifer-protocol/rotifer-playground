@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.4 — 2026-11-01
+
+Version aligned with the `v0.9.4` Rotifer release line (npm `@rotifer/playground` 0.33.0). The extension's code and bundled content are unchanged from 0.9.3. It runs the CLI as `npx -y @rotifer/playground`, which resolves to the latest published CLI, so 0.33.0 behaviour (Agent Memory for genes run locally, and the `rotifer agent memory list` / `delete` deployer commands) already applies without an extension update.
+
 ## 0.9.3 — 2026-10-24
 
 Version aligned with the `v0.9.3` Rotifer release line (npm `@rotifer/playground` 0.30.x). The extension's code and bundled content are unchanged from 0.9.2. It runs the CLI as `npx -y @rotifer/playground`, which resolves to the latest published CLI, so 0.30.x behaviour (Arena F(g) against the season median, genes run with the permissions their phenotype declares) already applies without an extension update.

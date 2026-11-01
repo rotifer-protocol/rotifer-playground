@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +24,37 @@ beforeEach(() => {
 });
 afterEach(() => {
   rmSync(isolatedHome, { recursive: true, force: true });
+});
+
+// The variables the gates read besides HOME. A developer who exported
+// DO_NOT_TRACK=1 in their shell used to see 16 of these tests fail. This file
+// sets the opted-out values itself, before any suite saves its environment, so
+// a test that relies on the caller's environment fails here and in CI, not only
+// on that developer's machine.
+const CALLER_ENV = {
+  DO_NOT_TRACK: "1",
+  ROTIFER_TELEMETRY: "0",
+  ROTIFER_INVOCATION_CHANNEL: "not-a-channel",
+};
+const callerEnvBefore = Object.fromEntries(Object.keys(CALLER_ENV).map((k) => [k, process.env[k]]));
+Object.assign(process.env, CALLER_ENV);
+// Each test starts from "nothing set" and sets only what it is about. This
+// runs before the suites' own beforeEach, and again after each suite's
+// afterEach has restored the environment it saved.
+beforeEach(() => {
+  for (const key of Object.keys(CALLER_ENV)) delete process.env[key];
+});
+afterAll(() => {
+  for (const [k, v] of Object.entries(callerEnvBefore)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+});
+
+describe("the caller's environment", () => {
+  it("does not reach a test: every gate input starts unset", () => {
+    for (const key of Object.keys(CALLER_ENV)) expect(process.env[key], key).toBeUndefined();
+  });
 });
 
 const CLOUD_ID = "250243be-4f02-4a29-8d8a-fe8bc3609c76";

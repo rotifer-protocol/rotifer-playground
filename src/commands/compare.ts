@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as display from "../utils/display.js";
 import { fidelityColor, scoreColor, c } from "../utils/palette.js";
-import { getGene } from "../cloud/client.js";
+import { cloudFailureHint, getGene } from "../cloud/client.js";
 
 export const compareCommand = new Command("compare")
   .description("Compare 2-5 genes by reputation and downloads")
@@ -61,7 +61,8 @@ export const compareCommand = new Command("compare")
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Comparison failed";
       display.error(msg);
-      display.hint("Check the gene refs and try again, or run 'rotifer search <query>' to find cloud genes.");
+      const hint = cloudFailureHint(err, "Check the gene refs and try again, or run 'rotifer search <query>' to find cloud genes.");
+      if (hint) display.hint(hint);
       process.exit(1);
     }
   });

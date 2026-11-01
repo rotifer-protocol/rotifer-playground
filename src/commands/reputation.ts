@@ -2,6 +2,7 @@ import { Command } from "commander";
 import * as display from "../utils/display.js";
 import { scoreColor } from "../utils/palette.js";
 import {
+  cloudFailureHint,
   getGene,
   getGeneReputation,
   getDeveloperReputation,
@@ -84,7 +85,8 @@ async function showGeneReputation(geneRef: string): Promise<void> {
     s.stop();
     const msg = err instanceof Error ? err.message : "Failed to fetch reputation";
     display.error(msg);
-    display.hint("Check your network connection, or run 'rotifer search' to find genes.");
+    const hint = cloudFailureHint(err, "Check the gene name/ID, or run 'rotifer search' to find genes.");
+    if (hint) display.hint(hint);
     process.exit(1);
   }
 }

@@ -3,15 +3,19 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { startRecordedCloud, type RecordedCloud } from "./recorded-cloud.js";
 
 const PROJECT_ROOT = resolve(__dirname, "../..");
 const CLI = `node ${resolve(PROJECT_ROOT, "dist/index.js")}`;
+const HOME = mkdtempSync(join(tmpdir(), "rotifer-list-run-versions-home-"));
+// `versions` reads the registry: the recorded one (tests/fixtures/cloud/).
+let cloud: RecordedCloud;
 const run = (cmd: string, cwd?: string) =>
   execSync(`${CLI} ${cmd}`, {
     cwd: cwd || PROJECT_ROOT,
     encoding: "utf-8",
     timeout: 15000,
-    env: { ...process.env, HOME: "/tmp/rotifer-test-home" },
+    env: { ...process.env, HOME, NO_COLOR: "1", ROTIFER_CLOUD_ENDPOINT: cloud.endpoint },
   });
 
 const tryRun = (cmd: string, cwd?: string) => {
@@ -21,6 +25,18 @@ const tryRun = (cmd: string, cwd?: string) => {
     return err.stderr || err.stdout || err.message;
   }
 };
+
+beforeAll(async () => {
+  cloud = await startRecordedCloud();
+});
+
+afterAll(async () => {
+  // Stop the server first, so a failed check cannot leave it running.
+  const unrecorded = await cloud.unrecorded();
+  await cloud.close();
+  expect(unrecorded).toEqual([]);
+  rmSync(HOME, { recursive: true, force: true });
+});
 
 describe("rotifer list", () => {
   let projectDir: string;
@@ -81,5 +97,22 @@ describe("rotifer versions", () => {
   it("handles nonexistent owner/name gracefully", () => {
     const out = tryRun("versions nobody nonexistent-gene-xyz");
     expect(out).toMatch(/no.*version|0 version|error/i);
+    expect(out).toContain("No published versions found for nobody/nonexistent-gene-xyz");
+  });
+
+  it("shows a gene's version chain, oldest first", () => {
+    const out = run("versions @fixture-owner/fixture-gene");
+    expect(out).toContain("Cloud Version History: fixture-owner/fixture-gene");
+    expect(out.indexOf("0.1.0")).toBeGreaterThan(-1);
+    expect(out.indexOf("0.2.0")).toBeGreaterThan(out.indexOf("0.1.0"));
+    expect(out).toContain("Adds a second output field");
+    expect(out).toContain("← 6f1c2a40-0000-4000-8000-000000000001");
+    expect(out).toContain("2 version(s) found in Rotifer Cloud");
+    expect(out).toContain("Latest: 0.2.0");
+  });
+
+  it("only lists the named owner's versions", () => {
+    const out = tryRun("versions @someone-else/fixture-gene");
+    expect(out).toContain("No published versions found for someone-else/fixture-gene");
   });
 });

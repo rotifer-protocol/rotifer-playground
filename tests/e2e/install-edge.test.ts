@@ -1,11 +1,27 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { execSync } from "node:child_process";
+import { startRecordedCloud, type RecordedCloud } from "./recorded-cloud.js";
 
 const CLI = join(__dirname, "..", "..", "dist", "index.js");
+
+// `install` looks the gene up in the registry: the recorded one
+// (tests/fixtures/cloud/).
+let cloud: RecordedCloud;
+
+beforeAll(async () => {
+  cloud = await startRecordedCloud();
+});
+
+afterAll(async () => {
+  // Stop the server first, so a failed check cannot leave it running.
+  const unrecorded = await cloud.unrecorded();
+  await cloud.close();
+  expect(unrecorded).toEqual([]);
+});
 
 function run(args: string, cwd: string, env?: Record<string, string>): { stdout: string; exitCode: number } {
   const testHome = join(tmpdir(), "rotifer-install-home-" + randomUUID());
@@ -15,7 +31,7 @@ function run(args: string, cwd: string, env?: Record<string, string>): { stdout:
       cwd,
       encoding: "utf-8",
       timeout: 15000,
-      env: { ...process.env, FORCE_COLOR: "0", HOME: testHome, ...env },
+      env: { ...process.env, FORCE_COLOR: "0", HOME: testHome, ROTIFER_CLOUD_ENDPOINT: cloud.endpoint, ...env },
     });
     return { stdout, exitCode: 0 };
   } catch (err: any) {
@@ -63,6 +79,7 @@ describe("rotifer install edge cases", () => {
   it("fails with invalid (non-UUID) gene id", () => {
     const result = run("install not-a-real-gene-id", projectDir);
     expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).toContain("Gene 'not-a-real-gene-id' not found");
   });
 
   it("fails when not in a rotifer project directory", () => {

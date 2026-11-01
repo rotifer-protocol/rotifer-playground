@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Requires network access and npx to run @rotifer/mcp-server@0.19.6 for Arena rankings and Gene metadata.
 metadata:
   author: rotifer-protocol
-  version: "2.4.12"
+  version: "2.4.13"
   command: /evolve
   mcp-package: "@rotifer/mcp-server@0.19.6"
 ---

@@ -44,13 +44,30 @@ const CLAWHUB_LOG = [
   "unrelated noise",
 ].join("\n");
 
+/**
+ * The same failure as it lands in live.log on a GitHub runner (run
+ * 41300305769): vitest colours its output there, and its github-actions
+ * reporter adds one `::error` workflow command per failed test, with the
+ * whole message %0A-encoded on one line.
+ */
+const ESC = "\u001b";
+const CLAWHUB_LOG_ON_RUNNER = [
+  ` ${ESC}[41m${ESC}[1m FAIL ${ESC}[22m${ESC}[49m tests/live/clawhub-live.test.ts${ESC}[2m > ${ESC}[22mlive ClawHub${ESC}[2m > ${ESC}[22mwrap --from-clawhub grilling downloads, unpacks and writes the gene`,
+  `${ESC}[31m${ESC}[1mAssertionError${ESC}[22m: ${ESC}[39m`,
+  "ℹ ClawHub: HTTP 500 — [Request ID: abc] Server Error; trying again (2/3)",
+  "error[E0010]: ClawHub skill 'grilling' could not be fetched: HTTP 500 — [Request ID: abc] Server Error (3 attempts)",
+  `${ESC}[31m+ error[E0010]: ClawHub skill 'grilling' could not be fetched: HTTP 500 — [Request ID: abc] Server Error (3 attempts)${ESC}[39m`,
+  `    ${ESC}[90m 61|${ESC}[39m     ${ESC}[34mexpect${ESC}[39m(output)${ESC}[33m.${ESC}[39m${ESC}[34mtoContain${ESC}[39m(${ESC}[32m"ClawHub: "${ESC}[39m)`,
+  "::error file=/home/runner/work/r/r/tests/live/clawhub-live.test.ts,title=tests/live/clawhub-live.test.ts > live ClawHub > wrap,line=67,column=28::AssertionError: %0A  Gene Wrapper%0Aerror[E0010]: ClawHub skill 'grilling' could not be fetched: HTTP 500 (3 attempts)%0A",
+].join("\n");
+
 let dir = "";
 const ghCalls = () => (existsSync(join(dir, "gh-calls")) ? readFileSync(join(dir, "gh-calls"), "utf-8") : "");
 
 /** Runs the issue step as the clawhub lane, in `dir`, with `gh` faked. */
-function runIssueStep(extraEnv: Record<string, string>, openIssue = "") {
+function runIssueStep(extraEnv: Record<string, string>, openIssue = "", log = CLAWHUB_LOG) {
   const lane = lanes.find((l) => l.key === "clawhub")!;
-  writeFileSync(join(dir, "live.log"), CLAWHUB_LOG);
+  writeFileSync(join(dir, "live.log"), log);
   writeFileSync(
     join(dir, "gh"),
     `#!/usr/bin/env bash\necho "gh $*" >> "${join(dir, "gh-calls")}"\nif [ "$1 $2" = "issue list" ]; then printf '%s' "${openIssue}"; fi\n`,
@@ -126,6 +143,23 @@ describe("live-checks.yml: the issue step", () => {
     expect(excerpt.filter((l) => l.includes("Server Error (3 attempts)"))).toHaveLength(1);
     expect(excerpt.some((l) => l.startsWith("+ "))).toBe(false);
     expect(excerpt.some((l) => /^ *\d+\| /.test(l))).toBe(false);
+  });
+
+  it("quotes a runner's coloured log as plain text, without vitest's ::error workflow commands", () => {
+    const r = runIssueStep({ DRY_RUN: "true" }, "", CLAWHUB_LOG_ON_RUNNER);
+    const excerpt = readFileSync(join(dir, "excerpt.txt"), "utf-8").split("\n").filter(Boolean);
+    expect(excerpt.join("\n")).not.toContain(ESC);
+    // Printed in a dry run, a "::" line would be read by the runner as a command.
+    expect(excerpt.some((l) => l.startsWith("::"))).toBe(false);
+    expect(excerpt.some((l) => /^ *\d+\| /.test(l))).toBe(false);
+    expect(excerpt.some((l) => l.startsWith("+ "))).toBe(false);
+    expect(excerpt).toEqual([
+      "  FAIL  tests/live/clawhub-live.test.ts > live ClawHub > wrap --from-clawhub grilling downloads, unpacks and writes the gene",
+      "AssertionError: ",
+      "ℹ ClawHub: HTTP 500 — [Request ID: abc] Server Error; trying again (2/3)",
+      "error[E0010]: ClawHub skill 'grilling' could not be fetched: HTTP 500 — [Request ID: abc] Server Error (3 attempts)",
+    ]);
+    expect(r.stdout).toContain("error[E0010]: ClawHub skill 'grilling' could not be fetched");
   });
 
   it("says a simulated failure is simulated", () => {

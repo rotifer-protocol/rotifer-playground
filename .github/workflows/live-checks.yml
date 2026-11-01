@@ -109,9 +109,11 @@ jobs:
           SIMULATED: ${{ inputs.simulate_failure == matrix.key && matrix.simulate || '' }}
         run: |
           TITLE="$SERVICE live check is failing"
-          # The CLI's lines, without vitest's source excerpts ("  99| expect(…)")
-          # and with its "+ " diff copies folded back into the line they repeat.
-          grep -E "$EXCERPT" live.log | grep -vE '^ *[0-9]+\| ' | sed -E 's/^[+-] //' | awk '!seen[$0]++' | head -20 > excerpt.txt || true
+          # The CLI's lines as plain text: without the colours vitest uses on a
+          # runner, its "::error" workflow commands (one per failed test, already
+          # on the run page) and its source excerpts ("  99| expect(…)"), and with
+          # its "+ " diff copies folded back into the line they repeat.
+          sed -E $'s/\x1b\\[[0-9;]*[A-Za-z]//g' live.log | grep -E "$EXCERPT" | grep -vE '^::|^ *[0-9]+\| ' | sed -E 's/^[+-] //' | awk '!seen[$0]++' | head -20 > excerpt.txt || true
           {
             if [ -n "$SIMULATED" ]; then
               echo "**Simulated failure** (simulate_failure, ROTIFER_LIVE_SIMULATE=$SIMULATED): not a real outage."

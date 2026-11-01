@@ -10,5 +10,5 @@ with synthetic content:
 
 PR CI runs `tests/e2e/clawhub-wrap.test.ts` against these. The real endpoints
 are checked on a schedule by `tests/live/clawhub-live.test.ts`
-(`.github/workflows/clawhub-live.yml`); if ClawHub changes shape, that check
+(`.github/workflows/live-checks.yml`); if ClawHub changes shape, that check
 fails and this fixture is updated to match.

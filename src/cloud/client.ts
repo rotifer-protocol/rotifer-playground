@@ -84,6 +84,72 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * Rotifer Cloud could not be reached at all: no HTTP status came back.
+ *
+ * Node's fetch reports every such failure as a bare `TypeError("fetch
+ * failed")` and keeps the reason in `err.cause`, so printing `err.message`
+ * told users nothing ("✗ fetch failed") during an outage. This carries the
+ * endpoint and the cause's code instead.
+ */
+export class CloudNetworkError extends Error {
+  constructor(
+    readonly endpoint: string,
+    readonly code: string | undefined,
+    reason: string,
+    options?: { cause?: unknown },
+  ) {
+    super(`Cannot reach Rotifer Cloud (${endpoint}): ${reason}`, options);
+    this.name = "CloudNetworkError";
+  }
+}
+
+const NETWORK_REASONS: Record<string, string> = {
+  ECONNREFUSED: "connection refused",
+  ECONNRESET: "connection reset",
+  EPIPE: "connection reset",
+  ENOTFOUND: "host not found",
+  EAI_AGAIN: "DNS lookup failed",
+  ETIMEDOUT: "connection timed out",
+  ENETUNREACH: "network unreachable",
+  EHOSTUNREACH: "host unreachable",
+  UND_ERR_CONNECT_TIMEOUT: "connection timed out",
+  UND_ERR_HEADERS_TIMEOUT: "no response headers in time",
+  UND_ERR_SOCKET: "connection closed before a response",
+};
+
+type CauseLike = { code?: unknown; message?: unknown; errors?: CauseLike[] };
+
+export function toCloudNetworkError(url: string, err: TypeError): CloudNetworkError {
+  let endpoint = url;
+  try {
+    endpoint = new URL(url).origin;
+  } catch {
+    // keep the raw URL
+  }
+  const cause = (err.cause ?? {}) as CauseLike;
+  // Happy-eyeballs connects fail with an AggregateError: the code is on it or
+  // on its first member.
+  const rawCode = cause.code ?? cause.errors?.[0]?.code;
+  const code = typeof rawCode === "string" ? rawCode : undefined;
+  const known = code ? NETWORK_REASONS[code] : undefined;
+  const detail = typeof cause.message === "string" && cause.message ? cause.message : err.message;
+  const reason = known ? `${known} (${code})` : code ? `${detail} (${code})` : detail;
+  return new CloudNetworkError(endpoint, code, reason, { cause: err });
+}
+
+/** `fetch`, with "fetch failed" turned into a CloudNetworkError that names its cause. */
+async function cloudFetch(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    // Network failures are TypeErrors carrying a cause; aborts and timeouts
+    // (AbortError / TimeoutError) pass through for callers that handle them.
+    if (err instanceof TypeError && err.cause !== undefined) throw toCloudNetworkError(url, err);
+    throw err;
+  }
+}
+
 // --- Gene Registry ---
 
 interface SearchGeneRow {
@@ -162,7 +228,7 @@ async function fetchSearchGenes(body: {
   p_limit: number;
   p_offset: number;
 }): Promise<SearchGeneRow[]> {
-  const res = await fetch(apiUrl("/rpc/search_genes"), {
+  const res = await cloudFetch(apiUrl("/rpc/search_genes"), {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify(body),
@@ -261,7 +327,7 @@ export async function getGene(idOrName: string): Promise<CloudGene> {
       break;
   }
 
-  const res = await fetch(apiUrl(`/genes?${params}`), {
+  const res = await cloudFetch(apiUrl(`/genes?${params}`), {
     headers: authHeaders(),
   });
   const data = await handleResponse<any[]>(res);
@@ -308,7 +374,7 @@ export async function publishGene(opts: {
   const creds = loadCredentials();
   if (!creds) throw new Error("Not logged in. Run 'rotifer login' first.");
 
-  const existCheck = await fetch(
+  const existCheck = await cloudFetch(
     apiUrl(
       `/genes?owner_id=eq.${creds.user.id}&name=eq.${opts.name}&version=eq.${opts.version}&select=id,published`,
     ),
@@ -333,7 +399,7 @@ export async function publishGene(opts: {
     wasmSize = opts.wasmBytes.length;
     wasmHash = createHash("sha256").update(opts.wasmBytes).digest("hex");
 
-    const uploadRes = await fetch(
+    const uploadRes = await cloudFetch(
       storageUrl(`/object/gene-wasm/${wasmPath}`),
       {
         method: "POST",
@@ -355,7 +421,7 @@ export async function publishGene(opts: {
 
   let previousVersionId: string | null = null;
   if (!isUpdate) {
-    const prevCheck = await fetch(
+    const prevCheck = await cloudFetch(
       apiUrl(`/genes?owner_id=eq.${creds.user.id}&name=eq.${opts.name}&select=id&order=created_at.desc&limit=1`),
       { headers: authHeaders() }
     );
@@ -387,7 +453,7 @@ export async function publishGene(opts: {
   if (changelog) body.changelog = changelog;
   if (previousVersionId) body.previous_version_id = previousVersionId;
 
-  const res = await fetch(apiUrl("/genes"), {
+  const res = await cloudFetch(apiUrl("/genes"), {
     method: "POST",
     headers: {
       ...authHeaders(true),
@@ -466,7 +532,7 @@ export async function fetchArenaAuditRows(): Promise<ArenaAuditRow[]> {
     params.set("limit", String(perPage));
     params.set("offset", String(offset));
 
-    const res = await fetch(apiUrl(`/arena_entries?${params}`), { headers: authHeaders() });
+    const res = await cloudFetch(apiUrl(`/arena_entries?${params}`), { headers: authHeaders() });
     const page = await handleResponse<ArenaAuditRow[]>(res);
     rows.push(...page);
     if (page.length < perPage) return rows;
@@ -512,7 +578,7 @@ export interface UnpublishedGene {
  * it. Fixing that URL would have turned a silent no-op into real data loss.)
  */
 export async function unpublishGene(id: string, reason?: string): Promise<UnpublishedGene> {
-  const res = await fetch(apiUrl("/rpc/unpublish_gene"), {
+  const res = await cloudFetch(apiUrl("/rpc/unpublish_gene"), {
     method: "POST",
     headers: {
       ...authHeaders(true),
@@ -561,7 +627,7 @@ export async function unpublishGene(id: string, reason?: string): Promise<Unpubl
  * function cannot turn silence back into success.
  */
 export async function republishGene(id: string, reason?: string): Promise<UnpublishedGene> {
-  const res = await fetch(apiUrl("/rpc/republish_gene"), {
+  const res = await cloudFetch(apiUrl("/rpc/republish_gene"), {
     method: "POST",
     headers: {
       ...authHeaders(true),
@@ -612,12 +678,12 @@ export async function listOwnGeneVersions(name: string): Promise<OwnedGeneVersio
   params.set("select", "id,name,version,published,created_at");
   params.set("order", "created_at.desc");
 
-  const res = await fetch(apiUrl(`/genes?${params}`), { headers: authHeaders(true) });
+  const res = await cloudFetch(apiUrl(`/genes?${params}`), { headers: authHeaders(true) });
   return handleResponse<OwnedGeneVersion[]>(res);
 }
 
 export async function downloadGeneWasm(wasmUrl: string): Promise<Buffer> {
-  const res = await fetch(wasmUrl);
+  const res = await cloudFetch(wasmUrl);
   if (!res.ok) throw new Error(`Failed to download WASM (${res.status})`);
   const arrayBuf = await res.arrayBuffer();
   return Buffer.from(arrayBuf);
@@ -628,7 +694,7 @@ export async function trackDownload(
   source: "cli" | "mcp" | "api" | "web" = "cli",
 ): Promise<void> {
   try {
-    const res = await fetch(apiUrl("/rpc/track_download"), {
+    const res = await cloudFetch(apiUrl("/rpc/track_download"), {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({ p_gene_id: geneId, p_source: source }),
@@ -683,7 +749,7 @@ export async function publishEvaluationRuns(
 ): Promise<void> {
   if (runs.length === 0) return;
 
-  const res = await fetch(apiUrl("/arena_evaluation_runs"), {
+  const res = await cloudFetch(apiUrl("/arena_evaluation_runs"), {
     method: "POST",
     headers: { ...authHeaders(true), Prefer: "return=minimal" },
     body: JSON.stringify(
@@ -709,7 +775,7 @@ export async function getFitnessReference(
   fidelity: string,
   timeoutMs: number = 5_000,
 ): Promise<SeasonReferenceRow | null> {
-  const res = await fetch(apiUrl("/rpc/get_fitness_reference"), {
+  const res = await cloudFetch(apiUrl("/rpc/get_fitness_reference"), {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ p_domain: domain, p_fidelity: fidelity }),
@@ -768,7 +834,7 @@ export async function arenaSubmit(
   // and clears it when a write carries none, so a row's label always
   // describes the write that put its score there (migration 20261027200000).
   // A registry without that migration ignores the header.
-  const res = await fetch(apiUrl("/arena_entries?on_conflict=gene_id"), {
+  const res = await cloudFetch(apiUrl("/arena_entries?on_conflict=gene_id"), {
     method: "POST",
     headers: {
       ...authHeaders(true),
@@ -838,7 +904,7 @@ export async function arenaLeaderboard(options: {
   limit?: number;
   offset?: number;
 }): Promise<LeaderboardRow[]> {
-  const res = await fetch(apiUrl("/rpc/get_arena_leaderboard"), {
+  const res = await cloudFetch(apiUrl("/rpc/get_arena_leaderboard"), {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({
@@ -901,7 +967,7 @@ export async function getProfileByUsername(
   params.set("select", "id,username,avatar_url");
   params.set("limit", "1");
 
-  const res = await fetch(apiUrl(`/profiles?${params}`), {
+  const res = await cloudFetch(apiUrl(`/profiles?${params}`), {
     headers: authHeaders(),
   });
   const data = await handleResponse<any[]>(res);
@@ -920,7 +986,7 @@ export async function getGeneReputation(geneId: string): Promise<GeneReputationR
   params.set("order", "computed_at.desc");
   params.set("limit", "1");
 
-  const res = await fetch(apiUrl(`/gene_reputation?${params}`), {
+  const res = await cloudFetch(apiUrl(`/gene_reputation?${params}`), {
     headers: authHeaders(),
   });
   const data = await handleResponse<any[]>(res);
@@ -953,7 +1019,7 @@ export async function getDeveloperReputation(userId: string): Promise<DeveloperR
   const params = new URLSearchParams();
   params.set("user_id", `eq.${userId}`);
 
-  const res = await fetch(apiUrl(`/developer_reputation?${params}`), {
+  const res = await cloudFetch(apiUrl(`/developer_reputation?${params}`), {
     headers: authHeaders(),
   });
   const data = await handleResponse<any[]>(res);
@@ -995,7 +1061,7 @@ export async function listGeneVersions(owner: string, name: string): Promise<Gen
   params.set("select", "id,version,changelog,previous_version_id,created_at,profiles(username)");
   params.set("order", "created_at.asc");
 
-  const res = await fetch(apiUrl(`/genes?${params}`), {
+  const res = await cloudFetch(apiUrl(`/genes?${params}`), {
     headers: authHeaders(),
   });
   const data = await handleResponse<any[]>(res);
@@ -1027,7 +1093,7 @@ export async function getGeneStats(idOrName: string): Promise<GeneStatsResponse>
     const gene = await getGene(idOrName);
     geneId = gene.id;
   }
-  const res = await fetch(apiUrl("/rpc/get_gene_stats"), {
+  const res = await cloudFetch(apiUrl("/rpc/get_gene_stats"), {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ p_gene_id: geneId }),
@@ -1060,7 +1126,7 @@ export async function getReputationComputeLog(limit: number = 10): Promise<Compu
   params.set("order", "started_at.desc");
   params.set("limit", String(limit));
 
-  const res = await fetch(apiUrl(`/reputation_compute_log?${params}`), {
+  const res = await cloudFetch(apiUrl(`/reputation_compute_log?${params}`), {
     headers: authHeaders(),
   });
   const data = await handleResponse<any[]>(res);
@@ -1083,7 +1149,7 @@ export async function getContributionMetrics(geneId: string): Promise<Contributi
   params.set("gene_id", `eq.${geneId}`);
   params.set("select", "*");
 
-  const res = await fetch(apiUrl(`/gene_contribution_metrics?${params}`), {
+  const res = await cloudFetch(apiUrl(`/gene_contribution_metrics?${params}`), {
     headers: authHeaders(),
   });
   const data = await handleResponse<any[]>(res);
@@ -1115,7 +1181,7 @@ export async function getContributionMetrics(geneId: string): Promise<Contributi
 }
 
 export async function getReputationLeaderboard(limit: number = 20): Promise<LeaderboardEntry[]> {
-  const res = await fetch(apiUrl("/rpc/get_reputation_leaderboard"), {
+  const res = await cloudFetch(apiUrl("/rpc/get_reputation_leaderboard"), {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ p_limit: limit }),

@@ -1,0 +1,118 @@
+name: Live Checks
+
+# The services the CLI talks to, checked for real once a day: ClawHub
+# (`wrap --from-clawhub`) and Rotifer Cloud (the registry commands).
+#
+# The PR gate runs the same CLI paths against recorded copies
+# (tests/fixtures/clawhub/, tests/fixtures/cloud/). A live call in every PR
+# failed PRs for reasons no PR could fix: ClawHub's backend fails about one
+# request in six with HTTP 500 and takes 4–11 s when it works (measured
+# 2026-10-31), and with Rotifer Cloud slow or hanging eight registry tests
+# timed out (2026-11-01). These jobs notice when a real service changes — a
+# new redirect, a new response shape, a refused key, a moved host — or stays
+# down, and each says so in one standing issue rather than in a red PR.
+#
+# The CLI prints what the service answered, so an issue carries the real
+# cause, e.g. "HTTP 500 — [Request ID: …] Server Error (3 attempts)" or
+# "Cannot reach Rotifer Cloud (…): connection refused (ECONNREFUSED)".
+
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  live:
+    name: ${{ matrix.service }} live check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: ClawHub
+            suite: tests/live/clawhub-live.test.ts
+            # The CLI's own error lines: they name the HTTP status or the
+            # timeout / network cause.
+            excerpt: 'error\[E00(10|11|12)\]|ClawHub:|AssertionError|FAIL '
+            fix: "If ClawHub changed shape (fields, redirects, host), update src/utils/clawhub-client.ts and the recorded fixture in tests/fixtures/clawhub/."
+          - service: Rotifer Cloud
+            suite: tests/live/cloud-live.test.ts
+            excerpt: 'Cannot reach Rotifer Cloud|Cloud API error|No API key found|Legacy API keys|AssertionError|FAIL '
+            fix: "If the API changed shape (columns, types), update the recorded fixture in tests/fixtures/cloud/. If the shipped key was refused, see DEFAULT_CLOUD_ANON_KEY in src/cloud/types.ts."
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Live check
+        id: live
+        env:
+          SERVICE: ${{ matrix.service }}
+          SUITE: ${{ matrix.suite }}
+        run: |
+          set -o pipefail
+          if npm run test:live -- "$SUITE" 2>&1 | tee live.log; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::error::$SERVICE live check failed — see the issue this job opens or refreshes"
+          fi
+
+      # One standing issue per service, refreshed in place: a daily duplicate
+      # while a service is down would train everyone to ignore it.
+      - name: Open or refresh the issue
+        if: steps.live.outputs.ok == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SERVICE: ${{ matrix.service }}
+          SUITE: ${{ matrix.suite }}
+          EXCERPT: ${{ matrix.excerpt }}
+          FIX: ${{ matrix.fix }}
+        run: |
+          TITLE="$SERVICE live check is failing"
+          grep -E "$EXCERPT" live.log | head -20 > excerpt.txt || true
+          {
+            echo "\`npm run test:live -- $SUITE\` failed against the real $SERVICE."
+            echo
+            echo "What the CLI reported:"
+            echo
+            echo '```'
+            cat excerpt.txt
+            echo '```'
+            echo
+            echo "Run: $RUN_URL"
+            echo
+            echo "$FIX If it is only down or answering 5xx, this issue is refreshed daily until a run passes; close it then."
+            echo
+            echo "Refreshed automatically by \`.github/workflows/live-checks.yml\`."
+          } > issue-body.md
+          EXISTING="$(gh issue list --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then
+            {
+              echo "Still failing ($(date -u +%F)): $RUN_URL"
+              echo
+              echo '```'
+              cat excerpt.txt
+              echo '```'
+            } > comment.md
+            gh issue comment "$EXISTING" --body-file comment.md
+            echo "refreshed issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body-file issue-body.md
+          fi
+          exit 1

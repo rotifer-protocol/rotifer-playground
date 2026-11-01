@@ -22,7 +22,7 @@
         "command": "npx",
         "args": [
           "-y",
-          "@rotifer/mcp-server@0.19.6",
+          "@rotifer/mcp-server@0.19.7",
           "--tools=evolve"
         ]
       }
@@ -56,5 +56,5 @@
     "name": "Rotifer Protocol",
     "url": "https://rotifer.dev"
   },
-  "version": "0.9.10"
+  "version": "0.9.11"
 }

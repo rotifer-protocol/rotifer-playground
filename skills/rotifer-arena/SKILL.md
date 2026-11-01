@@ -28,7 +28,7 @@ Or use the MCP Server for IDE integration:
   "mcpServers": {
     "rotifer": {
       "command": "npx",
-      "args": ["@rotifer/mcp-server@0.19.6"]
+      "args": ["@rotifer/mcp-server@0.19.7"]
     }
   }
 }

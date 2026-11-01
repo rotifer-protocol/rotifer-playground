@@ -117,7 +117,7 @@ with an unlisted way around it is not a restriction.
 The version is pinned rather than floating, so what you install is what you reviewed:
 
 ```bash
-npx -y @rotifer/mcp-server@0.19.6 --tools=evolve
+npx -y @rotifer/mcp-server@0.19.7 --tools=evolve
 ```
 
 You can run that yourself and ask it to list its tools.

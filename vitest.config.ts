@@ -8,6 +8,8 @@ export default defineConfig({
       "tests/unit/development-genome-eval.test.ts",
       "tests/unit/rls-verification.test.ts",
       "tests/unit/scan-top50.test.ts",
+      // Live third-party checks: run on a schedule (vitest.live.config.ts).
+      "tests/live/**",
     ],
     globals: false,
     testTimeout: 10000,

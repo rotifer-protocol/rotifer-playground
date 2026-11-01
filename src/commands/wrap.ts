@@ -6,7 +6,6 @@ import { contentHash } from "../utils/content-hash.js";
 import { geneIdV2 } from "../utils/binding.js";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import https from "node:https";
 import * as display from "../utils/display.js";
 import { c } from "../utils/palette.js";
 import { loadConfig } from "../utils/config.js";
@@ -16,66 +15,16 @@ import { suggestDomains } from "../utils/domain-suggest.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { offerAutoPublish, resolveWrapFidelity } from "../publish/auto-publish.js";
 import { showGeneIdV2 } from "../utils/gene-id-display.js";
+import {
+  ClawHubError,
+  fetchClawHubInfo,
+  fetchClawHubPackage,
+  type ClawHubRequestOptions,
+  type ClawHubSkillInfo,
+} from "../utils/clawhub-client.js";
 
-const CLAWHUB_API = "https://clawhub.ai/api/skill";
-const CLAWHUB_DOWNLOAD = "https://wry-manatee-359.convex.site/api/v1/download";
-
-interface ClawHubSkillInfo {
-  slug: string;
-  displayName: string;
-  summary: string;
-  stats: { downloads: number; stars: number; versions: number; installsCurrent: number };
-  owner: { handle: string; displayName: string };
-  version: string;
-}
-
-function httpsGet(url: string): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
-      // 307/308 preserve the request method, same as 301/302 for a GET — all
-      // four just mean "follow Location". ClawHub's download endpoint moved
-      // from 302 to 307 at some point without this ever being noticed: the
-      // response body of an unfollowed redirect is an HTML/JSON page, and
-      // piping that straight into `unzip -o` fails with a generic error that
-      // gives no hint the real problem was a status code this function
-      // didn't recognize (confirmed against the live endpoint, 2026-08-31).
-      if (
-        res.statusCode === 301 ||
-        res.statusCode === 302 ||
-        res.statusCode === 307 ||
-        res.statusCode === 308
-      ) {
-        res.resume(); // drain/discard the redirect body so its socket can be released
-        return httpsGet(res.headers.location!).then(resolve, reject);
-      }
-      if (res.statusCode !== 200) {
-        reject(new Error(`HTTP ${res.statusCode} for ${url}`));
-        return;
-      }
-      const chunks: Buffer[] = [];
-      res.on("data", (chunk: Buffer) => chunks.push(chunk));
-      res.on("end", () => resolve(Buffer.concat(chunks)));
-      res.on("error", reject);
-    }).on("error", reject);
-  });
-}
-
-async function fetchClawHubInfo(slug: string): Promise<ClawHubSkillInfo> {
-  const buf = await httpsGet(`${CLAWHUB_API}?slug=${slug}`);
-  const data = JSON.parse(buf.toString());
-  if (!data.skill) throw new Error(`Skill '${slug}' not found on ClawHub`);
-  return {
-    slug: data.skill.slug,
-    displayName: data.skill.displayName,
-    summary: data.skill.summary,
-    stats: data.skill.stats,
-    owner: { handle: data.owner?.handle || "unknown", displayName: data.owner?.displayName || "" },
-    version: data.latestVersion?.version || "0.0.0",
-  };
-}
-
-async function downloadAndExtract(slug: string): Promise<string> {
-  const zipBuf = await httpsGet(`${CLAWHUB_DOWNLOAD}?slug=${slug}`);
+async function downloadAndExtract(slug: string, options: ClawHubRequestOptions): Promise<string> {
+  const zipBuf = await fetchClawHubPackage(slug, options);
   const workDir = join(tmpdir(), `rotifer-clawhub-${slug}-${Date.now()}`);
   mkdirSync(workDir, { recursive: true });
   const zipPath = join(workDir, `${slug}.zip`);
@@ -237,16 +186,27 @@ export const wrapCommand = new Command("wrap")
 
     if (options.fromClawhub) {
       const slug = options.fromClawhub;
+      // Retries are announced: ClawHub is slow and fails transiently often
+      // enough that a silent 30 s wait would look like a hang.
+      const clawhub: ClawHubRequestOptions = {
+        onRetry: (attempt, attempts, err) =>
+          display.info(`ClawHub: ${err.message.replace(/ \(\d+ attempts?\)$/, "")}; trying again (${attempt + 1}/${attempts})`),
+      };
       display.info(`Fetching ClawHub skill metadata: ${slug}`);
       let info: ClawHubSkillInfo;
       try {
-        info = await fetchClawHubInfo(slug);
+        info = await fetchClawHubInfo(slug, clawhub);
       } catch (e) {
+        const isNotFound = e instanceof ClawHubError && e.kind === "not_found";
         display.rustStyleError({
           code: "E0010",
-          message: `ClawHub skill '${slug}' not found or API error`,
-          file: `${CLAWHUB_API}?slug=${slug}`,
-          suggestion: "Check the slug at https://clawhub.ai/skills/<slug>",
+          message: isNotFound
+            ? `ClawHub skill '${slug}' ${e.message}`
+            : `ClawHub API error for skill '${slug}': ${e instanceof Error ? e.message : String(e)}`,
+          file: e instanceof ClawHubError ? e.url : `ClawHub metadata for ${slug}`,
+          suggestion: isNotFound
+            ? "Check the slug at https://clawhub.ai/skills/<slug>"
+            : "ClawHub did not answer properly; this is usually transient. Try again in a minute.",
           docsUrl: "https://rotifer.dev/docs/migration",
         });
         process.exit(1);
@@ -257,13 +217,16 @@ export const wrapCommand = new Command("wrap")
 
       let skillDir: string;
       try {
-        skillDir = await downloadAndExtract(slug);
+        skillDir = await downloadAndExtract(slug, clawhub);
       } catch (e) {
+        const isNotFound = e instanceof ClawHubError && e.kind === "not_found";
         display.rustStyleError({
           code: "E0011",
-          message: `Failed to download skill '${slug}'`,
-          file: `${CLAWHUB_DOWNLOAD}?slug=${slug}`,
-          suggestion: "The skill may have been delisted. Check its status on ClawHub.",
+          message: `Failed to download skill '${slug}': ${e instanceof Error ? e.message : String(e)}`,
+          file: e instanceof ClawHubError ? e.url : `ClawHub package for ${slug}`,
+          suggestion: isNotFound
+            ? "The skill may have been delisted. Check its status on ClawHub."
+            : "ClawHub did not answer properly; this is usually transient. Try again in a minute.",
           docsUrl: "https://rotifer.dev/docs/migration",
         });
         process.exit(1);

@@ -158,6 +158,9 @@ jobs:
         # Node 20 job can only ever exercise the .js fixtures, so it guards
         # nothing the 22 job does not.
         node-version: ["22"]
+    env:
+      # Suites that need AgentMemory fail without it instead of skipping.
+      ROTIFER_REQUIRE_NATIVE_MEMORY: "1"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -171,6 +174,22 @@ jobs:
 
       - name: Build TypeScript
         run: npm run build
+
+      # The tests run against the addon built from this commit, not the
+      # platform package npm ci installs: on main that is the previous
+      # release, and on a release PR there is none — the bumped version is not
+      # on npm until the release tag publishes it, so every test that needs
+      # the addon failed there (0.33.0). tests/unit/ci-test-jobs-checkout-napi.test.ts
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+
+      - name: Build the napi addon from this checkout
+        working-directory: crates/rotifer-napi
+        run: npx napi build --release --platform
+
+      - name: Load that addon, not the platform package
+        run: node scripts/use-checkout-napi.mjs
 
       # The coverage gate (60/55 thresholds in vitest.config.ts) ran on this
       # lane from cdb9d727 until b108617 dropped it as a side effect of the

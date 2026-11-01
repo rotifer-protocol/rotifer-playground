@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.33.0...v0.33.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* **cloud:** give the gene-name hint only when the registry says the gene does not exist ([#528](https://github.com/rotifer-protocol/rotifer-playground/issues/528)) ([a81b5ca](https://github.com/rotifer-protocol/rotifer-playground/commit/a81b5ca52aff0d4a19ff744e40284170c6fb3fdd))
+* **cloud:** name the real cause when Rotifer Cloud can't be reached; run the registry suites against a recorded cloud ([#524](https://github.com/rotifer-protocol/rotifer-playground/issues/524)) ([b8ce9a1](https://github.com/rotifer-protocol/rotifer-playground/commit/b8ce9a1643859d242a2e701370c9aec20f0f5c93))
+* **live-checks:** quote the runner's log as plain text in the issue excerpt ([#527](https://github.com/rotifer-protocol/rotifer-playground/issues/527)) ([ff9ee1e](https://github.com/rotifer-protocol/rotifer-playground/commit/ff9ee1e82f338263694fce6918fdbdcc6e807fb6))
+* **package:** stop shipping rolldown's Linux binding as our optional dependency ([#522](https://github.com/rotifer-protocol/rotifer-playground/issues/522)) ([a8172d5](https://github.com/rotifer-protocol/rotifer-playground/commit/a8172d54834ab549db67d953c5bba346069dbb4c))
+
 ## [0.33.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.32.1...v0.33.0) (2026-11-01)
 
 

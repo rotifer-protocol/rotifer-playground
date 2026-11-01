@@ -58,6 +58,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:live": "vitest run --config vitest.live.config.ts",
     "test:workspace": "vitest run --config vitest.workspace.config.ts",
     "lint": "tsc --noEmit && eslint src/",
     "lint:names": "eslint src/ --rule '@typescript-eslint/naming-convention: error'",

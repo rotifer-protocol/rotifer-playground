@@ -1,0 +1,29 @@
+{
+  "skill": {
+    "slug": "fixture-skill",
+    "displayName": "Fixture Skill",
+    "summary": "A synthetic ClawHub skill for wrap --from-clawhub tests",
+    "tags": {
+      "latest": "1.0.0"
+    },
+    "stats": {
+      "comments": 0,
+      "downloads": 1234,
+      "installs": 56,
+      "stars": 7,
+      "versions": 1
+    },
+    "createdAt": 1761868800000,
+    "updatedAt": 1761868800000
+  },
+  "latestVersion": {
+    "version": "1.0.0",
+    "createdAt": 1761868800000,
+    "changelog": "First version"
+  },
+  "owner": {
+    "handle": "fixture-owner",
+    "displayName": "Fixture Owner",
+    "image": ""
+  }
+}

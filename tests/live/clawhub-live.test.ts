@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 /**
- * The real ClawHub, on a schedule (.github/workflows/clawhub-live.yml), not in
+ * The real ClawHub, on a schedule (.github/workflows/live-checks.yml), not in
  * the PR gate: its backend fails about one request in six with HTTP 500 and
  * takes 4–11 s when it works (measured 2026-10-31). The PR gate runs the same
  * CLI path against a recorded ClawHub (tests/e2e/clawhub-wrap.test.ts); this

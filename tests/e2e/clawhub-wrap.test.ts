@@ -15,7 +15,7 @@ import type { AddressInfo } from "node:net";
  * with HTTP 500 and takes 4–11 s when it works (measured 2026-10-31), so a
  * live call in the PR gate failed PRs for reasons no PR could fix. The live
  * endpoints are still checked, on a schedule that opens an issue when they
- * fail (tests/live/clawhub-live.test.ts, .github/workflows/clawhub-live.yml).
+ * fail (tests/live/clawhub-live.test.ts, .github/workflows/live-checks.yml).
  *
  * The fixture keeps what the live suite was added for (2026-08-31): the
  * download endpoint answers 307, which an earlier client did not follow and

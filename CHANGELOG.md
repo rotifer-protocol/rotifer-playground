@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.32.1...v0.33.0) (2026-11-01)
+
+
+### Features
+
+* **memory:** Agent Memory in the Cloud binding (spec §38) ([#505](https://github.com/rotifer-protocol/rotifer-playground/issues/505)) ([50b8f45](https://github.com/rotifer-protocol/rotifer-playground/commit/50b8f4537e0965ded6972e7897ee65c1f881a4b4))
+* **memory:** AgentMemory for genes — TS SDK, CLI and demo genes (spec §38) ([#504](https://github.com/rotifer-protocol/rotifer-playground/issues/504)) ([ae84efe](https://github.com/rotifer-protocol/rotifer-playground/commit/ae84efeb35544fb4d3dce43385d5e48047cbfe06))
+* **memory:** AgentMemory in rotifer-core, its host functions and the napi binding ([#503](https://github.com/rotifer-protocol/rotifer-playground/issues/503)) ([67e8c0b](https://github.com/rotifer-protocol/rotifer-playground/commit/67e8c0b0ef4f6384552bef9326ebb30c1c413927))
+* run validates against the gene's schema; fixes for compile, test, agent, sandbox, hello and config ([#501](https://github.com/rotifer-protocol/rotifer-playground/issues/501)) ([012b5f3](https://github.com/rotifer-protocol/rotifer-playground/commit/012b5f3a32a68ae77da1106bd3a32c4e681c34b7))
+
+
+### Bug Fixes
+
+* **deps:** bump wasmtime to 48.0.8 for the 2026-10-29 RustSec advisories; run macOS CI on macos-15 ([#502](https://github.com/rotifer-protocol/rotifer-playground/issues/502)) ([809b48a](https://github.com/rotifer-protocol/rotifer-playground/commit/809b48a9b04a513451f58e16ef101739f2672c7f))
+* **wrap:** report ClawHub's real failure and retry it; run the ClawHub suite against a recorded ClawHub ([#517](https://github.com/rotifer-protocol/rotifer-playground/issues/517)) ([3027147](https://github.com/rotifer-protocol/rotifer-playground/commit/302714753e9ee3f6035037b3a8ab7543c3bba638))
+* τ is paused in the CLI and skills; run imports a file: URL on Windows ([#499](https://github.com/rotifer-protocol/rotifer-playground/issues/499)) ([13a2ca3](https://github.com/rotifer-protocol/rotifer-playground/commit/13a2ca341ad65108c18767be993d86543b82084c))
+
 ## [0.32.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.32.0...v0.32.1) (2026-10-28)
 
 

@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DEFAULT_CLOUD_ANON_KEY } from "../../src/cloud/types.js";
+import { announceSimulation, simulatedService, type SimulatedService } from "./simulate.js";
 
 /**
  * The real Rotifer Cloud, on a schedule (.github/workflows/live-checks.yml),
@@ -25,12 +26,17 @@ const CLOUD = "https://cloud.rotifer.dev";
 const CLI = join(__dirname, "../../dist/index.js");
 const fixture = JSON.parse(readFileSync(join(__dirname, "../fixtures/cloud/registry.json"), "utf-8"));
 let home: string;
+// Only for live-checks.yml's simulate_failure input; see simulate.ts. It
+// replaces the cloud for the CLI's commands; the direct shape checks below
+// still ask the real API.
+let sim: SimulatedService | null = null;
 
 function run(args: string[]): Promise<{ out: string; stdout: string; code: number | null }> {
   const env: Record<string, string | undefined> = { ...process.env, HOME: home, NO_COLOR: "1", ROTIFER_TELEMETRY: "0" };
   // The real cloud, with the key the CLI ships, whatever the environment says.
   delete env.ROTIFER_CLOUD_ENDPOINT;
   delete env.ROTIFER_CLOUD_ANON_KEY;
+  if (sim) env.ROTIFER_CLOUD_ENDPOINT = sim.url;
   return new Promise((resolve) => {
     const child = execFile("node", [CLI, ...args], { cwd: home, timeout: 60_000, env }, (_err, stdout, stderr) =>
       resolve({ out: `${stdout}${stderr}`, stdout, code: child.exitCode }),
@@ -54,11 +60,14 @@ function shape(row: Record<string, unknown>, keys: string[]): Record<string, str
   return Object.fromEntries(keys.map((k) => [k, row[k] === null ? "null" : typeof row[k]]));
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), "rotifer-cloud-live-"));
+  sim = await simulatedService();
+  if (sim) announceSimulation(sim, "Rotifer Cloud");
 });
 
-afterAll(() => {
+afterAll(async () => {
+  await sim?.close();
   rmSync(home, { recursive: true, force: true });
 });
 

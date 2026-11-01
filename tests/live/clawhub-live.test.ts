@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { announceSimulation, simulatedService, type SimulatedService } from "./simulate.js";
 
 /**
  * The real ClawHub, on a schedule (.github/workflows/live-checks.yml), not in
@@ -19,12 +20,18 @@ import { tmpdir } from "node:os";
 
 const CLI = join(__dirname, "../../dist/index.js");
 const TMP = join(tmpdir(), `rotifer-clawhub-live-${Date.now()}`);
+// Only for live-checks.yml's simulate_failure input; see simulate.ts.
+let sim: SimulatedService | null = null;
 
 function run(args: string[]): Promise<string> {
   const env = { ...process.env, NO_COLOR: "1" };
   // The real endpoints, whatever the environment says.
   delete env.ROTIFER_CLAWHUB_API_URL;
   delete env.ROTIFER_CLAWHUB_DOWNLOAD_URL;
+  if (sim) {
+    env.ROTIFER_CLAWHUB_API_URL = `${sim.url}/api/skill`;
+    env.ROTIFER_CLAWHUB_DOWNLOAD_URL = `${sim.url}/api/v1/download`;
+  }
   return new Promise((resolve) => {
     execFile("node", [CLI, ...args], { cwd: TMP, timeout: 150_000, env }, (_err, stdout, stderr) =>
       resolve(`${stdout}${stderr}`),
@@ -32,15 +39,20 @@ function run(args: string[]): Promise<string> {
   });
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   mkdirSync(join(TMP, "genes"), { recursive: true });
   writeFileSync(
     join(TMP, "rotifer.json"),
     JSON.stringify({ name: "clawhub-live", genes_dir: "genes", default_domain: "general", author: "test" }),
   );
+  sim = await simulatedService();
+  if (sim) announceSimulation(sim, "ClawHub");
 });
 
-afterAll(() => rmSync(TMP, { recursive: true, force: true }));
+afterAll(async () => {
+  await sim?.close();
+  rmSync(TMP, { recursive: true, force: true });
+});
 
 describe("live ClawHub", () => {
   it("a slug that does not exist is reported as not found (HTTP 404)", async () => {

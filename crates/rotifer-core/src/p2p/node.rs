@@ -1611,7 +1611,7 @@ mod tests {
             .expect("dialable addr");
 
         let rt = tokio::runtime::Runtime::new().expect("runtime");
-        let (foreign_peer, closed) = rt.block_on(async {
+        let (foreign_peer, closed, closed_after) = rt.block_on(async {
             let mut swarm = libp2p::SwarmBuilder::with_new_identity()
                 .with_tokio()
                 .with_tcp(
@@ -1636,24 +1636,34 @@ mod tests {
                 .build();
             let me = *swarm.local_peer_id();
             swarm.dial(target).expect("dial");
-            let mut connected = false;
-            let closed = tokio::time::timeout(Duration::from_secs(15), async {
+            let mut connected_at = None;
+            let closed_after = tokio::time::timeout(Duration::from_secs(15), async {
                 loop {
                     match swarm.select_next_some().await {
-                        SwarmEvent::ConnectionEstablished { .. } => connected = true,
-                        SwarmEvent::ConnectionClosed { num_established: 0, .. } if connected => {
-                            return true;
+                        SwarmEvent::ConnectionEstablished { .. } => {
+                            connected_at.get_or_insert_with(std::time::Instant::now);
+                        }
+                        SwarmEvent::ConnectionClosed { num_established: 0, .. } if connected_at.is_some() => {
+                            return connected_at.map(|t| t.elapsed());
                         }
                         _ => {}
                     }
                 }
             })
             .await
-            .unwrap_or(false);
-            (me.to_string(), closed)
+            .unwrap_or(None);
+            (me.to_string(), closed_after.is_some(), closed_after)
         });
 
         assert!(closed, "the Rotifer node must hang up on a non-Rotifer peer");
+        // libp2p closes an idle connection after 10 s (the swarm default; neither
+        // side changes it), so a hang-up that slow could be idleness, not the
+        // guard. Identify completes in milliseconds; 5 s is half the idle timeout.
+        let closed_after = closed_after.expect("closed");
+        assert!(
+            closed_after < Duration::from_secs(5),
+            "the guard must hang up right after Identify, not leave it to the 10 s idle timeout (closed after {closed_after:?})"
+        );
         assert_eq!(node.foreign_peers_dropped(), 1);
         assert!(!node.identified_peers().contains(&foreign_peer));
         assert!(!node.discovered_peers().contains(&foreign_peer));

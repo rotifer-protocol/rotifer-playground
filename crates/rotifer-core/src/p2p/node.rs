@@ -22,16 +22,20 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use libp2p::futures::StreamExt;
+use libp2p::autonat;
 use libp2p::connection_limits;
+use libp2p::dcutr;
 use libp2p::gossipsub;
 use libp2p::identify;
 use libp2p::memory_connection_limits;
 use libp2p::identity::Keypair;
 use libp2p::kad::{self, store::MemoryStore};
 use libp2p::mdns;
+use libp2p::multiaddr::Protocol;
+use libp2p::relay;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
-use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
+use libp2p::swarm::{ConnectionDenied, DialError, ListenError, NetworkBehaviour, SwarmEvent};
 use libp2p::{Multiaddr, PeerId as Libp2pPeerId, Swarm};
 use tokio::sync::{mpsc, oneshot};
 
@@ -82,16 +86,16 @@ const IDENTIFY_PROTOCOL_VERSION: &str = "/rotifer/p2p/1";
 /// peer discovery + a distributed record store; GossipSub provides
 /// publish/subscribe message broadcast; Identify exchanges peer metadata
 /// (protocols, listen + observed addrs) on connect.
-/// Conservative connection-limit defaults (ADR-304 D2). They cap how many
-/// connections the Swarm holds so a node can't be connected into OOM; the
-/// per-peer + total ceilings pair with the message-layer rate limit (§8.6).
-/// Real values get tuned against the public-network load test (Milestone C).
+/// Connection limits (ADR-304 D2). They keep a node from being connected into
+/// OOM and pair with the message-layer rate limit (§8.6). The inbound, outbound
+/// and pending caps are `NetworkConfig` fields; these are their defaults (P2P
+/// RFC §4.1.4: 50 / 50 / 20). The total and per-peer caps are fixed: the total
+/// is a hard ceiling no configuration can raise.
 const MAX_ESTABLISHED: u32 = 512;
 const MAX_ESTABLISHED_PER_PEER: u32 = 4;
-const MAX_PENDING_INCOMING: u32 = 32;
-const MAX_PENDING_OUTGOING: u32 = 32;
-const MAX_ESTABLISHED_INCOMING: u32 = 256;
-const MAX_ESTABLISHED_OUTGOING: u32 = 256;
+pub(super) const MAX_ESTABLISHED_INCOMING: u32 = 50;
+pub(super) const MAX_ESTABLISHED_OUTGOING: u32 = 50;
+pub(super) const MAX_PENDING: u32 = 20;
 /// Deny new connections once process memory exceeds this fraction of system RAM.
 const MAX_MEMORY_PERCENTAGE: f64 = 0.9;
 
@@ -149,14 +153,26 @@ fn push_bounded(buf: &mut Vec<ReceivedMessage>, msg: ReceivedMessage, cap: usize
 
 #[derive(NetworkBehaviour)]
 struct NodeBehaviour {
-    kademlia: kad::Behaviour<MemoryStore>,
-    gossipsub: gossipsub::Behaviour,
-    identify: identify::Behaviour,
+    // The limits come first. libp2p offers a new connection to each behaviour
+    // in field order, and some (request-response, under AutoNAT) record it as
+    // soon as they are asked; a limit listed after them would refuse it too
+    // late and leave a stale entry that panics when the peer's other
+    // connection closes.
     /// Caps total / per-peer / pending connections so a node can't be connected
     /// into resource exhaustion — the scale-up guardrail (ADR-304 D2).
     connection_limits: connection_limits::Behaviour,
     /// Denies new connections under memory pressure (process RSS vs system RAM).
     memory_connection_limits: memory_connection_limits::Behaviour,
+    kademlia: kad::Behaviour<MemoryStore>,
+    gossipsub: gossipsub::Behaviour,
+    identify: identify::Behaviour,
+    /// NAT traversal (ADR-304 D1): AutoNAT asks peers to dial it back to learn
+    /// whether it is reachable (and answers their probes); the relay client
+    /// holds reservations on configured relays so peers can reach it through
+    /// them; DCUtR then tries to replace a relayed connection with a direct one.
+    autonat: autonat::Behaviour,
+    relay_client: relay::client::Behaviour,
+    dcutr: dcutr::Behaviour,
     /// LAN discovery (P2P RFC §5.1). Disabled unless the node listens on a
     /// non-loopback interface — see [`mdns_should_run`].
     mdns: Toggle<mdns::tokio::Behaviour>,
@@ -213,6 +229,52 @@ pub struct ReceivedMessage {
 /// and the event loop.
 type ReceivedMessages = Arc<Mutex<Vec<ReceivedMessage>>>;
 
+/// Connections this node refused under its own limits (ADR-304 D2, P2P RFC
+/// §4.1.4), by cause. Transport failures are not refusals and are not counted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ConnectionDenials {
+    /// Inbound connections over a cap (inbound, pending or per peer).
+    pub inbound_limit: u64,
+    /// Outbound dials over a cap (outbound, pending or per peer).
+    pub outbound_limit: u64,
+    /// Connections in either direction refused under memory pressure.
+    pub memory: u64,
+}
+
+impl ConnectionDenials {
+    /// All refusals, whatever the cause.
+    pub fn total(&self) -> u64 {
+        self.inbound_limit + self.outbound_limit + self.memory
+    }
+}
+
+/// Whether peers can dial this node directly, as AutoNAT last judged it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Reachability {
+    /// Not probed yet, or no peer could probe it.
+    #[default]
+    Unknown,
+    /// Peers dialled it back on one of its addresses.
+    Public,
+    /// Peers could not dial it back: it is behind NAT or a firewall.
+    Private,
+}
+
+/// NAT traversal state (ADR-304 D1): AutoNAT's verdict, relay reservations,
+/// and how relayed connections and hole punches went.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NatTraversal {
+    pub reachability: Reachability,
+    /// Relays (PeerIds) currently holding a reservation for this node.
+    pub relay_reservations: Vec<String>,
+    /// Connections that reached this node through a relay circuit.
+    pub relayed_inbound: u64,
+    /// Relayed connections replaced by a direct one through hole punching (DCUtR).
+    pub hole_punch_succeeded: u64,
+    /// Hole-punch attempts that failed; the relayed connection stays in use.
+    pub hole_punch_failed: u64,
+}
+
 /// Shared state handles the event loop updates and the synchronous API reads.
 struct NodeShared {
     listen_addrs: Arc<Mutex<Vec<String>>>,
@@ -228,8 +290,10 @@ struct NodeShared {
     /// Count of inbound messages ignored for arriving on a topic with no
     /// registered validator.
     unregistered: Arc<Mutex<u64>>,
-    /// Count of inbound connections denied by the connection limits (ADR-304).
-    rejected: Arc<Mutex<u64>>,
+    /// Connections refused by this node's own limits (ADR-304 D2).
+    denials: Arc<Mutex<ConnectionDenials>>,
+    /// NAT traversal state (ADR-304 D1).
+    nat: Arc<Mutex<NatTraversal>>,
     /// Peers currently announced over mDNS (RFC §5.1).
     mdns_peers: MdnsPeers,
     /// Whether mDNS actually started (false when disabled, loopback-only, or
@@ -276,17 +340,20 @@ pub struct Node {
     /// Count of inbound messages ignored for arriving on a topic with no
     /// registered validator.
     unregistered: Arc<Mutex<u64>>,
-    /// Count of inbound connections denied by the connection limits (ADR-304).
-    rejected: Arc<Mutex<u64>>,
+    /// Connections refused by this node's own limits (ADR-304 D2).
+    denials: Arc<Mutex<ConnectionDenials>>,
+    /// NAT traversal state (ADR-304 D1).
+    nat: Arc<Mutex<NatTraversal>>,
     /// Peers currently announced over mDNS (RFC §5.1).
     mdns_peers: MdnsPeers,
     /// Whether mDNS is running (set on `start`).
     mdns_active: Arc<Mutex<bool>>,
     /// Count of peers dropped after Identify showed a non-Rotifer protocol.
     foreign: Arc<Mutex<u64>>,
-    /// Override for `max_established_incoming` (tests / future config). `None`
-    /// uses the conservative `MAX_ESTABLISHED_INCOMING` default (ADR-304).
-    max_established_incoming: Option<u32>,
+    /// Let AutoNAT probe and be probed on loopback / private addresses. Off in
+    /// production (AutoNAT only trusts peers seen at global IPs); tests turn it
+    /// on to check reachability on one machine.
+    autonat_on_loopback: bool,
     /// Dedicated runtime hosting the Swarm event loop (`None` until `start`).
     runtime: Option<tokio::runtime::Runtime>,
     /// Command channel into the event loop (`None` until `start`).
@@ -359,11 +426,12 @@ impl Node {
             rate_limited: Arc::new(Mutex::new(0)),
             invalid: Arc::new(Mutex::new(0)),
             unregistered: Arc::new(Mutex::new(0)),
-            rejected: Arc::new(Mutex::new(0)),
+            denials: Arc::new(Mutex::new(ConnectionDenials::default())),
+            nat: Arc::new(Mutex::new(NatTraversal::default())),
             mdns_peers: Arc::new(Mutex::new(HashMap::new())),
             mdns_active: Arc::new(Mutex::new(false)),
             foreign: Arc::new(Mutex::new(0)),
-            max_established_incoming: None,
+            autonat_on_loopback: false,
             runtime: None,
             cmd_tx: None,
             task: None,
@@ -402,18 +470,36 @@ impl Node {
             .unwrap_or_default()
     }
 
-    /// Override the max number of established **inbound** connections (ADR-304).
-    /// `None`/unset keeps the conservative default. Mainly for tests + future
-    /// config; must be called before [`Node::start`].
+    /// Set `NetworkConfig::max_inbound_connections` (ADR-304 D2; 0 = dial-out
+    /// only). Must be called before [`Node::start`].
     pub fn with_max_established_incoming(mut self, max: u32) -> Self {
-        self.max_established_incoming = Some(max);
+        self.config.max_inbound_connections = max;
         self
     }
 
-    /// Count of inbound connections denied so far by the connection limits
-    /// (ADR-304). Non-zero means the node shed load under its connection cap.
+    /// Let AutoNAT work on loopback and private addresses (tests only; see
+    /// the field). Must be called before [`Node::start`].
+    #[cfg(test)]
+    fn with_autonat_on_loopback(mut self) -> Self {
+        self.autonat_on_loopback = true;
+        self
+    }
+
+    /// Connections refused so far by this node's own limits, in either
+    /// direction (ADR-304 D2). Non-zero means the node shed load.
     pub fn rejected_connections(&self) -> u64 {
-        self.rejected.lock().map(|n| *n).unwrap_or(0)
+        self.connection_denials().total()
+    }
+
+    /// Connections refused so far by this node's own limits, by cause.
+    pub fn connection_denials(&self) -> ConnectionDenials {
+        self.denials.lock().map(|d| *d).unwrap_or_default()
+    }
+
+    /// NAT traversal state: AutoNAT's verdict, relay reservations, relayed
+    /// connections and hole punches (ADR-304 D1).
+    pub fn nat_traversal(&self) -> NatTraversal {
+        self.nat.lock().map(|n| n.clone()).unwrap_or_default()
     }
 
     /// Whether mDNS is running (`NetworkConfig::mdns_enabled` asks for it).
@@ -579,9 +665,14 @@ impl Node {
         let host = self.config.listen_host.clone();
         let port = self.config.listen_port;
         let bootstrap = self.config.bootstrap_peers.clone();
+        let relays = parse_relays(&self.config.relays)?;
         let limits = SwarmOptions {
-            max_established_incoming: self.max_established_incoming,
+            max_inbound: self.config.max_inbound_connections,
+            max_outbound: self.config.max_outbound_connections,
+            max_pending: self.config.max_pending_connections,
             mdns: mdns_should_run(self.config.mdns_enabled, &host),
+            relays,
+            autonat_on_loopback: self.autonat_on_loopback,
         };
         let shared = NodeShared {
             listen_addrs: Arc::clone(&self.listen_addrs),
@@ -592,7 +683,8 @@ impl Node {
             rate_limited: Arc::clone(&self.rate_limited),
             invalid: Arc::clone(&self.invalid),
             unregistered: Arc::clone(&self.unregistered),
-            rejected: Arc::clone(&self.rejected),
+            denials: Arc::clone(&self.denials),
+            nat: Arc::clone(&self.nat),
             mdns_peers: Arc::clone(&self.mdns_peers),
             mdns_active: Arc::clone(&self.mdns_active),
             foreign: Arc::clone(&self.foreign),
@@ -814,18 +906,61 @@ fn write_atomic_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
 
 /// Per-start Swarm options decided on the synchronous side.
 struct SwarmOptions {
-    /// Override for the inbound connection cap (`None` = default).
-    max_established_incoming: Option<u32>,
+    /// Inbound / outbound / pending connection caps (P2P RFC §4.1.4).
+    max_inbound: u32,
+    max_outbound: u32,
+    max_pending: u32,
     /// Run mDNS (already gated by [`mdns_should_run`]).
     mdns: bool,
+    /// Relays to hold a reservation on, each ending in `/p2p/<PeerId>`.
+    relays: Vec<(Multiaddr, Libp2pPeerId)>,
+    /// See `Node::autonat_on_loopback`.
+    autonat_on_loopback: bool,
 }
 
-/// Build a libp2p Swarm with TCP + QUIC transports (Noise + Yamux) over the
-/// tokio runtime, carrying the node's composite behaviour (Kademlia in server
-/// mode, plus GossipSub, Identify and — when requested — mDNS). autonat/dcutr
-/// land in Milestone B (ADR-304).
+/// Parse `NetworkConfig::relays`. A relay is configured on purpose, so a bad
+/// entry fails `start` instead of being skipped: the node would otherwise run
+/// unreachable behind NAT without saying why.
+fn parse_relays(relays: &[String]) -> Result<Vec<(Multiaddr, Libp2pPeerId)>, NetworkError> {
+    relays
+        .iter()
+        .map(|raw| {
+            let addr: Multiaddr = raw
+                .parse()
+                .map_err(|e| NetworkError::Transport(format!("relay address {raw}: {e}")))?;
+            match addr.iter().last() {
+                Some(Protocol::P2p(peer)) => Ok((addr, peer)),
+                _ => Err(NetworkError::Transport(format!(
+                    "relay address {raw} must end in /p2p/<relay PeerId>"
+                ))),
+            }
+        })
+        .collect()
+}
+
+/// AutoNAT (v1) settings. libp2p's defaults, except on loopback for tests,
+/// where it must trust local addresses and probe without the boot delay.
+fn autonat_config(on_loopback: bool) -> autonat::Config {
+    let default = autonat::Config::default();
+    if on_loopback {
+        autonat::Config {
+            only_global_ips: false,
+            boot_delay: Duration::from_millis(500),
+            retry_interval: Duration::from_secs(1),
+            throttle_server_period: Duration::ZERO,
+            ..default
+        }
+    } else {
+        default
+    }
+}
+
+/// Build a libp2p Swarm with TCP + QUIC transports (Noise + Yamux) and a
+/// Circuit Relay v2 client transport over the tokio runtime, carrying the
+/// node's composite behaviour: Kademlia in server mode, GossipSub, Identify,
+/// the NAT traversal set (AutoNAT, relay client, DCUtR; ADR-304 D1), the
+/// connection limits and — when requested — mDNS.
 fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBehaviour>, NetworkError> {
-    let max_established_incoming = options.max_established_incoming;
     let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
         .with_tcp(
@@ -835,7 +970,11 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
         )
         .map_err(|e| NetworkError::Transport(format!("tcp transport: {e}")))?
         .with_quic()
-        .with_behaviour(|key| {
+        // Relayed connections are encrypted end to end like any other:
+        // the relay only forwards Noise ciphertext (P2P RFC §8.2).
+        .with_relay_client(libp2p::noise::Config::new, libp2p::yamux::Config::default)
+        .map_err(|e| NetworkError::Transport(format!("relay client transport: {e}")))?
+        .with_behaviour(|key, relay_client| {
             let peer_id = key.public().to_peer_id();
             let mut kademlia = kad::Behaviour::new(peer_id, MemoryStore::new(peer_id));
             kademlia.set_mode(Some(kad::Mode::Server));
@@ -851,12 +990,10 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
             let limits = connection_limits::ConnectionLimits::default()
                 .with_max_established(Some(MAX_ESTABLISHED))
                 .with_max_established_per_peer(Some(MAX_ESTABLISHED_PER_PEER))
-                .with_max_pending_incoming(Some(MAX_PENDING_INCOMING))
-                .with_max_pending_outgoing(Some(MAX_PENDING_OUTGOING))
-                .with_max_established_incoming(Some(
-                    max_established_incoming.unwrap_or(MAX_ESTABLISHED_INCOMING),
-                ))
-                .with_max_established_outgoing(Some(MAX_ESTABLISHED_OUTGOING));
+                .with_max_pending_incoming(Some(options.max_pending))
+                .with_max_pending_outgoing(Some(options.max_pending))
+                .with_max_established_incoming(Some(options.max_inbound))
+                .with_max_established_outgoing(Some(options.max_outbound));
             let connection_limits = connection_limits::Behaviour::new(limits);
             let memory_connection_limits =
                 memory_connection_limits::Behaviour::with_max_percentage(MAX_MEMORY_PERCENTAGE);
@@ -875,17 +1012,63 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
                 None
             };
             NodeBehaviour {
+                connection_limits,
+                memory_connection_limits,
                 kademlia,
                 gossipsub,
                 identify,
-                connection_limits,
-                memory_connection_limits,
+                autonat: autonat::Behaviour::new(peer_id, autonat_config(options.autonat_on_loopback)),
+                relay_client,
+                dcutr: dcutr::Behaviour::new(peer_id),
                 mdns: Toggle::from(mdns),
             }
         })
         .expect("behaviour construction is infallible")
         .build();
     Ok(swarm)
+}
+
+/// Count a connection refused by one of this node's own limits (ADR-304 D2).
+fn record_denial(denials: &Mutex<ConnectionDenials>, inbound: bool, cause: &ConnectionDenied) {
+    let memory = cause
+        .downcast_ref::<memory_connection_limits::MemoryUsageLimitExceeded>()
+        .is_some();
+    let limit = cause.downcast_ref::<connection_limits::Exceeded>().is_some();
+    if !memory && !limit {
+        tracing::debug!(inbound, "connection refused: {cause}");
+        return;
+    }
+    if let Ok(mut d) = denials.lock() {
+        match (memory, inbound) {
+            (true, _) => d.memory += 1,
+            (false, true) => d.inbound_limit += 1,
+            (false, false) => d.outbound_limit += 1,
+        }
+    }
+    tracing::debug!(inbound, "connection refused by local limit: {cause}");
+}
+
+/// AutoNAT's verdict as the node reports it.
+fn reachability_of(status: &autonat::NatStatus) -> Reachability {
+    match status {
+        autonat::NatStatus::Public(_) => Reachability::Public,
+        autonat::NatStatus::Private => Reachability::Private,
+        autonat::NatStatus::Unknown => Reachability::Unknown,
+    }
+}
+
+/// The relay's PeerId if `addr` is one of our relay circuit listen addresses
+/// (`.../p2p/<relay>/p2p-circuit`).
+fn circuit_relay(addr: &Multiaddr) -> Option<String> {
+    let mut relay = None;
+    for protocol in addr.iter() {
+        match protocol {
+            Protocol::P2p(peer) => relay = Some(peer.to_string()),
+            Protocol::P2pCircuit => return relay,
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Drive the Swarm: bind the listener, best-effort dial bootstrap peers, then
@@ -917,7 +1100,8 @@ async fn run_event_loop(
         rate_limited,
         invalid,
         unregistered,
-        rejected,
+        denials,
+        nat,
         mdns_peers,
         mdns_active,
         foreign,
@@ -971,6 +1155,20 @@ async fn run_event_loop(
         }
     }
 
+    // Hold a reservation on each configured relay (ADR-304 D1): listening on
+    // its circuit address dials the relay and asks it to accept circuits for
+    // us. Peers that cannot dial us directly reach us through it.
+    for (relay_addr, _) in &options.relays {
+        let circuit = relay_addr.clone().with(Protocol::P2pCircuit);
+        if let Err(e) = swarm.listen_on(circuit) {
+            tracing::warn!("relay {relay_addr}: cannot request a reservation: {e}");
+        }
+    }
+    // A relay must be a Rotifer node: every Rotifer peer dialling through it
+    // runs the Identify guard below and would hang up on anything else. Kept
+    // to say so when a configured relay fails that check.
+    let relay_peers: HashSet<Libp2pPeerId> = options.relays.iter().map(|(_, p)| *p).collect();
+
     // Dialable addresses of peers met this session, in encounter order, written
     // back to the store on shutdown. Identify is the source: it reports the
     // peer's advertised *listen* addresses, which are reachable again later —
@@ -1019,6 +1217,11 @@ async fn run_event_loop(
                         let gone = address.to_string();
                         addrs.retain(|a| a != &gone);
                     }
+                    if let Some(relay_peer) = circuit_relay(&address)
+                        && let Ok(mut n) = nat.lock()
+                    {
+                        n.relay_reservations.retain(|r| r != &relay_peer);
+                    }
                 }
                 SwarmEvent::ListenerError { .. } => {
                     if let Some(tx) = ready_tx.take() {
@@ -1052,16 +1255,58 @@ async fn run_event_loop(
                     }
                     swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                 }
-                SwarmEvent::IncomingConnectionError { .. } => {
-                    // A pending inbound connection failed — most commonly denied
-                    // by the connection limits (ADR-304 D2). Count + log so load
-                    // shedding is observable instead of silent.
-                    if let Ok(mut n) = rejected.lock() {
-                        *n += 1;
+                // Refusals by our own limits are counted by cause so load
+                // shedding is observable (ADR-304 D2); a transport failure
+                // is not a refusal. Logged at debug: a flood would spam warn.
+                SwarmEvent::IncomingConnectionError {
+                    error: ListenError::Denied { cause }, ..
+                } => record_denial(&denials, true, &cause),
+                SwarmEvent::OutgoingConnectionError {
+                    error: DialError::Denied { cause }, ..
+                } => record_denial(&denials, false, &cause),
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Autonat(
+                    autonat::Event::StatusChanged { new, .. },
+                )) => {
+                    let reachability = reachability_of(&new);
+                    tracing::info!(?reachability, "AutoNAT reachability changed");
+                    if let Ok(mut n) = nat.lock() {
+                        n.reachability = reachability;
                     }
-                    tracing::debug!(
-                        "inbound connection rejected (connection limit reached or transport error)"
-                    );
+                }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::RelayClient(event)) => {
+                    let Ok(mut n) = nat.lock() else { continue };
+                    match event {
+                        relay::client::Event::ReservationReqAccepted { relay_peer_id, renewal, .. } => {
+                            let relay_peer = relay_peer_id.to_string();
+                            if !n.relay_reservations.contains(&relay_peer) {
+                                n.relay_reservations.push(relay_peer);
+                            }
+                            if !renewal {
+                                tracing::info!(%relay_peer_id, "relay reservation accepted");
+                            }
+                        }
+                        relay::client::Event::InboundCircuitEstablished { src_peer_id, .. } => {
+                            n.relayed_inbound += 1;
+                            tracing::debug!(%src_peer_id, "peer connected through a relay");
+                        }
+                        relay::client::Event::OutboundCircuitEstablished { .. } => {}
+                    }
+                }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Dcutr(dcutr::Event {
+                    remote_peer_id,
+                    result,
+                })) => {
+                    let Ok(mut n) = nat.lock() else { continue };
+                    match result {
+                        Ok(_) => {
+                            n.hole_punch_succeeded += 1;
+                            tracing::debug!(%remote_peer_id, "hole punch succeeded: direct connection");
+                        }
+                        Err(e) => {
+                            n.hole_punch_failed += 1;
+                            tracing::debug!(%remote_peer_id, "hole punch failed, staying on the relay: {e}");
+                        }
+                    }
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
                     kad::Event::RoutingUpdated { peer, .. },
@@ -1135,6 +1380,13 @@ async fn run_event_loop(
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Identify(
                     identify::Event::Received { peer_id, info, .. },
                 )) if info.protocol_version != IDENTIFY_PROTOCOL_VERSION => {
+                    if relay_peers.contains(&peer_id) {
+                        tracing::warn!(
+                            %peer_id,
+                            protocol_version = %info.protocol_version,
+                            "configured relay is not a Rotifer node; dropping it, so no circuit can run through it"
+                        );
+                    }
                     // Not a Rotifer node. mDNS's shared `_p2p._udp.local`
                     // service makes this routine on a LAN (IPFS and other
                     // libp2p apps answer too), and Kademlia speaks libp2p's
@@ -2170,5 +2422,299 @@ mod tests {
 
         let _ = std::fs::remove_file(&a_id);
         let _ = std::fs::remove_file(&b_id);
+    }
+
+    // -----------------------------------------------------------------
+    // A3 — NAT traversal client and connection limits (ADR-304 D1–D2)
+    // -----------------------------------------------------------------
+
+    /// Poll `check` every 100 ms until it holds or `secs` pass.
+    fn wait_until(secs: u64, mut check: impl FnMut() -> bool) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(secs);
+        while std::time::Instant::now() < deadline {
+            if check() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        check()
+    }
+
+    /// A Circuit Relay v2 server on loopback, as a plain libp2p swarm: the node
+    /// is a relay client only (ADR-304 D3). It identifies as a Rotifer node,
+    /// as a relay must: peers dialling through it drop anything else.
+    struct LocalRelay {
+        /// `/ip4/127.0.0.1/tcp/<port>/p2p/<relay PeerId>`
+        addr: String,
+        peer_id: String,
+        stop: Arc<std::sync::atomic::AtomicBool>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl LocalRelay {
+        fn spawn() -> Self {
+            use libp2p::swarm::NetworkBehaviour;
+
+            #[derive(NetworkBehaviour)]
+            struct RelayServer {
+                relay: relay::Behaviour,
+                identify: identify::Behaviour,
+            }
+
+            let key = Keypair::generate_ed25519();
+            let peer_id = key.public().to_peer_id();
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let stop_t = Arc::clone(&stop);
+            let (tx, rx) = std::sync::mpsc::channel();
+            let thread = std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().expect("runtime");
+                rt.block_on(async move {
+                    let mut swarm = libp2p::SwarmBuilder::with_existing_identity(key)
+                        .with_tokio()
+                        .with_tcp(
+                            libp2p::tcp::Config::default(),
+                            libp2p::noise::Config::new,
+                            libp2p::yamux::Config::default,
+                        )
+                        .expect("tcp")
+                        .with_behaviour(|key| RelayServer {
+                            relay: relay::Behaviour::new(key.public().to_peer_id(), relay::Config::default()),
+                            identify: identify::Behaviour::new(identify::Config::new(
+                                IDENTIFY_PROTOCOL_VERSION.into(),
+                                key.public(),
+                            )),
+                        })
+                        .expect("behaviour")
+                        .build();
+                    swarm.listen_on("/ip4/127.0.0.1/tcp/0".parse().expect("addr")).expect("listen");
+                    let mut ready = Some(tx);
+                    let mut tick = tokio::time::interval(Duration::from_millis(100));
+                    while !stop_t.load(Ordering::Relaxed) {
+                        tokio::select! {
+                            _ = tick.tick() => {}
+                            event = swarm.select_next_some() => {
+                                if let SwarmEvent::NewListenAddr { address, .. } = event {
+                                    // A relay hands its reachable addresses to the
+                                    // peers that reserve on it.
+                                    swarm.add_external_address(address.clone());
+                                    if let Some(tx) = ready.take() {
+                                        let _ = tx.send(address);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            });
+            let addr = rx.recv_timeout(Duration::from_secs(10)).expect("relay listening");
+            Self { addr: format!("{addr}/p2p/{peer_id}"), peer_id: peer_id.to_string(), stop, thread: Some(thread) }
+        }
+    }
+
+    impl Drop for LocalRelay {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            if let Some(t) = self.thread.take() {
+                let _ = t.join();
+            }
+        }
+    }
+
+    // A3-1: a node that peers can only reach through a relay holds a
+    // reservation there, and a peer that knows only its relayed address
+    // connects, identifies and exchanges gossip with it.
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "integration: Circuit Relay v2 through a local relay — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn nat_node_is_reached_through_a_local_relay() {
+        use super::super::messages::{ANNOUNCEMENTS_TOPIC, encode_announcement};
+
+        let relay = LocalRelay::spawn();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let start = |name: &str, c: NetworkConfig| {
+            let mut node = Node::with_paths(
+                c,
+                dir.path().join(format!("{name}.pem")),
+                dir.path().join(format!("{name}-peers.json")),
+            )
+            .expect("build");
+            node.start().expect("start");
+            node
+        };
+
+        // The node "behind NAT": it advertises nothing anyone is told about
+        // except its circuit address on the relay.
+        let behind = start("behind", NetworkConfig { relays: vec![relay.addr.clone()], ..cfg(0) });
+        let behind_id = behind.local_peer_id().0;
+        assert!(
+            wait_until(15, || behind.nat_traversal().relay_reservations.contains(&relay.peer_id)),
+            "the relay must accept a reservation (state: {:?})",
+            behind.nat_traversal()
+        );
+
+        // The dialler is given only the relayed address.
+        let circuit = format!("{}/p2p-circuit/p2p/{behind_id}", relay.addr);
+        let dialer = start("dialer", NetworkConfig { bootstrap_peers: vec![circuit], ..cfg(0) });
+        assert!(
+            wait_until(15, || dialer.identified_peers().contains(&behind_id)),
+            "the dialler must reach and identify the node through the relay"
+        );
+        assert!(
+            behind.nat_traversal().relayed_inbound >= 1,
+            "the connection must have arrived as a relay circuit (state: {:?})",
+            behind.nat_traversal()
+        );
+
+        // Useful traffic crosses: a valid announcement from the node behind
+        // NAT reaches the dialler, authenticated as its publisher.
+        behind.subscribe(ANNOUNCEMENTS_TOPIC).expect("subscribe");
+        dialer.subscribe(ANNOUNCEMENTS_TOPIC).expect("subscribe");
+        let gene_id = format!("v2:{}", "cd".repeat(32));
+        let delivered = wait_until(20, || {
+            let payload = encode_announcement(&super::super::GeneAnnouncement {
+                gene_id: gene_id.clone(),
+                name: "behind-nat".into(),
+                domain: "test".into(),
+                fidelity: "Wrapped".into(),
+                ir_spec: String::new(),
+                version: "1.0.0".into(),
+                timestamp_ms: wall_clock_ms(),
+            });
+            let _ = behind.publish(ANNOUNCEMENTS_TOPIC, &payload);
+            dialer
+                .received_announcements()
+                .iter()
+                .any(|(a, from)| a.gene_id == gene_id && from == &behind_id)
+        });
+        assert!(delivered, "an announcement from the node behind NAT must reach the dialler");
+
+        // DCUtR then replaces the relayed connection with a direct one. Both
+        // ends try at once and one attempt wins, so at least one side reports
+        // success; on loopback the direct path always exists.
+        assert!(
+            wait_until(15, || behind.nat_traversal().hole_punch_succeeded + dialer.nat_traversal().hole_punch_succeeded >= 1),
+            "the relayed connection must be upgraded by hole punching (behind: {:?}, dialer: {:?})",
+            behind.nat_traversal(),
+            dialer.nat_traversal()
+        );
+    }
+
+    // A3-1: a relay entry that cannot be used fails `start` loudly.
+    #[test]
+    fn a_relay_without_a_peer_id_fails_start() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        for bad in ["/ip4/127.0.0.1/tcp/4001", "not a multiaddr"] {
+            let c = NetworkConfig { relays: vec![bad.into()], ..cfg(0) };
+            let mut node = Node::with_keypair_path(c, dir.path().join("id.pem")).expect("build");
+            match node.start() {
+                Err(NetworkError::Transport(msg)) => assert!(msg.contains(bad), "error names the entry: {msg}"),
+                other => panic!("relay {bad:?} must fail start, got {other:?}"),
+            }
+        }
+    }
+
+    // A3-1: AutoNAT asks a connected peer to dial it back, and a node the
+    // peer could dial is judged Public. (A refused dial-back still completes
+    // the handshake first, so loopback cannot stage Private; the mapping is
+    // pinned by `autonat_verdicts_map_to_reachability`.)
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "integration: AutoNAT dial-back on loopback — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn autonat_judges_a_dialable_node_public() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let id = |name: &str| dir.path().join(format!("{name}.id"));
+        let mut server = Node::with_keypair_path(cfg(0), id("server")).expect("build").with_autonat_on_loopback();
+        server.start().expect("start");
+        let server_addr = format!("{}/p2p/{}", server.listen_addrs()[0], server.local_peer_id().0);
+        let c = NetworkConfig { bootstrap_peers: vec![server_addr], ..cfg(0) };
+        let mut node = Node::with_keypair_path(c, id("node")).expect("build").with_autonat_on_loopback();
+        assert_eq!(node.nat_traversal().reachability, Reachability::Unknown, "unknown before any probe");
+        node.start().expect("start");
+        assert!(
+            wait_until(20, || node.nat_traversal().reachability == Reachability::Public),
+            "a node the server can dial back must be judged Public (state: {:?})",
+            node.nat_traversal()
+        );
+    }
+
+    #[test]
+    fn autonat_verdicts_map_to_reachability() {
+        let addr: Multiaddr = "/ip4/203.0.113.7/tcp/4001".parse().expect("addr");
+        assert_eq!(reachability_of(&autonat::NatStatus::Public(addr)), Reachability::Public);
+        assert_eq!(reachability_of(&autonat::NatStatus::Private), Reachability::Private);
+        assert_eq!(reachability_of(&autonat::NatStatus::Unknown), Reachability::Unknown);
+    }
+
+    // A3-2: refusals are counted by direction and cause, and the outbound cap
+    // from the config is enforced.
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "integration: outbound connection cap over loopback — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn outbound_cap_refuses_dials_and_counts_them() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut target = Node::with_keypair_path(cfg(0), dir.path().join("target.pem")).expect("build");
+        target.start().expect("start");
+        let target_addr = format!("{}/p2p/{}", target.listen_addrs()[0], target.local_peer_id().0);
+        let target_id = target.local_peer_id().0;
+
+        let c = NetworkConfig { bootstrap_peers: vec![target_addr], max_outbound_connections: 0, ..cfg(0) };
+        let mut capped = Node::with_keypair_path(c, dir.path().join("capped.pem")).expect("build");
+        capped.start().expect("start");
+
+        assert!(
+            wait_until(10, || capped.connection_denials().outbound_limit >= 1),
+            "the dial must be refused by the outbound cap (denials: {:?})",
+            capped.connection_denials()
+        );
+        let d = capped.connection_denials();
+        assert_eq!((d.inbound_limit, d.memory), (0, 0), "counted under its own cause only: {d:?}");
+        assert_eq!(capped.rejected_connections(), d.total());
+        assert!(!capped.identified_peers().contains(&target_id), "no connection was made");
+    }
+
+    // A connection refused by a limit must leave no trace in the other
+    // behaviours. libp2p asks behaviours in field order; one that records a
+    // connection before a later limit refuses it keeps a stale entry, and
+    // request-response (under AutoNAT) then panics in the event loop when the
+    // peer's real connection closes. The limits are listed first for this.
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "integration: refused connection and AutoNAT over loopback — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn a_refused_connection_does_not_crash_the_event_loop() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let id = |name: &str| dir.path().join(format!("{name}.id"));
+        let mut prober = Node::with_keypair_path(cfg(0), id("prober")).expect("build").with_autonat_on_loopback();
+        prober.start().expect("start");
+        let prober_addr = format!("{}/p2p/{}", prober.listen_addrs()[0], prober.local_peer_id().0);
+
+        // Connects out to the prober, then refuses the prober's AutoNAT
+        // dial-back under its zero inbound cap.
+        let c = NetworkConfig { bootstrap_peers: vec![prober_addr], ..cfg(0) };
+        let mut node = Node::with_keypair_path(c, id("node"))
+            .expect("build")
+            .with_autonat_on_loopback()
+            .with_max_established_incoming(0);
+        node.start().expect("start");
+        assert!(
+            wait_until(20, || node.connection_denials().inbound_limit >= 1),
+            "precondition: the dial-back must be refused (denials: {:?})",
+            node.connection_denials()
+        );
+
+        // Closing the real connection is what tripped the stale entry.
+        prober.stop().expect("stop");
+        std::thread::sleep(Duration::from_secs(2));
+        assert!(
+            node.subscribe("/rotifer/p2p/1/announcements").is_ok(),
+            "the event loop must still be running after a refused connection"
+        );
     }
 }

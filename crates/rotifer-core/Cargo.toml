@@ -32,11 +32,12 @@ tokio.workspace = true
 base64.workspace = true
 ureq.workspace = true
 url.workspace = true
-# NOTE: `dns` + `mdns` features intentionally omitted — both pull
-# hickory-proto, which has open advisories (RUSTSEC-2026-0118 has no fix).
-# Neither is used by the implemented kad/gossipsub paths; re-add with a
-# vetted resolver when DNS bootstrap / mDNS discovery is actually wired.
+# `mdns` pulls hickory-proto. Since libp2p 0.57 (libp2p-mdns 0.49) that is
+# hickory-proto ^0.26, clear of RUSTSEC-2026-0118 (unaffected >= 0.26.0-beta.1)
+# and RUSTSEC-2026-0119 (patched >= 0.26.1); `cargo tree -i hickory-proto` must
+# show no 0.25.x. `dns` stays omitted: no `/dns4/` bootstrap is wired yet.
 libp2p = { workspace = true, features = [
+    "mdns",
     "tcp",
     "quic",
     "noise",
@@ -49,6 +50,13 @@ libp2p = { workspace = true, features = [
     "ed25519",
     "macros",
 ] }
+
+# libp2p-quic 0.14 (libp2p 0.57) brings aws-lc-sys in through quinn's
+# rustls-aws-lc-rs. Its x86_64 Windows build needs NASM on PATH; this feature-only
+# line makes it use the prebuilt NASM objects instead, so the windows-x64 napi
+# target builds on a stock runner. Adds no crate of its own.
+[target.'cfg(all(windows, target_arch = "x86_64"))'.dependencies]
+aws-lc-rs = { version = "1.19", default-features = false, features = ["prebuilt-nasm"] }
 
 [features]
 # Opt-in marker for the multi-node P2P integration tests in src/p2p/. Those tests

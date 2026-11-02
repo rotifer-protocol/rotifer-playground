@@ -26,13 +26,14 @@ vi.mock("../../src/utils/p2p-daemon.js", () => ({
   runDaemon: vi.fn(),
 }));
 
-import { networkCommand } from "../../src/commands/network.js";
+import { daemonArgs, networkCommand } from "../../src/commands/network.js";
 import { geneIdV2, loadP2pNode } from "../../src/utils/binding.js";
 
 const V2_ID = `v2:${"ab".repeat(32)}`;
 import {
   controlRequest,
   isDaemonRunning,
+  runDaemon,
 } from "../../src/utils/p2p-daemon.js";
 import * as display from "../../src/utils/display.js";
 
@@ -196,5 +197,29 @@ describe("network start", () => {
     vi.mocked(loadP2pNode).mockReturnValue(null);
     await networkCommand.parseAsync(["start"], { from: "user" });
     expect(display.warn).toHaveBeenCalledWith(expect.stringContaining("unavailable"));
+  });
+});
+
+describe("network __daemon (mDNS switch)", () => {
+  it("passes --no-mdns through to the daemon", async () => {
+    await networkCommand.parseAsync(["__daemon", "--host", "0.0.0.0", "--no-mdns"], { from: "user" });
+    expect(runDaemon).toHaveBeenCalledWith("0.0.0.0", 9878, [], false);
+  });
+
+  it("leaves mDNS on by default", async () => {
+    await networkCommand.parseAsync(["__daemon", "--host", "0.0.0.0"], { from: "user" });
+    expect(runDaemon).toHaveBeenCalledWith("0.0.0.0", 9878, [], true);
+  });
+});
+
+describe("daemonArgs", () => {
+  it("adds --no-mdns only when mDNS is off", () => {
+    expect(daemonArgs("0.0.0.0", 9878, ["/ip4/10.0.0.2/tcp/9878"], true)).toEqual([
+      "network", "__daemon", "--host", "0.0.0.0", "--port", "9878",
+      "--bootstrap", "/ip4/10.0.0.2/tcp/9878",
+    ]);
+    expect(daemonArgs("0.0.0.0", 9878, [], false)).toEqual([
+      "network", "__daemon", "--host", "0.0.0.0", "--port", "9878", "--no-mdns",
+    ]);
   });
 });

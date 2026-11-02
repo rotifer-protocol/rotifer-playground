@@ -170,21 +170,23 @@ export interface P2pNodeHandle {
 /**
  * Construct a native libp2p P2P node. Returns null when the native addon is
  * unavailable (e.g. a pure-TS environment without the compiled `.node`), so
- * callers can degrade gracefully.
+ * callers can degrade gracefully. mDNS LAN discovery is off unless asked for
+ * (ADR-313: no default exposure); the daemon passes the CLI's `--no-mdns` choice.
  */
 export function loadP2pNode(
   listenHost: string,
   listenPort: number,
-  bootstrapPeers: string[]
+  bootstrapPeers: string[],
+  shouldUseMdns = false,
 ): P2pNodeHandle | null {
   const mod = loadRawModule();
   // napi renders the Rust `P2pNode` as `P2PNode` (it uppercases the "p2p"
   // acronym); accept either spelling so both the raw addon and any JS wrapper work.
   const Ctor = (mod?.P2PNode ?? mod?.P2pNode) as
-    | (new (host: string, port: number, peers: string[]) => P2pNodeHandle)
+    | (new (host: string, port: number, peers: string[], shouldUseMdns?: boolean) => P2pNodeHandle)
     | undefined;
   if (typeof Ctor !== "function") return null;
-  return new Ctor(listenHost, listenPort, bootstrapPeers);
+  return new Ctor(listenHost, listenPort, bootstrapPeers, shouldUseMdns);
 }
 
 /** Outcome of computing a gene's v2 ID: the ID, or why it has none. */

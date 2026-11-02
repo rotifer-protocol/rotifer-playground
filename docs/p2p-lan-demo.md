@@ -13,7 +13,8 @@ walkthrough assumes macOS, but the only OS-specific note is the firewall prompt.
 > listens without joining anything. That is deliberate: official bootstrap
 > infrastructure is not deployed, and shipping a placeholder address would only
 > fail silently. Point nodes at each other explicitly with `--bootstrap`, as this
-> guide does. Use `/ip4/` addresses — `/dns4/` needs a DNS-resolving transport
+> guide does, or — on releases after 0.33.1 — let mDNS find them on one LAN (see
+> Notes). Use `/ip4/` addresses — `/dns4/` needs a DNS-resolving transport
 > that this build intentionally omits.
 >
 > P2P is also **off by default** (`enabled: false`): the CLI never joins a
@@ -90,6 +91,10 @@ PeerId needed), then confirm the link:
 rotifer network start --host 0.0.0.0 --port 9878 --bootstrap /ip4/192.168.0.103/tcp/9878
 rotifer network peers     # lists A's PeerId within a second or two
 ```
+
+On releases after 0.33.1, machines on the same subnet also find each other by
+mDNS, so `--bootstrap` can be left out here; keep it if the network blocks
+multicast (see Troubleshooting).
 
 ### A4. Announce on A, receive on B
 
@@ -225,6 +230,11 @@ labels the publisher claims; the publisher itself is the authenticated PeerId.
   first `--host 0.0.0.0` start, macOS may pop *"Do you want the application
   'node' to accept incoming network connections?"* — click **Allow** (or allow
   `node` in System Settings → Network → Firewall).
+- **Nodes don't find each other without `--bootstrap` (mDNS).** mDNS only runs
+  with a non-loopback `--host` (such as `0.0.0.0`) and only reaches the same
+  subnet. Guest and corporate Wi-Fi often block multicast or isolate clients;
+  macOS may also ask to let `node` find devices on the local network — allow
+  it. When multicast can't get through, pass `--bootstrap` as above.
 - **`network start` says "unavailable".** The native addon isn't loading. On
   Path A, reinstall `@rotifer/playground` (your platform may lack a prebuilt
   addon). On Path B, re-run the §1 build steps, including the `cp` and `rm -rf`
@@ -249,12 +259,22 @@ HOME=/tmp/node-a node dist/index.js network announce <gene-name>   # from a dir 
 HOME=/tmp/node-b node dist/index.js network received
 ```
 
+These daemons listen on loopback, where mDNS stays off. Start both with
+`--host 0.0.0.0` instead and they find each other by mDNS — no `--bootstrap`.
+
 ## Notes
 
 - **Path A vs Path B.** Since **v0.9.0** the published platform packages bundle
   the P2P addon, so `npm install -g` users get `--host` / `network received` out
   of the box (Path A). Path B (from-source) is only for developing the addon
   itself, where a fresh local build must shadow the published package.
-- LAN reachability here relies on manual `--bootstrap`. Automatic discovery
-  (mDNS) and reaching nodes across the public internet (NAT traversal, relays)
-  are later milestones — see the productionization roadmap.
+- **mDNS LAN discovery** (releases after 0.33.1, P2P RFC §5.1): a node started
+  with a non-loopback `--host` announces itself on the local network and
+  connects to the Rotifer nodes it hears, with no `--bootstrap`. It never runs
+  on the default `127.0.0.1`, where it could not be reached anyway. mDNS is
+  unauthenticated, so on untrusted networks (public Wi-Fi) start with
+  `--no-mdns`; connections are still Noise-authenticated and announcements
+  still validated. Other libp2p programs on the LAN (IPFS, for example) answer
+  mDNS too; they are disconnected as soon as they identify as non-Rotifer.
+- Reaching nodes across the public internet (NAT traversal, relays) is a later
+  milestone — see the productionization roadmap.

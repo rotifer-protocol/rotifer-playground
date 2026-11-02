@@ -10,8 +10,12 @@ Inventory as of v0.27.0 (wire format v1):
 | Tier | Count | Ignored by default? | Runnable today? |
 |---|---|---|---|
 | Unit tests (whole crate) | 405 | no | yes — plain `cargo test` |
-| Multi-node integration | 14 (7 of them adversarial) | yes (feature-gated) | yes — see below |
-| Spec scaffolds | 2 | yes (unconditional) | **no — they fail by design** |
+| Multi-node integration | 17 (7 of them adversarial) | yes (feature-gated) | yes — see below |
+| Spec scaffolds | 1 | yes (unconditional) | **no — it fails by design** |
+
+The integration and scaffold rows were updated when mDNS landed with libp2p
+0.57: A.1.6 moved from a scaffold to a runnable test, and two more mDNS-era
+node tests joined it.
 
 Among the unit tests, the frozen wire format is pinned by `messages::tests`:
 A.4.3 checks the `.proto`'s sha256, A.4.3b checks the hand-written prost tags
@@ -28,6 +32,9 @@ Nothing special; they run in the default `cargo test -p rotifer-core` and in the
 ## Tier 2 — multi-node integration tests (runnable)
 
 These spin up **real libp2p nodes over loopback** and assert real behaviour.
+The mDNS tests are the exception: mDNS never runs on a loopback listener, so
+they listen on `0.0.0.0` and need a multicast-capable non-loopback interface
+(the multicast stays on the host — no second machine is involved).
 They are gated behind the `p2p-integration` feature, which is empty and has no
 build effect — it exists purely as an opt-in marker:
 
@@ -49,6 +56,9 @@ The node tests:
 | `node::tests::two_nodes_dht_put_get` | `node.rs` | Kademlia DHT put → get round-trip |
 | `node::tests::connection_limit_rejects_inbound` | `node.rs` | inbound connections past the cap are rejected |
 | `node::tests::remembered_peers_let_a_restart_reconnect_without_bootstrap` | `node.rs` | a restarted node reconnects from its peer store, no bootstrap |
+| `node::tests::A_1_6_two_nodes_mdns_self_discover_within_3s` | `node.rs` | two nodes with no bootstrap find each other by mDNS within 3s, then complete Identify (RFC §5.1) |
+| `node::tests::mdns_disabled_nodes_do_not_discover_each_other` | `node.rs` | with `mdns_enabled: false` two nodes on `0.0.0.0` stay unaware of each other |
+| `node::tests::non_rotifer_peer_is_dropped_after_identify` | `node.rs` | a libp2p peer identifying as `/ipfs/0.1.0` is disconnected, counted, and kept out of the peer store |
 
 The adversarial suite (`adversarial.rs`) attacks a real node. Each hostile
 message is followed by a legitimate probe from the same attacker, so "not
@@ -84,22 +94,21 @@ deterministic and socket-free.
 
 ## Tier 3 — spec scaffolds (not runnable)
 
-Two tests are `#[ignore]`d **unconditionally** — no feature flag turns them on:
+One test is `#[ignore]`d **unconditionally** — no feature flag turns it on:
 
 | Test | File | Why it cannot run |
 |---|---|---|
-| `node::tests::A_1_6_two_nodes_mdns_self_discover_within_3s` | `node.rs` | body ends in `unimplemented!()` — mDNS is not wired (its DNS dependency has an open advisory) |
 | `cloud_sync::tests::A_6_6_strict_eventual_consistency_within_5s` | `cloud_sync.rs` | body ends in `unimplemented!()` — needs a real Supabase instance plus a live libp2p swarm |
 
 The former A.4.3 and A.4.4 scaffolds now run as unit tests (see the top of
-this page).
+this page), and A.1.6 runs as a Tier 2 test.
 
 These are TDD placeholders that pin down acceptance criteria (the `A_x_y` names
 are spec IDs). They get real bodies, and lose the `#[ignore]`, when the feature
 they test lands. Until then:
 
 - **Do not run them expecting a pass.** `cargo test -p rotifer-core --lib --
-  --ignored` runs Tier 2 *and* Tier 3 together, so Tier 3's two failures are the
+  --ignored` runs Tier 2 *and* Tier 3 together, so Tier 3's failure is the
   expected outcome of that command, not a regression. To exercise only the
   runnable ones, use the Tier 2 command above.
 - **Do not "fix" them by deleting them.** They are the executable record of what

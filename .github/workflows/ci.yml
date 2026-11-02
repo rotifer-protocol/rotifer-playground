@@ -437,16 +437,14 @@ jobs:
         run: |
           # cargo-audit 0.22+ is required to parse current RustSec CVSS 4.0 advisories.
           cargo install cargo-audit@0.22.1 --quiet
-          # RUSTSEC-2026-0118 / -0119: hickory-proto DoS, reachable only via libp2p's
-          # optional dns/mdns features, which we do NOT enable — the DNS code is never
-          # compiled into the binary (it only lingers in Cargo.lock as a disabled
-          # optional dependency). -0118 has no fixed release. Tracked: move to libp2p
-          # component crates to drop it from the lockfile entirely.
+          # No ignores. mDNS is on (libp2p 0.57), and it pulls hickory-proto 0.26.3,
+          # which RUSTSEC-2026-0118 / -0119 (hickory-proto DoS) no longer match:
+          # unaffected >= 0.26.0-beta.1, patched >= 0.26.1.
           # NOTE: there is no wasmtime ignore, and there should not be one. wasmtime is
           # pinned to the first release that carries the fixes (see Cargo.toml); when a
           # new advisory lands, upgrade — do not add an ignore for the WASM sandbox,
           # since it is the Gene isolation boundary.
-          cargo audit --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119
+          cargo audit
 
       - name: npm dependency audit
         run: npm audit --audit-level=high

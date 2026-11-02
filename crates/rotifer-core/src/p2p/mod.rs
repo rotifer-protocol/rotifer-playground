@@ -92,6 +92,18 @@ pub struct NetworkConfig {
     pub listen_port: u16,
     pub bootstrap_peers: Vec<String>,
     pub enabled: bool,
+    /// mDNS LAN discovery (P2P RFC §4.4 `mdns_enabled`, §5.1). On by default,
+    /// but it only runs when `listen_host` is not loopback: mDNS announces a
+    /// node at the source IP of its multicast packet, so a loopback-only node
+    /// could not be reached and would only expose its PeerId to the LAN. Turn
+    /// it off on untrusted networks (§5.1.2, `rotifer network start --no-mdns`).
+    /// Absent in configs written before it existed, which read as on.
+    #[serde(default = "default_mdns_enabled")]
+    pub mdns_enabled: bool,
+}
+
+fn default_mdns_enabled() -> bool {
+    true
 }
 
 impl Default for NetworkConfig {
@@ -114,6 +126,7 @@ impl Default for NetworkConfig {
             // means re-enabling DNS in the transport.
             bootstrap_peers: Vec::new(),
             enabled: false,
+            mdns_enabled: default_mdns_enabled(),
         }
     }
 }
@@ -318,6 +331,7 @@ mod tests {
             listen_port: 4001,
             bootstrap_peers: vec!["/ip4/127.0.0.1/tcp/4001".into()],
             enabled: true,
+            mdns_enabled: true,
         };
         let json = serde_json::to_string(&config).unwrap();
         let decoded: NetworkConfig = serde_json::from_str(&json).unwrap();
@@ -325,6 +339,18 @@ mod tests {
         assert_eq!(decoded.listen_host, "0.0.0.0");
         assert_eq!(decoded.listen_port, 4001);
         assert!(decoded.enabled);
+    }
+
+    #[test]
+    fn network_config_mdns_defaults_on_and_round_trips_off() {
+        // RFC §4.4: `mdns_enabled` defaults to true. A config written before
+        // the field existed must read as on, and an explicit off must survive.
+        assert!(NetworkConfig::default().mdns_enabled);
+        let legacy = r#"{"node_id":"n","listen_host":"127.0.0.1","listen_port":9878,"bootstrap_peers":[],"enabled":true}"#;
+        assert!(serde_json::from_str::<NetworkConfig>(legacy).unwrap().mdns_enabled);
+        let off = NetworkConfig { mdns_enabled: false, ..NetworkConfig::default() };
+        let decoded: NetworkConfig = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
+        assert!(!decoded.mdns_enabled);
     }
 
     #[test]

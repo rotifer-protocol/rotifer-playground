@@ -5,12 +5,13 @@
  *
  *   supabase start                              (gotrue, kong, postgrest, edge-runtime needed)
  *   psql "$DB_URL" -f supabase/migrations-deferred-v095-por/20261102200000_node_attestation.sql
- *   SUPABASE_URL=http://127.0.0.1:54321 ANON_KEY=<supabase status> SERVICE_ROLE_KEY=<supabase status> \
+ *   SUPABASE_URL=http://127.0.0.1:54321 ANON_KEY=<supabase status> \
  *   DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres [SUPABASE_WORKDIR=<dir>] \
  *     deno run --allow-net --allow-env --allow-run supabase/functions/node-attestation/e2e.ts
  *
- * Two throwaway accounts are created through the auth admin API and signed
- * in with a password, so the function sees real session tokens; they are
+ * Two throwaway accounts sign up with the anon key (the local stack confirms
+ * email sign-ups at once) and use the session tokens they get back, so the
+ * function sees real tokens; they are
  * deleted at the end. The function reaches the database as por_issuer: the
  * script gives that role a throwaway password (sent to psql on stdin) for the
  * run and takes the login away again at the end. From inside the edge
@@ -42,8 +43,7 @@ import {
 const BASE = localUrl("SUPABASE_URL", Deno.env.get("SUPABASE_URL"), "http://127.0.0.1:54321");
 const DB_URL = localUrl("DB_URL", Deno.env.get("DB_URL"), "postgresql://postgres:postgres@127.0.0.1:54322/postgres");
 const ANON = Deno.env.get("ANON_KEY");
-const SERVICE = Deno.env.get("SERVICE_ROLE_KEY");
-if (!ANON || !SERVICE) throw new Error("ANON_KEY and SERVICE_ROLE_KEY are required (the local stack's, from supabase status)");
+if (!ANON) throw new Error("ANON_KEY is required (the local stack's, from supabase status)");
 const WORKDIR = Deno.env.get("SUPABASE_WORKDIR");
 const FN = `${BASE}/functions/v1/node-attestation`;
 const AUD = FN;
@@ -73,23 +73,21 @@ async function psql(sql: string): Promise<string> {
   return new TextDecoder().decode(out.stdout).trim();
 }
 
-/** A confirmed account made through the auth admin API, signed in with a password. */
+/** A new account through sign-up; the local stack confirms it at once and returns a session. */
 async function account(email: string): Promise<{ id: string; jwt: string }> {
   const password = b64url(crypto.getRandomValues(new Uint8Array(18)));
-  const created = await fetch(`${BASE}/auth/v1/admin/users`, {
-    method: "POST",
-    headers: { apikey: SERVICE!, Authorization: `Bearer ${SERVICE}`, "content-type": "application/json" },
-    body: JSON.stringify({ email, password, email_confirm: true }),
-  });
-  if (created.status !== 200) throw new Error(`creating ${email}: ${created.status}`);
-  const { id } = await created.json();
-  const login = await fetch(`${BASE}/auth/v1/token?grant_type=password`, {
+  const res = await fetch(`${BASE}/auth/v1/signup`, {
     method: "POST",
     headers: { apikey: ANON!, "content-type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
-  if (login.status !== 200) throw new Error(`signing in ${email}: ${login.status}`);
-  return { id, jwt: (await login.json()).access_token };
+  if (res.status !== 200) throw new Error(`signing up ${email}: ${res.status}`);
+  const body = await res.json();
+  const id = body.user?.id, jwt = body.access_token;
+  if (typeof id !== "string" || typeof jwt !== "string") {
+    throw new Error(`signing up ${email} returned no session (are email confirmations on? keys: ${Object.keys(body).sort().join(",")})`);
+  }
+  return { id, jwt };
 }
 
 async function nodeKey() {

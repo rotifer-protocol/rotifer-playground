@@ -12,7 +12,7 @@ v0.9.5 A1「节点证明（PoR）」Cloud 侧的迁移，**主动延期**：参�
 
 | 文件 | 内容 | 解锁条件 |
 |---|---|---|
-| `20261102200000_node_attestation.sql` | `nodes`、只追加的签发记录 `node_attestation_issuances`、一次性挑战 `node_attestation_challenges`、撤销表 `node_attestation_revocations`；RLS；签发函数专用的数据库角色 `por_issuer`（只能执行发挑战、入账这两个 SECURITY DEFINER 函数，不能直接读写任何表） | v0.9.5 阶段二 B1 拿到用户关键词；部署前置见 `supabase/functions/node-attestation/README.md`「Before deploying」 |
+| `20261102200000_node_attestation.sql` | `nodes`、只追加的签发记录 `node_attestation_issuances`、一次性挑战 `node_attestation_challenges`、撤销表 `node_attestation_revocations`；RLS；签发函数专用的数据库角色 `por_issuer`（只能执行四个 PoR 的 SECURITY DEFINER 函数，不能直接读写任何表） | v0.9.5 阶段二 B1 拿到用户关键词；部署前置见 `supabase/functions/node-attestation/README.md`「Before deploying」 |
 
 依据：ADR-300 修订二「锁定契约 v2」的「表」「发证挑战」与 D5。
 
@@ -35,7 +35,7 @@ DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres \
 
 ## 部署时要多配的一项
 
-签发函数不用 service_role，而是以 `por_issuer` 角色连数据库。迁移只建角色、不给登录权限，B1 部署时由绑定层：
+签发函数以专用的 `por_issuer` 角色连数据库，这个角色只能执行四个 PoR 函数（发挑战、入账、撤销、为 JWKS 导出撤销表），不能直接读写任何表，也不绕过 RLS。迁移只建角色、不给登录权限，B1 部署时由绑定层：
 
 1. 在部署环境里给 `por_issuer` 设密码（`ALTER ROLE por_issuer LOGIN PASSWORD …`）；
 2. 把连接串存成签发函数的密钥 `POR_DB_URL`（走 Supabase 连接池时用户名是 `por_issuer.<项目 ref>`，用 transaction 模式）。

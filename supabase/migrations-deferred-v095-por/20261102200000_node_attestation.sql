@@ -19,10 +19,10 @@
 --   node_attestation_revocations  the database side of the JWKS rotifer_revoked
 --                                 list; a revoked certificate stops counting.
 --
--- Writes go only through the SECURITY DEFINER functions below. The two that
--- issue may be executed only by por_issuer, a role made for the edge function
--- and able to do nothing else: the function verifies the node's signature
--- first, then records. anon and authenticated cannot write anything here —
+-- Writes go only through the SECURITY DEFINER functions below, which only
+-- por_issuer may execute, a role made for the edge function and able to do
+-- nothing else: the function verifies the node's signature first, then
+-- records. anon and authenticated cannot write anything here —
 -- were the record step open to them, a caller could skip the signature check
 -- and claim another node's PeerId, and the rebinding rule would then lock the
 -- real owner out.
@@ -97,13 +97,16 @@ ALTER TABLE node_attestation_challenges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE node_attestation_revocations ENABLE ROW LEVEL SECURITY;
 
 -- ── The issuing role ──────────────────────────────────────
--- The edge function connects as por_issuer. It may execute
--- node_attestation_challenge and node_attestation_issue and nothing else: no
--- table privilege, no other function. It is not service_role, which bypasses
--- RLS and can do anything through the API, so the function holds no key that
--- could. The migration creates it without LOGIN; the deployment gives it a
--- password and the function a connection string (README in this directory).
--- Roles belong to the cluster, not the database, so create it only once.
+-- The edge function connects as por_issuer. It may execute the four PoR
+-- functions (challenge, issue, revoke, revocations for the JWKS file) and
+-- nothing else: no table privilege, no other function, no RLS bypass. So the
+-- function holds no key that can read or write a table directly. The
+-- migration creates it without LOGIN; the deployment gives it a password and
+-- the function a connection string (README in this directory). Roles belong
+-- to the cluster, not the database, so create it only once.
+--
+-- Supabase's default privileges also grant EXECUTE on every new function to
+-- service_role; each function below takes that back explicitly.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'por_issuer') THEN
@@ -142,7 +145,7 @@ CREATE TRIGGER node_attestation_issuances_no_truncate
   BEFORE TRUNCATE ON node_attestation_issuances
   FOR EACH STATEMENT EXECUTE FUNCTION node_attestation_issuances_append_only();
 
-REVOKE ALL ON FUNCTION node_attestation_issuances_append_only() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION node_attestation_issuances_append_only() FROM PUBLIC, anon, authenticated, service_role;
 
 -- ── Helpers ──────────────────────────────────────────────
 
@@ -165,7 +168,7 @@ AS $$
   );
 $$;
 
-REVOKE ALL ON FUNCTION node_attestation_account_open(UUID) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION node_attestation_account_open(UUID) FROM PUBLIC, anon, authenticated, service_role;
 
 -- ── node_attestation_challenge ────────────────────────────
 -- Step 1 of the contract: a 32-byte one-time nonce and its deadline (now + 300 s).
@@ -324,8 +327,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION node_attestation_revoke(TEXT, BIGINT, TEXT) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION node_attestation_revoke(TEXT, BIGINT, TEXT) TO service_role;
+REVOKE ALL ON FUNCTION node_attestation_revoke(TEXT, BIGINT, TEXT) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION node_attestation_revoke(TEXT, BIGINT, TEXT) TO por_issuer;
 
 -- The list for scripts/por-jwks.ts --revoked: one entry per PeerId (latest
 -- not_after), only while some certificate it voids could still be accepted
@@ -344,5 +347,5 @@ AS $$
    WHERE not_after + 604800 + 60 >= floor(extract(epoch FROM now()))::BIGINT;
 $$;
 
-REVOKE ALL ON FUNCTION node_attestation_revocations_for_jwks() FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION node_attestation_revocations_for_jwks() TO service_role;
+REVOKE ALL ON FUNCTION node_attestation_revocations_for_jwks() FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION node_attestation_revocations_for_jwks() TO por_issuer;

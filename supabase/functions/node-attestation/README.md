@@ -58,7 +58,7 @@ Token (`por.ts`):
 | A PeerId live under another account is refused until that certificate expires or is revoked | `node_attestation_issue` |
 | ≤ 3 distinct live PeerIds per account, counted on the append-only log (deleting a `nodes` row frees nothing); a renewal takes no extra slot; revoked certificates stop counting | `node_attestation_issue` |
 | Concurrent redemptions are serialised: PeerId lock, then account lock | `node_attestation_issue`, `race-check.sh` |
-| The function records only through `por_issuer`, a role that can execute the two issuing functions and nothing else; it holds no service_role key | migration ("The issuing role"), `store.ts`, `index.ts` |
+| The function reaches the database only as `por_issuer`, a role that can execute the four PoR functions and nothing else; it reads no broader key | migration ("The issuing role"), `store.ts`, `index.ts`, `store.test.ts` |
 | The token and the response carry the pseudonym, never the user id | `handler.ts`, `handler.test.ts` |
 
 "Live" means a verifier would still accept the certificate: `exp + 60 s` has
@@ -80,18 +80,20 @@ not passed and no revocation with `not_after ≥ iat` covers it.
 
 ## Database access
 
-The function never uses service_role. It identifies the caller with
-`auth.getUser` (anon key), and records through a Postgres connection logged
-in as `por_issuer`, which may execute `node_attestation_challenge` and
-`node_attestation_issue` and nothing else. The Supabase platform still puts
-`SUPABASE_SERVICE_ROLE_KEY` into every function's environment; this function
-does not read it, and `store.test.ts` fails if its code ever does.
+The function identifies the caller with `auth.getUser` (anon key) and
+records through a Postgres connection logged in as `por_issuer`. That role
+may execute the four PoR functions (`node_attestation_challenge`,
+`node_attestation_issue`, `node_attestation_revoke`,
+`node_attestation_revocations_for_jwks`) and nothing else: no table
+privilege, no RLS bypass. The Supabase platform puts its own full-access key
+into every function's environment; this function does not read it, and
+`store.test.ts` fails if its code ever does.
 
 The connection uses [postgres.js](https://github.com/porsager/postgres)
 (`npm:postgres@3.4.7`). supabase-js cannot log in as a database role of its
 own choosing (PostgREST would need a JWT signed with the project's JWT
-secret, a stronger key than service_role), so a Postgres driver is needed;
-none was in the repository before.
+secret, which can mint a token for any role), so a Postgres driver is
+needed; none was in the repository before.
 
 ## Before deploying
 
@@ -118,4 +120,4 @@ in order:
 6. `[functions.node-attestation] verify_jwt = true` in `supabase/config.toml`.
 7. A revocation routine for banned accounts and replaced node keys
    (`node_attestation_revoke`), and republishing the JWKS from
-   `node_attestation_revocations_for_jwks()`.
+   `node_attestation_revocations_for_jwks()`; both run as `por_issuer`.

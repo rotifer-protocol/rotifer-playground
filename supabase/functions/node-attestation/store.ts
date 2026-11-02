@@ -2,8 +2,8 @@
  * AttestationStore on Postgres: the two SECURITY DEFINER functions of the
  * deferred migration 20261102200000 (supabase/migrations-deferred-v095-por/),
  * called over a connection logged in as por_issuer. That role may execute
- * these two functions and nothing else, so the function holds no
- * service_role key and no credential that can read or write a table.
+ * the PoR functions and nothing else, so the function holds no credential
+ * that can read or write a table directly.
  *
  * The connection is passed in as a plain query function, so the calls here
  * are tested without a database (store.test.ts); index.ts supplies the driver.
@@ -20,8 +20,8 @@ export const ISSUER_ROLE = "por_issuer";
 
 /**
  * Checks that a connection string logs in as the issuing role. A string for
- * postgres or service_role would still work, with far more rights than the
- * function needs, so it is refused rather than used.
+ * postgres or any other broad role would still work, with far more rights
+ * than the function needs, so it is refused rather than used.
  */
 export function issuerUser(dbUrl: string): string {
   let url: URL;

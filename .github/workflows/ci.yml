@@ -681,6 +681,13 @@ jobs:
         # assertion ran.
         run: bash supabase/functions/node-attestation/pgtap-deferred.sh
 
+      - name: Run the node-attestation concurrency checks
+        # Needs the deferred migration from the step above. Several Postgres
+        # sessions redeem at once against the per-account limit, one nonce
+        # and one PeerId, logged in as por_issuer like the edge function (a
+        # throwaway password, removed at the end). Exits 1 on a wrong result.
+        run: bash supabase/functions/node-attestation/race-check.sh
+
       - name: Stop supabase
         if: always()
         run: supabase stop --no-backup || true

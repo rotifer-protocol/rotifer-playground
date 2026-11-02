@@ -672,15 +672,7 @@ impl Node {
         let host = self.config.listen_host.clone();
         let port = self.config.listen_port;
         let bootstrap = self.config.bootstrap_peers.clone();
-        let relays = parse_relays(&self.config.relays)?;
-        let limits = SwarmOptions {
-            max_inbound: self.config.max_inbound_connections,
-            max_outbound: self.config.max_outbound_connections,
-            max_pending: self.config.max_pending_connections,
-            mdns: mdns_should_run(self.config.mdns_enabled, &host),
-            relays,
-            autonat_on_loopback: self.autonat_on_loopback,
-        };
+        let limits = self.swarm_options()?;
         let shared = NodeShared {
             listen_addrs: Arc::clone(&self.listen_addrs),
             discovered: Arc::clone(&self.discovered),
@@ -909,6 +901,20 @@ fn write_atomic_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
     let tmp = tmp_sibling(path);
     std::fs::write(&tmp, data)?;
     std::fs::rename(&tmp, path)
+}
+
+impl Node {
+    /// The Swarm options `start` builds with, read from the config.
+    fn swarm_options(&self) -> Result<SwarmOptions, NetworkError> {
+        Ok(SwarmOptions {
+            max_inbound: self.config.max_inbound_connections,
+            max_outbound: self.config.max_outbound_connections,
+            max_pending: self.config.max_pending_connections,
+            mdns: mdns_should_run(self.config.mdns_enabled, &self.config.listen_host),
+            relays: parse_relays(&self.config.relays)?,
+            autonat_on_loopback: self.autonat_on_loopback,
+        })
+    }
 }
 
 /// Per-start Swarm options decided on the synchronous side.
@@ -2626,6 +2632,11 @@ mod tests {
     // peer could dial is judged Public. (A refused dial-back still completes
     // the handshake first, so loopback cannot stage Private; the mapping is
     // pinned by `autonat_verdicts_map_to_reachability`.)
+    //
+    // Loopback is not a global IP, so this only works with the test-only
+    // relaxation. The second half pins that a node built the production way
+    // keeps libp2p's rule of trusting only global IPs: it neither answers a
+    // loopback peer's probe nor probes through one.
     #[test]
     #[cfg_attr(
         not(feature = "p2p-integration"),
@@ -2634,6 +2645,19 @@ mod tests {
     fn autonat_judges_a_dialable_node_public() {
         let dir = tempfile::tempdir().expect("temp dir");
         let id = |name: &str| dir.path().join(format!("{name}.id"));
+
+        // A separate pair, started first so it is watched the whole time:
+        // `asker` probes at the test pace, and its only peer is `production`,
+        // built without `with_autonat_on_loopback`.
+        let mut production = Node::with_keypair_path(cfg(0), id("production")).expect("build");
+        production.start().expect("start");
+        let production_id = production.local_peer_id().0;
+        let production_addr = format!("{}/p2p/{production_id}", production.listen_addrs()[0]);
+        let c = NetworkConfig { bootstrap_peers: vec![production_addr], ..cfg(0) };
+        let mut asker = Node::with_keypair_path(c, id("asker")).expect("build").with_autonat_on_loopback();
+        asker.start().expect("start");
+        let pair_started = std::time::Instant::now();
+
         let mut server = Node::with_keypair_path(cfg(0), id("server")).expect("build").with_autonat_on_loopback();
         server.start().expect("start");
         let server_addr = format!("{}/p2p/{}", server.listen_addrs()[0], server.local_peer_id().0);
@@ -2645,6 +2669,24 @@ mod tests {
             wait_until(20, || node.nat_status() == Reachability::Public),
             "a node the server can dial back must be judged Public (state: {:?})",
             node.nat_traversal()
+        );
+
+        assert!(
+            asker.identified_peers().contains(&production_id),
+            "asker must be connected to the production node"
+        );
+        // A production node that trusted loopback would answer asker's probes
+        // and asker would turn Public within seconds. Watch for 25 s: past
+        // libp2p's 15 s boot delay, in case a change to `build_swarm` drops
+        // the test pace along with the global-IP rule.
+        let remaining = Duration::from_secs(25).saturating_sub(pair_started.elapsed()).as_secs();
+        assert!(
+            !wait_until(remaining, || asker.nat_status() != Reachability::Unknown
+                || production.nat_status() != Reachability::Unknown),
+            "a node built the production way must keep AutoNAT's global-IP rule \
+             (asker: {:?}, production: {:?})",
+            asker.nat_traversal(),
+            production.nat_traversal()
         );
     }
 
@@ -2668,6 +2710,40 @@ mod tests {
             (libp2p.throttle_clients_global_max, libp2p.throttle_clients_peer_max, libp2p.max_peer_addresses)
         );
         assert_eq!(node.nat_status(), Reachability::Unknown);
+    }
+
+    // A3-2: the total established cap is inbound + outbound (100 by default)
+    // and follows the config. Read off the swarm `start` builds: the per-way
+    // caps hide the total in any connection test.
+    #[test]
+    fn total_connection_cap_is_inbound_plus_outbound() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let limits_of = |name: &str, c: NetworkConfig| {
+            let node = Node::with_keypair_path(c, dir.path().join(format!("{name}.id"))).expect("build");
+            let options = node.swarm_options().expect("options");
+            let mut swarm = build_swarm(node.keypair.clone(), &options).expect("swarm");
+            format!("{:?}", swarm.behaviour_mut().connection_limits.limits_mut())
+        };
+        let no_mdns = NetworkConfig { mdns_enabled: false, ..cfg(0) };
+
+        let defaults = limits_of("defaults", no_mdns.clone());
+        for field in [
+            "max_established_total: Some(100)",
+            "max_established_incoming: Some(50)",
+            "max_established_outgoing: Some(50)",
+        ] {
+            assert!(defaults.contains(field), "default limits must have {field}: {defaults}");
+        }
+
+        let c = NetworkConfig { max_inbound_connections: 3, max_outbound_connections: 4, ..no_mdns };
+        let custom = limits_of("custom", c);
+        for field in [
+            "max_established_total: Some(7)",
+            "max_established_incoming: Some(3)",
+            "max_established_outgoing: Some(4)",
+        ] {
+            assert!(custom.contains(field), "limits must follow the config ({field}): {custom}");
+        }
     }
 
     #[test]

@@ -10,7 +10,7 @@ Inventory as of v0.27.0 (wire format v1):
 | Tier | Count | Ignored by default? | Runnable today? |
 |---|---|---|---|
 | Unit tests (whole crate) | 405 | no | yes — plain `cargo test` |
-| Multi-node integration | 18 (8 of them adversarial) | yes (feature-gated) | yes — see below |
+| Multi-node integration | 22 (8 of them adversarial) | yes (feature-gated) | yes — see below |
 | Spec scaffolds | 1 | yes (unconditional) | **no — it fails by design** |
 
 The integration and scaffold rows were updated when mDNS landed with libp2p

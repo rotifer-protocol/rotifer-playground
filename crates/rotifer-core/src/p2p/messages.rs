@@ -16,9 +16,25 @@ use prost::Message as _;
 use super::GeneAnnouncement;
 use crate::gene_id::{self, NotComputable};
 
-/// GossipSub topic carrying wire-v1 gene announcements. Nodes on the
-/// pre-freeze JSON format use a different topic and never see these.
+/// GossipSub topic carrying wire-v1 gene announcements (ADR-340 D3). Nodes on
+/// the pre-freeze JSON format use `/rotifer/announcements`, which this version
+/// neither reads nor writes (ADR-340 D6).
 pub const ANNOUNCEMENTS_TOPIC: &str = "/rotifer/p2p/1/announcements";
+
+/// Validator a gossip topic runs on every message before it is forwarded
+/// (P2P RFC §6.4).
+pub type TopicValidator = fn(&[u8], Option<&str>, u64) -> Verdict;
+
+/// The gossip topics this node validates, and so may accept and forward. A
+/// message on any other topic is ignored: not surfaced, not forwarded, and not
+/// held against the sender (ADR-340 D3's Ignore). Subscribing to a topic is
+/// therefore never enough to make a node relay bytes nobody has checked.
+pub const TOPIC_VALIDATORS: &[(&str, TopicValidator)] = &[(ANNOUNCEMENTS_TOPIC, validate_gossip)];
+
+/// The validator registered for `topic`, if any.
+pub fn topic_validator(topic: &str) -> Option<TopicValidator> {
+    TOPIC_VALIDATORS.iter().find(|(t, _)| *t == topic).map(|(_, v)| *v)
+}
 
 /// Largest gossip payload accepted on the announcements topic.
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
@@ -242,6 +258,27 @@ pub fn local_announcement(genes_root: &Path, name: &str, now_ms: u64) -> Result<
 #[allow(non_snake_case)]
 mod tests {
     use super::*;
+
+    /// A.4 topic naming (ADR-340 D3 / D6): the announcements topic is the
+    /// versioned one, and only registered topics are validated — the legacy
+    /// JSON topic and anything unknown get no validator, so they are ignored.
+    #[test]
+    fn topics_follow_adr_340_versioned_naming() {
+        assert_eq!(ANNOUNCEMENTS_TOPIC, "/rotifer/p2p/1/announcements");
+        assert!(!TOPIC_VALIDATORS.is_empty());
+        for (topic, _) in TOPIC_VALIDATORS {
+            assert!(topic.starts_with("/rotifer/p2p/1/"), "{topic} is not a wire-v1 topic");
+        }
+        let names: Vec<&str> = TOPIC_VALIDATORS.iter().map(|(t, _)| *t).collect();
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "a topic is registered twice: {names:?}");
+        assert!(topic_validator(ANNOUNCEMENTS_TOPIC).is_some());
+        for unregistered in ["/rotifer/announcements", "/rotifer/announcements/text", "/rotifer/p2p/1/heartbeats", ""] {
+            assert!(topic_validator(unregistered).is_none(), "{unregistered:?} must have no validator");
+        }
+    }
 
     const NOW: u64 = 1_760_000_000_000;
     const SRC: Option<&str> = Some("12D3KooWsource");

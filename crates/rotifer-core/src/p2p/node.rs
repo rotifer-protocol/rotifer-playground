@@ -225,6 +225,9 @@ struct NodeShared {
     rate_limited: Arc<Mutex<u64>>,
     /// Count of inbound messages rejected by wire-format validation.
     invalid: Arc<Mutex<u64>>,
+    /// Count of inbound messages ignored for arriving on a topic with no
+    /// registered validator.
+    unregistered: Arc<Mutex<u64>>,
     /// Count of inbound connections denied by the connection limits (ADR-304).
     rejected: Arc<Mutex<u64>>,
     /// Peers currently announced over mDNS (RFC §5.1).
@@ -270,6 +273,9 @@ pub struct Node {
     rate_limited: Arc<Mutex<u64>>,
     /// Count of inbound messages rejected by wire-format validation.
     invalid: Arc<Mutex<u64>>,
+    /// Count of inbound messages ignored for arriving on a topic with no
+    /// registered validator.
+    unregistered: Arc<Mutex<u64>>,
     /// Count of inbound connections denied by the connection limits (ADR-304).
     rejected: Arc<Mutex<u64>>,
     /// Peers currently announced over mDNS (RFC §5.1).
@@ -352,6 +358,7 @@ impl Node {
             received: Arc::new(Mutex::new(Vec::new())),
             rate_limited: Arc::new(Mutex::new(0)),
             invalid: Arc::new(Mutex::new(0)),
+            unregistered: Arc::new(Mutex::new(0)),
             rejected: Arc::new(Mutex::new(0)),
             mdns_peers: Arc::new(Mutex::new(HashMap::new())),
             mdns_active: Arc::new(Mutex::new(false)),
@@ -485,6 +492,12 @@ impl Node {
         self.rate_limited.lock().map(|n| *n).unwrap_or(0)
     }
 
+    /// Number of inbound messages ignored because their topic has no
+    /// registered validator (see `messages::TOPIC_VALIDATORS`).
+    pub fn unregistered_topic_count(&self) -> u64 {
+        self.unregistered.lock().map(|n| *n).unwrap_or(0)
+    }
+
     /// Store a record in the Kademlia DHT, replicated to the closest peers.
     /// Blocks until the write quorum is reached (or times out).
     pub fn put_record(&self, key: &[u8], value: &[u8]) -> Result<(), NetworkError> {
@@ -578,6 +591,7 @@ impl Node {
             received: Arc::clone(&self.received),
             rate_limited: Arc::clone(&self.rate_limited),
             invalid: Arc::clone(&self.invalid),
+            unregistered: Arc::clone(&self.unregistered),
             rejected: Arc::clone(&self.rejected),
             mdns_peers: Arc::clone(&self.mdns_peers),
             mdns_active: Arc::clone(&self.mdns_active),
@@ -902,6 +916,7 @@ async fn run_event_loop(
         received,
         rate_limited,
         invalid,
+        unregistered,
         rejected,
         mdns_peers,
         mdns_active,
@@ -1062,7 +1077,7 @@ async fn run_event_loop(
                         message,
                     },
                 )) => {
-                    use super::messages::{ANNOUNCEMENTS_TOPIC, Verdict, validate_gossip};
+                    use super::messages::{Verdict, topic_validator};
                     use gossipsub::MessageAcceptance;
                     let now_ms = wall_clock_ms();
                     let topic = message.topic.to_string();
@@ -1076,11 +1091,11 @@ async fn run_event_loop(
                             *n += 1;
                         }
                         MessageAcceptance::Ignore
-                    } else if topic == ANNOUNCEMENTS_TOPIC {
-                        // Wire-format validation before forwarding (ADR-340):
-                        // invalid announcements are dropped and their sender
-                        // penalized, never relayed.
-                        match validate_gossip(&message.data, source.as_deref(), now_ms) {
+                    } else if let Some(validate) = topic_validator(&topic) {
+                        // The topic's validator runs before forwarding (RFC
+                        // §6.4, ADR-340): invalid messages are dropped and
+                        // their sender penalized, never relayed.
+                        match validate(&message.data, source.as_deref(), now_ms) {
                             Verdict::Accept(_) => MessageAcceptance::Accept,
                             Verdict::Ignore => MessageAcceptance::Ignore,
                             Verdict::Reject(_) => {
@@ -1091,7 +1106,14 @@ async fn run_event_loop(
                             }
                         }
                     } else {
-                        MessageAcceptance::Accept
+                        // No validator registered: nothing has checked these
+                        // bytes, so they are not surfaced or forwarded. Not
+                        // penalized either — the topic may be one a newer
+                        // node speaks (ADR-340 D3's Ignore).
+                        if let Ok(mut n) = unregistered.lock() {
+                            *n += 1;
+                        }
+                        MessageAcceptance::Ignore
                     };
                     if matches!(acceptance, MessageAcceptance::Accept)
                         && let Ok(mut msgs) = received.lock()
@@ -1309,6 +1331,18 @@ fn persist_peers(path: &Path, addrs: &[String]) -> std::io::Result<()> {
 #[allow(non_snake_case)]
 mod tests {
     use super::*;
+
+    /// Gossip topics and the Identify version string move together (ADR-340
+    /// D3): every registered topic sits under the version a peer identifies by.
+    #[test]
+    fn registered_topics_share_the_identify_version() {
+        for (topic, _) in super::super::messages::TOPIC_VALIDATORS {
+            assert!(
+                topic.starts_with(&format!("{IDENTIFY_PROTOCOL_VERSION}/")),
+                "{topic} is not under {IDENTIFY_PROTOCOL_VERSION}"
+            );
+        }
+    }
 
     fn cfg(port: u16) -> NetworkConfig {
         NetworkConfig {
@@ -2003,8 +2037,19 @@ mod tests {
     #[test]
     #[cfg_attr(not(feature = "p2p-integration"), ignore = "two-node integration: gossipsub publisher authentication over loopback — enable the p2p-integration feature or run with --ignored")]
     fn two_nodes_gossip_authenticates_publisher() {
-        const TOPIC: &str = "/rotifer/announcements";
-        let payload = b"gene-announcement-xyz";
+        use super::super::messages::{ANNOUNCEMENTS_TOPIC as TOPIC, encode_announcement};
+        // A valid wire-v1 announcement on the real topic: only a validated
+        // topic's messages are surfaced and forwarded (ADR-340 D3 / D6).
+        let encoded = encode_announcement(&super::super::GeneAnnouncement {
+            gene_id: format!("v2:{}", "ab".repeat(32)),
+            name: "gossip-auth".into(),
+            domain: "test".into(),
+            fidelity: "Wrapped".into(),
+            ir_spec: String::new(),
+            version: "1.0.0".into(),
+            timestamp_ms: wall_clock_ms(),
+        });
+        let payload = encoded.as_slice();
 
         let a_id = std::env::temp_dir().join("rotifer-gossip-a.pem");
         let b_id = std::env::temp_dir().join("rotifer-gossip-b.pem");

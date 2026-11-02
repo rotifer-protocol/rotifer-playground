@@ -60,7 +60,9 @@ def encode_heartbeat(h):
 
 
 def main():
-    token = "eyJhbGciOiJFZERTQSJ9.eyJpc3MiOiJodHRwczovL3JvdGlmZXIuZGV2In0.c2ln"
+    # Fixed test vector, not a credential: header {"alg":"EdDSA"}, payload
+    # {"iss":"https://rotifer.dev"}, signature the bytes "sig".
+    token = "eyJhbGciOiJFZERTQSJ9.eyJpc3MiOiJodHRwczovL3JvdGlmZXIuZGV2In0.c2ln"  # gitleaks:allow
     vectors = [
         ("anonymous", dict(genes_hosted=0, uptime_seconds=0, rotifer_version="0.34.0", bindings=[],
                            cloud_attestation="", timestamp_ms=1760000000000)),

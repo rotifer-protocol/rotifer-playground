@@ -697,8 +697,13 @@ impl Node {
     }
 
     /// Store a record in the Kademlia DHT, replicated to the closest peers.
-    /// Blocks until the write quorum is reached (or times out).
+    /// Blocks until the write quorum is reached (or times out). Keys under
+    /// `/rotifer/gene/` are refused: gene records are frozen (v1) and only
+    /// ever written signed, through the gene record path.
     pub fn put_record(&self, key: &[u8], value: &[u8]) -> Result<(), NetworkError> {
+        if key.starts_with(super::gene_record::KEY_PREFIX.as_bytes()) {
+            return Err(NetworkError::ReservedKey(String::from_utf8_lossy(key).into_owned()));
+        }
         let (tx, rx) = oneshot::channel();
         self.send_command(Command::PutRecord {
             key: key.to_vec(),
@@ -3151,6 +3156,17 @@ mod tests {
             (thresholds.gossip_threshold, thresholds.publish_threshold, thresholds.graylist_threshold),
             (-10.0, -50.0, -80.0)
         );
+    }
+
+    #[test]
+    fn generic_put_refuses_gene_record_keys() {
+        // Refused before reaching the event loop, so an unstarted node shows
+        // it; any other key gets as far as "not connected".
+        let node = Node::new(cfg(0)).expect("build");
+        let gene_key = super::super::gene_record::provider_key(&format!("v2:{}", "ab".repeat(32)));
+        assert!(matches!(node.put_record(&gene_key, b"x"), Err(NetworkError::ReservedKey(_))));
+        assert!(matches!(node.put_record(b"/rotifer/gene/", b"x"), Err(NetworkError::ReservedKey(_))));
+        assert!(matches!(node.put_record(b"other/key", b"x"), Err(NetworkError::NotConnected)));
     }
 
     #[test]

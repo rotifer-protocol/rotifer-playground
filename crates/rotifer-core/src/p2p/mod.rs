@@ -8,11 +8,13 @@
 //!
 //! Supporting submodules: `messages` (wire format), `security` (peer
 //! validation + rate limiting), `cloud_sync` (Cloud<->P2P consistency),
-//! `heartbeat` and `por` (node heartbeats and their proof of registration).
+//! `heartbeat` and `por` (node heartbeats and their proof of registration),
+//! `gene_record` (the signed DHT gene record, frozen v1).
 
 use serde::{Deserialize, Serialize};
 
 pub mod cloud_sync;
+pub mod gene_record;
 pub mod heartbeat;
 pub mod messages;
 pub mod node;
@@ -213,6 +215,8 @@ pub enum NetworkError {
     Transport(String),
     #[error("topic has no registered validator: {0}")]
     UnregisteredTopic(String),
+    #[error("key is reserved for gene records: {0}")]
+    ReservedKey(String),
     #[error("invalid configuration: {0}")]
     Config(String),
 }

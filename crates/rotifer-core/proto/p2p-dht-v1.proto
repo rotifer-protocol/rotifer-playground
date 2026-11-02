@@ -1,0 +1,35 @@
+// Rotifer P2P DHT gene record, version 1 — FROZEN (ADR-340 revision, 〔T-142〕).
+//
+// Stored on the Kad protocol /rotifer/gene-discovery/1.0.0 under the key
+//   "/rotifer/gene/" + gene_id + "/" + base58btc(publisher)
+// and nowhere else. A record is one publisher's signed claim that it has the
+// gene: several publishers of one gene each have their own key, so no one can
+// overwrite another's record. Field numbers, types and meanings never change;
+// an incompatible change gets a new key namespace and a new Kad protocol name,
+// never a second decoder for these bytes.
+//
+// The normative rules (key shape, parsing grammar, publisher binding,
+// signature, time window, replacement) are in the ADR-340 revision;
+// src/p2p/gene_record.rs implements them. Unsigned bytes carry no meaning: a node stores and serves the
+// canonical encoding of the three fields below and drops any others.
+//
+// This file is frozen byte for byte, comments included: tests pin its sha256.
+// The Rust type in src/p2p/gene_record.rs mirrors it by hand, and vectors from
+// an independent implementation are in tests/fixtures/p2p-dht-v1/.
+
+syntax = "proto3";
+
+package rotifer.p2p.dht.v1;
+
+message GeneRecord {
+  // A rotifer.p2p.wire.v1.GeneAnnouncement (the message itself, not the
+  // GossipMessage wrapper), exactly as the publisher encoded and signed it.
+  // Receivers verify the signature over these bytes and never re-encode them.
+  bytes announcement = 1;
+  // The publisher's libp2p PeerId: exactly 38 bytes, the identity multihash of
+  // an Ed25519 public key (00 24 08 01 12 20 followed by the 32-byte key).
+  bytes publisher = 2;
+  // Ed25519 signature (64 bytes) by that key over
+  //   "rotifer-gene-record-v1" || 0x00 || u32be(len(announcement)) || announcement
+  bytes signature = 3;
+}

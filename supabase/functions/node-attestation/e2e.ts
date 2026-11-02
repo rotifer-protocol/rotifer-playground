@@ -15,9 +15,11 @@
  * deleted at the end. The function reaches the database as por_issuer: the
  * script gives that role a throwaway password (sent to psql on stdin) for the
  * run and takes the login away again at the end. From inside the edge
- * runtime the database is the stack's container, supabase_db_<project_id>
- * (from supabase/config.toml in SUPABASE_WORKDIR); POR_DB_HOST overrides it. The script makes a throwaway signing key, pseudonym
- * key and node keys in memory and starts `supabase functions serve node-attestation` itself,
+ * runtime the database is reached by its alias on the stack's network, db:5432
+ * (the container name supabase_db_<project_id> does not resolve there under
+ * every Docker runtime); POR_DB_HOST overrides it. The script makes a
+ * throwaway signing key, pseudonym key and node keys in memory and starts
+ * `supabase functions serve node-attestation` itself,
  * handing the two server secrets over a pipe (--env-file /dev/stdin), so no
  * key is ever written to disk. It stops the server at the end.
  * SUPABASE_URL and DB_URL must point at this machine (local-only.ts).
@@ -142,13 +144,7 @@ const pseudoKey = await importPseudonymKey(pseudoRaw);
 
 // ── the function's database login, for this run only ──────
 const issuerPassword = Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, "0")).join("");
-let dbHost = Deno.env.get("POR_DB_HOST");
-if (!dbHost) {
-  const toml = await Deno.readTextFile(`${WORKDIR ?? "."}/supabase/config.toml`);
-  const id = toml.match(/^project_id\s*=\s*"([^"]+)"/m)?.[1];
-  if (!id) throw new Error("no project_id in supabase/config.toml; set POR_DB_HOST");
-  dbHost = `supabase_db_${id}:5432`;
-}
+const dbHost = Deno.env.get("POR_DB_HOST") ?? "db:5432";
 await psqlStdin(`ALTER ROLE por_issuer LOGIN PASSWORD '${issuerPassword}';`);
 
 // ── server ─────────────────────────────────────────────────

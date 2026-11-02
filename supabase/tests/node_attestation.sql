@@ -25,7 +25,7 @@ SELECT to_regclass('public.nodes') IS NOT NULL AS has_nodes \gset
 
 BEGIN;
 
-SELECT plan(67);
+SELECT plan(71);
 
 SELECT floor(extract(epoch FROM now()))::bigint AS now \gset
 SELECT :now + 604800 AS exp \gset
@@ -363,6 +363,20 @@ SELECT throws_ok(format($$ SELECT node_attestation_challenge(%L, %L) $$, :E, :AU
 RESET ROLE;
 SET LOCAL ROLE anon;
 SELECT throws_ok($$ SELECT count(*) FROM nodes $$, '42501', NULL, 'L11: anon cannot read nodes');
+RESET ROLE;
+
+-- The three internal tables are closed twice: no grant (L5, L6) and RLS with
+-- no policy. Take the grant away for a moment (rolled back with the rest) to
+-- check the second layer on its own: zero policies return zero rows.
+SELECT ok((SELECT count(*) FROM node_attestation_issuances) > 0
+      AND (SELECT count(*) FROM node_attestation_challenges) > 0
+      AND (SELECT count(*) FROM node_attestation_revocations) > 0,
+  'L12: the three internal tables hold rows, so the counts below are not empty by accident');
+GRANT SELECT ON node_attestation_issuances, node_attestation_challenges, node_attestation_revocations TO authenticated;
+SET LOCAL ROLE authenticated;
+SELECT is((SELECT count(*)::int FROM node_attestation_issuances), 0, 'L13: with a stray grant, RLS still shows no issuance rows');
+SELECT is((SELECT count(*)::int FROM node_attestation_challenges), 0, 'L14: with a stray grant, RLS still shows no challenges');
+SELECT is((SELECT count(*)::int FROM node_attestation_revocations), 0, 'L15: with a stray grant, RLS still shows no revocations');
 RESET ROLE;
 
 SELECT * FROM finish();

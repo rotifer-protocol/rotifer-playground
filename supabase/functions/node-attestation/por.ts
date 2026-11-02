@@ -243,7 +243,7 @@ export interface Jwk {
   x?: string;
   kid?: string;
   alg?: string;
-  [k: string]: unknown;
+  use?: string;
 }
 
 export async function verifyToken(

@@ -58,6 +58,7 @@ Token (`por.ts`):
 | A PeerId live under another account is refused until that certificate expires or is revoked | `node_attestation_issue` |
 | ≤ 3 distinct live PeerIds per account, counted on the append-only log (deleting a `nodes` row frees nothing); a renewal takes no extra slot; revoked certificates stop counting | `node_attestation_issue` |
 | Concurrent redemptions are serialised: PeerId lock, then account lock | `node_attestation_issue`, `race-check.sh` |
+| The function records only through `por_issuer`, a role that can execute the two issuing functions and nothing else; it holds no service_role key | migration ("The issuing role"), `store.ts`, `index.ts` |
 | The token and the response carry the pseudonym, never the user id | `handler.ts`, `handler.test.ts` |
 
 "Live" means a verifier would still accept the certificate: `exp + 60 s` has
@@ -70,11 +71,27 @@ not passed and no revocation with `not_after ≥ iat` covers it.
 | `por.ts` | Challenge bytes, PeerId, pseudonym, token signing and a reference verifier |
 | `jwks.ts` | The static JWKS file with `rotifer_revoked`; `scripts/por-jwks.ts` is its CLI |
 | `handler.ts` | Routing, validation, order of checks, error codes |
-| `store.ts` | The two database functions, called with the service role |
-| `index.ts` | `Deno.serve`, environment, `auth.getUser` |
+| `store.ts` | The two database functions, called over a connection logged in as `por_issuer` |
+| `index.ts` | `Deno.serve`, environment, `auth.getUser`, the Postgres connection |
 | `*.test.ts` | Deno tests: `deno test --allow-read --allow-write --allow-run --allow-env supabase/functions/node-attestation/` |
+| `pgtap-deferred.sh` | Applies the deferred migration to a throwaway database and runs its pgTAP, failing on a skip (CI runs it) |
 | `race-check.sh` | Multi-session checks against a local database (exits 1 on failure) |
 | `e2e.ts` | End to end against a local stack, with keys created in memory and never written to disk (see its header) |
+
+## Database access
+
+The function never uses service_role. It identifies the caller with
+`auth.getUser` (anon key), and records through a Postgres connection logged
+in as `por_issuer`, which may execute `node_attestation_challenge` and
+`node_attestation_issue` and nothing else. The Supabase platform still puts
+`SUPABASE_SERVICE_ROLE_KEY` into every function's environment; this function
+does not read it, and `store.test.ts` fails if its code ever does.
+
+The connection uses [postgres.js](https://github.com/porsager/postgres)
+(`npm:postgres@3.4.7`). supabase-js cannot log in as a database role of its
+own choosing (PostgREST would need a JWT signed with the project's JWT
+secret, a stronger key than service_role), so a Postgres driver is needed;
+none was in the repository before.
 
 ## Before deploying
 
@@ -86,12 +103,19 @@ in order:
 2. The signing key and K_pseudo, made in the deployment environment and
    stored only as its secrets (`POR_SIGNING_KEY`, `POR_PSEUDONYM_KEY`;
    `index.ts`). Making or saving the real keys needs the user's approval.
-3. The public key published in `https://rotifer.dev/.well-known/jwks.json`
+3. A login for `por_issuer`: the migration creates the role without one.
+   Give it a password in the deployment environment
+   (`ALTER ROLE por_issuer LOGIN PASSWORD …`), and store the connection
+   string as the function's secret `POR_DB_URL`. Through Supabase's pooler
+   the user name is `por_issuer.<project ref>`; use transaction mode (the
+   function prepares no statements and takes only transaction-scoped locks).
+   The function refuses a `POR_DB_URL` for any other user.
+4. The public key published in `https://rotifer.dev/.well-known/jwks.json`
    (`scripts/por-jwks.ts`) and confirmed to be served, **before** the
    function signs with it. Rotation order is in the script's header.
-4. Rate limiting for both operations. The database caps open challenges at 5
+5. Rate limiting for both operations. The database caps open challenges at 5
    per account, but that is not a request limit.
-5. `[functions.node-attestation] verify_jwt = true` in `supabase/config.toml`.
-6. A revocation routine for banned accounts and replaced node keys
+6. `[functions.node-attestation] verify_jwt = true` in `supabase/config.toml`.
+7. A revocation routine for banned accounts and replaced node keys
    (`node_attestation_revoke`), and republishing the JWKS from
    `node_attestation_revocations_for_jwks()`.

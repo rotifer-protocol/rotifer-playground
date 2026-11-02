@@ -447,7 +447,15 @@ impl Node {
     /// Publish `data` to a GossipSub topic. Fire-and-forget: delivery needs a
     /// formed mesh, so callers broadcasting to fresh peers should retry until a
     /// subscriber receives it.
+    ///
+    /// Only topics with a registered validator are allowed: other nodes ignore
+    /// everything else, and the pre-freeze `/rotifer/announcements` is never
+    /// written (ADR-340 D6). Refused with `UnregisteredTopic`.
     pub fn publish(&self, topic: &str, data: &[u8]) -> Result<(), NetworkError> {
+        use super::messages::topic_validator;
+        if topic_validator(topic).is_none() {
+            return Err(NetworkError::UnregisteredTopic(topic.to_string()));
+        }
         self.send_command(Command::Publish {
             topic: topic.to_string(),
             data: data.to_vec(),
@@ -1551,6 +1559,30 @@ mod tests {
         assert!(node.mdns_peers().is_empty());
     }
 
+    #[test]
+    fn publish_refuses_topics_without_a_validator() {
+        use super::super::messages::ANNOUNCEMENTS_TOPIC;
+        // A started node, so a refusal can only come from the topic check.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut node = Node::with_keypair_path(cfg(0), dir.path().join("id.pem")).expect("build");
+        node.start().expect("start");
+        // ADR-340 D6: the pre-freeze JSON topic is never written. The others
+        // have no validator, so every Rotifer node would ignore them.
+        for topic in [
+            "/rotifer/announcements",
+            "/rotifer/announcements/text",
+            "/rotifer/p2p/1/heartbeats",
+            "/rotifer/p2p/1/unregistered",
+            "",
+        ] {
+            match node.publish(topic, b"x") {
+                Err(NetworkError::UnregisteredTopic(t)) => assert_eq!(t, topic),
+                other => panic!("publish on {topic:?} must be refused as unregistered, got {other:?}"),
+            }
+        }
+        node.publish(ANNOUNCEMENTS_TOPIC, b"x").expect("the registered topic is allowed");
+    }
+
     // -----------------------------------------------------------------
     // With mDNS switched off, LAN nodes stay strangers (RFC §5.1.2)
     // -----------------------------------------------------------------
@@ -1611,7 +1643,7 @@ mod tests {
             .expect("dialable addr");
 
         let rt = tokio::runtime::Runtime::new().expect("runtime");
-        let (foreign_peer, closed) = rt.block_on(async {
+        let (foreign_peer, closed, closed_after) = rt.block_on(async {
             let mut swarm = libp2p::SwarmBuilder::with_new_identity()
                 .with_tokio()
                 .with_tcp(
@@ -1636,24 +1668,34 @@ mod tests {
                 .build();
             let me = *swarm.local_peer_id();
             swarm.dial(target).expect("dial");
-            let mut connected = false;
-            let closed = tokio::time::timeout(Duration::from_secs(15), async {
+            let mut connected_at = None;
+            let closed_after = tokio::time::timeout(Duration::from_secs(15), async {
                 loop {
                     match swarm.select_next_some().await {
-                        SwarmEvent::ConnectionEstablished { .. } => connected = true,
-                        SwarmEvent::ConnectionClosed { num_established: 0, .. } if connected => {
-                            return true;
+                        SwarmEvent::ConnectionEstablished { .. } => {
+                            connected_at.get_or_insert_with(std::time::Instant::now);
+                        }
+                        SwarmEvent::ConnectionClosed { num_established: 0, .. } if connected_at.is_some() => {
+                            return connected_at.map(|t| t.elapsed());
                         }
                         _ => {}
                     }
                 }
             })
             .await
-            .unwrap_or(false);
-            (me.to_string(), closed)
+            .unwrap_or(None);
+            (me.to_string(), closed_after.is_some(), closed_after)
         });
 
         assert!(closed, "the Rotifer node must hang up on a non-Rotifer peer");
+        // libp2p closes an idle connection after 10 s (the swarm default; neither
+        // side changes it), so a hang-up that slow could be idleness, not the
+        // guard. Identify completes in milliseconds; 5 s is half the idle timeout.
+        let closed_after = closed_after.expect("closed");
+        assert!(
+            closed_after < Duration::from_secs(5),
+            "the guard must hang up right after Identify, not leave it to the 10 s idle timeout (closed after {closed_after:?})"
+        );
         assert_eq!(node.foreign_peers_dropped(), 1);
         assert!(!node.identified_peers().contains(&foreign_peer));
         assert!(!node.discovered_peers().contains(&foreign_peer));

@@ -250,28 +250,29 @@ fn adv_8_unregistered_topic_is_not_relayed_nor_penalized() {
     let legacy_json = br#"{"gene_id":"legacy-dir-name","name":"legacy","domain":"test","fidelity":"Native"}"#;
     let dir = tempfile::tempdir().unwrap();
     // Same shape as ADV-7: the relay is the only path from sender to far node.
+    // `Node::publish` refuses both topics, so the sender is a plain libp2p
+    // swarm, as an old JSON node or a hostile one would be.
     let relay = spawn(&dir, "relay", vec![]);
     let far = spawn_with(&dir, "far", vec![addr(&relay)], Some(0));
-    let sender = spawn_with(&dir, "sender", vec![addr(&relay)], Some(0));
     // Everyone subscribes, so a relay that accepted these would forward them.
-    for node in [&relay, &far, &sender] {
+    for node in [&relay, &far] {
         node.subscribe(LEGACY).expect("subscribe");
         node.subscribe(UNREGISTERED).expect("subscribe");
     }
-    await_control(&sender, &relay, "control-relay");
-    await_control(&sender, &far, "control-far");
+    let sender = RawSender::spawn(
+        &addr(&relay),
+        vec![(LEGACY, legacy_json.to_vec()), (UNREGISTERED, b"unvalidated".to_vec())],
+    );
+    await_raw_control(&relay, &sender, 0);
+    await_raw_control(&far, &sender, 0);
 
-    // Publish across several gossip heartbeats, under the per-peer rate limit.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut sent = 0u32;
-    while Instant::now() < deadline {
-        sender.publish(LEGACY, legacy_json).expect("publish");
-        sender.publish(UNREGISTERED, format!("unvalidated-{sent}").as_bytes()).expect("publish");
-        sent += 1;
-        std::thread::sleep(Duration::from_millis(400));
-    }
+    // Keep publishing across several gossip heartbeats, under the per-peer
+    // rate limit (three messages per 400 ms round).
+    std::thread::sleep(Duration::from_secs(5));
     // Not penalized: the same sender's valid traffic still goes through the relay.
-    await_control(&sender, &far, "probe-after-unregistered");
+    await_raw_control(&far, &sender, sender.round());
+    let sender_id = sender.peer_id.clone();
+    drop(sender);
 
     for topic in [LEGACY, UNREGISTERED] {
         assert!(
@@ -288,7 +289,115 @@ fn adv_8_unregistered_topic_is_not_relayed_nor_penalized() {
     assert_eq!(relay.invalid_message_count(), 0, "ignored, not rejected: the sender is not penalized");
     assert_eq!(relay.rate_limited_count(), 0, "precondition: nothing was dropped by the flood limit instead");
     assert!(
-        !far.identified_peers().contains(&sender.local_peer_id().0),
+        !far.identified_peers().contains(&sender_id),
         "precondition: the far node must not be peered with the sender directly"
     );
+}
+
+/// A sender that is not a `Node`: plain libp2p GossipSub + Identify, as an old
+/// JSON-era node or a hostile one would be. `Node::publish` refuses topics with
+/// no validator, so this is the only way such traffic reaches a Rotifer node.
+/// It identifies as Rotifer so the Identify guard keeps the connection, dials
+/// `relay` only, never listens, and publishes every 400 ms until `stop`:
+/// each of `noise`, then a fresh valid announcement whose ID is
+/// `raw-control-<round>`. `round` counts finished rounds.
+struct RawSender {
+    peer_id: String,
+    round: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl RawSender {
+    fn spawn(relay: &str, noise: Vec<(&'static str, Vec<u8>)>) -> Self {
+        use libp2p::futures::StreamExt;
+        use libp2p::{gossipsub, identify, swarm::NetworkBehaviour, Multiaddr};
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+        use std::sync::Arc;
+
+        #[derive(NetworkBehaviour)]
+        struct Raw {
+            gossipsub: gossipsub::Behaviour,
+            identify: identify::Behaviour,
+        }
+
+        let relay: Multiaddr = relay.parse().expect("relay multiaddr");
+        let key = libp2p::identity::Keypair::generate_ed25519();
+        let peer_id = key.public().to_peer_id().to_string();
+        let round = Arc::new(AtomicU32::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (round_t, stop_t) = (Arc::clone(&round), Arc::clone(&stop));
+        let thread = std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("runtime");
+            rt.block_on(async move {
+                let mut swarm = libp2p::SwarmBuilder::with_existing_identity(key)
+                    .with_tokio()
+                    .with_tcp(
+                        libp2p::tcp::Config::default(),
+                        libp2p::noise::Config::new,
+                        libp2p::yamux::Config::default,
+                    )
+                    .expect("tcp")
+                    .with_behaviour(|key| Raw {
+                        gossipsub: gossipsub::Behaviour::new(
+                            gossipsub::MessageAuthenticity::Signed(key.clone()),
+                            gossipsub::Config::default(),
+                        )
+                        .expect("gossipsub"),
+                        identify: identify::Behaviour::new(identify::Config::new(
+                            "/rotifer/p2p/1".into(),
+                            key.public(),
+                        )),
+                    })
+                    .expect("behaviour")
+                    .build();
+                let topics: Vec<&str> = noise.iter().map(|(t, _)| *t).chain([ANNOUNCEMENTS_TOPIC]).collect();
+                for t in &topics {
+                    swarm.behaviour_mut().gossipsub.subscribe(&gossipsub::IdentTopic::new(*t)).expect("subscribe");
+                }
+                swarm.dial(relay).expect("dial relay");
+                let mut tick = tokio::time::interval(Duration::from_millis(400));
+                while !stop_t.load(Ordering::Relaxed) {
+                    tokio::select! {
+                        _ = tick.tick() => {
+                            let n = round_t.load(Ordering::Relaxed);
+                            for (t, data) in &noise {
+                                let _ = swarm.behaviour_mut().gossipsub.publish(gossipsub::IdentTopic::new(*t), data.clone());
+                            }
+                            let control = encode_announcement(&announcement(&id(&format!("raw-control-{n}")), now_ms()));
+                            let _ = swarm.behaviour_mut().gossipsub.publish(gossipsub::IdentTopic::new(ANNOUNCEMENTS_TOPIC), control);
+                            round_t.store(n + 1, Ordering::Relaxed);
+                        }
+                        _ = swarm.select_next_some() => {}
+                    }
+                }
+            });
+        });
+        Self { peer_id, round, stop, thread: Some(thread) }
+    }
+
+    fn round(&self) -> u32 {
+        self.round.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl Drop for RawSender {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+/// Wait until `node` surfaces a `raw-control-<n>` announcement with `n >= from`.
+fn await_raw_control(node: &Node, sender: &RawSender, from: u32) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        if (from..sender.round()).any(|n| has(node, &id(&format!("raw-control-{n}")))) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    panic!("no raw-control announcement from round {from} on reached the node within 20s");
 }

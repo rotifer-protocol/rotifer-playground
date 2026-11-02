@@ -447,7 +447,15 @@ impl Node {
     /// Publish `data` to a GossipSub topic. Fire-and-forget: delivery needs a
     /// formed mesh, so callers broadcasting to fresh peers should retry until a
     /// subscriber receives it.
+    ///
+    /// Only topics with a registered validator are allowed: other nodes ignore
+    /// everything else, and the pre-freeze `/rotifer/announcements` is never
+    /// written (ADR-340 D6). Refused with `UnregisteredTopic`.
     pub fn publish(&self, topic: &str, data: &[u8]) -> Result<(), NetworkError> {
+        use super::messages::topic_validator;
+        if topic_validator(topic).is_none() {
+            return Err(NetworkError::UnregisteredTopic(topic.to_string()));
+        }
         self.send_command(Command::Publish {
             topic: topic.to_string(),
             data: data.to_vec(),
@@ -1549,6 +1557,30 @@ mod tests {
         node.start().expect("start");
         assert!(!node.mdns_active());
         assert!(node.mdns_peers().is_empty());
+    }
+
+    #[test]
+    fn publish_refuses_topics_without_a_validator() {
+        use super::super::messages::ANNOUNCEMENTS_TOPIC;
+        // A started node, so a refusal can only come from the topic check.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut node = Node::with_keypair_path(cfg(0), dir.path().join("id.pem")).expect("build");
+        node.start().expect("start");
+        // ADR-340 D6: the pre-freeze JSON topic is never written. The others
+        // have no validator, so every Rotifer node would ignore them.
+        for topic in [
+            "/rotifer/announcements",
+            "/rotifer/announcements/text",
+            "/rotifer/p2p/1/heartbeats",
+            "/rotifer/p2p/1/unregistered",
+            "",
+        ] {
+            match node.publish(topic, b"x") {
+                Err(NetworkError::UnregisteredTopic(t)) => assert_eq!(t, topic),
+                other => panic!("publish on {topic:?} must be refused as unregistered, got {other:?}"),
+            }
+        }
+        node.publish(ANNOUNCEMENTS_TOPIC, b"x").expect("the registered topic is allowed");
     }
 
     // -----------------------------------------------------------------

@@ -158,6 +158,8 @@ pub enum NetworkError {
     Timeout,
     #[error("network error: {0}")]
     Transport(String),
+    #[error("topic has no registered validator: {0}")]
+    UnregisteredTopic(String),
 }
 
 /// Stub implementation for v0.5 — logs operations but doesn't connect.

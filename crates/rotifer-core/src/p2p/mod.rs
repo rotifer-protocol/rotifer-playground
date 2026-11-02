@@ -100,10 +100,47 @@ pub struct NetworkConfig {
     /// Absent in configs written before it existed, which read as on.
     #[serde(default = "default_mdns_enabled")]
     pub mdns_enabled: bool,
+    /// Maximum simultaneous inbound connections (P2P RFC §4.1.4). Connections
+    /// that reach this node through a relay count as inbound, so a relay can
+    /// never fill more than this share of the node's connections (§8.5).
+    #[serde(default = "default_max_inbound_connections")]
+    pub max_inbound_connections: u32,
+    /// Maximum simultaneous outbound connections (P2P RFC §4.1.4).
+    #[serde(default = "default_max_outbound_connections")]
+    pub max_outbound_connections: u32,
+    /// Maximum connections still being set up (P2P RFC §4.1.4), applied to
+    /// each direction separately.
+    #[serde(default = "default_max_pending_connections")]
+    pub max_pending_connections: u32,
+    /// Circuit Relay v2 relays to hold a reservation on, so peers that cannot
+    /// dial this node directly (it is behind NAT) can reach it through them
+    /// (ADR-304 D1). Each entry is a multiaddr ending in `/p2p/<relay PeerId>`.
+    /// Empty by default and never hardcoded: no relay is deployed yet, and
+    /// running one is the founder's call (ADR-304 D3). A relay sees the IP
+    /// addresses of both ends of every circuit through it (§8.7).
+    #[serde(default)]
+    pub relays: Vec<String>,
 }
 
 fn default_mdns_enabled() -> bool {
     true
+}
+
+/// P2P RFC §4.1.4 defaults: 50 in, 50 out, 20 pending.
+pub const DEFAULT_MAX_INBOUND_CONNECTIONS: u32 = node::MAX_ESTABLISHED_INCOMING;
+pub const DEFAULT_MAX_OUTBOUND_CONNECTIONS: u32 = node::MAX_ESTABLISHED_OUTGOING;
+pub const DEFAULT_MAX_PENDING_CONNECTIONS: u32 = node::MAX_PENDING;
+
+fn default_max_inbound_connections() -> u32 {
+    DEFAULT_MAX_INBOUND_CONNECTIONS
+}
+
+fn default_max_outbound_connections() -> u32 {
+    DEFAULT_MAX_OUTBOUND_CONNECTIONS
+}
+
+fn default_max_pending_connections() -> u32 {
+    DEFAULT_MAX_PENDING_CONNECTIONS
 }
 
 impl Default for NetworkConfig {
@@ -127,6 +164,10 @@ impl Default for NetworkConfig {
             bootstrap_peers: Vec::new(),
             enabled: false,
             mdns_enabled: default_mdns_enabled(),
+            max_inbound_connections: DEFAULT_MAX_INBOUND_CONNECTIONS,
+            max_outbound_connections: DEFAULT_MAX_OUTBOUND_CONNECTIONS,
+            max_pending_connections: DEFAULT_MAX_PENDING_CONNECTIONS,
+            relays: Vec::new(),
         }
     }
 }
@@ -334,6 +375,7 @@ mod tests {
             bootstrap_peers: vec!["/ip4/127.0.0.1/tcp/4001".into()],
             enabled: true,
             mdns_enabled: true,
+            ..NetworkConfig::default()
         };
         let json = serde_json::to_string(&config).unwrap();
         let decoded: NetworkConfig = serde_json::from_str(&json).unwrap();
@@ -353,6 +395,30 @@ mod tests {
         let off = NetworkConfig { mdns_enabled: false, ..NetworkConfig::default() };
         let decoded: NetworkConfig = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
         assert!(!decoded.mdns_enabled);
+    }
+
+    #[test]
+    fn network_config_connection_limits_follow_rfc_4_1_4() {
+        // RFC §4.1.4: 50 inbound, 50 outbound, 20 pending. Configs written
+        // before these fields existed read as those defaults, as do relays
+        // (none). Explicit values survive a round trip.
+        let d = NetworkConfig::default();
+        assert_eq!((d.max_inbound_connections, d.max_outbound_connections, d.max_pending_connections), (50, 50, 20));
+        assert!(d.relays.is_empty(), "no relay is hardcoded (ADR-304 D3)");
+        let legacy = r#"{"node_id":"n","listen_host":"127.0.0.1","listen_port":9878,"bootstrap_peers":[],"enabled":true}"#;
+        let old: NetworkConfig = serde_json::from_str(legacy).unwrap();
+        assert_eq!((old.max_inbound_connections, old.max_outbound_connections, old.max_pending_connections), (50, 50, 20));
+        assert!(old.relays.is_empty());
+        let set = NetworkConfig {
+            max_inbound_connections: 3,
+            max_outbound_connections: 4,
+            max_pending_connections: 5,
+            relays: vec!["/ip4/10.0.0.1/tcp/4001/p2p/12D3KooWExample".into()],
+            ..NetworkConfig::default()
+        };
+        let back: NetworkConfig = serde_json::from_str(&serde_json::to_string(&set).unwrap()).unwrap();
+        assert_eq!((back.max_inbound_connections, back.max_outbound_connections, back.max_pending_connections), (3, 4, 5));
+        assert_eq!(back.relays, set.relays);
     }
 
     #[test]

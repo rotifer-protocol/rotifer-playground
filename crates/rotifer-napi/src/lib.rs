@@ -68,6 +68,7 @@ impl P2pNode {
             bootstrap_peers,
             enabled: true,
             mdns_enabled: mdns_enabled.unwrap_or(true),
+            ..NetworkConfig::default()
         };
         let inner = CoreNode::new(config)
             .map_err(|e| Error::from_reason(format!("create p2p node: {e}")))?;

@@ -25,15 +25,15 @@ SELECT to_regclass('public.nodes') IS NOT NULL AS has_nodes \gset
 
 BEGIN;
 
-SELECT plan(74);
+SELECT plan(79);
 
--- The edge function's role. postgres may switch to it only once granted.
--- pgTAP's own functions live in the extensions schema, which por_issuer
--- cannot see (it needs nothing there: the PoR functions run as their owner),
--- so the assertions made while switched to it need that schema too. Both
--- grants are rolled back with everything else.
-GRANT por_issuer TO postgres;
-GRANT USAGE ON SCHEMA extensions TO por_issuer;
+-- The edge function's role and the operators' role. postgres may switch to
+-- them only once granted. pgTAP's own functions live in the extensions
+-- schema, which neither role can see (neither needs anything there: the PoR
+-- functions run as their owner), so the assertions made while switched to
+-- them need that schema too. All grants are rolled back with everything else.
+GRANT por_issuer, por_operator TO postgres;
+GRANT USAGE ON SCHEMA extensions TO por_issuer, por_operator;
 
 SELECT floor(extract(epoch FROM now()))::bigint AS now \gset
 SELECT :now + 604800 AS exp \gset
@@ -82,11 +82,11 @@ SELECT is(
 
 SELECT is(
   (SELECT count(*)::int
-     FROM unnest(ARRAY['anon', 'authenticated', 'service_role', 'por_issuer']) r,
+     FROM unnest(ARRAY['anon', 'authenticated', 'service_role', 'por_issuer', 'por_operator']) r,
           unnest(ARRAY['nodes', 'node_attestation_issuances', 'node_attestation_challenges', 'node_attestation_revocations']) t,
           unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p
     WHERE has_table_privilege(r, 'public.' || t, p)),
-  0, 'S4: no client role, not service_role and not por_issuer may write any of the four tables directly');
+  0, 'S4: no client role, not service_role, por_issuer or por_operator may write any of the four tables directly');
 
 SELECT is(
   (SELECT array_agg(t ORDER BY t)
@@ -105,20 +105,36 @@ SELECT is(
     WHERE has_function_privilege(r, 'public.' || f, 'EXECUTE')),
   0, 'S6: anon and authenticated cannot execute any PoR function');
 
-SELECT ok(
-  (SELECT bool_and(has_function_privilege('por_issuer', 'public.' || f, 'EXECUTE'))
+SELECT is(
+  (SELECT array_agg(f ORDER BY f)
      FROM unnest(ARRAY['node_attestation_challenge(uuid,text)',
                        'node_attestation_issue(uuid,text,bytea,bigint,text,text,bigint,bigint,text)',
                        'node_attestation_revoke(text,bigint,text)',
-                       'node_attestation_revocations_for_jwks()']) f)
-  AND (SELECT count(*) = 0
+                       'node_attestation_revocations_for_jwks()']) f
+    WHERE has_function_privilege('por_issuer', 'public.' || f, 'EXECUTE')),
+  ARRAY['node_attestation_challenge(uuid,text)',
+        'node_attestation_issue(uuid,text,bytea,bigint,text,text,bigint,bigint,text)'],
+  'S7: of the four PoR functions, por_issuer (the edge function) can execute challenge and issue only');
+
+SELECT is(
+  (SELECT array_agg(f ORDER BY f)
+     FROM unnest(ARRAY['node_attestation_challenge(uuid,text)',
+                       'node_attestation_issue(uuid,text,bytea,bigint,text,text,bigint,bigint,text)',
+                       'node_attestation_revoke(text,bigint,text)',
+                       'node_attestation_revocations_for_jwks()']) f
+    WHERE has_function_privilege('por_operator', 'public.' || f, 'EXECUTE')),
+  ARRAY['node_attestation_revocations_for_jwks()', 'node_attestation_revoke(text,bigint,text)'],
+  'S12: of the four PoR functions, por_operator (operators only) can execute revoke and the JWKS export only');
+
+SELECT is(
+  (SELECT count(*)::int
      FROM unnest(ARRAY['service_role', 'authenticated']) r,
           unnest(ARRAY['node_attestation_challenge(uuid,text)',
                        'node_attestation_issue(uuid,text,bytea,bigint,text,text,bigint,bigint,text)',
                        'node_attestation_revoke(text,bigint,text)',
                        'node_attestation_revocations_for_jwks()']) f
     WHERE has_function_privilege(r, 'public.' || f, 'EXECUTE')),
-  'S7: por_issuer can execute the four PoR functions; service_role and authenticated cannot execute any of them');
+  0, 'S13: service_role and authenticated cannot execute any of the four PoR functions');
 
 SELECT is(
   (SELECT count(*)::int
@@ -127,18 +143,31 @@ SELECT is(
   0, 'S9: service_role cannot execute the two internal helpers either');
 
 SELECT is(
-  (SELECT count(*)::int FROM unnest(ARRAY['node_attestation_account_open(uuid)',
-                                          'node_attestation_issuances_append_only()']) f
-    WHERE has_function_privilege('por_issuer', 'public.' || f, 'EXECUTE'))
-  + (SELECT count(*)::int FROM unnest(ARRAY['nodes', 'node_attestation_issuances',
-                                            'node_attestation_challenges', 'node_attestation_revocations']) t
-    WHERE has_table_privilege('por_issuer', 'public.' || t, 'SELECT')),
-  0, 'S10: por_issuer cannot execute the internal helpers nor read any of the four tables');
+  (SELECT count(*)::int
+     FROM unnest(ARRAY['por_issuer', 'por_operator']) r,
+          unnest(ARRAY['node_attestation_account_open(uuid)', 'node_attestation_issuances_append_only()']) f
+    WHERE has_function_privilege(r, 'public.' || f, 'EXECUTE'))
+  + (SELECT count(*)::int
+     FROM unnest(ARRAY['por_issuer', 'por_operator']) r,
+          unnest(ARRAY['nodes', 'node_attestation_issuances',
+                       'node_attestation_challenges', 'node_attestation_revocations']) t
+    WHERE has_table_privilege(r, 'public.' || t, 'SELECT')),
+  0, 'S10: neither por_issuer nor por_operator can execute the internal helpers or read any of the four tables');
 
 SELECT is(
-  (SELECT rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls OR rolreplication OR rolinherit
-     FROM pg_roles WHERE rolname = 'por_issuer'),
-  false, 'S11: por_issuer is not superuser, cannot create roles or databases, does not bypass RLS, does not inherit');
+  (SELECT bool_or(rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls OR rolreplication OR rolinherit)
+     FROM pg_roles WHERE rolname IN ('por_issuer', 'por_operator')),
+  false, 'S11: neither role is superuser, can create roles or databases, bypasses RLS or inherits');
+SELECT is((SELECT count(*)::int FROM pg_roles WHERE rolname IN ('por_issuer', 'por_operator')), 2,
+  'S11b: both roles exist (so S11 did not pass on an empty set)');
+
+-- Logged in as the edge function, the operator functions are refused.
+SET LOCAL ROLE por_issuer;
+SELECT throws_ok($$ SELECT node_attestation_revoke('12D3KooWNotARealPeerIdForThePermissionCheck', NULL, 'must be refused') $$,
+  '42501', NULL, 'S14: por_issuer calling node_attestation_revoke is refused');
+SELECT throws_ok($$ SELECT node_attestation_revocations_for_jwks() $$,
+  '42501', NULL, 'S15: por_issuer calling node_attestation_revocations_for_jwks is refused');
+RESET ROLE;
 
 SELECT is(
   (SELECT count(*)::int FROM pg_constraint
@@ -252,8 +281,10 @@ SELECT throws_ok($$ UPDATE node_attestation_issuances SET exp = iat + 1 $$,
 SELECT throws_ok($$ TRUNCATE node_attestation_issuances $$,
   '42501', NULL, 'Q10: truncating the issuance log is refused');
 
--- A revoked certificate stops counting.
+-- A revoked certificate stops counting. Revoking is the operators' job.
+SET LOCAL ROLE por_operator;
 SELECT node_attestation_revoke(:P3, NULL, 'test: node replaced its identity.key');
+SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:A, :AUD) AS c \gset
 SELECT is(node_attestation_issue(:A, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :P4, :SUBA, :now, :exp, 'k1'),
   '{"ok": true}'::jsonb, 'Q11: after P3 is revoked, A gets P4');
@@ -305,7 +336,9 @@ SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:E, :AUD) AS c \gset
 SELECT is(node_attestation_issue(:E, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :P9, :SUBE, :now, :exp, 'k1'),
   '{"error": "POR_PEER_BOUND_ELSEWHERE"}'::jsonb, 'R4: E cannot take P9 either');
+SET LOCAL ROLE por_operator;
 SELECT node_attestation_revoke(:P9, :now - 50, 'test: A''s node key leaked');
+SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:E, :AUD) AS c \gset
 SELECT is(node_attestation_issue(:E, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :P9, :SUBE, :now, :exp, 'k1'),
   '{"ok": true}'::jsonb, 'R5: once A''s certificate for P9 is revoked, E can take P9');
@@ -368,7 +401,7 @@ INSERT INTO node_attestation_revocations (peer_id, not_after) VALUES
   (:P3, :now - 10),                 -- older entry for P3: the latest (now) wins
   (:P5, :now - 604800 - 60),        -- exactly at the edge: still needed
   (:P6, :now - 604800 - 61);        -- every token it voids has expired: dropped
-SET LOCAL ROLE por_issuer;
+SET LOCAL ROLE por_operator;
 SELECT is(node_attestation_revocations_for_jwks(),
   jsonb_build_array(
     jsonb_build_object('peer_id', :P3, 'not_after', :now),

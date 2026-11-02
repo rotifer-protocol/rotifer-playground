@@ -58,7 +58,7 @@ Token (`por.ts`):
 | A PeerId live under another account is refused until that certificate expires or is revoked | `node_attestation_issue` |
 | ≤ 3 distinct live PeerIds per account, counted on the append-only log (deleting a `nodes` row frees nothing); a renewal takes no extra slot; revoked certificates stop counting | `node_attestation_issue` |
 | Concurrent redemptions are serialised: PeerId lock, then account lock | `node_attestation_issue`, `race-check.sh` |
-| The function reaches the database only as `por_issuer`, a role that can execute the four PoR functions and nothing else; it reads no broader key | migration ("The issuing role"), `store.ts`, `index.ts`, `store.test.ts` |
+| The function reaches the database only as `por_issuer`, a role that can execute the two issuing functions and nothing else; it reads no broader key. Revoking and the JWKS export belong to `por_operator`, which the function never uses | migration ("The issuing and operator roles"), `store.ts`, `index.ts`, `store.test.ts`; pgTAP S7, S10–S15 |
 | The token and the response carry the pseudonym, never the user id | `handler.ts`, `handler.test.ts` |
 
 "Live" means a verifier would still accept the certificate: `exp + 60 s` has
@@ -76,16 +76,19 @@ not passed and no revocation with `not_after ≥ iat` covers it.
 | `*.test.ts` | Deno tests: `deno test --allow-read --allow-write --allow-run --allow-env supabase/functions/node-attestation/` |
 | `pgtap-deferred.sh` | Applies the deferred migration to a throwaway database and runs its pgTAP, failing on a skip (CI runs it) |
 | `race-check.sh` | Multi-session checks against a local database (exits 1 on failure) |
-| `e2e.ts` | End to end against a local stack, with keys created in memory and never written to disk (see its header) |
+| `e2e.ts` | End to end against a local stack, with keys created in memory and never written to disk (see its header). The function reaches the database at `db:5432`, the database's alias on the stack's network; set `POR_DB_HOST` if your stack names it otherwise (under colima the container name does not resolve, the alias does) |
 
 ## Database access
 
 The function identifies the caller with `auth.getUser` (anon key) and
 records through a Postgres connection logged in as `por_issuer`. That role
-may execute the four PoR functions (`node_attestation_challenge`,
-`node_attestation_issue`, `node_attestation_revoke`,
-`node_attestation_revocations_for_jwks`) and nothing else: no table
-privilege, no RLS bypass. The Supabase platform puts its own full-access key
+may execute the two issuing functions (`node_attestation_challenge`,
+`node_attestation_issue`) and nothing else: no table privilege, no RLS
+bypass. The function never revokes, so it gets no right to: were a
+compromised function able to call `node_attestation_revoke`, it could void
+any certificate. Revoking and exporting the revocation list
+(`node_attestation_revoke`, `node_attestation_revocations_for_jwks`) belong
+to `por_operator`, a role for operators' manual runs only. The Supabase platform puts its own full-access key
 into every function's environment; this function does not read it, and
 `store.test.ts` fails if its code ever does.
 
@@ -120,4 +123,6 @@ in order:
 6. `[functions.node-attestation] verify_jwt = true` in `supabase/config.toml`.
 7. A revocation routine for banned accounts and replaced node keys
    (`node_attestation_revoke`), and republishing the JWKS from
-   `node_attestation_revocations_for_jwks()`; both run as `por_issuer`.
+   `node_attestation_revocations_for_jwks()`. Both run as `por_operator`, by
+   an operator, never through the function: give that role a login only
+   where operators run them, kept apart from `POR_DB_URL`.

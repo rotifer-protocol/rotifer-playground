@@ -7,8 +7,9 @@
  *   SUPABASE_URL, SUPABASE_ANON_KEY       identify the caller (auth.getUser)
  *   POR_DB_URL                            Postgres connection logged in as
  *                                         por_issuer (store.ts); that role can
- *                                         execute the PoR database functions and
- *                                         nothing else; no broader key is read.
+ *                                         execute the two issuing database
+ *                                         functions and nothing else; no
+ *                                         broader key is read.
  *   POR_SIGNING_KEY                       private OKP / Ed25519 JWK with kid; its
  *                                         public half must already be in the JWKS
  *   POR_PSEUDONYM_KEY                     K_pseudo, base64url, >= 32 bytes; a

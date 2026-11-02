@@ -12,7 +12,7 @@ v0.9.5 A1「节点证明（PoR）」Cloud 侧的迁移，**主动延期**：参�
 
 | 文件 | 内容 | 解锁条件 |
 |---|---|---|
-| `20261102200000_node_attestation.sql` | `nodes`、只追加的签发记录 `node_attestation_issuances`、一次性挑战 `node_attestation_challenges`、撤销表 `node_attestation_revocations`；RLS；签发函数专用的数据库角色 `por_issuer`（只能执行四个 PoR 的 SECURITY DEFINER 函数，不能直接读写任何表） | v0.9.5 阶段二 B1 拿到用户关键词；部署前置见 `supabase/functions/node-attestation/README.md`「Before deploying」 |
+| `20261102200000_node_attestation.sql` | `nodes`、只追加的签发记录 `node_attestation_issuances`、一次性挑战 `node_attestation_challenges`、撤销表 `node_attestation_revocations`；RLS；签发函数专用的数据库角色 `por_issuer`（只能执行发挑战、入账两个 SECURITY DEFINER 函数，不能直接读写任何表）；运维专用的 `por_operator`（只能执行撤销、导出 JWKS 撤销表两个函数） | v0.9.5 阶段二 B1 拿到用户关键词；部署前置见 `supabase/functions/node-attestation/README.md`「Before deploying」 |
 
 依据：ADR-300 修订二「锁定契约 v2」的「表」「发证挑战」与 D5。
 
@@ -35,12 +35,13 @@ DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres \
 
 ## 部署时要多配的一项
 
-签发函数以专用的 `por_issuer` 角色连数据库，这个角色只能执行四个 PoR 函数（发挑战、入账、撤销、为 JWKS 导出撤销表），不能直接读写任何表，也不绕过 RLS。迁移只建角色、不给登录权限，B1 部署时由绑定层：
+签发函数以专用的 `por_issuer` 角色连数据库，这个角色只能执行两个入账用的函数（发挑战、入账），不能直接读写任何表，也不绕过 RLS。撤销证书、为 JWKS 导出撤销表这两个函数，签发函数的代码根本不调，所以不给 `por_issuer`，改给单独的运维角色 `por_operator`：它只供运维手动撤销、导出撤销表时使用，签发函数永远不用它——否则签发函数一旦被攻破，攻击者就能撤销任意证书。迁移只建这两个角色、都不给登录权限，B1 部署时由绑定层：
 
 1. 在部署环境里给 `por_issuer` 设密码（`ALTER ROLE por_issuer LOGIN PASSWORD …`）；
-2. 把连接串存成签发函数的密钥 `POR_DB_URL`（走 Supabase 连接池时用户名是 `por_issuer.<项目 ref>`，用 transaction 模式）。
+2. 把连接串存成签发函数的密钥 `POR_DB_URL`（走 Supabase 连接池时用户名是 `por_issuer.<项目 ref>`，用 transaction 模式）；
+3. 只在运维执行撤销的地方给 `por_operator` 开登录，它的连接串不放进签发函数的环境。
 
-本目录和本仓库都不配任何真实连接串。本地测试（`race-check.sh`、`e2e.ts`）用临时生成的密码，经标准输入传给 psql，不落盘，跑完收回登录权限。
+本目录和本仓库都不配任何真实连接串。本地测试（`race-check.sh`、`e2e.ts`）用临时生成的密码，经标准输入传给 psql，不落盘，跑完收回登录权限。在 colima 里跑 `e2e.ts`，签发函数要按网络别名 `db:5432` 连数据库（容器名 `supabase_db_<项目 id>` 解析不到）；脚本默认就用它，栈里别名不同时设 `POR_DB_HOST`。
 
 ---
 

@@ -2,8 +2,8 @@
  * AttestationStore on Postgres: the two SECURITY DEFINER functions of the
  * deferred migration 20261102200000 (supabase/migrations-deferred-v095-por/),
  * called over a connection logged in as por_issuer. That role may execute
- * the PoR functions and nothing else, so the function holds no credential
- * that can read or write a table directly.
+ * these two functions and nothing else (not revoke, not the JWKS export), so
+ * the function holds no credential that can read or write a table directly.
  *
  * The connection is passed in as a plain query function, so the calls here
  * are tested without a database (store.test.ts); index.ts supplies the driver.

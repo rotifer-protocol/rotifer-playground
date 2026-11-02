@@ -29,9 +29,9 @@ fi
 # for the nodes table; the role is what the assertions run as. Both must be
 # there, or the run below would be a skip that looks like a pass.
 present=$(psql "$DB" -X -t -A -v ON_ERROR_STOP=1 \
-  -c "SELECT to_regclass('public.nodes') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'por_issuer')")
+  -c "SELECT to_regclass('public.nodes') IS NOT NULL AND (SELECT count(*) FROM pg_roles WHERE rolname IN ('por_issuer', 'por_operator')) = 2")
 if [ "$present" != t ]; then
-  echo "::error::the deferred migration is not in this database (no nodes table or no por_issuer role); node_attestation.sql would only skip" >&2
+  echo "::error::the deferred migration is not in this database (no nodes table, or no por_issuer or por_operator role); node_attestation.sql would only skip" >&2
   exit 1
 fi
 

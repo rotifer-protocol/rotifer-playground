@@ -233,6 +233,11 @@ jobs:
         run: deno test --allow-read=supabase/functions/chat supabase/functions/chat/
       - name: Run agent-memory edge function tests
         run: deno test supabase/functions/agent-memory/
+      # node-attestation: challenge bytes, PeerId, pseudonym, token signing,
+      # handler, store and the JWKS builder; jwks.test.ts runs the
+      # scripts/por-jwks.ts CLI as a subprocess, hence --allow-run.
+      - name: Run node-attestation edge function tests
+        run: deno test --allow-read --allow-write --allow-run --allow-env supabase/functions/node-attestation/
 
   vscode-extension:
     name: VSCode Extension Tests
@@ -665,6 +670,23 @@ jobs:
           #     same hardening migration
           # The suite is now blocking — any drift fails CI.
           supabase test db
+
+      - name: Run the deferred node-attestation pgTAP
+        # The node-attestation migration is deferred
+        # (supabase/migrations-deferred-v095-por/, not in the chain replayed
+        # above), so in the step above node_attestation.sql only skips. Apply
+        # it to this throwaway database and run that file on its own. The
+        # script fails if the migration is not there, or if the file skips or
+        # runs fewer assertions than it declares, so a green step means every
+        # assertion ran.
+        run: bash supabase/functions/node-attestation/pgtap-deferred.sh
+
+      - name: Run the node-attestation concurrency checks
+        # Needs the deferred migration from the step above. Several Postgres
+        # sessions redeem at once against the per-account limit, one nonce
+        # and one PeerId, logged in as por_issuer like the edge function (a
+        # throwaway password, removed at the end). Exits 1 on a wrong result.
+        run: bash supabase/functions/node-attestation/race-check.sh
 
       - name: Stop supabase
         if: always()

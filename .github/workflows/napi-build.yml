@@ -7,6 +7,15 @@ on:
         description: "Upload artifacts for publishing"
         type: boolean
         default: false
+  # Manual run on any branch, so a change that can break a native target
+  # (dependency bumps, new C/asm crates) is built for all four before it merges
+  # instead of failing halfway through a release.
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: "Upload artifacts for publishing"
+        type: boolean
+        default: false
 
 permissions:
   contents: read

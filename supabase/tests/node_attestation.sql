@@ -25,7 +25,7 @@ SELECT to_regclass('public.nodes') IS NOT NULL AS has_nodes \gset
 
 BEGIN;
 
-SELECT plan(64);
+SELECT plan(67);
 
 SELECT floor(extract(epoch FROM now()))::bigint AS now \gset
 SELECT :now + 604800 AS exp \gset
@@ -114,7 +114,7 @@ SELECT node_attestation_challenge(:A, :AUD) AS ch1 \gset
 RESET ROLE;
 
 SELECT is(octet_length(decode((:'ch1'::jsonb) ->> 'nonce', 'hex')), 32, 'C1: the nonce is 32 bytes');
-SELECT is(((:'ch1'::jsonb) ->> 'challenge_exp')::bigint, :now + 300, 'C2: the challenge is valid for 300 s');
+SELECT is(((:'ch1'::jsonb) ->> 'challenge_exp')::bigint, (:now + 300)::bigint, 'C2: the challenge is valid for 300 s');
 SELECT ((:'ch1'::jsonb) ->> 'nonce') AS n1, ((:'ch1'::jsonb) ->> 'challenge_exp') AS e1 \gset
 
 SET LOCAL ROLE service_role;

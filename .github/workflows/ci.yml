@@ -404,7 +404,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
 
+      # The cross-layer PoR tests run the Cloud issuer's own signing code
+      # (supabase/functions/node-attestation) under Deno. Locally they skip
+      # when deno is missing; REQUIRE_POR_CROSS=1 makes a missing deno fail
+      # them here instead, so they cannot pass by not running.
+      - uses: denoland/setup-deno@e95548e56dfa95d4e1a28d6f422fafe75c4c26fb # v2.0.3
+        with:
+          deno-version: v2.x
+
       - name: Two-node libp2p integration tests (serial, real loopback nodes)
+        env:
+          REQUIRE_POR_CROSS: "1"
         # The src/p2p/ two-node tests (kad discovery / gossipsub broadcast / DHT
         # put-get + the connectivity spike) are
         # #[cfg_attr(not(feature = "p2p-integration"), ignore)] — ignored by the

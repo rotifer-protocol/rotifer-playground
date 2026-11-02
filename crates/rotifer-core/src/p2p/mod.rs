@@ -7,14 +7,17 @@
 //! folded into [`node`] once the real multi-node implementation landed.
 //!
 //! Supporting submodules: `messages` (wire format), `security` (peer
-//! validation + rate limiting), `cloud_sync` (Cloud<->P2P consistency).
+//! validation + rate limiting), `cloud_sync` (Cloud<->P2P consistency),
+//! `heartbeat` and `por` (node heartbeats and their proof of registration).
 
 use serde::{Deserialize, Serialize};
 
 pub mod cloud_sync;
+pub mod heartbeat;
 pub mod messages;
 pub mod node;
 pub mod peerstore;
+pub mod por;
 pub mod security;
 
 // Exploratory two-node connectivity spike (test-only).
@@ -120,6 +123,14 @@ pub struct NetworkConfig {
     /// addresses of both ends of every circuit through it (§8.7).
     #[serde(default)]
     pub relays: Vec<String>,
+    /// Issuers whose proof-of-registration tokens this node checks in other
+    /// nodes' heartbeats, each with the address of its published keys
+    /// (ADR-300 locked contract v2, "信任锚"). Defaults to
+    /// `https://rotifer.dev` alone; a self-hosted issuer is added here, and
+    /// removing the default stops trusting it. Absent in older configs, which
+    /// read as the default.
+    #[serde(default = "por::default_trust_anchors")]
+    pub trust_anchors: Vec<por::TrustAnchor>,
 }
 
 fn default_mdns_enabled() -> bool {
@@ -168,6 +179,7 @@ impl Default for NetworkConfig {
             max_outbound_connections: DEFAULT_MAX_OUTBOUND_CONNECTIONS,
             max_pending_connections: DEFAULT_MAX_PENDING_CONNECTIONS,
             relays: Vec::new(),
+            trust_anchors: por::default_trust_anchors(),
         }
     }
 }
@@ -201,6 +213,8 @@ pub enum NetworkError {
     Transport(String),
     #[error("topic has no registered validator: {0}")]
     UnregisteredTopic(String),
+    #[error("invalid configuration: {0}")]
+    Config(String),
 }
 
 /// Stub implementation for v0.5 — logs operations but doesn't connect.

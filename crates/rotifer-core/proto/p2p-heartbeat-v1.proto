@@ -1,0 +1,38 @@
+// Rotifer P2P node heartbeat, version 1 — FROZEN (ADR-300 D6).
+//
+// Carried on the GossipSub topic /rotifer/p2p/1/heartbeats, as the whole
+// payload: there is no GossipMessage wrapper, because the topic already says
+// what the message is. One topic carries exactly one schema; an incompatible
+// version gets a new topic (/rotifer/p2p/2/heartbeats), never a second decoder
+// on this one. Existing field numbers, types and meanings never change; new
+// fields may be added, and receivers ignore fields they do not know.
+//
+// Authentication is GossipSub's own (MessageAuthenticity::Signed): the
+// authenticated source is the node the heartbeat describes. There is no
+// sender field and no second signature here.
+//
+// The Rust type in src/p2p/heartbeat.rs mirrors this file by hand; tests pin
+// its sha256 and check golden encodings in tests/fixtures/p2p-heartbeat-v1/.
+
+syntax = "proto3";
+
+package rotifer.p2p.heartbeat.v1;
+
+message NodeHeartbeat {
+  // Number of genes this node can serve (a count, never a list: P2P RFC §8.7).
+  uint32 genes_hosted = 1;
+  uint64 uptime_seconds = 2;
+  // The node's Rotifer version, MAJOR.MINOR.PATCH with an optional pre-release
+  // or build suffix. At most 64 bytes.
+  string rotifer_version = 3;
+  // Binding types the node supports, e.g. "local", "cloud". At most 16
+  // entries of at most 64 bytes each.
+  repeated string bindings = 4;
+  // Optional proof of registration: a JWT from an issuer the receiver trusts,
+  // binding this node's PeerId to an account pseudonym (ADR-300 locked
+  // contract v2). Empty when the node has none. At most 2048 bytes.
+  bytes cloud_attestation = 5;
+  // Unix milliseconds. Receivers reject heartbeats more than 300 000 ms in
+  // the past or 60 000 ms in the future of their own clock.
+  uint64 timestamp_ms = 6;
+}

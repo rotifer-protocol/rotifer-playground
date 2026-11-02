@@ -294,6 +294,61 @@ fn adv_8_unregistered_topic_is_not_relayed_nor_penalized() {
     );
 }
 
+// ---------------------------------------------------------------------
+// ADV-9 — a heartbeat carrying a forged attestation (ADR-300 contract v2,
+// R16/R17): the relay rejects it before forwarding and holds it against the
+// authenticated source, which gets no registered standing
+// ---------------------------------------------------------------------
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_9_forged_attestation_is_rejected_and_not_relayed() {
+    use super::heartbeat::{encode_heartbeat, HEARTBEATS_TOPIC};
+    use super::por::tests::{claims, header, hb, jwks_json, sign};
+    use super::por::{default_trust_anchors, AttestationStatus, Fetched, KeyStore};
+    let dir = tempfile::tempdir().unwrap();
+    // Every node here already holds the issuer's keys (a primed on-disk
+    // cache), so the forgery is certain from the first heartbeat on.
+    let issuer = libp2p::identity::ed25519::Keypair::generate();
+    let anchors = default_trust_anchors();
+    let mut store = KeyStore::load(Some(dir.path().join("jwks-cache.json")), &anchors);
+    let job = store.request(&anchors[0], 0).expect("fetch job");
+    let body = jwks_json(&issuer, "k1", "").into_bytes();
+    store.finish(&job, Ok(Fetched { body, max_age_secs: None }), now_ms() / 1000, 0);
+
+    // The attacker signs a token for its own PeerId with a key the issuer
+    // never published, under the issuer's kid.
+    let key = libp2p::identity::Keypair::generate_ed25519();
+    let attacker = key.public().to_peer_id().to_string();
+    let forger = libp2p::identity::ed25519::Keypair::generate();
+    let token = sign(&forger, &header("k1"), &claims(&attacker, now_ms() / 1000 - 60));
+    let heartbeat = encode_heartbeat(&hb(&token, now_ms()));
+
+    let relay = spawn(&dir, "relay", vec![]);
+    let far = spawn_with(&dir, "far", vec![addr(&relay)], Some(0));
+    let sender = RawSender::spawn_as(key, &addr(&relay), vec![(HEARTBEATS_TOPIC, heartbeat)]);
+    await_raw_control(&relay, &sender, 0);
+    await_raw_control(&far, &sender, 0);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while relay.heartbeat_stats().forged == 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    // A few more gossip rounds, so anything the relay forwarded would arrive.
+    std::thread::sleep(Duration::from_secs(3));
+    await_raw_control(&far, &sender, sender.round());
+    drop(sender);
+
+    let seen = relay.peer_attestation(&attacker).expect("the relay records the source");
+    assert!(seen.forged >= 1, "held against the authenticated source: {seen:?}");
+    assert_ne!(seen.status, AttestationStatus::Valid, "no registered standing from a forged token");
+    assert!(relay.invalid_message_count() >= 1, "rejected, not ignored");
+    assert!(far.peer_attestation(&attacker).is_none(), "the forged heartbeat must not be relayed");
+    assert_eq!(far.heartbeat_stats().forged, 0);
+    assert!(
+        !far.identified_peers().contains(&attacker),
+        "precondition: the far node must not be peered with the sender directly"
+    );
+}
+
 /// A sender that is not a `Node`: plain libp2p GossipSub + Identify, as an old
 /// JSON-era node or a hostile one would be. `Node::publish` refuses topics with
 /// no validator, so this is the only way such traffic reaches a Rotifer node.
@@ -310,6 +365,11 @@ struct RawSender {
 
 impl RawSender {
     fn spawn(relay: &str, noise: Vec<(&'static str, Vec<u8>)>) -> Self {
+        Self::spawn_as(libp2p::identity::Keypair::generate_ed25519(), relay, noise)
+    }
+
+    /// As [`RawSender::spawn`], with a given identity.
+    fn spawn_as(key: libp2p::identity::Keypair, relay: &str, noise: Vec<(&'static str, Vec<u8>)>) -> Self {
         use libp2p::futures::StreamExt;
         use libp2p::{gossipsub, identify, swarm::NetworkBehaviour, Multiaddr};
         use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -322,7 +382,6 @@ impl RawSender {
         }
 
         let relay: Multiaddr = relay.parse().expect("relay multiaddr");
-        let key = libp2p::identity::Keypair::generate_ed25519();
         let peer_id = key.public().to_peer_id().to_string();
         let round = Arc::new(AtomicU32::new(0));
         let stop = Arc::new(AtomicBool::new(false));

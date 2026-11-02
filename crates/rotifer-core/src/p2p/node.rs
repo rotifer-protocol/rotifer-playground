@@ -39,7 +39,9 @@ use libp2p::swarm::{ConnectionDenied, DialError, ListenError, NetworkBehaviour, 
 use libp2p::{Multiaddr, PeerId as Libp2pPeerId, Swarm};
 use tokio::sync::{mpsc, oneshot};
 
+use super::heartbeat::{self, HEARTBEATS_TOPIC, WireNodeHeartbeat};
 use super::peerstore;
+use super::por::{self, Decision, FetchJob, Fetched, HeartbeatDesk, HeartbeatStats, KeyStore, PeerAttestation};
 use super::{NetworkConfig, NetworkError, PeerId};
 
 /// PEM armor label for the persisted node identity.
@@ -57,6 +59,13 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often remembered peers are flushed to disk while running. A clean stop
 /// also persists them; this only bounds the loss when a daemon is killed.
 const PEER_FLUSH_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Shortest gap between two heartbeats from this node. Besides the timer, a
+/// node also sends one when a peer joins the heartbeats topic, so that it is
+/// known without waiting a full interval, and restarts the timer; keeping any
+/// two heartbeats this far apart stays under the receivers' 2-per-minute rate
+/// (P2P RFC §8.6) with room for network jitter.
+const MIN_HEARTBEAT_GAP: Duration = Duration::from_secs(35);
 
 /// Commands sent from the synchronous `Node` API to the Swarm event loop.
 enum Command {
@@ -304,6 +313,10 @@ struct NodeShared {
     /// Count of peers disconnected because Identify showed they are not
     /// Rotifer nodes.
     foreign: Arc<Mutex<u64>>,
+    /// Token this node's heartbeats carry.
+    attestation: Arc<Mutex<Option<String>>>,
+    /// Other nodes' heartbeats and attestations.
+    heartbeats: Arc<Mutex<HeartbeatDesk>>,
 }
 
 /// Fixed listen ports currently bound by live nodes in this process. libp2p's
@@ -352,6 +365,14 @@ pub struct Node {
     mdns_active: Arc<Mutex<bool>>,
     /// Count of peers dropped after Identify showed a non-Rotifer protocol.
     foreign: Arc<Mutex<u64>>,
+    /// Proof-of-registration token this node's heartbeats carry (`None` =
+    /// anonymous). See [`Node::set_attestation`].
+    attestation: Arc<Mutex<Option<String>>>,
+    /// Other nodes' heartbeats: trust anchors, cached issuer keys, and each
+    /// source's attestation (ADR-300). Rebuilt from the config on `start`.
+    heartbeats: Arc<Mutex<HeartbeatDesk>>,
+    /// How often this node publishes its heartbeat.
+    heartbeat_interval: Duration,
     /// Let AutoNAT probe and be probed on loopback / private addresses. Off in
     /// production (AutoNAT only trusts peers seen at global IPs); tests turn it
     /// on to check reachability on one machine.
@@ -433,6 +454,9 @@ impl Node {
             mdns_peers: Arc::new(Mutex::new(HashMap::new())),
             mdns_active: Arc::new(Mutex::new(false)),
             foreign: Arc::new(Mutex::new(0)),
+            attestation: Arc::new(Mutex::new(None)),
+            heartbeats: Arc::new(Mutex::new(HeartbeatDesk::new(Vec::new(), KeyStore::default()))),
+            heartbeat_interval: Duration::from_secs(heartbeat::HEARTBEAT_INTERVAL_SECS),
             autonat_on_loopback: false,
             runtime: None,
             cmd_tx: None,
@@ -530,6 +554,44 @@ impl Node {
     /// Rotifer nodes (protocol version other than `/rotifer/p2p/1`).
     pub fn foreign_peers_dropped(&self) -> u64 {
         self.foreign.lock().map(|n| *n).unwrap_or(0)
+    }
+
+    /// Carry this proof-of-registration token in this node's heartbeats from
+    /// now on; `None` makes them anonymous (a full participant, no bonus).
+    /// Refused unless it is a PoR token for this node's own PeerId: other
+    /// nodes would reject the heartbeat as a forgery and penalise this node.
+    /// The signature and expiry are left to the receivers, who hold the
+    /// issuer keys.
+    pub fn set_attestation(&self, token: Option<String>) -> Result<(), NetworkError> {
+        if let Some(t) = &token {
+            let parsed = por::parse_token(t.as_bytes()).map_err(|why| NetworkError::Config(format!("attestation: {why}")))?;
+            if parsed.claims.peer_id != self.peer_id.to_string() {
+                return Err(NetworkError::Config("attestation is for another PeerId".into()));
+            }
+        }
+        if let Ok(mut a) = self.attestation.lock() {
+            *a = token;
+        }
+        Ok(())
+    }
+
+    /// What `peer`'s newest heartbeat said about its registration, or `None`
+    /// if no heartbeat from it has been accepted.
+    pub fn peer_attestation(&self, peer: &str) -> Option<PeerAttestation> {
+        self.heartbeats.lock().ok()?.peer(peer)
+    }
+
+    /// Heartbeat counters: applied, rate-limited, undecidable, malformed,
+    /// forged.
+    pub fn heartbeat_stats(&self) -> HeartbeatStats {
+        self.heartbeats.lock().map(|d| d.stats()).unwrap_or_default()
+    }
+
+    /// Publish heartbeats this often instead of every five minutes (tests).
+    #[cfg(test)]
+    fn with_heartbeat_interval(mut self, interval: Duration) -> Self {
+        self.heartbeat_interval = interval;
+        self
     }
 
     /// Subscribe to a GossipSub topic. Requires the node to be started.
@@ -655,6 +717,9 @@ impl Node {
         if self.cmd_tx.is_some() {
             return Ok(());
         }
+        // Trust anchors are configured on purpose: a bad one fails `start`
+        // rather than silently trusting nobody.
+        por::check_trust_anchors(&self.config.trust_anchors).map_err(NetworkError::Config)?;
 
         // Reserve a fixed port in-process so a second node on the same port
         // fails deterministically — libp2p hardcodes SO_REUSEPORT, so the OS
@@ -668,6 +733,13 @@ impl Node {
                 )));
             }
             self.bound_port = Some(self.config.listen_port);
+        }
+
+        let jwks_cache = self.peerstore_path.with_file_name("jwks-cache.json");
+        if let Ok(mut desk) = self.heartbeats.lock() {
+            let anchors = self.config.trust_anchors.clone();
+            let store = KeyStore::load(Some(jwks_cache), &anchors);
+            *desk = HeartbeatDesk::new(anchors, store);
         }
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -695,6 +767,8 @@ impl Node {
             mdns_peers: Arc::clone(&self.mdns_peers),
             mdns_active: Arc::clone(&self.mdns_active),
             foreign: Arc::clone(&self.foreign),
+            attestation: Arc::clone(&self.attestation),
+            heartbeats: Arc::clone(&self.heartbeats),
         };
         let (ready_tx, ready_rx) = oneshot::channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -921,6 +995,7 @@ impl Node {
             mdns: mdns_should_run(self.config.mdns_enabled, &self.config.listen_host),
             relays: parse_relays(&self.config.relays)?,
             autonat_on_loopback: self.autonat_on_loopback,
+            heartbeat_interval: self.heartbeat_interval,
         })
     }
 }
@@ -937,6 +1012,8 @@ struct SwarmOptions {
     relays: Vec<(Multiaddr, Libp2pPeerId)>,
     /// See `Node::autonat_on_loopback`.
     autonat_on_loopback: bool,
+    /// See `Node::heartbeat_interval`.
+    heartbeat_interval: Duration,
 }
 
 /// Parse `NetworkConfig::relays`. A relay is configured on purpose, so a bad
@@ -1126,6 +1203,8 @@ async fn run_event_loop(
         mdns_peers,
         mdns_active,
         foreign,
+        attestation,
+        heartbeats,
     } = shared;
     // Per-peer flood defence (§8.6); lives in the single-threaded event loop.
     let mut security = super::security::Security::new();
@@ -1199,6 +1278,19 @@ async fn run_event_loop(
         *met = remembered.clone();
     }
 
+    // Every node takes part in the heartbeats topic (ADR-300): it publishes
+    // its own heartbeat and checks everyone else's. The timer's first tick
+    // fires at once; with no peers yet that publish simply finds nobody.
+    let heartbeats_topic = gossipsub::IdentTopic::new(HEARTBEATS_TOPIC);
+    let _ = swarm.behaviour_mut().gossipsub.subscribe(&heartbeats_topic);
+    let started = std::time::Instant::now();
+    let mut heartbeat_timer = tokio::time::interval(options.heartbeat_interval);
+    heartbeat_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut last_heartbeat: Option<std::time::Instant> = None;
+    // Issuer keys are fetched off the event loop, which never waits on the
+    // network (ADR-300 R18); results come back on this channel.
+    let (fetch_tx, mut fetch_rx) = mpsc::unbounded_channel::<(FetchJob, Result<Fetched, String>)>();
+
     // Periodic peer-store flush; the first tick fires immediately, so consume it
     // up front rather than writing an empty store on startup.
     let mut peer_flush = tokio::time::interval(PEER_FLUSH_INTERVAL);
@@ -1222,6 +1314,19 @@ async fn run_event_loop(
                     && let Err(e) = persist_peers(&peerstore_path, &met)
                 {
                     tracing::debug!("periodic peer-store flush failed: {e}");
+                }
+            }
+            _ = heartbeat_timer.tick() => {
+                let data = own_heartbeat(started, &attestation);
+                if swarm.behaviour_mut().gossipsub.publish(heartbeats_topic.clone(), data).is_ok() {
+                    last_heartbeat = Some(std::time::Instant::now());
+                }
+            }
+            Some((job, result)) = fetch_rx.recv() => {
+                let (now_s, mono_s) = (wall_clock_ms() / 1000, started.elapsed().as_secs());
+                let next = heartbeats.lock().ok().and_then(|mut d| d.on_fetched(&job, result, now_s, mono_s));
+                if let Some(next) = next {
+                    spawn_jwks_fetch(next, &fetch_tx);
                 }
             }
             event = swarm.select_next_some() => match event {
@@ -1337,6 +1442,19 @@ async fn run_event_loop(
                     }
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(
+                    gossipsub::Event::Subscribed { topic, .. },
+                )) if topic == heartbeats_topic.hash()
+                    && last_heartbeat.is_none_or(|t| t.elapsed() >= MIN_HEARTBEAT_GAP) =>
+                {
+                    // A peer joined: let it know this node now rather than
+                    // after up to a whole interval.
+                    let data = own_heartbeat(started, &attestation);
+                    if swarm.behaviour_mut().gossipsub.publish(heartbeats_topic.clone(), data).is_ok() {
+                        last_heartbeat = Some(std::time::Instant::now());
+                        heartbeat_timer.reset();
+                    }
+                }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(
                     gossipsub::Event::Message {
                         propagation_source,
                         message_id,
@@ -1352,6 +1470,9 @@ async fn run_event_loop(
                     // message is dropped unforwarded (not penalized — the
                     // relay may be honest).
                     let sender = PeerId(propagation_source.to_string());
+                    // Only gene announcements are kept for the API; heartbeats
+                    // update the heartbeat desk instead.
+                    let mut surface = false;
                     let acceptance = if security.record_message(&sender).is_err() {
                         if let Ok(mut n) = rate_limited.lock() {
                             *n += 1;
@@ -1362,7 +1483,34 @@ async fn run_event_loop(
                         // §6.4, ADR-340): invalid messages are dropped and
                         // their sender penalized, never relayed.
                         match validate(&message.data, source.as_deref(), now_ms) {
-                            Verdict::Accept(_) => MessageAcceptance::Accept,
+                            Verdict::Accept(_) => {
+                                surface = true;
+                                MessageAcceptance::Accept
+                            }
+                            Verdict::Heartbeat(hb) => {
+                                // Well-formed and fresh; the desk decides its
+                                // attestation (ADR-300 contract v2). The
+                                // validator has already refused a missing source.
+                                let from = source.as_deref().unwrap_or_default();
+                                let mono_ms = started.elapsed().as_millis() as u64;
+                                let (decision, fetch) = heartbeats
+                                    .lock()
+                                    .map(|mut d| d.on_heartbeat(from, &hb, now_ms, mono_ms))
+                                    .unwrap_or((Decision::Ignore, None));
+                                if let Some(job) = fetch {
+                                    spawn_jwks_fetch(job, &fetch_tx);
+                                }
+                                match decision {
+                                    Decision::Accept => MessageAcceptance::Accept,
+                                    Decision::Ignore => MessageAcceptance::Ignore,
+                                    Decision::Reject => {
+                                        if let Ok(mut n) = invalid.lock() {
+                                            *n += 1;
+                                        }
+                                        MessageAcceptance::Reject
+                                    }
+                                }
+                            }
                             Verdict::Ignore => MessageAcceptance::Ignore,
                             Verdict::Reject(_) => {
                                 if let Ok(mut n) = invalid.lock() {
@@ -1381,7 +1529,8 @@ async fn run_event_loop(
                         }
                         MessageAcceptance::Ignore
                     };
-                    if matches!(acceptance, MessageAcceptance::Accept)
+                    if surface
+                        && matches!(acceptance, MessageAcceptance::Accept)
                         && let Ok(mut msgs) = received.lock()
                     {
                         push_bounded(
@@ -1570,6 +1719,31 @@ async fn run_event_loop(
         }
     }
 
+}
+
+/// This node's heartbeat as of now.
+fn own_heartbeat(started: std::time::Instant, attestation: &Arc<Mutex<Option<String>>>) -> Vec<u8> {
+    let token = attestation.lock().ok().and_then(|a| a.clone()).unwrap_or_default();
+    heartbeat::encode_heartbeat(&WireNodeHeartbeat {
+        // The network layer holds no gene store of its own yet, so a node
+        // claims none rather than a number nothing backs.
+        genes_hosted: 0,
+        uptime_seconds: started.elapsed().as_secs(),
+        rotifer_version: env!("CARGO_PKG_VERSION").into(),
+        bindings: Vec::new(),
+        cloud_attestation: token.into_bytes(),
+        timestamp_ms: wall_clock_ms(),
+    })
+}
+
+/// Fetch an issuer's keys on the blocking pool and hand the result back to
+/// the event loop.
+fn spawn_jwks_fetch(job: FetchJob, tx: &mpsc::UnboundedSender<(FetchJob, Result<Fetched, String>)>) {
+    let tx = tx.clone();
+    tokio::task::spawn_blocking(move || {
+        let result = por::fetch_jwks(&job.url);
+        let _ = tx.send((job, result));
+    });
 }
 
 /// Record a peer address in dialable form (`<transport>/p2p/<peer-id>`, the same
@@ -1836,7 +2010,6 @@ mod tests {
         for topic in [
             "/rotifer/announcements",
             "/rotifer/announcements/text",
-            "/rotifer/p2p/1/heartbeats",
             "/rotifer/p2p/1/unregistered",
             "",
         ] {
@@ -1846,6 +2019,7 @@ mod tests {
             }
         }
         node.publish(ANNOUNCEMENTS_TOPIC, b"x").expect("the registered topic is allowed");
+        node.publish(HEARTBEATS_TOPIC, b"x").expect("the heartbeats topic is registered too (ADR-300)");
     }
 
     // -----------------------------------------------------------------
@@ -2863,5 +3037,118 @@ mod tests {
             node.subscribe("/rotifer/p2p/1/announcements").is_ok(),
             "the event loop must still be running after a refused connection"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // A1 — heartbeats with proof of registration (ADR-300 contract v2)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn set_attestation_refuses_tokens_that_would_brand_this_node_a_forger() {
+        use super::super::por::tests::{claims, header, sign};
+        let dir = tempfile::tempdir().expect("temp dir");
+        let node = Node::with_keypair_path(cfg(0), dir.path().join("n.id")).expect("build");
+        let kp = libp2p::identity::ed25519::Keypair::generate();
+        let me = node.local_peer_id().0;
+        let mine = sign(&kp, &header("k1"), &claims(&me, 1_800_000_000));
+        let theirs = sign(&kp, &header("k1"), &claims("12D3KooWSomeoneElse", 1_800_000_000));
+        assert!(node.set_attestation(Some(mine)).is_ok());
+        assert!(matches!(node.set_attestation(Some(theirs)), Err(NetworkError::Config(_))));
+        assert!(matches!(node.set_attestation(Some("not a token".into())), Err(NetworkError::Config(_))));
+        assert!(node.set_attestation(None).is_ok());
+    }
+
+    #[test]
+    fn a_bad_trust_anchor_fails_start() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let anchors = vec![super::super::por::TrustAnchor {
+            iss: "https://rotifer.dev".into(),
+            jwks_url: "http://rotifer.dev/.well-known/jwks.json".into(),
+        }];
+        let mut node = Node::with_keypair_path(NetworkConfig { trust_anchors: anchors, ..cfg(0) }, dir.path().join("n.id"))
+            .expect("build");
+        assert!(matches!(node.start(), Err(NetworkError::Config(_))));
+        assert!(!node.listening);
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "two-node integration: heartbeat attestation over loopback — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn heartbeats_carry_a_checked_attestation_between_two_nodes() {
+        use super::super::por::tests::{JwksServer, claims, header, jwks_json, sign};
+        use super::super::por::{AttestationStatus, DEFAULT_ISSUER, TrustAnchor};
+        let issuer = libp2p::identity::ed25519::Keypair::generate();
+        let server = JwksServer::serve(jwks_json(&issuer, "k1", ""));
+        let anchors = vec![TrustAnchor { iss: DEFAULT_ISSUER.into(), jwks_url: server.url.clone() }];
+        let dir = tempfile::tempdir().expect("temp dir");
+
+        let mut a = Node::with_keypair_path(cfg(0), dir.path().join("a.id"))
+            .expect("build")
+            .with_heartbeat_interval(Duration::from_secs(2));
+        let iat = wall_clock_ms() / 1000 - 60;
+        a.set_attestation(Some(sign(&issuer, &header("k1"), &claims(&a.local_peer_id().0, iat)))).expect("attest");
+        a.start().expect("start");
+        let a_addr = a.listen_addrs()[0].clone();
+        let c = NetworkConfig { bootstrap_peers: vec![a_addr], trust_anchors: anchors, ..cfg(0) };
+        let mut b = Node::with_keypair_path(c, dir.path().join("b.id"))
+            .expect("build")
+            .with_heartbeat_interval(Duration::from_secs(2));
+        b.start().expect("start");
+
+        let a_id = a.local_peer_id().0;
+        let b_id = b.local_peer_id().0;
+        assert!(
+            wait_until(30, || b.peer_attestation(&a_id).is_some_and(|p| p.status == AttestationStatus::Valid)),
+            "B must see A as registered (A: {:?}, stats {:?}, JWKS fetches {})",
+            b.peer_attestation(&a_id),
+            b.heartbeat_stats(),
+            server.hits.load(Ordering::Relaxed)
+        );
+        let seen = b.peer_attestation(&a_id).unwrap();
+        assert_eq!(seen.iss.as_deref(), Some(DEFAULT_ISSUER));
+        assert_eq!(seen.forged, 0);
+        assert!(
+            wait_until(20, || a.peer_attestation(&b_id).is_some()),
+            "A must hear B's anonymous heartbeat too"
+        );
+        assert_eq!(a.peer_attestation(&b_id).unwrap().status, AttestationStatus::None);
+        assert_eq!(server.hits.load(Ordering::Relaxed), 1, "keys are fetched once and cached");
+        assert!(dir.path().join("jwks-cache.json").exists(), "and kept on disk for offline restarts");
+        assert!(
+            !b.received_messages().iter().any(|m| m.topic == HEARTBEATS_TOPIC),
+            "heartbeats are not surfaced as gossip messages"
+        );
+        assert_eq!(b.invalid_message_count(), 0);
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "cross-layer: the Cloud issuer's code under Deno, two nodes over loopback — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn cross_layer_a_node_registered_by_the_real_issuer_is_seen_as_registered() {
+        use super::super::por::tests::DenoIssuer;
+        use super::super::por::{AttestationStatus, DEFAULT_ISSUER, TrustAnchor};
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut a = Node::with_keypair_path(cfg(0), dir.path().join("a.id"))
+            .expect("build")
+            .with_heartbeat_interval(Duration::from_secs(2));
+        let a_id = a.local_peer_id().0;
+        let Some(issuer) = DenoIssuer::start(&a_id, "12D3KooWDoesNotMatterHere") else { return };
+        a.set_attestation(Some(issuer.token("valid"))).expect("attest");
+        a.start().expect("start");
+        let anchors = vec![TrustAnchor { iss: DEFAULT_ISSUER.into(), jwks_url: issuer.url.clone() }];
+        let c = NetworkConfig { bootstrap_peers: vec![a.listen_addrs()[0].clone()], trust_anchors: anchors, ..cfg(0) };
+        let mut b = Node::with_keypair_path(c, dir.path().join("b.id")).expect("build");
+        b.start().expect("start");
+        assert!(
+            wait_until(30, || b.peer_attestation(&a_id).is_some_and(|p| p.status == AttestationStatus::Valid)),
+            "B must see A as registered (A: {:?}, stats {:?})",
+            b.peer_attestation(&a_id),
+            b.heartbeat_stats()
+        );
+        assert_eq!(b.peer_attestation(&a_id).unwrap().sub.as_deref(), Some(issuer.sub.as_str()));
     }
 }

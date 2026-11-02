@@ -5,12 +5,14 @@
  *
  *   supabase start                              (gotrue, kong, postgrest, edge-runtime needed)
  *   psql "$DB_URL" -f supabase/migrations-deferred-v095-por/20261102200000_node_attestation.sql
- *   SUPABASE_URL=http://127.0.0.1:54321 JWT_SECRET=<supabase status> \
+ *   SUPABASE_URL=http://127.0.0.1:54321 ANON_KEY=<supabase status> SERVICE_ROLE_KEY=<supabase status> \
  *   DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres [SUPABASE_WORKDIR=<dir>] \
  *     deno run --allow-net --allow-env --allow-run supabase/functions/node-attestation/e2e.ts
  *
- * The script makes a throwaway signing key, pseudonym key and node keys in
- * memory and starts `supabase functions serve node-attestation` itself,
+ * Two throwaway accounts are created through the auth admin API and signed
+ * in with a password, so the function sees real session tokens; they are
+ * deleted at the end. The script makes a throwaway signing key, pseudonym
+ * key and node keys in memory and starts `supabase functions serve node-attestation` itself,
  * handing the two server secrets over a pipe (--env-file /dev/stdin), so no
  * key is ever written to disk. It stops the server at the end.
  * SUPABASE_URL and DB_URL must point at this machine (local-only.ts).
@@ -35,14 +37,14 @@ import {
 
 const BASE = localUrl("SUPABASE_URL", Deno.env.get("SUPABASE_URL"), "http://127.0.0.1:54321");
 const DB_URL = localUrl("DB_URL", Deno.env.get("DB_URL"), "postgresql://postgres:postgres@127.0.0.1:54322/postgres");
-const SECRET = Deno.env.get("JWT_SECRET");
-if (!SECRET) throw new Error("JWT_SECRET is required (supabase status)");
+const ANON = Deno.env.get("ANON_KEY");
+const SERVICE = Deno.env.get("SERVICE_ROLE_KEY");
+if (!ANON || !SERVICE) throw new Error("ANON_KEY and SERVICE_ROLE_KEY are required (the local stack's, from supabase status)");
 const WORKDIR = Deno.env.get("SUPABASE_WORKDIR");
 const FN = `${BASE}/functions/v1/node-attestation`;
 const AUD = FN;
 
-const U1 = "e2e11111-1111-4111-8111-111111111111";
-const U2 = "e2e22222-2222-4222-8222-222222222222";
+const EMAILS = ["e2e-por-1@example.com", "e2e-por-2@example.com"];
 const enc = new TextEncoder();
 let failures = 0;
 
@@ -57,13 +59,23 @@ async function psql(sql: string): Promise<string> {
   return new TextDecoder().decode(out.stdout).trim();
 }
 
-async function mint(sub: string): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
-  const head = b64url(enc.encode(JSON.stringify({ alg: "HS256", typ: "JWT" })));
-  const body = b64url(enc.encode(JSON.stringify({ sub, role: "authenticated", aud: "authenticated", iat: now, exp: now + 900 })));
-  const key = await crypto.subtle.importKey("raw", enc.encode(SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(`${head}.${body}`)));
-  return `${head}.${body}.${b64url(sig)}`;
+/** A confirmed account made through the auth admin API, signed in with a password. */
+async function account(email: string): Promise<{ id: string; jwt: string }> {
+  const password = b64url(crypto.getRandomValues(new Uint8Array(18)));
+  const created = await fetch(`${BASE}/auth/v1/admin/users`, {
+    method: "POST",
+    headers: { apikey: SERVICE!, Authorization: `Bearer ${SERVICE}`, "content-type": "application/json" },
+    body: JSON.stringify({ email, password, email_confirm: true }),
+  });
+  if (created.status !== 200) throw new Error(`creating ${email}: ${created.status}`);
+  const { id } = await created.json();
+  const login = await fetch(`${BASE}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: { apikey: ANON!, "content-type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (login.status !== 200) throw new Error(`signing in ${email}: ${login.status}`);
+  return { id, jwt: (await login.json()).access_token };
 }
 
 async function nodeKey() {
@@ -100,10 +112,11 @@ async function signedIssueBody(jwt: string, user: string, node: Node) {
 }
 
 async function cleanup(): Promise<void> {
+  const emails = EMAILS.map((e) => `'${e}'`).join(", ");
   await psql(`SET session_replication_role = replica;
-    DELETE FROM node_attestation_issuances WHERE user_id IN ('${U1}', '${U2}');
+    DELETE FROM node_attestation_issuances WHERE user_id IN (SELECT id FROM auth.users WHERE email IN (${emails}));
     SET session_replication_role = origin;
-    DELETE FROM auth.users WHERE id IN ('${U1}', '${U2}');`);
+    DELETE FROM auth.users WHERE email IN (${emails});`);
 }
 
 // ── keys, in memory only ───────────────────────────────────
@@ -136,18 +149,16 @@ for (const stream of [server.stdout, server.stderr]) {
 
 try {
   await cleanup();
-  await psql(`INSERT INTO auth.users (id, aud, role, email, raw_user_meta_data) VALUES
-    ('${U1}', 'authenticated', 'authenticated', 'e2e-por-1@example.com', '{"user_name":"e2e_por_1"}'),
-    ('${U2}', 'authenticated', 'authenticated', 'e2e-por-2@example.com', '{"user_name":"e2e_por_2"}');`);
-  const jwt1 = await mint(U1);
-  const jwt2 = await mint(U2);
+  const { id: U1, jwt: jwt1 } = await account(EMAILS[0]);
+  const { id: U2, jwt: jwt2 } = await account(EMAILS[1]);
 
   // Wait for the function to answer (the edge runtime boots after `serve` starts).
   let up = false;
   for (let i = 0; i < 60 && !up; i++) {
     try {
       const r = await call("challenge", jwt1, {});
-      up = r.status !== 502 && r.status !== 503 && r.status !== 404;
+      // Up means the function itself answered: a 200 or one of its own error codes.
+      up = r.status === 200 || String((r.body.error as { code?: unknown } | undefined)?.code ?? "").startsWith("POR_");
       if (!up) await new Promise((res) => setTimeout(res, 1000));
     } catch {
       await new Promise((res) => setTimeout(res, 1000));

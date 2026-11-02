@@ -408,7 +408,10 @@ fn adv_10_a_forger_is_graylisted() {
     assert!(to >= from + 5, "the sender kept sending ({from}..{to})");
     let through: Vec<u32> = (from..to).filter(|n| has(&relay, &id(&format!("raw-control-{n}")))).collect();
     assert!(through.is_empty(), "a graylisted peer's messages must be dropped, got rounds {through:?}");
-    assert!(relay.heartbeat_stats().forged >= 1);
+    // The sender kept forging every round, and the rate limit would let a
+    // second forgery in within the minute: only being graylisted by the
+    // first one keeps the relay from ever reading another.
+    assert_eq!(relay.heartbeat_stats().forged, 1, "one forgery is enough");
 }
 
 // ---------------------------------------------------------------------

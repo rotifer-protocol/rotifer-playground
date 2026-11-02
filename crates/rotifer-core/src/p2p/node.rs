@@ -3141,6 +3141,19 @@ mod tests {
     }
 
     #[test]
+    fn peer_score_params_are_the_ruled_ones() {
+        // The parameters the swarm is built with (CEO 〔T-140〕 E7), not
+        // libp2p's defaults: if either side drifts, this fails.
+        let (params, thresholds) = peer_score_params();
+        assert_eq!(params.app_specific_weight, 1.0);
+        assert!(params.topics.is_empty(), "no topic scores: P1–P4 stay off");
+        assert_eq!(
+            (thresholds.gossip_threshold, thresholds.publish_threshold, thresholds.graylist_threshold),
+            (-10.0, -50.0, -80.0)
+        );
+    }
+
+    #[test]
     fn a_bad_trust_anchor_fails_start() {
         let dir = tempfile::tempdir().expect("temp dir");
         let anchors = vec![super::super::por::TrustAnchor {

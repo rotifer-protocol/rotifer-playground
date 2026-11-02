@@ -1488,6 +1488,18 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn score_numbers_are_the_ruled_ones() {
+        // CEO 〔T-140〕 E7, by value: the other tests use the names.
+        assert_eq!(APP_SPECIFIC_WEIGHT, 1.0);
+        assert_eq!(REGISTERED_BONUS, 20.0);
+        assert_eq!(BONUS_PEERS_PER_PSEUDONYM, 2);
+        assert_eq!(FORGERY_PENALTY, -100.0);
+        assert_eq!(FORGERY_WINDOW_MS, 86_400_000);
+        assert_eq!(FORGERY_FLOOR, -300.0);
+        assert_eq!(SCORE_REFRESH_INTERVAL, Duration::from_secs(60));
+    }
+
+    #[test]
     fn score_follows_registration_status() {
         assert_eq!(GRAYLIST, libp2p::gossipsub::PeerScoreThresholds::default().graylist_threshold);
         let i = issuer(&format!(r#"{{"peer_id":"p-revoked","not_after":{NOW_S}}}"#));

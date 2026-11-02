@@ -145,6 +145,19 @@ fn gossipsub_config() -> gossipsub::Config {
         .expect("gossipsub config is valid")
 }
 
+/// Peer scoring (ADR-300 contract v2, CEO 〔T-140〕 E7): no topic scores
+/// (P1–P4 off, so A4's Ignore / Reject semantics are unchanged), the
+/// application score at weight [`por::APP_SPECIFIC_WEIGHT`], everything else
+/// and the thresholds (gossip −10, publish −50, graylist −80) at libp2p's
+/// defaults. One certain forgery (−100) is below the graylist threshold.
+fn peer_score_params() -> (gossipsub::PeerScoreParams, gossipsub::PeerScoreThresholds) {
+    let params = gossipsub::PeerScoreParams {
+        app_specific_weight: por::APP_SPECIFIC_WEIGHT,
+        ..Default::default()
+    };
+    (params, gossipsub::PeerScoreThresholds::default())
+}
+
 /// Wall-clock Unix milliseconds (announcement freshness is wall-clock based).
 fn wall_clock_ms() -> u64 {
     std::time::SystemTime::now()
@@ -317,6 +330,8 @@ struct NodeShared {
     attestation: Arc<Mutex<Option<String>>>,
     /// Other nodes' heartbeats and attestations.
     heartbeats: Arc<Mutex<HeartbeatDesk>>,
+    /// Connected peers' GossipSub scores, as of the last recompute.
+    scores: Arc<Mutex<HashMap<String, f64>>>,
 }
 
 /// Fixed listen ports currently bound by live nodes in this process. libp2p's
@@ -371,8 +386,12 @@ pub struct Node {
     /// Other nodes' heartbeats: trust anchors, cached issuer keys, and each
     /// source's attestation (ADR-300). Rebuilt from the config on `start`.
     heartbeats: Arc<Mutex<HeartbeatDesk>>,
+    /// Connected peers' GossipSub scores, as of the last recompute.
+    scores: Arc<Mutex<HashMap<String, f64>>>,
     /// How often this node publishes its heartbeat.
     heartbeat_interval: Duration,
+    /// How often peer scores are recomputed besides after each heartbeat.
+    score_refresh_interval: Duration,
     /// Let AutoNAT probe and be probed on loopback / private addresses. Off in
     /// production (AutoNAT only trusts peers seen at global IPs); tests turn it
     /// on to check reachability on one machine.
@@ -456,7 +475,9 @@ impl Node {
             foreign: Arc::new(Mutex::new(0)),
             attestation: Arc::new(Mutex::new(None)),
             heartbeats: Arc::new(Mutex::new(HeartbeatDesk::new(Vec::new(), KeyStore::default()))),
+            scores: Arc::new(Mutex::new(HashMap::new())),
             heartbeat_interval: Duration::from_secs(heartbeat::HEARTBEAT_INTERVAL_SECS),
+            score_refresh_interval: por::SCORE_REFRESH_INTERVAL,
             autonat_on_loopback: false,
             runtime: None,
             cmd_tx: None,
@@ -587,10 +608,24 @@ impl Node {
         self.heartbeats.lock().map(|d| d.stats()).unwrap_or_default()
     }
 
+    /// A connected peer's GossipSub score as of the last recompute (after
+    /// each heartbeat decision and every minute), or `None` if it was not
+    /// connected then. Below −80 the peer is graylisted.
+    pub fn peer_score(&self, peer: &str) -> Option<f64> {
+        self.scores.lock().ok()?.get(peer).copied()
+    }
+
     /// Publish heartbeats this often instead of every five minutes (tests).
     #[cfg(test)]
     fn with_heartbeat_interval(mut self, interval: Duration) -> Self {
         self.heartbeat_interval = interval;
+        self
+    }
+
+    /// Recompute peer scores this often instead of every minute (tests).
+    #[cfg(test)]
+    pub(crate) fn with_score_refresh_interval(mut self, interval: Duration) -> Self {
+        self.score_refresh_interval = interval;
         self
     }
 
@@ -769,6 +804,7 @@ impl Node {
             foreign: Arc::clone(&self.foreign),
             attestation: Arc::clone(&self.attestation),
             heartbeats: Arc::clone(&self.heartbeats),
+            scores: Arc::clone(&self.scores),
         };
         let (ready_tx, ready_rx) = oneshot::channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -996,6 +1032,7 @@ impl Node {
             relays: parse_relays(&self.config.relays)?,
             autonat_on_loopback: self.autonat_on_loopback,
             heartbeat_interval: self.heartbeat_interval,
+            score_refresh_interval: self.score_refresh_interval,
         })
     }
 }
@@ -1014,6 +1051,8 @@ struct SwarmOptions {
     autonat_on_loopback: bool,
     /// See `Node::heartbeat_interval`.
     heartbeat_interval: Duration,
+    /// See `Node::score_refresh_interval`.
+    score_refresh_interval: Duration,
 }
 
 /// Parse `NetworkConfig::relays`. A relay is configured on purpose, so a bad
@@ -1076,11 +1115,13 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
             let peer_id = key.public().to_peer_id();
             let mut kademlia = kad::Behaviour::new(peer_id, MemoryStore::new(peer_id));
             kademlia.set_mode(Some(kad::Mode::Server));
-            let gossipsub = gossipsub::Behaviour::new(
+            let mut gossipsub = gossipsub::Behaviour::new(
                 gossipsub::MessageAuthenticity::Signed(key.clone()),
                 gossipsub_config(),
             )
             .expect("gossipsub config is valid");
+            let (params, thresholds) = peer_score_params();
+            gossipsub.with_peer_score(params, thresholds).expect("peer score parameters are valid");
             let identify = identify::Behaviour::new(identify::Config::new(
                 IDENTIFY_PROTOCOL_VERSION.to_string(),
                 key.public(),
@@ -1205,6 +1246,7 @@ async fn run_event_loop(
         foreign,
         attestation,
         heartbeats,
+        scores,
     } = shared;
     // Per-peer flood defence (§8.6); lives in the single-threaded event loop.
     let mut security = super::security::Security::new();
@@ -1290,6 +1332,11 @@ async fn run_event_loop(
     // Issuer keys are fetched off the event loop, which never waits on the
     // network (ADR-300 R18); results come back on this channel.
     let (fetch_tx, mut fetch_rx) = mpsc::unbounded_channel::<(FetchJob, Result<Fetched, String>)>();
+    // Application scores follow the desk: recomputed after every heartbeat
+    // decision and on this timer (forgeries age out, tokens expire, peers
+    // connect).
+    let mut score_timer = tokio::time::interval(options.score_refresh_interval);
+    score_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     // Periodic peer-store flush; the first tick fires immediately, so consume it
     // up front rather than writing an empty store on startup.
@@ -1321,6 +1368,9 @@ async fn run_event_loop(
                 if swarm.behaviour_mut().gossipsub.publish(heartbeats_topic.clone(), data).is_ok() {
                     last_heartbeat = Some(std::time::Instant::now());
                 }
+            }
+            _ = score_timer.tick() => {
+                refresh_scores(&mut swarm, &heartbeats, &scores, started);
             }
             Some((job, result)) = fetch_rx.recv() => {
                 let (now_s, mono_s) = (wall_clock_ms() / 1000, started.elapsed().as_secs());
@@ -1500,6 +1550,7 @@ async fn run_event_loop(
                                 if let Some(job) = fetch {
                                     spawn_jwks_fetch(job, &fetch_tx);
                                 }
+                                refresh_scores(&mut swarm, &heartbeats, &scores, started);
                                 match decision {
                                     Decision::Accept => MessageAcceptance::Accept,
                                     Decision::Ignore => MessageAcceptance::Ignore,
@@ -1734,6 +1785,37 @@ fn own_heartbeat(started: std::time::Instant, attestation: &Arc<Mutex<Option<Str
         cloud_attestation: token.into_bytes(),
         timestamp_ms: wall_clock_ms(),
     })
+}
+
+/// Set every connected peer's GossipSub application score from the heartbeat
+/// desk, and record the resulting scores for [`Node::peer_score`].
+fn refresh_scores(
+    swarm: &mut Swarm<NodeBehaviour>,
+    desk: &Mutex<HeartbeatDesk>,
+    scores: &Mutex<HashMap<String, f64>>,
+    started: std::time::Instant,
+) {
+    let connected: Vec<Libp2pPeerId> = swarm.connected_peers().copied().collect();
+    let names: Vec<String> = connected.iter().map(|p| p.to_string()).collect();
+    let app = match desk.lock() {
+        Ok(d) => d.scores(
+            names.iter().map(String::as_str),
+            wall_clock_ms(),
+            started.elapsed().as_millis() as u64,
+        ),
+        Err(_) => return,
+    };
+    let gossipsub = &mut swarm.behaviour_mut().gossipsub;
+    let mut now = HashMap::with_capacity(connected.len());
+    for (peer, (name, score)) in connected.iter().zip(app) {
+        gossipsub.set_application_score(peer, score);
+        if let Some(total) = gossipsub.peer_score(peer) {
+            now.insert(name.to_string(), total);
+        }
+    }
+    if let Ok(mut s) = scores.lock() {
+        *s = now;
+    }
 }
 
 /// Fetch an issuer's keys on the blocking pool and hand the result back to
@@ -3059,6 +3141,19 @@ mod tests {
     }
 
     #[test]
+    fn peer_score_params_are_the_ruled_ones() {
+        // The parameters the swarm is built with (CEO 〔T-140〕 E7), not
+        // libp2p's defaults: if either side drifts, this fails.
+        let (params, thresholds) = peer_score_params();
+        assert_eq!(params.app_specific_weight, 1.0);
+        assert!(params.topics.is_empty(), "no topic scores: P1–P4 stay off");
+        assert_eq!(
+            (thresholds.gossip_threshold, thresholds.publish_threshold, thresholds.graylist_threshold),
+            (-10.0, -50.0, -80.0)
+        );
+    }
+
+    #[test]
     fn a_bad_trust_anchor_fails_start() {
         let dir = tempfile::tempdir().expect("temp dir");
         let anchors = vec![super::super::por::TrustAnchor {
@@ -3121,6 +3216,44 @@ mod tests {
             "heartbeats are not surfaced as gossip messages"
         );
         assert_eq!(b.invalid_message_count(), 0);
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "two-node integration: peer scores over loopback — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn peer_scores_follow_registration_between_two_nodes() {
+        use super::super::por::tests::{JwksServer, claims, header, jwks_json, sign};
+        use super::super::por::{DEFAULT_ISSUER, REGISTERED_BONUS, TrustAnchor};
+        let issuer = libp2p::identity::ed25519::Keypair::generate();
+        let server = JwksServer::serve(jwks_json(&issuer, "k1", ""));
+        let anchors = vec![TrustAnchor { iss: DEFAULT_ISSUER.into(), jwks_url: server.url.clone() }];
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut a = Node::with_keypair_path(NetworkConfig { trust_anchors: anchors.clone(), ..cfg(0) }, dir.path().join("a.id"))
+            .expect("build")
+            .with_heartbeat_interval(Duration::from_secs(2));
+        let iat = wall_clock_ms() / 1000 - 60;
+        a.set_attestation(Some(sign(&issuer, &header("k1"), &claims(&a.local_peer_id().0, iat)))).expect("attest");
+        a.start().expect("start");
+        let c = NetworkConfig { bootstrap_peers: vec![a.listen_addrs()[0].clone()], trust_anchors: anchors, ..cfg(0) };
+        let mut b = Node::with_keypair_path(c, dir.path().join("b.id"))
+            .expect("build")
+            .with_heartbeat_interval(Duration::from_secs(2));
+        b.start().expect("start");
+        let (a_id, b_id) = (a.local_peer_id().0, b.local_peer_id().0);
+        assert!(
+            wait_until(30, || b.peer_score(&a_id) == Some(REGISTERED_BONUS)),
+            "B must score registered A at +20 (score {:?}, A: {:?})",
+            b.peer_score(&a_id),
+            b.peer_attestation(&a_id)
+        );
+        assert!(
+            wait_until(20, || a.peer_attestation(&b_id).is_some()),
+            "A must hear B's anonymous heartbeat"
+        );
+        assert_eq!(a.peer_score(&b_id), Some(0.0), "anonymous: a full participant at 0");
+        assert_eq!(b.peer_score("12D3KooWNotConnected"), None);
     }
 
     #[test]

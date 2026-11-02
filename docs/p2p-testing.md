@@ -10,7 +10,7 @@ Inventory as of v0.27.0 (wire format v1):
 | Tier | Count | Ignored by default? | Runnable today? |
 |---|---|---|---|
 | Unit tests (whole crate) | 405 | no | yes — plain `cargo test` |
-| Multi-node integration | 26 (9 of them adversarial) | yes (feature-gated) | yes — see below |
+| Multi-node integration | 30 (11 of them adversarial) | yes (feature-gated) | yes — see below |
 | Spec scaffolds | 1 | yes (unconditional) | **no — it fails by design** |
 
 The integration and scaffold rows were updated when mDNS landed with libp2p
@@ -60,6 +60,8 @@ The node tests:
 | `node::tests::mdns_disabled_nodes_do_not_discover_each_other` | `node.rs` | with `mdns_enabled: false` two nodes on `0.0.0.0` stay unaware of each other |
 | `node::tests::non_rotifer_peer_is_dropped_after_identify` | `node.rs` | a libp2p peer identifying as `/ipfs/0.1.0` is disconnected, counted, and kept out of the peer store |
 | `node::tests::heartbeats_carry_a_checked_attestation_between_two_nodes` | `node.rs` | B fetches the issuer's keys once over HTTP and sees attested A as registered, anonymous B as unregistered (ADR-300) |
+| `node::tests::peer_scores_follow_registration_between_two_nodes` | `node.rs` | B scores registered A at +20 and A scores anonymous B at 0 — GossipSub application scores, weight 1.0 (ADR-300 contract v2) |
+| `adversarial::scores_are_refreshed_without_heartbeats` | `adversarial.rs` | scores are recomputed on a timer too: a peer that sends no heartbeat is still scored |
 | `node::tests::cross_layer_a_node_registered_by_the_real_issuer_is_seen_as_registered` | `node.rs` | the same, with a token signed by the Cloud issuer's own code (`tests/por-issuer/issue.ts`, run under Deno) |
 | `por::tests::cross_layer_tokens_from_the_real_issuer` | `por.rs` | the Cloud issuer's valid, expired, revoked, stolen and tampered tokens get the verdicts the contract gives them |
 
@@ -69,7 +71,9 @@ a missing deno into a failure, so in CI they cannot pass without running.
 
 The adversarial suite (`adversarial.rs`) attacks a real node. Each hostile
 message is followed by a legitimate probe from the same attacker, so "not
-delivered" means *rejected*, not *lost*:
+delivered" means *rejected*, not *lost*. The exceptions are the forged-token
+scenarios: one forgery graylists the attacker, so its probes go first, proving
+the path before the attack, and its traffic afterwards must *not* arrive:
 
 | Test | Attack | Expected |
 |---|---|---|
@@ -81,7 +85,9 @@ delivered" means *rejected*, not *lost*:
 | `adv_6_single_identity_flood_is_rate_limited` | 100-message burst | capped by the per-peer limit |
 | `adv_7_invalid_announcement_is_not_relayed` | attacker → relay → far node | stops at the relay (validated before forwarding) |
 | `adv_8_unregistered_topic_is_not_relayed_nor_penalized` | messages on topics with no validator (the legacy `/rotifer/announcements` and an unknown `/rotifer/p2p/1/…`), sender → relay → far node | ignored at the relay: not delivered, not forwarded, sender not penalized |
-| `adv_9_forged_attestation_is_rejected_and_not_relayed` | a heartbeat whose PoR token is signed with a key the issuer never published, sender → relay → far node | rejected at the relay and held against the sender, never relayed, no registered standing |
+| `adv_9_forged_attestation_is_rejected_and_not_relayed` | a heartbeat whose PoR token is signed with a key the issuer never published, sender → relay → far node | rejected at the relay and held against the sender, never relayed, no registered standing; the relay still forwards its own traffic |
+| `adv_10_a_forger_is_graylisted` | one forged heartbeat, then valid announcements from the same sender | the sender's score drops to −100, below the graylist threshold (−80), and everything it sends afterwards is dropped |
+| `adv_11_undecidable_attestations_are_never_penalised` | tokens under a kid the issuer has not published, and from a trusted issuer whose keys cannot be fetched | ignored, not rejected: score stays 0 and the senders' traffic keeps arriving (R17) |
 
 `adv_7` forces the relay to be the only path — neither end accepts inbound
 connections — and asserts that precondition. Without it the far node peers

@@ -69,6 +69,28 @@ pub const MAX_JWKS_BYTES: u64 = 64 * 1024;
 /// Whole-request timeout for a JWKS fetch.
 pub const JWKS_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 
+// GossipSub peer scoring (ADR-300 contract v2; parameters CEO 〔T-140〕 E7).
+// Only the application-specific score (P5) is set; P1–P4 stay off.
+/// Weight of the application-specific score.
+pub const APP_SPECIFIC_WEIGHT: f64 = 1.0;
+/// Score of a peer holding a valid registration, within its pseudonym's quota.
+pub const REGISTERED_BONUS: f64 = 20.0;
+/// Registered peers per pseudonym that get the bonus: the earliest verified
+/// valid among connected peers. Stricter than the contract's "per topic
+/// mesh", because GossipSub's application score is per peer, not per topic.
+pub const BONUS_PEERS_PER_PSEUDONYM: usize = 2;
+/// Score of one certain forgery (bad signature, or a token for another
+/// PeerId). Never for a token this node cannot decide (R17).
+pub const FORGERY_PENALTY: f64 = -100.0;
+/// How long a forgery counts against its source.
+pub const FORGERY_WINDOW_MS: u64 = 24 * 3600 * 1000;
+/// Lowest score forgeries can bring a peer to.
+pub const FORGERY_FLOOR: f64 = -300.0;
+/// Forgeries remembered per source: enough to reach the floor.
+const COUNTED_FORGERIES: usize = 3;
+/// Scores are recomputed after every heartbeat decision and this often.
+pub const SCORE_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+
 const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 // ---------------------------------------------------------------------------
@@ -585,6 +607,19 @@ pub struct PeerAttestation {
     /// Forged tokens this source has sent (held against it, never against
     /// the PeerId written in the token).
     pub forged: u64,
+    /// Monotonic ms of this source's newest forgeries (at most
+    /// [`COUNTED_FORGERIES`]), for the 24-hour penalty window.
+    pub(crate) forged_at: VecDeque<u64>,
+    /// Monotonic ms since which this source has held a valid token for its
+    /// current pseudonym; orders the pseudonym's bonus quota.
+    pub(crate) valid_since_ms: Option<u64>,
+}
+
+impl PeerAttestation {
+    /// Forgeries still counting against this source at `mono_ms`.
+    fn recent_forgeries(&self, mono_ms: u64) -> usize {
+        self.forged_at.iter().filter(|t| mono_ms < t.saturating_add(FORGERY_WINDOW_MS)).count()
+    }
 }
 
 /// Counters, for logs and tests.
@@ -677,7 +712,12 @@ impl HeartbeatDesk {
                 TokenCheck::Forged(how) => {
                     tracing::debug!(%source, ?how, "forged heartbeat attestation; rejected");
                     self.stats.forged += 1;
-                    self.entry(source).forged += 1;
+                    let entry = self.entry(source, mono_ms);
+                    entry.forged += 1;
+                    if entry.forged_at.len() >= COUNTED_FORGERIES {
+                        entry.forged_at.pop_front();
+                    }
+                    entry.forged_at.push_back(mono_ms);
                     return (Decision::Reject, fetch);
                 }
             },
@@ -687,11 +727,21 @@ impl HeartbeatDesk {
             self.stats.not_newer += 1;
             return (Decision::Accept, fetch);
         }
-        let entry = self.entry(source);
+        let entry = self.entry(source, mono_ms);
+        let iss = claims.as_ref().map(|c| c.iss.clone());
+        let sub = claims.as_ref().map(|c| c.sub.clone());
+        // The quota goes by how long a peer has been registered, so a
+        // routine token renewal does not cost a node its place.
+        let still_valid = entry.status == AttestationStatus::Valid && entry.iss == iss && entry.sub == sub;
+        entry.valid_since_ms = match status {
+            AttestationStatus::Valid if still_valid => entry.valid_since_ms.or(Some(mono_ms)),
+            AttestationStatus::Valid => Some(mono_ms),
+            _ => None,
+        };
         entry.status = status;
         entry.heartbeat_ms = hb.timestamp_ms;
-        entry.iss = claims.as_ref().map(|c| c.iss.clone());
-        entry.sub = claims.as_ref().map(|c| c.sub.clone());
+        entry.iss = iss;
+        entry.sub = sub;
         entry.exp = claims.as_ref().map(|c| c.exp);
         self.stats.applied += 1;
         (Decision::Accept, fetch)
@@ -756,10 +806,52 @@ impl HeartbeatDesk {
         true
     }
 
-    fn entry(&mut self, source: &str) -> &mut PeerAttestation {
+    /// GossipSub application score for each `connected` peer (ADR-300
+    /// contract v2): [`REGISTERED_BONUS`] for a valid, unexpired registration
+    /// within its pseudonym's quota, [`FORGERY_PENALTY`] per forgery in the
+    /// last 24 hours down to [`FORGERY_FLOOR`], and 0 otherwise — anonymous,
+    /// expired, revoked, or undecidable here. A peer with a forgery in the
+    /// window gets no bonus, so one forgery is enough to graylist it.
+    pub fn scores<'a>(&self, connected: impl IntoIterator<Item = &'a str>, now_ms: u64, mono_ms: u64) -> Vec<(&'a str, f64)> {
+        let now_s = now_ms / 1000;
+        let mut scores: Vec<(&'a str, f64)> = Vec::new();
+        let mut registered: HashMap<(&str, &str), Vec<(u64, usize)>> = HashMap::new();
+        for peer in connected {
+            let i = scores.len();
+            let Some(a) = self.peers.get(peer) else {
+                scores.push((peer, 0.0));
+                continue;
+            };
+            let forgeries = a.recent_forgeries(mono_ms);
+            scores.push((peer, (forgeries as f64 * FORGERY_PENALTY).max(FORGERY_FLOOR)));
+            if forgeries > 0 || a.status != AttestationStatus::Valid {
+                continue;
+            }
+            if let (Some(iss), Some(sub), Some(exp), Some(since)) = (&a.iss, &a.sub, a.exp, a.valid_since_ms)
+                && now_s <= exp.saturating_add(CLOCK_SKEW_SECS)
+            {
+                registered.entry((iss.as_str(), sub.as_str())).or_default().push((since, i));
+            }
+        }
+        for mut holders in registered.into_values() {
+            holders.sort_by(|x, y| x.0.cmp(&y.0).then_with(|| scores[x.1].0.cmp(scores[y.1].0)));
+            for &(_, i) in holders.iter().take(BONUS_PEERS_PER_PSEUDONYM) {
+                scores[i].1 += REGISTERED_BONUS;
+            }
+        }
+        scores
+    }
+
+    fn entry(&mut self, source: &str, mono_ms: u64) -> &mut PeerAttestation {
         if !self.peers.contains_key(source) && self.peers.len() >= MAX_TRACKED_SOURCES {
-            // Forget the source heard from longest ago.
-            if let Some(oldest) = self.peers.iter().min_by_key(|(_, a)| a.heartbeat_ms).map(|(p, _)| p.clone()) {
+            // Forget the source heard from longest ago, but never one whose
+            // forgery still counts: forgetting it would lift its penalty.
+            if let Some(oldest) = self
+                .peers
+                .iter()
+                .min_by_key(|(_, a)| (a.recent_forgeries(mono_ms) > 0, a.heartbeat_ms))
+                .map(|(p, _)| p.clone())
+            {
                 self.peers.remove(&oldest);
             }
         }
@@ -1372,5 +1464,181 @@ pub(crate) mod tests {
         assert_eq!(d.peers.len(), MAX_TRACKED_SOURCES);
         assert!(d.peer("peer-0").is_none(), "the source heard from longest ago is forgotten first");
         assert!(d.arrivals.len() <= MAX_TRACKED_SOURCES);
+    }
+
+    // -----------------------------------------------------------------------
+    // Scores (ADR-300 contract v2, CEO 〔T-140〕 E7)
+
+    /// libp2p's graylist threshold: below it a peer's messages are dropped.
+    const GRAYLIST: f64 = -80.0;
+
+    impl Issuer {
+        fn token_for(&self, peer: &str, sub: &str, iat: u64) -> String {
+            let payload = format!(
+                r#"{{"iss":"{DEFAULT_ISSUER}","sub":"{sub}","peer_id":"{peer}","iat":{iat},"exp":{}}}"#,
+                iat + MAX_LIFETIME_SECS
+            );
+            sign(&self.kp, &header("k1"), &payload)
+        }
+    }
+
+    fn score_of(d: &HeartbeatDesk, peer: &str, connected: &[&str], now_ms: u64, mono_ms: u64) -> f64 {
+        let scores = d.scores(connected.iter().copied(), now_ms, mono_ms);
+        scores.into_iter().find(|(p, _)| *p == peer).map(|(_, s)| s).expect("connected peer scored")
+    }
+
+    #[test]
+    fn score_numbers_are_the_ruled_ones() {
+        // CEO 〔T-140〕 E7, by value: the other tests use the names.
+        assert_eq!(APP_SPECIFIC_WEIGHT, 1.0);
+        assert_eq!(REGISTERED_BONUS, 20.0);
+        assert_eq!(BONUS_PEERS_PER_PSEUDONYM, 2);
+        assert_eq!(FORGERY_PENALTY, -100.0);
+        assert_eq!(FORGERY_WINDOW_MS, 86_400_000);
+        assert_eq!(FORGERY_FLOOR, -300.0);
+        assert_eq!(SCORE_REFRESH_INTERVAL, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn score_follows_registration_status() {
+        assert_eq!(GRAYLIST, libp2p::gossipsub::PeerScoreThresholds::default().graylist_threshold);
+        let i = issuer(&format!(r#"{{"peer_id":"p-revoked","not_after":{NOW_S}}}"#));
+        let mut d = desk_with(&i);
+        d.on_heartbeat("p-valid", &hb(&i.token("p-valid", NOW_S - 10), NOW_MS), NOW_MS, 0);
+        d.on_heartbeat("p-anon", &hb("", NOW_MS), NOW_MS, 0);
+        d.on_heartbeat("p-expired", &hb(&i.token("p-expired", NOW_S - 30 * 24 * 3600), NOW_MS), NOW_MS, 0);
+        d.on_heartbeat("p-revoked", &hb(&i.token("p-revoked", NOW_S - 10), NOW_MS), NOW_MS, 0);
+        let all = ["p-valid", "p-anon", "p-expired", "p-revoked", "p-unheard"];
+        let scores = d.scores(all, NOW_MS, 1000);
+        assert_eq!(
+            scores,
+            vec![("p-valid", REGISTERED_BONUS), ("p-anon", 0.0), ("p-expired", 0.0), ("p-revoked", 0.0), ("p-unheard", 0.0)]
+        );
+        assert_eq!(REGISTERED_BONUS, 20.0);
+        // The token runs out while the peer stays connected: the bonus goes.
+        let exp_ms = (NOW_S - 10 + MAX_LIFETIME_SECS + CLOCK_SKEW_SECS + 1) * 1000;
+        assert_eq!(score_of(&d, "p-valid", &all, exp_ms, 2000), 0.0);
+    }
+
+    #[test]
+    fn attack_a_third_node_under_one_pseudonym_gets_no_bonus() {
+        let i = issuer("");
+        let mut d = desk_with(&i);
+        for (k, p) in ["n1", "n2", "n3"].into_iter().enumerate() {
+            let t = i.token_for(p, "acct-a", NOW_S - 10);
+            assert_eq!(d.on_heartbeat(p, &hb(&t, NOW_MS), NOW_MS, k as u64 * 1000).0, Decision::Accept);
+        }
+        d.on_heartbeat("m1", &hb(&i.token_for("m1", "acct-b", NOW_S - 10), NOW_MS), NOW_MS, 5000);
+        // Whatever order the connections are listed in, the two registered
+        // longest keep the bonus; another account is counted on its own.
+        let scores = d.scores(["n3", "m1", "n2", "n1"], NOW_MS, 6000);
+        assert_eq!(scores, vec![("n3", 0.0), ("m1", 20.0), ("n2", 20.0), ("n1", 20.0)]);
+        // Counted over connected peers: one of the two leaves, the third moves up.
+        assert_eq!(d.scores(["n3", "n2"], NOW_MS, 6000), vec![("n3", 20.0), ("n2", 20.0)]);
+        // A routine renewal keeps a node's place in the queue...
+        let renewed = i.token_for("n1", "acct-a", NOW_S - 1);
+        assert_eq!(d.on_heartbeat("n1", &hb(&renewed, NOW_MS + 1), NOW_MS, 70_000).0, Decision::Accept);
+        assert_eq!(d.scores(["n1", "n2", "n3"], NOW_MS, 70_000), vec![("n1", 20.0), ("n2", 20.0), ("n3", 0.0)]);
+        // ...and losing its registration sends it to the back.
+        assert_eq!(d.on_heartbeat("n1", &hb("", NOW_MS + 2), NOW_MS, 71_000).0, Decision::Accept);
+        assert_eq!(d.on_heartbeat("n1", &hb(&renewed, NOW_MS + 3), NOW_MS, 140_000).0, Decision::Accept);
+        assert_eq!(d.scores(["n1", "n2", "n3"], NOW_MS, 140_000), vec![("n1", 0.0), ("n2", 20.0), ("n3", 20.0)]);
+    }
+
+    #[test]
+    fn attack_one_forgery_graylists_for_a_day() {
+        let i = issuer("");
+        let mut d = desk_with(&i);
+        // Even a source that was registered.
+        d.on_heartbeat(ME, &hb(&i.token(ME, NOW_S - 10), NOW_MS), NOW_MS, 0);
+        assert_eq!(score_of(&d, ME, &[ME], NOW_MS, 0), 20.0);
+        let forged = sign(&ed25519::Keypair::generate(), &header("k1"), &claims(ME, NOW_S));
+        let t0 = 70_000;
+        assert_eq!(d.on_heartbeat(ME, &hb(&forged, NOW_MS + 1), NOW_MS, t0).0, Decision::Reject);
+        let score = score_of(&d, ME, &[ME], NOW_MS, t0);
+        assert_eq!(score, FORGERY_PENALTY);
+        assert!(score < GRAYLIST, "one certain forgery is enough to graylist");
+        assert!(score_of(&d, ME, &[ME], NOW_MS, t0 + FORGERY_WINDOW_MS - 1) < GRAYLIST);
+        // A day later it no longer counts, and the registration it kept counts again.
+        assert_eq!(score_of(&d, ME, &[ME], NOW_MS, t0 + FORGERY_WINDOW_MS), 20.0);
+    }
+
+    #[test]
+    fn attack_forgeries_add_up_to_a_floor_within_a_sliding_day() {
+        let mut d = desk_with(&issuer(""));
+        let forged = sign(&ed25519::Keypair::generate(), &header("k1"), &claims(ME, NOW_S));
+        for k in 0..5u64 {
+            // One a minute, under the rate limit.
+            assert_eq!(d.on_heartbeat(ME, &hb(&forged, NOW_MS + k), NOW_MS, k * 60_000).0, Decision::Reject);
+            let expected = (-100.0 * (k + 1) as f64).max(FORGERY_FLOOR);
+            assert_eq!(score_of(&d, ME, &[ME], NOW_MS, k * 60_000), expected, "after {} forgeries", k + 1);
+        }
+        assert_eq!(FORGERY_FLOOR, -300.0);
+        assert_eq!(d.peer(ME).unwrap().forged, 5);
+        // The window slides: the last three were at minutes 2, 3 and 4.
+        let day = FORGERY_WINDOW_MS;
+        assert_eq!(score_of(&d, ME, &[ME], NOW_MS, 2 * 60_000 + day - 1), -300.0);
+        assert_eq!(score_of(&d, ME, &[ME], NOW_MS, 2 * 60_000 + day), -200.0);
+        assert_eq!(score_of(&d, ME, &[ME], NOW_MS, 3 * 60_000 + day), -100.0);
+        assert_eq!(score_of(&d, ME, &[ME], NOW_MS, 4 * 60_000 + day), 0.0);
+    }
+
+    #[test]
+    fn attack_what_cannot_be_decided_here_is_never_penalised() {
+        // R17: only a cryptographically certain forgery costs score. A key this
+        // node has not seen, keys it cannot fetch, an issuer it does not
+        // trust, a token from the future, or a malformed one: score 0, never
+        // graylisted, however often they come.
+        let i = issuer("");
+        let mut d = desk_with(&i);
+        let unknown_kid = sign(&i.kp, &header("k-rotated"), &claims("p-kid", NOW_S - 10));
+        let other_key_unknown_kid = sign(&ed25519::Keypair::generate(), &header("k-other"), &claims("p-kid2", NOW_S - 10));
+        let untrusted = sign(
+            &i.kp,
+            &header("k1"),
+            &format!(r#"{{"iss":"https://elsewhere.example","sub":"s","peer_id":"p-iss","iat":{},"exp":{}}}"#, NOW_S - 10, NOW_S + 3600),
+        );
+        let future = i.token("p-future", NOW_S + 3600);
+        let cases = [
+            ("p-kid", unknown_kid.as_str(), Decision::Ignore),
+            ("p-kid2", other_key_unknown_kid.as_str(), Decision::Ignore),
+            ("p-iss", untrusted.as_str(), Decision::Ignore),
+            ("p-future", future.as_str(), Decision::Ignore),
+            ("p-junk", "not.a.token", Decision::Reject),
+        ];
+        // No keys at all: the issuer's JWKS could not be fetched.
+        let mut keyless = HeartbeatDesk::new(default_trust_anchors(), KeyStore::default());
+        let (decision, fetch) = keyless.on_heartbeat("p-nokeys", &hb(&i.token("p-nokeys", NOW_S - 10), NOW_MS), NOW_MS, 0);
+        assert_eq!(decision, Decision::Ignore);
+        let job = fetch.expect("a fetch was asked for");
+        assert_eq!(keyless.on_fetched(&job, Err("connection refused".into()), NOW_S, 0), None);
+        for round in 0..2u64 {
+            let mono = round * 60_000;
+            for (peer, token, expected) in cases {
+                assert_eq!(d.on_heartbeat(peer, &hb(token, NOW_MS + round), NOW_MS, mono).0, expected, "{peer}");
+            }
+            let (decision, _) = keyless.on_heartbeat("p-nokeys", &hb(&i.token("p-nokeys", NOW_S - 10), NOW_MS + round), NOW_MS, 61_000 + mono);
+            assert_eq!(decision, Decision::Ignore, "still no keys");
+        }
+        let peers: Vec<&str> = cases.iter().map(|c| c.0).collect();
+        for (peer, score) in d.scores(peers.iter().copied(), NOW_MS, 120_000) {
+            assert_eq!(score, 0.0, "{peer}");
+        }
+        assert_eq!(score_of(&keyless, "p-nokeys", &["p-nokeys"], NOW_MS, 122_000), 0.0);
+        assert_eq!(d.stats().forged + keyless.stats().forged, 0);
+    }
+
+    #[test]
+    fn attack_forgers_are_not_forgotten_to_lift_their_penalty() {
+        // A flood of new identities fills the bookkeeping; the source that
+        // forged, heard from longest ago, must still be remembered.
+        let mut d = desk_with(&issuer(""));
+        let forged = sign(&ed25519::Keypair::generate(), &header("k1"), &claims(ME, NOW_S));
+        assert_eq!(d.on_heartbeat(ME, &hb(&forged, NOW_MS), NOW_MS, 0).0, Decision::Reject);
+        for k in 0..(MAX_TRACKED_SOURCES as u64 + 10) {
+            d.on_heartbeat(&format!("flood-{k}"), &hb("", NOW_MS + k), NOW_MS, 1000);
+        }
+        assert_eq!(d.peers.len(), MAX_TRACKED_SOURCES);
+        assert_eq!(score_of(&d, ME, &[ME], NOW_MS, 2000), FORGERY_PENALTY);
     }
 }

@@ -325,16 +325,20 @@ fn adv_9_forged_attestation_is_rejected_and_not_relayed() {
 
     let relay = spawn(&dir, "relay", vec![]);
     let far = spawn_with(&dir, "far", vec![addr(&relay)], Some(0));
-    let sender = RawSender::spawn_as(key, &addr(&relay), vec![(HEARTBEATS_TOPIC, heartbeat)]);
+    // The sender's path through the relay is proven before the forgery: one
+    // forgery graylists it at the relay, so nothing of its gets through after.
+    let sender = RawSender::spawn_gated(key, &addr(&relay), vec![(HEARTBEATS_TOPIC, heartbeat)], false);
     await_raw_control(&relay, &sender, 0);
     await_raw_control(&far, &sender, 0);
+    sender.start_noise();
     let deadline = Instant::now() + Duration::from_secs(20);
     while relay.heartbeat_stats().forged == 0 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(200));
     }
-    // A few more gossip rounds, so anything the relay forwarded would arrive.
+    // A few more gossip rounds, so anything the relay forwarded would arrive,
+    // and the relay's own path to the far node is still up.
     std::thread::sleep(Duration::from_secs(3));
-    await_raw_control(&far, &sender, sender.round());
+    await_control(&relay, &far, "adv-9-relay-still-forwards");
     drop(sender);
 
     let seen = relay.peer_attestation(&attacker).expect("the relay records the source");
@@ -349,6 +353,151 @@ fn adv_9_forged_attestation_is_rejected_and_not_relayed() {
     );
 }
 
+/// A node that trusts `anchors` (adversarial nodes otherwise run the defaults).
+fn spawn_trusting(dir: &tempfile::TempDir, name: &str, anchors: Vec<super::por::TrustAnchor>) -> Node {
+    let cfg = NetworkConfig { listen_port: 0, enabled: true, trust_anchors: anchors, ..Default::default() };
+    let mut node = Node::with_keypair_path(cfg, dir.path().join(format!("{name}.pem"))).expect("build node");
+    node.start().expect("start node");
+    node.subscribe(ANNOUNCEMENTS_TOPIC).expect("subscribe");
+    node
+}
+
+// ---------------------------------------------------------------------
+// ADV-10 — one certain forgery graylists the source (ADR-300 contract v2,
+// CEO 〔T-140〕 E7): its score drops below −80 and the relay drops
+// everything it sends afterwards, valid or not
+// ---------------------------------------------------------------------
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_10_a_forger_is_graylisted() {
+    use super::heartbeat::{encode_heartbeat, HEARTBEATS_TOPIC};
+    use super::por::tests::{claims, header, hb, JwksServer, jwks_json, sign};
+    use super::por::{Fetched, KeyStore, TrustAnchor, DEFAULT_ISSUER};
+    let dir = tempfile::tempdir().unwrap();
+    let issuer = libp2p::identity::ed25519::Keypair::generate();
+    let server = JwksServer::serve(jwks_json(&issuer, "k1", ""));
+    let anchors = vec![TrustAnchor { iss: DEFAULT_ISSUER.into(), jwks_url: server.url.clone() }];
+    // The relay already holds the issuer's keys (a primed on-disk cache), so
+    // the forgery is certain from the first heartbeat on.
+    let mut store = KeyStore::load(Some(dir.path().join("jwks-cache.json")), &anchors);
+    let job = store.request(&anchors[0], 0).expect("fetch job");
+    let body = jwks_json(&issuer, "k1", "").into_bytes();
+    store.finish(&job, Ok(Fetched { body, max_age_secs: None }), now_ms() / 1000, 0);
+    let relay = spawn_trusting(&dir, "relay", anchors);
+    let key = libp2p::identity::Keypair::generate_ed25519();
+    let attacker = key.public().to_peer_id().to_string();
+    let forged = sign(&libp2p::identity::ed25519::Keypair::generate(), &header("k1"), &claims(&attacker, now_ms() / 1000 - 60));
+    let sender = RawSender::spawn_gated(key, &addr(&relay), vec![(HEARTBEATS_TOPIC, encode_heartbeat(&hb(&forged, now_ms())))], false);
+    await_raw_control(&relay, &sender, 0);
+    sender.start_noise();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while relay.peer_score(&attacker).is_none_or(|s| s >= -80.0) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let score = relay.peer_score(&attacker);
+    assert!(
+        score.is_some_and(|s| s <= -100.0),
+        "one forgery: −100, below the graylist threshold (score {score:?}, stats {:?})",
+        relay.heartbeat_stats()
+    );
+    // Rounds sent from now on are all dropped, valid announcements included.
+    let from = sender.round() + 1;
+    std::thread::sleep(Duration::from_secs(4));
+    let to = sender.round();
+    drop(sender);
+    assert!(to >= from + 5, "the sender kept sending ({from}..{to})");
+    let through: Vec<u32> = (from..to).filter(|n| has(&relay, &id(&format!("raw-control-{n}")))).collect();
+    assert!(through.is_empty(), "a graylisted peer's messages must be dropped, got rounds {through:?}");
+    // The sender kept forging every round, and the rate limit would let a
+    // second forgery in within the minute: only being graylisted by the
+    // first one keeps the relay from ever reading another.
+    assert_eq!(relay.heartbeat_stats().forged, 1, "one forgery is enough");
+}
+
+// ---------------------------------------------------------------------
+// Scores are also recomputed on a timer, not only when a heartbeat arrives:
+// a graylisted peer's heartbeats are dropped unread, so only the timer can
+// lift its penalty once the forgery ages out. Seen here as a peer that
+// sends no heartbeat at all still getting a score.
+// ---------------------------------------------------------------------
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn scores_are_refreshed_without_heartbeats() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = NetworkConfig { listen_port: 0, enabled: true, ..Default::default() };
+    let mut relay = Node::with_keypair_path(cfg, dir.path().join("relay.pem"))
+        .expect("build node")
+        .with_score_refresh_interval(Duration::from_secs(1));
+    relay.start().expect("start node");
+    relay.subscribe(ANNOUNCEMENTS_TOPIC).expect("subscribe");
+    let sender = RawSender::spawn(&addr(&relay), vec![]);
+    await_raw_control(&relay, &sender, 0);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while relay.peer_score(&sender.peer_id).is_none() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(relay.peer_score(&sender.peer_id), Some(0.0), "scored by the timer (stats {:?})", relay.heartbeat_stats());
+    assert_eq!(relay.heartbeat_stats().applied, 0, "precondition: no heartbeat from anyone");
+}
+
+// ---------------------------------------------------------------------
+// ADV-11 — what this node cannot decide costs nothing (R17, CEO 〔T-140〕
+// E7): a key it has not seen and an issuer whose keys it cannot fetch are
+// ignored, never scored down, never graylisted
+// ---------------------------------------------------------------------
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_11_undecidable_attestations_are_never_penalised() {
+    use super::heartbeat::{encode_heartbeat, HEARTBEATS_TOPIC};
+    use super::por::tests::{claims, header, hb, JwksServer, jwks_json, sign};
+    use super::por::{TrustAnchor, DEFAULT_ISSUER, MAX_LIFETIME_SECS};
+    let dir = tempfile::tempdir().unwrap();
+    let issuer = libp2p::identity::ed25519::Keypair::generate();
+    let server = JwksServer::serve(jwks_json(&issuer, "k1", ""));
+    let dead_url = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://127.0.0.1:{}/.well-known/jwks.json", l.local_addr().unwrap().port())
+    };
+    let second = "https://second-issuer.example";
+    let relay = spawn_trusting(
+        &dir,
+        "relay",
+        vec![
+            TrustAnchor { iss: DEFAULT_ISSUER.into(), jwks_url: server.url.clone() },
+            TrustAnchor { iss: second.into(), jwks_url: dead_url },
+        ],
+    );
+    let iat = now_ms() / 1000 - 60;
+    // The trusted issuer's own key under a kid it has not published.
+    let k1 = libp2p::identity::Keypair::generate_ed25519();
+    let p1 = k1.public().to_peer_id().to_string();
+    let unknown_kid = sign(&issuer, &header("k-unpublished"), &claims(&p1, iat));
+    // A trusted issuer whose keys cannot be fetched.
+    let k2 = libp2p::identity::Keypair::generate_ed25519();
+    let p2 = k2.public().to_peer_id().to_string();
+    let payload = format!(r#"{{"iss":"{second}","sub":"s","peer_id":"{p2}","iat":{iat},"exp":{}}}"#, iat + MAX_LIFETIME_SECS);
+    let no_keys = sign(&issuer, &header("k1"), &payload);
+    let s1 = RawSender::spawn_as(k1, &addr(&relay), vec![(HEARTBEATS_TOPIC, encode_heartbeat(&hb(&unknown_kid, now_ms())))]);
+    let s2 = RawSender::spawn_as(k2, &addr(&relay), vec![(HEARTBEATS_TOPIC, encode_heartbeat(&hb(&no_keys, now_ms())))]);
+    // Two of each sender's heartbeats get past the rate limit in the first minute.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while relay.heartbeat_stats().unverifiable < 4 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(relay.heartbeat_stats().unverifiable >= 4, "precondition: both judged undecidable ({:?})", relay.heartbeat_stats());
+    assert!(server.hits.load(std::sync::atomic::Ordering::Relaxed) >= 1, "precondition: the unknown kid was looked up");
+    // Both still get through afterwards...
+    await_raw_control(&relay, &s1, s1.round());
+    await_raw_control(&relay, &s2, s2.round());
+    // ...and neither is scored down.
+    assert_eq!(relay.peer_score(&p1), Some(0.0));
+    assert_eq!(relay.peer_score(&p2), Some(0.0));
+    let stats = relay.heartbeat_stats();
+    assert_eq!((stats.forged, stats.malformed), (0, 0));
+    assert_eq!(relay.invalid_message_count(), 0, "ignored, not rejected");
+    drop((s1, s2));
+}
+
 /// A sender that is not a `Node`: plain libp2p GossipSub + Identify, as an old
 /// JSON-era node or a hostile one would be. `Node::publish` refuses topics with
 /// no validator, so this is the only way such traffic reaches a Rotifer node.
@@ -359,6 +508,7 @@ fn adv_9_forged_attestation_is_rejected_and_not_relayed() {
 struct RawSender {
     peer_id: String,
     round: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    noise_on: std::sync::Arc<std::sync::atomic::AtomicBool>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -370,6 +520,12 @@ impl RawSender {
 
     /// As [`RawSender::spawn`], with a given identity.
     fn spawn_as(key: libp2p::identity::Keypair, relay: &str, noise: Vec<(&'static str, Vec<u8>)>) -> Self {
+        Self::spawn_gated(key, relay, noise, true)
+    }
+
+    /// As [`RawSender::spawn_as`]; with `noise_on` false only the control
+    /// announcements go out until [`RawSender::start_noise`].
+    fn spawn_gated(key: libp2p::identity::Keypair, relay: &str, noise: Vec<(&'static str, Vec<u8>)>, noise_on: bool) -> Self {
         use libp2p::futures::StreamExt;
         use libp2p::{gossipsub, identify, swarm::NetworkBehaviour, Multiaddr};
         use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -385,7 +541,8 @@ impl RawSender {
         let peer_id = key.public().to_peer_id().to_string();
         let round = Arc::new(AtomicU32::new(0));
         let stop = Arc::new(AtomicBool::new(false));
-        let (round_t, stop_t) = (Arc::clone(&round), Arc::clone(&stop));
+        let noise_on = Arc::new(AtomicBool::new(noise_on));
+        let (round_t, stop_t, noise_t) = (Arc::clone(&round), Arc::clone(&stop), Arc::clone(&noise_on));
         let thread = std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("runtime");
             rt.block_on(async move {
@@ -420,7 +577,7 @@ impl RawSender {
                     tokio::select! {
                         _ = tick.tick() => {
                             let n = round_t.load(Ordering::Relaxed);
-                            for (t, data) in &noise {
+                            for (t, data) in noise.iter().filter(|_| noise_t.load(Ordering::Relaxed)) {
                                 let _ = swarm.behaviour_mut().gossipsub.publish(gossipsub::IdentTopic::new(*t), data.clone());
                             }
                             let control = encode_announcement(&announcement(&id(&format!("raw-control-{n}")), now_ms()));
@@ -432,11 +589,15 @@ impl RawSender {
                 }
             });
         });
-        Self { peer_id, round, stop, thread: Some(thread) }
+        Self { peer_id, round, noise_on, stop, thread: Some(thread) }
     }
 
     fn round(&self) -> u32 {
         self.round.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn start_noise(&self) {
+        self.noise_on.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

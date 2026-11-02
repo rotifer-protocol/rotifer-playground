@@ -2010,7 +2010,6 @@ mod tests {
         for topic in [
             "/rotifer/announcements",
             "/rotifer/announcements/text",
-            "/rotifer/p2p/1/heartbeats",
             "/rotifer/p2p/1/unregistered",
             "",
         ] {
@@ -2020,6 +2019,7 @@ mod tests {
             }
         }
         node.publish(ANNOUNCEMENTS_TOPIC, b"x").expect("the registered topic is allowed");
+        node.publish(HEARTBEATS_TOPIC, b"x").expect("the heartbeats topic is registered too (ADR-300)");
     }
 
     // -----------------------------------------------------------------

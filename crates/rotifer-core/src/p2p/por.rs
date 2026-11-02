@@ -730,8 +730,8 @@ impl HeartbeatDesk {
         let entry = self.entry(source, mono_ms);
         let iss = claims.as_ref().map(|c| c.iss.clone());
         let sub = claims.as_ref().map(|c| c.sub.clone());
-        // The quota goes by how long a peer has been registered, so a node
-        // cannot jump the queue by re-registering under the same account.
+        // The quota goes by how long a peer has been registered, so a
+        // routine token renewal does not cost a node its place.
         let still_valid = entry.status == AttestationStatus::Valid && entry.iss == iss && entry.sub == sub;
         entry.valid_since_ms = match status {
             AttestationStatus::Valid if still_valid => entry.valid_since_ms.or(Some(mono_ms)),
@@ -1523,14 +1523,13 @@ pub(crate) mod tests {
         assert_eq!(scores, vec![("n3", 0.0), ("m1", 20.0), ("n2", 20.0), ("n1", 20.0)]);
         // Counted over connected peers: one of the two leaves, the third moves up.
         assert_eq!(d.scores(["n3", "n2"], NOW_MS, 6000), vec![("n3", 20.0), ("n2", 20.0)]);
-        // Renewing its token does not move a node up the queue...
-        let renewed = i.token_for("n3", "acct-a", NOW_S - 1);
-        assert_eq!(d.on_heartbeat("n3", &hb(&renewed, NOW_MS + 1), NOW_MS, 70_000).0, Decision::Accept);
-        assert_eq!(score_of(&d, "n3", &["n1", "n2", "n3"], NOW_MS, 70_000), 0.0);
-        // ...and losing its registration sends a node to the back.
-        assert_eq!(d.on_heartbeat("n1", &hb("", NOW_MS + 1), NOW_MS, 70_000).0, Decision::Accept);
+        // A routine renewal keeps a node's place in the queue...
         let renewed = i.token_for("n1", "acct-a", NOW_S - 1);
-        assert_eq!(d.on_heartbeat("n1", &hb(&renewed, NOW_MS + 2), NOW_MS, 140_000).0, Decision::Accept);
+        assert_eq!(d.on_heartbeat("n1", &hb(&renewed, NOW_MS + 1), NOW_MS, 70_000).0, Decision::Accept);
+        assert_eq!(d.scores(["n1", "n2", "n3"], NOW_MS, 70_000), vec![("n1", 20.0), ("n2", 20.0), ("n3", 0.0)]);
+        // ...and losing its registration sends it to the back.
+        assert_eq!(d.on_heartbeat("n1", &hb("", NOW_MS + 2), NOW_MS, 71_000).0, Decision::Accept);
+        assert_eq!(d.on_heartbeat("n1", &hb(&renewed, NOW_MS + 3), NOW_MS, 140_000).0, Decision::Accept);
         assert_eq!(d.scores(["n1", "n2", "n3"], NOW_MS, 140_000), vec![("n1", 0.0), ("n2", 20.0), ("n3", 20.0)]);
     }
 

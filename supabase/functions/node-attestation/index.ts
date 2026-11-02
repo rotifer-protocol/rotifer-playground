@@ -5,8 +5,10 @@
  * Environment (secrets live only in the deployment environment, never in a
  * repository; ADR-300 locked contract v2 "claims"):
  *   SUPABASE_URL, SUPABASE_ANON_KEY       identify the caller (auth.getUser)
- *   SUPABASE_SERVICE_ROLE_KEY             execute the two PoR database functions,
- *                                         nothing else (store.ts)
+ *   POR_DB_URL                            Postgres connection logged in as
+ *                                         por_issuer (store.ts); that role can
+ *                                         execute the two PoR database functions
+ *                                         and nothing else. No service_role key.
  *   POR_SIGNING_KEY                       private OKP / Ed25519 JWK with kid; its
  *                                         public half must already be in the JWKS
  *   POR_PSEUDONYM_KEY                     K_pseudo, base64url, >= 32 bytes; a
@@ -19,9 +21,10 @@
  */
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import postgres from "npm:postgres@3.4.7";
 import { type Deps, errorResponse, handle, PorError } from "./handler.ts";
 import { fromB64url, importPseudonymKey, importSigningJwk } from "./por.ts";
-import { supabaseStore } from "./store.ts";
+import { issuerUser, postgresStore } from "./store.ts";
 
 function required(name: string): string {
   const v = Deno.env.get(name);
@@ -32,7 +35,8 @@ function required(name: string): string {
 async function configure(): Promise<Deps> {
   const url = required("SUPABASE_URL");
   const anonKey = required("SUPABASE_ANON_KEY");
-  const serviceKey = required("SUPABASE_SERVICE_ROLE_KEY");
+  const dbUrl = required("POR_DB_URL");
+  issuerUser(dbUrl);
   const aud = required("NODE_ATTESTATION_AUD");
   let jwk: JsonWebKey;
   try {
@@ -47,7 +51,10 @@ async function configure(): Promise<Deps> {
 
   const options = { auth: { persistSession: false, autoRefreshToken: false } };
   const auth = createClient(url, anonKey, options);
-  const service = createClient(url, serviceKey, options);
+  // One connection per instance is enough: each request is two short
+  // statements. prepare: false keeps it usable through the transaction-mode
+  // pooler; the database functions take only transaction-scoped locks.
+  const sql = postgres(dbUrl, { max: 1, prepare: false, idle_timeout: 20, connect_timeout: 10 });
   return {
     async authenticate(authorization) {
       const jwt = authorization?.match(/^Bearer (.+)$/)?.[1];
@@ -55,7 +62,7 @@ async function configure(): Promise<Deps> {
       const { data, error } = await auth.auth.getUser(jwt);
       return error || !data.user ? null : data.user.id;
     },
-    store: supabaseStore(service),
+    store: postgresStore((text, params) => sql.unsafe(text, params as never[])),
     signer,
     pseudonymKey,
     aud,

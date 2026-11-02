@@ -25,7 +25,11 @@ SELECT to_regclass('public.nodes') IS NOT NULL AS has_nodes \gset
 
 BEGIN;
 
-SELECT plan(71);
+SELECT plan(74);
+
+-- The edge function's role. postgres may switch to it only once granted;
+-- the grant is rolled back with everything else.
+GRANT por_issuer TO postgres;
 
 SELECT floor(extract(epoch FROM now()))::bigint AS now \gset
 SELECT :now + 604800 AS exp \gset
@@ -74,11 +78,11 @@ SELECT is(
 
 SELECT is(
   (SELECT count(*)::int
-     FROM unnest(ARRAY['anon', 'authenticated', 'service_role']) r,
+     FROM unnest(ARRAY['anon', 'authenticated', 'service_role', 'por_issuer']) r,
           unnest(ARRAY['nodes', 'node_attestation_issuances', 'node_attestation_challenges', 'node_attestation_revocations']) t,
           unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p
     WHERE has_table_privilege(r, 'public.' || t, p)),
-  0, 'S4: no client role and not service_role may write any of the four tables directly');
+  0, 'S4: no client role, not service_role and not por_issuer may write any of the four tables directly');
 
 SELECT is(
   (SELECT array_agg(t ORDER BY t)
@@ -98,9 +102,32 @@ SELECT is(
   0, 'S6: anon and authenticated cannot execute any PoR function');
 
 SELECT ok(
-  has_function_privilege('service_role', 'public.node_attestation_issue(uuid,text,bytea,bigint,text,text,bigint,bigint,text)', 'EXECUTE')
-  AND has_function_privilege('service_role', 'public.node_attestation_challenge(uuid,text)', 'EXECUTE'),
-  'S7: service_role (the edge function) can execute challenge and issue');
+  has_function_privilege('por_issuer', 'public.node_attestation_issue(uuid,text,bytea,bigint,text,text,bigint,bigint,text)', 'EXECUTE')
+  AND has_function_privilege('por_issuer', 'public.node_attestation_challenge(uuid,text)', 'EXECUTE'),
+  'S7: por_issuer (the edge function) can execute challenge and issue');
+
+SELECT is(
+  (SELECT count(*)::int
+     FROM unnest(ARRAY['node_attestation_challenge(uuid,text)',
+                       'node_attestation_issue(uuid,text,bytea,bigint,text,text,bigint,bigint,text)']) f
+    WHERE has_function_privilege('service_role', 'public.' || f, 'EXECUTE')),
+  0, 'S9: service_role cannot execute challenge or issue');
+
+SELECT is(
+  (SELECT count(*)::int FROM unnest(ARRAY['node_attestation_revoke(text,bigint,text)',
+                                          'node_attestation_revocations_for_jwks()',
+                                          'node_attestation_account_open(uuid)',
+                                          'node_attestation_issuances_append_only()']) f
+    WHERE has_function_privilege('por_issuer', 'public.' || f, 'EXECUTE'))
+  + (SELECT count(*)::int FROM unnest(ARRAY['nodes', 'node_attestation_issuances',
+                                            'node_attestation_challenges', 'node_attestation_revocations']) t
+    WHERE has_table_privilege('por_issuer', 'public.' || t, 'SELECT')),
+  0, 'S10: por_issuer can execute no other PoR function and read none of the four tables');
+
+SELECT is(
+  (SELECT rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls OR rolreplication OR rolinherit
+     FROM pg_roles WHERE rolname = 'por_issuer'),
+  false, 'S11: por_issuer is not superuser, cannot create roles or databases, does not bypass RLS, does not inherit');
 
 SELECT is(
   (SELECT count(*)::int FROM pg_constraint
@@ -109,7 +136,7 @@ SELECT is(
 
 -- ── Challenges ─────────────────────────────────────────────
 
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:A, :AUD) AS ch1 \gset
 RESET ROLE;
 
@@ -117,14 +144,14 @@ SELECT is(octet_length(decode((:'ch1'::jsonb) ->> 'nonce', 'hex')), 32, 'C1: the
 SELECT is(((:'ch1'::jsonb) ->> 'challenge_exp')::bigint, (:now + 300)::bigint, 'C2: the challenge is valid for 300 s');
 SELECT ((:'ch1'::jsonb) ->> 'nonce') AS n1, ((:'ch1'::jsonb) ->> 'challenge_exp') AS e1 \gset
 
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:A, :AUD) AS ch2 \gset
 RESET ROLE;
 SELECT isnt((:'ch2'::jsonb) ->> 'nonce', :'n1', 'C3: two challenges get different nonces');
 
 -- ── Issue, single-use nonce ────────────────────────────────
 
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT is(node_attestation_issue(:A, :AUD, decode(:'n1', 'hex'), :e1, :P1, :SUBA, :now, :exp, 'k1'),
   '{"ok": true}'::jsonb, 'I1: A redeems a fresh challenge for P1');
 SELECT is(node_attestation_issue(:A, :AUD, decode(:'n1', 'hex'), :e1, :P1, :SUBA, :now, :exp, 'k1'),
@@ -140,7 +167,7 @@ SELECT results_eq(
 
 -- Another account, another aud, another deadline: refused, and A's nonce stays usable.
 SELECT ((:'ch2'::jsonb) ->> 'nonce') AS n2, ((:'ch2'::jsonb) ->> 'challenge_exp') AS e2 \gset
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT is(node_attestation_issue(:B, :AUD, decode(:'n2', 'hex'), :e2, :P2, :SUBB, :now, :exp, 'k1'),
   '{"error": "POR_CHALLENGE_INVALID"}'::jsonb, 'N3: B cannot redeem a challenge issued to A');
 SELECT is(node_attestation_issue(:A, 'https://shadow.example/functions/v1/node-attestation', decode(:'n2', 'hex'), :e2, :P2, :SUBA, :now, :exp, 'k1'),
@@ -156,7 +183,7 @@ RESET ROLE;
 -- An expired challenge: refused and consumed.
 INSERT INTO node_attestation_challenges (nonce, user_id, aud, challenge_exp)
 VALUES (decode(repeat('01', 32), 'hex'), :A, :AUD, :now - 1);
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT is(node_attestation_issue(:A, :AUD, decode(repeat('01', 32), 'hex'), :now - 1, :P3, :SUBA, :now, :exp, 'k1'),
   '{"error": "POR_CHALLENGE_EXPIRED"}'::jsonb, 'N8: an expired challenge is refused');
 RESET ROLE;
@@ -164,7 +191,7 @@ SELECT isnt((SELECT consumed_at FROM node_attestation_challenges WHERE nonce = d
   'N9: ... and consumed, so it cannot be tried again');
 
 -- Bad times are a caller bug, raised.
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:A, :AUD) AS ch \gset
 SELECT throws_ok(
   format($$ SELECT node_attestation_issue(%L, %L, decode(%L, 'hex'), %s, %L, %L, %s, %s, 'k1') $$,
@@ -179,7 +206,7 @@ RESET ROLE;
 -- ── Per-account limit (D5): 3 distinct PeerIds ─────────────
 -- Each issue below takes a fresh challenge first (:c).
 
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:A, :AUD) AS c \gset
 SELECT is(node_attestation_issue(:A, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :P3, :SUBA, :now, :exp, 'k1'),
   '{"ok": true}'::jsonb, 'Q1: A''s third PeerId (P3) is issued');
@@ -190,7 +217,7 @@ RESET ROLE;
 SELECT is((SELECT count(*)::int FROM node_attestation_issuances WHERE peer_id = :P4)
         + (SELECT count(*)::int FROM nodes WHERE peer_id = :P4), 0, 'Q3: the refusal recorded nothing for P4');
 
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:A, :AUD) AS c \gset
 SELECT is(node_attestation_issue(:A, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :P2, :SUBA, :now, :exp, 'k2'),
   '{"ok": true}'::jsonb, 'Q4: renewing P2 at the limit is allowed: the same PeerId takes no extra slot');
@@ -200,7 +227,7 @@ SELECT is((SELECT cert_kid FROM nodes WHERE peer_id = :P2), 'k2', 'Q6: nodes poi
 
 -- Deleting the nodes row frees nothing: the certificate still works on the network.
 DELETE FROM nodes WHERE peer_id = :P3;
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:A, :AUD) AS c \gset
 SELECT is(node_attestation_issue(:A, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :P4, :SUBA, :now, :exp, 'k1'),
   '{"error": "POR_QUOTA_EXCEEDED"}'::jsonb, 'Q7 (P0): deleting a nodes row does not free a slot');
@@ -217,6 +244,7 @@ SELECT throws_ok($$ TRUNCATE node_attestation_issuances $$,
 -- A revoked certificate stops counting.
 SET LOCAL ROLE service_role;
 SELECT node_attestation_revoke(:P3, NULL, 'test: node replaced its identity.key');
+SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:A, :AUD) AS c \gset
 SELECT is(node_attestation_issue(:A, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :P4, :SUBA, :now, :exp, 'k1'),
   '{"ok": true}'::jsonb, 'Q11: after P3 is revoked, A gets P4');
@@ -233,7 +261,7 @@ INSERT INTO node_attestation_issuances (peer_id, user_id, iat, exp, kid) VALUES
   (:P5, :B, :now - 604800 - 100, :now - 100, 'k0'),
   (:P6, :B, :now - 604800 - 61, :now - 61, 'k0'),
   (:P7, :B, :now - 604800 - 60, :now - 60, 'k0');
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:B, :AUD) AS c \gset
 SELECT is(node_attestation_issue(:B, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :P8, :SUBB, :now, :exp, 'k1'),
   '{"ok": true}'::jsonb, 'Q13: B (live: P7) gets P8');
@@ -256,7 +284,7 @@ INSERT INTO node_attestation_issuances (peer_id, user_id, iat, exp, kid) VALUES
   (:P9, :A, :now - 100, :now - 100 + 604800, 'k1'),
   (:P10, :A, :now - 604800 - 61, :now - 61, 'k0');
 
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:E, :AUD) AS c \gset
 SELECT is(node_attestation_issue(:E, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :P1, :SUBE, :now, :exp, 'k1'),
   '{"error": "POR_PEER_BOUND_ELSEWHERE"}'::jsonb, 'R1 (P0): E cannot take P1 while A''s certificate for it is live');
@@ -264,11 +292,13 @@ RESET ROLE;
 SELECT is((SELECT user_id FROM nodes WHERE peer_id = :P1), :A::uuid, 'R2: P1 is still A''s');
 SELECT is((SELECT count(*)::int FROM node_attestation_issuances WHERE peer_id = :P1 AND user_id = :E), 0, 'R3: nothing recorded for E');
 
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:E, :AUD) AS c \gset
 SELECT is(node_attestation_issue(:E, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :P9, :SUBE, :now, :exp, 'k1'),
   '{"error": "POR_PEER_BOUND_ELSEWHERE"}'::jsonb, 'R4: E cannot take P9 either');
+SET LOCAL ROLE service_role;
 SELECT node_attestation_revoke(:P9, :now - 50, 'test: A''s node key leaked');
+SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:E, :AUD) AS c \gset
 SELECT is(node_attestation_issue(:E, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :P9, :SUBE, :now, :exp, 'k1'),
   '{"ok": true}'::jsonb, 'R5: once A''s certificate for P9 is revoked, E can take P9');
@@ -283,26 +313,26 @@ SELECT results_eq(
 
 -- ── Closed, banned and deleted accounts ───────────────────
 
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:C, :AUD) AS cc \gset
 RESET ROLE;
 UPDATE profiles SET closed_at = now() WHERE id = :C;
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT is(node_attestation_issue(:C, :AUD, decode((:'cc'::jsonb) ->> 'nonce', 'hex'), ((:'cc'::jsonb) ->> 'challenge_exp')::bigint, :PC, :SUBA, :now, :exp, 'k1'),
   '{"error": "POR_ACCOUNT_CLOSED"}'::jsonb, 'A1: an account closed after taking its challenge is refused at redemption');
 SELECT is(node_attestation_challenge(:C, :AUD), '{"error": "POR_ACCOUNT_CLOSED"}'::jsonb, 'A2: a closed account gets no challenge');
 RESET ROLE;
 
 UPDATE auth.users SET banned_until = now() + interval '1 day' WHERE id = :D;
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT is(node_attestation_challenge(:D, :AUD), '{"error": "POR_ACCOUNT_CLOSED"}'::jsonb, 'A3: a banned account gets no challenge');
 RESET ROLE;
 UPDATE auth.users SET banned_until = now() - interval '1 second', deleted_at = now() WHERE id = :D;
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT is(node_attestation_challenge(:D, :AUD), '{"error": "POR_ACCOUNT_CLOSED"}'::jsonb, 'A4: a soft-deleted account gets no challenge');
 RESET ROLE;
 UPDATE auth.users SET deleted_at = NULL WHERE id = :D;
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT ok(node_attestation_challenge(:D, :AUD) ? 'nonce', 'A5: a ban that has run out no longer blocks');
 
 -- ── Open challenges per account: at most 5 ─────────────────
@@ -316,7 +346,7 @@ SELECT is(node_attestation_challenge(:E, :AUD), '{"error": "POR_TOO_MANY_CHALLEN
 RESET ROLE;
 UPDATE node_attestation_challenges SET challenge_exp = :now - 1
  WHERE nonce = (SELECT nonce FROM node_attestation_challenges WHERE user_id = :E LIMIT 1);
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE por_issuer;
 SELECT ok(node_attestation_challenge(:E, :AUD) ? 'nonce', 'CH3: an expired challenge is cleared and frees its place');
 RESET ROLE;
 

@@ -11,7 +11,11 @@
  *
  * Two throwaway accounts are created through the auth admin API and signed
  * in with a password, so the function sees real session tokens; they are
- * deleted at the end. The script makes a throwaway signing key, pseudonym
+ * deleted at the end. The function reaches the database as por_issuer: the
+ * script gives that role a throwaway password (sent to psql on stdin) for the
+ * run and takes the login away again at the end. From inside the edge
+ * runtime the database is the stack's container, supabase_db_<project_id>
+ * (from supabase/config.toml in SUPABASE_WORKDIR); POR_DB_HOST overrides it. The script makes a throwaway signing key, pseudonym
  * key and node keys in memory and starts `supabase functions serve node-attestation` itself,
  * handing the two server secrets over a pipe (--env-file /dev/stdin), so no
  * key is ever written to disk. It stops the server at the end.
@@ -51,6 +55,16 @@ let failures = 0;
 function check(ok: boolean, what: string, detail = ""): void {
   console.log(`${ok ? "ok" : "FAIL"} - ${what}${ok || !detail ? "" : `: ${detail}`}`);
   if (!ok) failures++;
+}
+
+/** For SQL that carries a secret: sent on stdin, so it never appears in a process list. */
+async function psqlStdin(sql: string): Promise<void> {
+  const p = new Deno.Command("psql", { args: [DB_URL, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", "-"], stdin: "piped", stdout: "null", stderr: "piped" }).spawn();
+  const w = p.stdin.getWriter();
+  await w.write(enc.encode(sql));
+  await w.close();
+  const out = await p.output();
+  if (!out.success) throw new Error(new TextDecoder().decode(out.stderr));
 }
 
 async function psql(sql: string): Promise<string> {
@@ -128,6 +142,17 @@ const { jwks } = buildJwks([{ kty: "OKP", crv: "Ed25519", x: pubJwk.x, kid }], [
 const pseudoRaw = crypto.getRandomValues(new Uint8Array(32));
 const pseudoKey = await importPseudonymKey(pseudoRaw);
 
+// ── the function's database login, for this run only ──────
+const issuerPassword = Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, "0")).join("");
+let dbHost = Deno.env.get("POR_DB_HOST");
+if (!dbHost) {
+  const toml = await Deno.readTextFile(`${WORKDIR ?? "."}/supabase/config.toml`);
+  const id = toml.match(/^project_id\s*=\s*"([^"]+)"/m)?.[1];
+  if (!id) throw new Error("no project_id in supabase/config.toml; set POR_DB_HOST");
+  dbHost = `supabase_db_${id}:5432`;
+}
+await psqlStdin(`ALTER ROLE por_issuer LOGIN PASSWORD '${issuerPassword}';`);
+
 // ── server ─────────────────────────────────────────────────
 const serveArgs = ["functions", "serve", "node-attestation", "--env-file", "/dev/stdin"];
 if (WORKDIR) serveArgs.push("--workdir", WORKDIR);
@@ -136,7 +161,8 @@ const server = new Deno.Command("supabase", { args: serveArgs, stdin: "piped", s
   const w = server.stdin.getWriter();
   // dotenv: single-quoted values are taken literally.
   await w.write(enc.encode(
-    `POR_SIGNING_KEY='${JSON.stringify(privJwk)}'\nPOR_PSEUDONYM_KEY=${b64url(pseudoRaw)}\nNODE_ATTESTATION_AUD=${AUD}\n`,
+    `POR_SIGNING_KEY='${JSON.stringify(privJwk)}'\nPOR_PSEUDONYM_KEY=${b64url(pseudoRaw)}\nNODE_ATTESTATION_AUD=${AUD}\n` +
+      `POR_DB_URL=postgresql://por_issuer:${issuerPassword}@${dbHost}/postgres\n`,
   ));
   await w.close();
 }
@@ -215,7 +241,25 @@ try {
   const anon = await call("challenge", null, {});
   check(anon.status === 401, "no token: 401", `${anon.status}`);
 
-  // 7. what the database holds
+  // 7. a signed-in account cannot reach the database functions directly
+  //    (that would skip the signature check), through the REST API either
+  const before = await psql(`SELECT count(*) FROM node_attestation_issuances`);
+  const rpc = async (fn: string, args: unknown) =>
+    (await fetch(`${BASE}/rest/v1/rpc/${fn}`, {
+      method: "POST",
+      headers: { apikey: ANON!, Authorization: `Bearer ${jwt2}`, "content-type": "application/json" },
+      body: JSON.stringify(args),
+    })).status;
+  const direct = await rpc("node_attestation_issue", {
+    p_user_id: U2, p_aud: AUD, p_nonce: "\\x" + "00".repeat(32), p_challenge_exp: 1, p_peer_id: n4.peerId,
+    p_sub: "a".repeat(43), p_iat: 1, p_exp: 604801, p_kid: kid,
+  });
+  check(direct === 401 || direct === 403 || direct === 404, "a signed-in account cannot call node_attestation_issue over REST", `${direct}`);
+  const directCh = await rpc("node_attestation_challenge", { p_user_id: U2, p_aud: AUD });
+  check(directCh === 401 || directCh === 403 || directCh === 404, "a signed-in account cannot call node_attestation_challenge over REST", `${directCh}`);
+  check(await psql(`SELECT count(*) FROM node_attestation_issuances`) === before, "nothing recorded by the direct calls");
+
+  // 8. what the database holds
   check(await psql(`SELECT count(*) FROM nodes WHERE user_id = '${U1}'`) === "3", "nodes: 3 rows for U1");
   check(await psql(`SELECT count(*) FROM node_attestation_issuances WHERE user_id = '${U1}'`) === "4", "issuance log: 3 certificates + 1 renewal");
   check(await psql(`SELECT count(*) FROM node_attestation_issuances WHERE peer_id = '${n4.peerId}'`) === "0", "nothing recorded for the refused 4th PeerId");
@@ -223,6 +267,7 @@ try {
 } finally {
   try {
     await cleanup();
+    await psql("ALTER ROLE por_issuer NOLOGIN PASSWORD NULL");
   } finally {
     server.kill("SIGTERM");
     await server.status;

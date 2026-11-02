@@ -19,8 +19,9 @@
 --   node_attestation_revocations  the database side of the JWKS rotifer_revoked
 --                                 list; a revoked certificate stops counting.
 --
--- Writes go only through the SECURITY DEFINER functions below, which only
--- service_role may execute: the edge function verifies the node's signature
+-- Writes go only through the SECURITY DEFINER functions below. The two that
+-- issue may be executed only by por_issuer, a role made for the edge function
+-- and able to do nothing else: the function verifies the node's signature
 -- first, then records. anon and authenticated cannot write anything here —
 -- were the record step open to them, a caller could skip the signature check
 -- and claim another node's PeerId, and the rebinding rule would then lock the
@@ -95,10 +96,26 @@ ALTER TABLE node_attestation_issuances ENABLE ROW LEVEL SECURITY;
 ALTER TABLE node_attestation_challenges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE node_attestation_revocations ENABLE ROW LEVEL SECURITY;
 
+-- ── The issuing role ──────────────────────────────────────
+-- The edge function connects as por_issuer. It may execute
+-- node_attestation_challenge and node_attestation_issue and nothing else: no
+-- table privilege, no other function. It is not service_role, which bypasses
+-- RLS and can do anything through the API, so the function holds no key that
+-- could. The migration creates it without LOGIN; the deployment gives it a
+-- password and the function a connection string (README in this directory).
+-- Roles belong to the cluster, not the database, so create it only once.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'por_issuer') THEN
+    CREATE ROLE por_issuer NOLOGIN NOINHERIT;
+  END IF;
+END
+$$;
+
 -- Supabase's default privileges grant every new table to anon, authenticated
 -- and service_role; take them all back, then give back the one read.
 REVOKE ALL ON nodes, node_attestation_issuances, node_attestation_challenges, node_attestation_revocations
-  FROM PUBLIC, anon, authenticated, service_role;
+  FROM PUBLIC, anon, authenticated, service_role, por_issuer;
 GRANT SELECT ON nodes TO authenticated;
 
 CREATE POLICY "Owners read their own nodes" ON nodes
@@ -184,8 +201,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION node_attestation_challenge(UUID, TEXT) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION node_attestation_challenge(UUID, TEXT) TO service_role;
+REVOKE ALL ON FUNCTION node_attestation_challenge(UUID, TEXT) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION node_attestation_challenge(UUID, TEXT) TO por_issuer;
 
 -- ── node_attestation_issue ────────────────────────────────
 -- Step 3, after the edge function has derived the PeerId from the public key
@@ -285,9 +302,9 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION node_attestation_issue(UUID, TEXT, BYTEA, BIGINT, TEXT, TEXT, BIGINT, BIGINT, TEXT)
-  FROM PUBLIC, anon, authenticated;
+  FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION node_attestation_issue(UUID, TEXT, BYTEA, BIGINT, TEXT, TEXT, BIGINT, BIGINT, TEXT)
-  TO service_role;
+  TO por_issuer;
 
 -- ── Revocation ────────────────────────────────────────────
 -- For a banned account, a leaked identity.key, or a node that replaced its

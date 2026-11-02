@@ -1631,8 +1631,19 @@ mod tests {
     #[test]
     #[cfg_attr(not(feature = "p2p-integration"), ignore = "two-node integration: gossipsub publisher authentication over loopback — enable the p2p-integration feature or run with --ignored")]
     fn two_nodes_gossip_authenticates_publisher() {
-        const TOPIC: &str = "/rotifer/announcements";
-        let payload = b"gene-announcement-xyz";
+        use super::super::messages::{ANNOUNCEMENTS_TOPIC as TOPIC, encode_announcement};
+        // A valid wire-v1 announcement on the real topic: only a validated
+        // topic's messages are surfaced and forwarded (ADR-340 D3 / D6).
+        let encoded = encode_announcement(&super::super::GeneAnnouncement {
+            gene_id: format!("v2:{}", "ab".repeat(32)),
+            name: "gossip-auth".into(),
+            domain: "test".into(),
+            fidelity: "Wrapped".into(),
+            ir_spec: String::new(),
+            version: "1.0.0".into(),
+            timestamp_ms: wall_clock_ms(),
+        });
+        let payload = encoded.as_slice();
 
         let a_id = std::env::temp_dir().join("rotifer-gossip-a.pem");
         let b_id = std::env::temp_dir().join("rotifer-gossip-b.pem");

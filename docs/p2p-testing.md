@@ -10,7 +10,7 @@ Inventory as of v0.27.0 (wire format v1):
 | Tier | Count | Ignored by default? | Runnable today? |
 |---|---|---|---|
 | Unit tests (whole crate) | 405 | no | yes — plain `cargo test` |
-| Multi-node integration | 14 (7 of them adversarial) | yes (feature-gated) | yes — see below |
+| Multi-node integration | 15 (8 of them adversarial) | yes (feature-gated) | yes — see below |
 | Spec scaffolds | 2 | yes (unconditional) | **no — they fail by design** |
 
 Among the unit tests, the frozen wire format is pinned by `messages::tests`:
@@ -63,6 +63,7 @@ delivered" means *rejected*, not *lost*:
 | `adv_5_malformed_payload_is_dropped` | garbage and pre-v1 JSON payloads | neither crashes nor surfaces |
 | `adv_6_single_identity_flood_is_rate_limited` | 100-message burst | capped by the per-peer limit |
 | `adv_7_invalid_announcement_is_not_relayed` | attacker → relay → far node | stops at the relay (validated before forwarding) |
+| `adv_8_unregistered_topic_is_not_relayed_nor_penalized` | messages on topics with no validator (the legacy `/rotifer/announcements` and an unknown `/rotifer/p2p/1/…`), sender → relay → far node | ignored at the relay: not delivered, not forwarded, sender not penalized |
 
 `adv_7` forces the relay to be the only path — neither end accepts inbound
 connections — and asserts that precondition. Without it the far node peers

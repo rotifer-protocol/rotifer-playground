@@ -235,15 +235,19 @@ fn adv_7_invalid_announcement_is_not_relayed() {
 }
 
 // ---------------------------------------------------------------------
-// ADV-8 — a topic no validator is registered for: ignored, so neither
-// relayed nor held against the sender (ADR-340 D3: Ignore = "do not
-// accept, do not penalize"; RFC §6.4: validate before forwarding)
+// ADV-8 — topics no validator is registered for, including the pre-freeze
+// JSON topic: ignored, so neither delivered, relayed, nor held against the
+// sender (ADR-340 D3: Ignore = "do not accept, do not penalize"; D6: the old
+// topic is neither read nor written; RFC §6.4: validate before forwarding)
 // ---------------------------------------------------------------------
 #[test]
 #[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
 fn adv_8_unregistered_topic_is_not_relayed_nor_penalized() {
-    // Versioned like a real topic, but nothing registers a validator for it.
+    // The topic npm 0.9.0–0.26.x nodes publish JSON on (ADR-340 D6), and a
+    // versioned topic that simply has no validator yet.
+    const LEGACY: &str = "/rotifer/announcements";
     const UNREGISTERED: &str = "/rotifer/p2p/1/unregistered";
+    let legacy_json = br#"{"gene_id":"legacy-dir-name","name":"legacy","domain":"test","fidelity":"Native"}"#;
     let dir = tempfile::tempdir().unwrap();
     // Same shape as ADV-7: the relay is the only path from sender to far node.
     let relay = spawn(&dir, "relay", vec![]);
@@ -251,6 +255,7 @@ fn adv_8_unregistered_topic_is_not_relayed_nor_penalized() {
     let sender = spawn_with(&dir, "sender", vec![addr(&relay)], Some(0));
     // Everyone subscribes, so a relay that accepted these would forward them.
     for node in [&relay, &far, &sender] {
+        node.subscribe(LEGACY).expect("subscribe");
         node.subscribe(UNREGISTERED).expect("subscribe");
     }
     await_control(&sender, &relay, "control-relay");
@@ -260,19 +265,26 @@ fn adv_8_unregistered_topic_is_not_relayed_nor_penalized() {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut sent = 0u32;
     while Instant::now() < deadline {
+        sender.publish(LEGACY, legacy_json).expect("publish");
         sender.publish(UNREGISTERED, format!("unvalidated-{sent}").as_bytes()).expect("publish");
         sent += 1;
-        std::thread::sleep(Duration::from_millis(300));
+        std::thread::sleep(Duration::from_millis(400));
     }
     // Not penalized: the same sender's valid traffic still goes through the relay.
     await_control(&sender, &far, "probe-after-unregistered");
 
+    for topic in [LEGACY, UNREGISTERED] {
+        assert!(
+            !far.received_messages().iter().any(|m| m.topic == topic),
+            "the relay must not forward a message on {topic}"
+        );
+        assert!(
+            !relay.received_messages().iter().any(|m| m.topic == topic),
+            "the relay must not deliver a message on {topic}"
+        );
+    }
+    assert_eq!(far.unregistered_topic_count(), 0, "nothing on an unregistered topic reaches the far node");
     assert!(relay.unregistered_topic_count() > 0, "the relay received them and ignored them");
-    assert_eq!(far.unregistered_topic_count(), 0, "the relay must not forward a message on an unregistered topic");
-    assert!(
-        !far.received_messages().iter().any(|m| m.topic == UNREGISTERED),
-        "nothing on an unregistered topic is surfaced"
-    );
     assert_eq!(relay.invalid_message_count(), 0, "ignored, not rejected: the sender is not penalized");
     assert_eq!(relay.rate_limited_count(), 0, "precondition: nothing was dropped by the flood limit instead");
     assert!(

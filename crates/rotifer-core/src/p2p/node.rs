@@ -28,6 +28,9 @@ use libp2p::identify;
 use libp2p::memory_connection_limits;
 use libp2p::identity::Keypair;
 use libp2p::kad::{self, store::MemoryStore};
+use libp2p::mdns;
+use libp2p::swarm::behaviour::toggle::Toggle;
+use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
 use libp2p::{Multiaddr, PeerId as Libp2pPeerId, Swarm};
 use tokio::sync::{mpsc, oneshot};
@@ -92,6 +95,18 @@ const MAX_ESTABLISHED_OUTGOING: u32 = 256;
 /// Deny new connections once process memory exceeds this fraction of system RAM.
 const MAX_MEMORY_PERCENTAGE: f64 = 0.9;
 
+/// mDNS query interval and record TTL (P2P RFC §5.1.1). libp2p's defaults are
+/// 5 min / 6 min; the RFC's shorter values let a LAN peer that joins late be
+/// found within one interval and a departed one be forgotten within two.
+const MDNS_QUERY_INTERVAL: Duration = Duration::from_secs(30);
+const MDNS_TTL: Duration = Duration::from_secs(120);
+
+/// Upper bound on peers tracked as mDNS-discovered. mDNS is unauthenticated
+/// (RFC §5.1.2): anyone on the LAN can answer with as many PeerIds as it likes,
+/// so the bookkeeping is capped. Dials are separately capped by the
+/// pending-outgoing connection limit.
+const MAX_MDNS_PEERS: usize = 256;
+
 /// Upper bound on buffered inbound GossipSub messages. Each sender is
 /// rate-limited, but many identities together are not (Sybil), so the buffer
 /// itself must be bounded or it grows without limit; the oldest drop first.
@@ -142,11 +157,45 @@ struct NodeBehaviour {
     connection_limits: connection_limits::Behaviour,
     /// Denies new connections under memory pressure (process RSS vs system RAM).
     memory_connection_limits: memory_connection_limits::Behaviour,
+    /// LAN discovery (P2P RFC §5.1). Disabled unless the node listens on a
+    /// non-loopback interface — see [`mdns_should_run`].
+    mdns: Toggle<mdns::tokio::Behaviour>,
+}
+
+/// Whether mDNS should run for a node listening on `host`.
+///
+/// libp2p-mdns rewrites every advertised address to the source IP of the
+/// mDNS packet that carried it, so a node bound to loopback would be announced
+/// at its LAN address, where nothing listens. Running mDNS there would only
+/// broadcast the node's PeerId to the LAN (RFC §8.7) without making it
+/// reachable — so a loopback-only node (the default) never runs it.
+fn mdns_should_run(enabled: bool, host: &str) -> bool {
+    enabled
+        && host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| !ip.is_loopback())
+            .unwrap_or(false)
+}
+
+/// mDNS settings (P2P RFC §5.1.1). The service name is libp2p's fixed
+/// `_p2p._udp.local`, not the RFC's `_rotifer._udp.local`: libp2p-mdns does not
+/// make it configurable. Non-Rotifer libp2p nodes on the LAN therefore answer
+/// too; they are dropped after Identify (see the `Identify` arm of the event
+/// loop), so they never enter the routing table or the peer store.
+fn mdns_config() -> mdns::Config {
+    mdns::Config {
+        ttl: MDNS_TTL,
+        query_interval: MDNS_QUERY_INTERVAL,
+        enable_ipv6: false,
+    }
 }
 
 /// Peers the node has discovered (present in the Kademlia routing table),
 /// shared between the synchronous API and the event loop.
 type DiscoveredPeers = Arc<Mutex<HashSet<String>>>;
+
+/// Peers currently announced over mDNS, each with its unexpired addresses.
+type MdnsPeers = Arc<Mutex<HashMap<String, HashSet<String>>>>;
 
 /// A GossipSub message received by the node, carrying its authenticated
 /// publisher. With `MessageAuthenticity::Signed`, `source` is bound to the
@@ -181,6 +230,14 @@ struct NodeShared {
     unregistered: Arc<Mutex<u64>>,
     /// Count of inbound connections denied by the connection limits (ADR-304).
     rejected: Arc<Mutex<u64>>,
+    /// Peers currently announced over mDNS (RFC §5.1).
+    mdns_peers: MdnsPeers,
+    /// Whether mDNS actually started (false when disabled, loopback-only, or
+    /// the mDNS socket could not be created).
+    mdns_active: Arc<Mutex<bool>>,
+    /// Count of peers disconnected because Identify showed they are not
+    /// Rotifer nodes.
+    foreign: Arc<Mutex<u64>>,
 }
 
 /// Fixed listen ports currently bound by live nodes in this process. libp2p's
@@ -221,6 +278,12 @@ pub struct Node {
     unregistered: Arc<Mutex<u64>>,
     /// Count of inbound connections denied by the connection limits (ADR-304).
     rejected: Arc<Mutex<u64>>,
+    /// Peers currently announced over mDNS (RFC §5.1).
+    mdns_peers: MdnsPeers,
+    /// Whether mDNS is running (set on `start`).
+    mdns_active: Arc<Mutex<bool>>,
+    /// Count of peers dropped after Identify showed a non-Rotifer protocol.
+    foreign: Arc<Mutex<u64>>,
     /// Override for `max_established_incoming` (tests / future config). `None`
     /// uses the conservative `MAX_ESTABLISHED_INCOMING` default (ADR-304).
     max_established_incoming: Option<u32>,
@@ -297,6 +360,9 @@ impl Node {
             invalid: Arc::new(Mutex::new(0)),
             unregistered: Arc::new(Mutex::new(0)),
             rejected: Arc::new(Mutex::new(0)),
+            mdns_peers: Arc::new(Mutex::new(HashMap::new())),
+            mdns_active: Arc::new(Mutex::new(false)),
+            foreign: Arc::new(Mutex::new(0)),
             max_established_incoming: None,
             runtime: None,
             cmd_tx: None,
@@ -348,6 +414,29 @@ impl Node {
     /// (ADR-304). Non-zero means the node shed load under its connection cap.
     pub fn rejected_connections(&self) -> u64 {
         self.rejected.lock().map(|n| *n).unwrap_or(0)
+    }
+
+    /// Whether mDNS is running (`NetworkConfig::mdns_enabled` asks for it).
+    /// False before `start`, when disabled, when the
+    /// node listens on loopback only, or if the mDNS socket could not be opened.
+    pub fn mdns_active(&self) -> bool {
+        self.mdns_active.lock().map(|a| *a).unwrap_or(false)
+    }
+
+    /// Peers currently announced on the LAN over mDNS (`PeerId` strings).
+    /// mDNS is unauthenticated: an entry only means something answered with
+    /// that PeerId; [`Node::identified_peers`] is the authenticated view.
+    pub fn mdns_peers(&self) -> Vec<String> {
+        self.mdns_peers
+            .lock()
+            .map(|peers| peers.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Count of peers disconnected because Identify showed they are not
+    /// Rotifer nodes (protocol version other than `/rotifer/p2p/1`).
+    pub fn foreign_peers_dropped(&self) -> u64 {
+        self.foreign.lock().map(|n| *n).unwrap_or(0)
     }
 
     /// Subscribe to a GossipSub topic. Requires the node to be started.
@@ -490,7 +579,10 @@ impl Node {
         let host = self.config.listen_host.clone();
         let port = self.config.listen_port;
         let bootstrap = self.config.bootstrap_peers.clone();
-        let max_established_incoming = self.max_established_incoming;
+        let limits = SwarmOptions {
+            max_established_incoming: self.max_established_incoming,
+            mdns: mdns_should_run(self.config.mdns_enabled, &host),
+        };
         let shared = NodeShared {
             listen_addrs: Arc::clone(&self.listen_addrs),
             discovered: Arc::clone(&self.discovered),
@@ -501,14 +593,16 @@ impl Node {
             invalid: Arc::clone(&self.invalid),
             unregistered: Arc::clone(&self.unregistered),
             rejected: Arc::clone(&self.rejected),
+            mdns_peers: Arc::clone(&self.mdns_peers),
+            mdns_active: Arc::clone(&self.mdns_active),
+            foreign: Arc::clone(&self.foreign),
         };
         let (ready_tx, ready_rx) = oneshot::channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
 
         let peerstore_path = self.peerstore_path.clone();
         let task = runtime.spawn(run_event_loop(
-            keypair, host, port, bootstrap, peerstore_path, max_established_incoming, shared,
-            ready_tx, cmd_rx,
+            keypair, host, port, bootstrap, peerstore_path, limits, shared, ready_tx, cmd_rx,
         ));
 
         // Block until the listener comes up (or fails) before returning.
@@ -574,6 +668,12 @@ impl Node {
         }
         if let Ok(mut msgs) = self.received.lock() {
             msgs.clear();
+        }
+        if let Ok(mut peers) = self.mdns_peers.lock() {
+            peers.clear();
+        }
+        if let Ok(mut active) = self.mdns_active.lock() {
+            *active = false;
         }
         if let Some(port) = self.bound_port.take()
             && let Ok(mut bound) = BOUND_PORTS.lock()
@@ -712,13 +812,20 @@ fn write_atomic_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
+/// Per-start Swarm options decided on the synchronous side.
+struct SwarmOptions {
+    /// Override for the inbound connection cap (`None` = default).
+    max_established_incoming: Option<u32>,
+    /// Run mDNS (already gated by [`mdns_should_run`]).
+    mdns: bool,
+}
+
 /// Build a libp2p Swarm with TCP + QUIC transports (Noise + Yamux) over the
 /// tokio runtime, carrying the node's composite behaviour (Kademlia in server
-/// mode, plus GossipSub and Identify). autonat/dcutr land in Milestone B (ADR-304).
-fn build_swarm(
-    keypair: Keypair,
-    max_established_incoming: Option<u32>,
-) -> Result<Swarm<NodeBehaviour>, NetworkError> {
+/// mode, plus GossipSub, Identify and — when requested — mDNS). autonat/dcutr
+/// land in Milestone B (ADR-304).
+fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBehaviour>, NetworkError> {
+    let max_established_incoming = options.max_established_incoming;
     let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
         .with_tcp(
@@ -753,12 +860,27 @@ fn build_swarm(
             let connection_limits = connection_limits::Behaviour::new(limits);
             let memory_connection_limits =
                 memory_connection_limits::Behaviour::with_max_percentage(MAX_MEMORY_PERCENTAGE);
+            // mDNS is best-effort: if its socket cannot be opened (no
+            // multicast-capable interface, sandboxed host) the node still
+            // starts and reaches peers through bootstrap and the peer store.
+            let mdns = if options.mdns {
+                match mdns::tokio::Behaviour::new(mdns_config(), peer_id) {
+                    Ok(behaviour) => Some(behaviour),
+                    Err(e) => {
+                        tracing::warn!("mDNS unavailable, continuing without LAN discovery: {e}");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
             NodeBehaviour {
                 kademlia,
                 gossipsub,
                 identify,
                 connection_limits,
                 memory_connection_limits,
+                mdns: Toggle::from(mdns),
             }
         })
         .expect("behaviour construction is infallible")
@@ -781,7 +903,7 @@ async fn run_event_loop(
     port: u16,
     bootstrap: Vec<String>,
     peerstore_path: PathBuf,
-    max_established_incoming: Option<u32>,
+    options: SwarmOptions,
     shared: NodeShared,
     ready_tx: oneshot::Sender<Result<(), NetworkError>>,
     mut cmd_rx: mpsc::UnboundedReceiver<Command>,
@@ -796,16 +918,26 @@ async fn run_event_loop(
         invalid,
         unregistered,
         rejected,
+        mdns_peers,
+        mdns_active,
+        foreign,
     } = shared;
     // Per-peer flood defence (§8.6); lives in the single-threaded event loop.
     let mut security = super::security::Security::new();
-    let mut swarm = match build_swarm(keypair, max_established_incoming) {
+    let mut swarm = match build_swarm(keypair, &options) {
         Ok(s) => s,
         Err(e) => {
             let _ = ready_tx.send(Err(e));
             return;
         }
     };
+    let mdns_running = swarm.behaviour().mdns.is_enabled();
+    if let Ok(mut active) = mdns_active.lock() {
+        *active = mdns_running;
+    }
+    if mdns_running {
+        tracing::info!("mDNS LAN discovery on (turn it off on untrusted networks, RFC §5.1.2)");
+    }
 
     // Bind to the configured interface (default 127.0.0.1 loopback; set 0.0.0.0
     // to accept connections from other hosts). Port 0 lets the OS allocate.
@@ -854,6 +986,9 @@ async fn run_event_loop(
     peer_flush.tick().await;
 
     let mut ready_tx = Some(ready_tx);
+    // Peers already dropped as non-Rotifer, so a refreshed mDNS record does not
+    // make us dial them again. Bounded like the mDNS table it filters.
+    let mut foreign_peers: HashSet<Libp2pPeerId> = HashSet::new();
     // Correlate in-flight DHT queries with the caller waiting on the result.
     let mut pending_put: HashMap<kad::QueryId, oneshot::Sender<Result<(), NetworkError>>> =
         HashMap::new();
@@ -999,6 +1134,37 @@ async fn run_event_loop(
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Identify(
                     identify::Event::Received { peer_id, info, .. },
+                )) if info.protocol_version != IDENTIFY_PROTOCOL_VERSION => {
+                    // Not a Rotifer node. mDNS's shared `_p2p._udp.local`
+                    // service makes this routine on a LAN (IPFS and other
+                    // libp2p apps answer too), and Kademlia speaks libp2p's
+                    // default protocol name, so without this an unrelated
+                    // node would enter our routing table and peer store. Drop
+                    // everything learned about it and hang up.
+                    let peer = peer_id.to_string();
+                    let suffix = format!("/p2p/{peer}");
+                    swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+                    if let Ok(mut peers) = discovered.lock() {
+                        peers.remove(&peer);
+                    }
+                    if let Ok(mut met) = met_peers.lock() {
+                        met.retain(|addr| !addr.ends_with(&suffix));
+                    }
+                    if let Ok(mut n) = foreign.lock() {
+                        *n += 1;
+                    }
+                    if foreign_peers.len() < MAX_MDNS_PEERS {
+                        foreign_peers.insert(peer_id);
+                    }
+                    tracing::debug!(
+                        %peer_id,
+                        protocol_version = %info.protocol_version,
+                        "dropping non-Rotifer peer"
+                    );
+                    let _ = swarm.disconnect_peer_id(peer_id);
+                }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Identify(
+                    identify::Event::Received { peer_id, info, .. },
                 )) => {
                     if let Ok(mut ids) = identified.lock() {
                         ids.insert(peer_id.to_string());
@@ -1012,6 +1178,59 @@ async fn run_event_loop(
                             remember(&mut met, &addr, &peer_id);
                         }
                         swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                    }
+                }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(mdns::Event::Discovered(found))) => {
+                    // RFC §5.1.1: connect to each newly announced peer. What
+                    // follows is the ordinary path — Identify confirms it is a
+                    // Rotifer node and feeds Kademlia, GossipSub meshes it in.
+                    // The Noise handshake authenticates the PeerId, so a forged
+                    // mDNS answer cannot impersonate a node (§5.1.2).
+                    let mut by_peer: HashMap<Libp2pPeerId, Vec<Multiaddr>> = HashMap::new();
+                    if let Ok(mut known) = mdns_peers.lock() {
+                        for (peer, addr) in found {
+                            if foreign_peers.contains(&peer) {
+                                continue;
+                            }
+                            let key = peer.to_string();
+                            if !known.contains_key(&key) && known.len() >= MAX_MDNS_PEERS {
+                                tracing::debug!(%peer, "mDNS peer table full, ignoring");
+                                continue;
+                            }
+                            known.entry(key).or_default().insert(addr.to_string());
+                            by_peer.entry(peer).or_default().push(addr);
+                        }
+                    }
+                    for (peer, addrs) in by_peer {
+                        // mDNS discovery is mutual, so both nodes dial at the
+                        // same instant. With libp2p's default port reuse each
+                        // dial leaves from the dialer's listen port, the two
+                        // SYNs cross, and TCP simultaneous open merges them
+                        // into one connection on which both sides start the
+                        // Noise handshake as initiator — it fails ("input
+                        // error") and neither node connects. A fresh source
+                        // port keeps the two dials separate connections.
+                        let opts = DialOpts::peer_id(peer)
+                            .addresses(addrs)
+                            .condition(PeerCondition::DisconnectedAndNotDialing)
+                            .allocate_new_port()
+                            .build();
+                        if let Err(e) = swarm.dial(opts) {
+                            tracing::debug!(%peer, "mDNS dial skipped: {e}");
+                        }
+                    }
+                }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(mdns::Event::Expired(gone))) => {
+                    if let Ok(mut known) = mdns_peers.lock() {
+                        for (peer, addr) in gone {
+                            let key = peer.to_string();
+                            if let Some(addrs) = known.get_mut(&key) {
+                                addrs.remove(&addr.to_string());
+                                if addrs.is_empty() {
+                                    known.remove(&key);
+                                }
+                            }
+                        }
                     }
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
@@ -1247,15 +1466,202 @@ mod tests {
     // A.1.6 — mDNS auto-discovery (≤3s) between two co-process nodes
     // -----------------------------------------------------------------
     #[test]
-    #[ignore = "A.1.6 integration — requires tokio multi-thread runtime; stage 2 unignores"]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "A.1.6 integration: real mDNS multicast on a non-loopback interface — enable the p2p-integration feature or run with --ignored"
+    )]
     fn A_1_6_two_nodes_mdns_self_discover_within_3s() {
-        // tokio::time::timeout(Duration::from_secs(3), ...) — stage 2
-        let mut a = Node::new(cfg(0)).expect("A.1.6 — node A build");
-        let mut b = Node::new(cfg(0)).expect("A.1.6 — node B build");
-        a.start().expect("A.1.6 — A start");
-        b.start().expect("A.1.6 — B start");
-        // Stage 2: poll discovery events until both peers see each other.
-        unimplemented!("A.1.6 — stage 2 wires mDNS event-loop");
+        // No bootstrap, no peer store: mDNS is the only way these two can meet.
+        // They listen on 0.0.0.0 because mDNS announces a node at the source
+        // IP of its multicast packet, never at loopback (see mdns_should_run).
+        let dir = tempfile::tempdir().expect("temp dir");
+        let start = |name: &str| {
+            let c = NetworkConfig { listen_host: "0.0.0.0".into(), ..cfg(0) };
+            let mut node = Node::with_paths(
+                c,
+                dir.path().join(format!("{name}.pem")),
+                dir.path().join(format!("{name}-peers.json")),
+            )
+            .expect("A.1.6 — build");
+            node.start().expect("A.1.6 — start");
+            assert!(
+                node.mdns_active(),
+                "A.1.6 — mDNS did not start: this host has no multicast-capable non-loopback interface"
+            );
+            node
+        };
+        let a = start("a");
+        let b = start("b");
+        let (a_peer, b_peer) = (a.local_peer_id().0, b.local_peer_id().0);
+        assert_ne!(a_peer, b_peer, "nodes must have distinct PeerIds");
+
+        // A.1.6 bound: both sides see the other's mDNS announcement within 3s.
+        let started = std::time::Instant::now();
+        let deadline = started + Duration::from_secs(3);
+        loop {
+            let a_saw_b = a.mdns_peers().contains(&b_peer);
+            let b_saw_a = b.mdns_peers().contains(&a_peer);
+            if a_saw_b && b_saw_a {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "A.1.6 — no mutual mDNS discovery within 3s (a_saw_b={a_saw_b}, b_saw_a={b_saw_a})"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        eprintln!("A.1.6 — mutual mDNS discovery after {:?}", started.elapsed());
+
+        // RFC §5.1.1 steps 1–2: the discovery turns into an authenticated
+        // connection — each side completes Identify with the other.
+        await_peer(&a, &b_peer, "A.1.6 — A never identified B after mDNS discovery");
+        await_peer(&b, &a_peer, "A.1.6 — B never identified A after mDNS discovery");
+        eprintln!("A.1.6 — mutual Identify after {:?}", started.elapsed());
+    }
+
+    // -----------------------------------------------------------------
+    // mDNS only runs on a non-loopback listen interface (RFC §5.1, §8.7)
+    // -----------------------------------------------------------------
+    #[test]
+    fn mdns_runs_only_on_a_non_loopback_listen_host() {
+        assert!(mdns_should_run(true, "0.0.0.0"));
+        assert!(mdns_should_run(true, "192.168.1.20"));
+        assert!(!mdns_should_run(true, "127.0.0.1"), "loopback would be announced at an unreachable LAN address");
+        assert!(!mdns_should_run(true, "::1"));
+        assert!(!mdns_should_run(true, "not-an-ip"));
+        assert!(!mdns_should_run(false, "0.0.0.0"), "disabled means disabled");
+    }
+
+    #[test]
+    fn mdns_timing_follows_rfc_5_1_1() {
+        let c = mdns_config();
+        assert_eq!(c.query_interval, Duration::from_secs(30));
+        assert_eq!(c.ttl, Duration::from_secs(120));
+        assert!(!c.enable_ipv6);
+    }
+
+    #[test]
+    fn loopback_node_does_not_run_mdns() {
+        // The default node (127.0.0.1) asked for mDNS but must not run it.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let c = NetworkConfig { mdns_enabled: true, ..cfg(0) };
+        let mut node = Node::with_keypair_path(c, dir.path().join("id.pem")).expect("build");
+        node.start().expect("start");
+        assert!(!node.mdns_active());
+        assert!(node.mdns_peers().is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // With mDNS switched off, LAN nodes stay strangers (RFC §5.1.2)
+    // -----------------------------------------------------------------
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "integration: mDNS off-switch on a non-loopback interface — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn mdns_disabled_nodes_do_not_discover_each_other() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let start = |name: &str| {
+            let c = NetworkConfig { listen_host: "0.0.0.0".into(), mdns_enabled: false, ..cfg(0) };
+            let mut node = Node::with_paths(
+                c,
+                dir.path().join(format!("{name}.pem")),
+                dir.path().join(format!("{name}-peers.json")),
+            )
+            .expect("build");
+            node.start().expect("start");
+            assert!(!node.mdns_active(), "mdns_enabled: false must keep mDNS off");
+            node
+        };
+        let a = start("a");
+        let b = start("b");
+        // Three times the window A.1.6 needs for discovery to happen at all.
+        std::thread::sleep(Duration::from_secs(9));
+        assert!(a.mdns_peers().is_empty() && b.mdns_peers().is_empty());
+        assert!(!a.identified_peers().contains(&b.local_peer_id().0));
+        assert!(!b.identified_peers().contains(&a.local_peer_id().0));
+    }
+
+    // -----------------------------------------------------------------
+    // A libp2p node that is not a Rotifer node is dropped after Identify
+    // -----------------------------------------------------------------
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "integration: non-Rotifer libp2p peer over loopback — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn non_rotifer_peer_is_dropped_after_identify() {
+        use libp2p::swarm::NetworkBehaviour;
+
+        // What an IPFS node answering our mDNS query looks like to us: plain
+        // libp2p, Kademlia on the shared default protocol, a foreign Identify
+        // version.
+        #[derive(NetworkBehaviour)]
+        struct Foreign {
+            identify: identify::Behaviour,
+            kademlia: kad::Behaviour<MemoryStore>,
+        }
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut node = Node::with_paths(cfg(0), dir.path().join("id.pem"), dir.path().join("peers.json"))
+            .expect("build");
+        node.start().expect("start");
+        let target: Multiaddr = format!("{}/p2p/{}", node.listen_addrs()[0], node.local_peer_id().0)
+            .parse()
+            .expect("dialable addr");
+
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let (foreign_peer, closed) = rt.block_on(async {
+            let mut swarm = libp2p::SwarmBuilder::with_new_identity()
+                .with_tokio()
+                .with_tcp(
+                    libp2p::tcp::Config::default(),
+                    libp2p::noise::Config::new,
+                    libp2p::yamux::Config::default,
+                )
+                .expect("tcp")
+                .with_behaviour(|key| {
+                    let id = key.public().to_peer_id();
+                    let mut kademlia = kad::Behaviour::new(id, MemoryStore::new(id));
+                    kademlia.set_mode(Some(kad::Mode::Server));
+                    Foreign {
+                        identify: identify::Behaviour::new(identify::Config::new(
+                            "/ipfs/0.1.0".into(),
+                            key.public(),
+                        )),
+                        kademlia,
+                    }
+                })
+                .expect("behaviour")
+                .build();
+            let me = *swarm.local_peer_id();
+            swarm.dial(target).expect("dial");
+            let mut connected = false;
+            let closed = tokio::time::timeout(Duration::from_secs(15), async {
+                loop {
+                    match swarm.select_next_some().await {
+                        SwarmEvent::ConnectionEstablished { .. } => connected = true,
+                        SwarmEvent::ConnectionClosed { num_established: 0, .. } if connected => {
+                            return true;
+                        }
+                        _ => {}
+                    }
+                }
+            })
+            .await
+            .unwrap_or(false);
+            (me.to_string(), closed)
+        });
+
+        assert!(closed, "the Rotifer node must hang up on a non-Rotifer peer");
+        assert_eq!(node.foreign_peers_dropped(), 1);
+        assert!(!node.identified_peers().contains(&foreign_peer));
+        assert!(!node.discovered_peers().contains(&foreign_peer));
+        let _ = node.stop();
+        assert!(
+            peerstore::load(&dir.path().join("peers.json")).iter().all(|a| !a.contains(&foreign_peer)),
+            "a non-Rotifer peer must not be remembered"
+        );
     }
 
     // -----------------------------------------------------------------

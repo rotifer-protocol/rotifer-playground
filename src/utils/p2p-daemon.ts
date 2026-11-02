@@ -135,8 +135,9 @@ export async function runDaemon(
   listenHost: string,
   listenPort: number,
   bootstrapPeers: string[],
+  shouldUseMdns: boolean,
 ): Promise<void> {
-  const maybeNode = loadP2pNode(listenHost, listenPort, bootstrapPeers);
+  const maybeNode = loadP2pNode(listenHost, listenPort, bootstrapPeers, shouldUseMdns);
   if (!maybeNode) {
     process.stderr.write("native P2P node unavailable; daemon cannot start\n");
     process.exit(1);

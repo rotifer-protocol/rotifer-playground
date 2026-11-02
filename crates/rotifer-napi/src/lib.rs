@@ -52,11 +52,14 @@ impl P2pNode {
     /// Build a node listening on `listen_port`, dialing `bootstrap_peers`
     /// (multiaddr strings). Uses the persistent identity at
     /// `~/.rotifer/identity.pem`, so the `PeerId` is stable across runs.
+    /// `mdns_enabled` (default true) allows mDNS LAN discovery; it only runs
+    /// when `listen_host` is not loopback (P2P RFC §5.1, `--no-mdns`).
     #[napi(constructor)]
     pub fn new(
         listen_host: String,
         listen_port: u32,
         bootstrap_peers: Vec<String>,
+        mdns_enabled: Option<bool>,
     ) -> Result<Self> {
         let config = NetworkConfig {
             node_id: uuid::Uuid::new_v4().to_string(),
@@ -64,6 +67,7 @@ impl P2pNode {
             listen_port: listen_port as u16,
             bootstrap_peers,
             enabled: true,
+            mdns_enabled: mdns_enabled.unwrap_or(true),
         };
         let inner = CoreNode::new(config)
             .map_err(|e| Error::from_reason(format!("create p2p node: {e}")))?;

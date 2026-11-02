@@ -54,14 +54,31 @@ function saveNetworkConfig(config: NetworkConfig): void {
   tightenPrivateFile(NETWORK_CONFIG);
 }
 
-/** Spawn the daemon as a detached background process, logging to ~/.rotifer/daemon.log. */
-function spawnDaemon(host: string, port: number, bootstrapPeers: string[]): void {
-  ensurePrivateDir(ROTIFER_HOME);
-  const logFd = openSync(join(ROTIFER_HOME, "daemon.log"), "a");
-  const args = [process.argv[1], "network", "__daemon", "--host", host, "--port", String(port)];
+/** Arguments for the hidden `network __daemon` subcommand that `start` spawns. */
+export function daemonArgs(
+  host: string,
+  port: number,
+  bootstrapPeers: string[],
+  shouldUseMdns: boolean,
+): string[] {
+  const args = ["network", "__daemon", "--host", host, "--port", String(port)];
   for (const peer of bootstrapPeers) {
     args.push("--bootstrap", peer);
   }
+  if (!shouldUseMdns) args.push("--no-mdns");
+  return args;
+}
+
+/** mDNS only runs off loopback: it announces a node at its LAN address (RFC §5.1). */
+function isLoopbackHost(host: string): boolean {
+  return host === "localhost" || host === "::1" || host.startsWith("127.");
+}
+
+/** Spawn the daemon as a detached background process, logging to ~/.rotifer/daemon.log. */
+function spawnDaemon(host: string, port: number, bootstrapPeers: string[], shouldUseMdns: boolean): void {
+  ensurePrivateDir(ROTIFER_HOME);
+  const logFd = openSync(join(ROTIFER_HOME, "daemon.log"), "a");
+  const args = [process.argv[1], ...daemonArgs(host, port, bootstrapPeers, shouldUseMdns)];
   const child = spawn(process.execPath, args, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
@@ -120,7 +137,11 @@ export const networkCommand = new Command("network")
         "127.0.0.1",
       )
       .option("-b, --bootstrap <addr...>", "bootstrap peer multiaddr(s); overrides config")
-      .action(async (options: { port: string; host: string; bootstrap?: string[] }) => {
+      .option(
+        "--no-mdns",
+        "don't discover or announce on the local network (use on untrusted Wi-Fi); mDNS only runs with a non-loopback --host",
+      )
+      .action(async (options: { port: string; host: string; bootstrap?: string[]; mdns: boolean }) => {
         display.header("Starting P2P Daemon");
 
         if (await isDaemonRunning()) {
@@ -146,7 +167,7 @@ export const networkCommand = new Command("network")
             ? options.bootstrap
             : config.bootstrap_peers;
 
-        spawnDaemon(host, port, bootstrap);
+        spawnDaemon(host, port, bootstrap, options.mdns);
         const isReady = await waitForDaemon(15_000);
         if (!isReady) {
           display.error(
@@ -165,6 +186,10 @@ export const networkCommand = new Command("network")
         display.kv("Listen host", host);
         display.kv("PID", String(state?.pid ?? "?"));
         display.kv("Bootstrap peers", String(bootstrap.length));
+        display.kv(
+          "LAN discovery (mDNS)",
+          !options.mdns ? "off (--no-mdns)" : isLoopbackHost(host) ? "off (loopback only)" : "on",
+        );
         console.log();
         display.success("P2P daemon running in the background.");
         if (host !== "127.0.0.1") {
@@ -180,8 +205,9 @@ export const networkCommand = new Command("network")
       .option("-H, --host <addr>", "listen interface", "127.0.0.1")
       .option("-p, --port <port>", "listen port", "9878")
       .option("--bootstrap <addr...>", "bootstrap multiaddr(s)")
-      .action(async (options: { host: string; port: string; bootstrap?: string[] }) => {
-        await runDaemon(options.host, parseInt(options.port, 10), options.bootstrap ?? []);
+      .option("--no-mdns", "disable mDNS LAN discovery")
+      .action(async (options: { host: string; port: string; bootstrap?: string[]; mdns: boolean }) => {
+        await runDaemon(options.host, parseInt(options.port, 10), options.bootstrap ?? [], options.mdns);
       }),
     { hidden: true }
   )

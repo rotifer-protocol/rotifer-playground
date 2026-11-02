@@ -86,16 +86,18 @@ const IDENTIFY_PROTOCOL_VERSION: &str = "/rotifer/p2p/1";
 /// peer discovery + a distributed record store; GossipSub provides
 /// publish/subscribe message broadcast; Identify exchanges peer metadata
 /// (protocols, listen + observed addrs) on connect.
-/// Connection limits (ADR-304 D2). They keep a node from being connected into
-/// OOM and pair with the message-layer rate limit (§8.6). The inbound, outbound
-/// and pending caps are `NetworkConfig` fields; these are their defaults (P2P
-/// RFC §4.1.4: 50 / 50 / 20). The total and per-peer caps are fixed: the total
-/// is a hard ceiling no configuration can raise.
-const MAX_ESTABLISHED: u32 = 512;
+/// Connection limits (ADR-304 D2), down from 256 in / 256 out / 512 total to
+/// P2P RFC §4.1.4. They keep a node from being connected into OOM and pair with
+/// the message-layer rate limit (§8.6). The inbound, outbound and pending caps
+/// are `NetworkConfig` fields and these are their defaults (50 / 50 / 20); the
+/// total is inbound + outbound (100 by default); the per-peer cap is fixed.
 const MAX_ESTABLISHED_PER_PEER: u32 = 4;
 pub(super) const MAX_ESTABLISHED_INCOMING: u32 = 50;
 pub(super) const MAX_ESTABLISHED_OUTGOING: u32 = 50;
+const MAX_ESTABLISHED: u32 = MAX_ESTABLISHED_INCOMING + MAX_ESTABLISHED_OUTGOING;
 pub(super) const MAX_PENDING: u32 = 20;
+// One peer can never hold the whole default budget.
+const _: () = assert!(MAX_ESTABLISHED_PER_PEER < MAX_ESTABLISHED);
 /// Deny new connections once process memory exceeds this fraction of system RAM.
 const MAX_MEMORY_PERCENTAGE: f64 = 0.9;
 
@@ -494,6 +496,11 @@ impl Node {
     /// Connections refused so far by this node's own limits, by cause.
     pub fn connection_denials(&self) -> ConnectionDenials {
         self.denials.lock().map(|d| *d).unwrap_or_default()
+    }
+
+    /// Whether peers can dial this node directly, as AutoNAT last judged it.
+    pub fn nat_status(&self) -> Reachability {
+        self.nat_traversal().reachability
     }
 
     /// NAT traversal state: AutoNAT's verdict, relay reservations, relayed
@@ -988,7 +995,7 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
                 key.public(),
             ));
             let limits = connection_limits::ConnectionLimits::default()
-                .with_max_established(Some(MAX_ESTABLISHED))
+                .with_max_established(Some(options.max_inbound.saturating_add(options.max_outbound)))
                 .with_max_established_per_peer(Some(MAX_ESTABLISHED_PER_PEER))
                 .with_max_pending_incoming(Some(options.max_pending))
                 .with_max_pending_outgoing(Some(options.max_pending))
@@ -2632,13 +2639,35 @@ mod tests {
         let server_addr = format!("{}/p2p/{}", server.listen_addrs()[0], server.local_peer_id().0);
         let c = NetworkConfig { bootstrap_peers: vec![server_addr], ..cfg(0) };
         let mut node = Node::with_keypair_path(c, id("node")).expect("build").with_autonat_on_loopback();
-        assert_eq!(node.nat_traversal().reachability, Reachability::Unknown, "unknown before any probe");
+        assert_eq!(node.nat_status(), Reachability::Unknown, "unknown before any probe");
         node.start().expect("start");
         assert!(
-            wait_until(20, || node.nat_traversal().reachability == Reachability::Public),
+            wait_until(20, || node.nat_status() == Reachability::Public),
             "a node the server can dial back must be judged Public (state: {:?})",
             node.nat_traversal()
         );
+    }
+
+    #[test]
+    fn autonat_keeps_libp2p_defaults_outside_tests() {
+        // Only test code relaxes AutoNAT (`with_autonat_on_loopback` is
+        // `#[cfg(test)]`); a node built normally uses libp2p's defaults,
+        // which trust only peers seen at global IPs.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let node = Node::with_keypair_path(cfg(0), dir.path().join("n.id")).expect("build");
+        assert!(!node.autonat_on_loopback);
+        let used = autonat_config(node.autonat_on_loopback);
+        let libp2p = autonat::Config::default();
+        assert!(used.only_global_ips);
+        assert_eq!(
+            (used.boot_delay, used.retry_interval, used.refresh_interval, used.throttle_server_period, used.confidence_max),
+            (libp2p.boot_delay, libp2p.retry_interval, libp2p.refresh_interval, libp2p.throttle_server_period, libp2p.confidence_max)
+        );
+        assert_eq!(
+            (used.throttle_clients_global_max, used.throttle_clients_peer_max, used.max_peer_addresses),
+            (libp2p.throttle_clients_global_max, libp2p.throttle_clients_peer_max, libp2p.max_peer_addresses)
+        );
+        assert_eq!(node.nat_status(), Reachability::Unknown);
     }
 
     #[test]

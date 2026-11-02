@@ -555,6 +555,19 @@ jobs:
       # with postgres and pg_prove cached, and failed on realtime.
       SUPABASE_IMAGES: postgres:17.6.1.064 pg_prove:3.36 gotrue:v2.184.0 realtime:v2.68.4 storage-api:v1.33.0
     steps:
+      # `docker load` of the cached images ran out of space ("no space left
+      # on device") on jobs 124743853743 and 125366370594, and each needed a
+      # manual re-run. The runner image ships toolchains this job never uses
+      # (.NET, the Android SDK, GHC, CodeQL) and some preloaded Docker images;
+      # remove them before anything is restored. The two df lines show how
+      # much was freed.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker image prune -af
+          df -h /
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - uses: supabase/setup-cli@b579fc8c7122aa485f1d947120eaeb11ee04d312 # v2.0.0

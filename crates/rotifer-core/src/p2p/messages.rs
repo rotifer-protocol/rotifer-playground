@@ -29,7 +29,10 @@ pub type TopicValidator = fn(&[u8], Option<&str>, u64) -> Verdict;
 /// message on any other topic is ignored: not surfaced, not forwarded, and not
 /// held against the sender (ADR-340 D3's Ignore). Subscribing to a topic is
 /// therefore never enough to make a node relay bytes nobody has checked.
-pub const TOPIC_VALIDATORS: &[(&str, TopicValidator)] = &[(ANNOUNCEMENTS_TOPIC, validate_gossip)];
+pub const TOPIC_VALIDATORS: &[(&str, TopicValidator)] = &[
+    (ANNOUNCEMENTS_TOPIC, validate_gossip),
+    (super::heartbeat::HEARTBEATS_TOPIC, super::heartbeat::validate_heartbeat),
+];
 
 /// The validator registered for `topic`, if any.
 pub fn topic_validator(topic: &str) -> Option<TopicValidator> {
@@ -141,8 +144,13 @@ pub enum Rejection {
     InvalidFidelity,
     /// `ir_spec` too long, or set for a Wrapped gene.
     InvalidIrSpec,
-    /// `version` too long.
+    /// `version` too long (announcements), or not MAJOR.MINOR.PATCH within
+    /// 64 bytes (heartbeats).
     InvalidVersion,
+    /// Heartbeat `bindings`: more than 16, or one empty or over 64 bytes.
+    InvalidBindings,
+    /// Heartbeat `cloud_attestation` over 2048 bytes.
+    OversizedAttestation,
     /// Timestamp outside the ±300 s anti-replay window (§6.4).
     Stale,
 }
@@ -157,6 +165,9 @@ pub enum Verdict {
     /// A well-formed message of a kind this node does not know (a future
     /// oneof body): drop it, do not forward, do not penalize.
     Ignore,
+    /// A structurally valid heartbeat. Its attestation is decided by the
+    /// node's heartbeat desk, which holds the keys ([`super::por`]).
+    Heartbeat(Box<super::heartbeat::WireNodeHeartbeat>),
 }
 
 /// Field rules a sender and a receiver both enforce.
@@ -275,7 +286,8 @@ mod tests {
         unique.dedup();
         assert_eq!(unique.len(), names.len(), "a topic is registered twice: {names:?}");
         assert!(topic_validator(ANNOUNCEMENTS_TOPIC).is_some());
-        for unregistered in ["/rotifer/announcements", "/rotifer/announcements/text", "/rotifer/p2p/1/heartbeats", ""] {
+        assert!(topic_validator("/rotifer/p2p/1/heartbeats").is_some(), "heartbeats are validated (ADR-300)");
+        for unregistered in ["/rotifer/announcements", "/rotifer/announcements/text", ""] {
             assert!(topic_validator(unregistered).is_none(), "{unregistered:?} must have no validator");
         }
     }

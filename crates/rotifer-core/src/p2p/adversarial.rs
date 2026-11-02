@@ -233,3 +233,50 @@ fn adv_7_invalid_announcement_is_not_relayed() {
          have reached it through the relay — which must not forward it"
     );
 }
+
+// ---------------------------------------------------------------------
+// ADV-8 — a topic no validator is registered for: ignored, so neither
+// relayed nor held against the sender (ADR-340 D3: Ignore = "do not
+// accept, do not penalize"; RFC §6.4: validate before forwarding)
+// ---------------------------------------------------------------------
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_8_unregistered_topic_is_not_relayed_nor_penalized() {
+    // Versioned like a real topic, but nothing registers a validator for it.
+    const UNREGISTERED: &str = "/rotifer/p2p/1/unregistered";
+    let dir = tempfile::tempdir().unwrap();
+    // Same shape as ADV-7: the relay is the only path from sender to far node.
+    let relay = spawn(&dir, "relay", vec![]);
+    let far = spawn_with(&dir, "far", vec![addr(&relay)], Some(0));
+    let sender = spawn_with(&dir, "sender", vec![addr(&relay)], Some(0));
+    // Everyone subscribes, so a relay that accepted these would forward them.
+    for node in [&relay, &far, &sender] {
+        node.subscribe(UNREGISTERED).expect("subscribe");
+    }
+    await_control(&sender, &relay, "control-relay");
+    await_control(&sender, &far, "control-far");
+
+    // Publish across several gossip heartbeats, under the per-peer rate limit.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut sent = 0u32;
+    while Instant::now() < deadline {
+        sender.publish(UNREGISTERED, format!("unvalidated-{sent}").as_bytes()).expect("publish");
+        sent += 1;
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    // Not penalized: the same sender's valid traffic still goes through the relay.
+    await_control(&sender, &far, "probe-after-unregistered");
+
+    assert!(relay.unregistered_topic_count() > 0, "the relay received them and ignored them");
+    assert_eq!(far.unregistered_topic_count(), 0, "the relay must not forward a message on an unregistered topic");
+    assert!(
+        !far.received_messages().iter().any(|m| m.topic == UNREGISTERED),
+        "nothing on an unregistered topic is surfaced"
+    );
+    assert_eq!(relay.invalid_message_count(), 0, "ignored, not rejected: the sender is not penalized");
+    assert_eq!(relay.rate_limited_count(), 0, "precondition: nothing was dropped by the flood limit instead");
+    assert!(
+        !far.identified_peers().contains(&sender.local_peer_id().0),
+        "precondition: the far node must not be peered with the sender directly"
+    );
+}

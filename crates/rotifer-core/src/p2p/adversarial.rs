@@ -635,7 +635,8 @@ enum RawWrite {
 /// A peer that is not a `Node`: plain libp2p Kademlia on Rotifer's protocol
 /// name, with none of its rules, as a broken or hostile implementation would
 /// be. It identifies as Rotifer so the Identify guard keeps the connection,
-/// and sends each write straight to the victim.
+/// sends each write straight to the victim, and redials whenever it is not
+/// connected.
 struct RawDht {
     peer_id: libp2p::PeerId,
     key: libp2p::identity::Keypair,
@@ -692,11 +693,16 @@ impl RawDht {
                     .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
                     .build();
                 swarm.behaviour_mut().kademlia.add_address(&victim_id, victim_addr.clone());
-                let _ = swarm.dial(victim_addr);
                 let mut tick = tokio::time::interval(Duration::from_millis(100));
                 while !stop_t.load(Ordering::Relaxed) {
                     tokio::select! {
-                        _ = tick.tick() => {}
+                        // Keep dialling while not connected, as a peer that
+                        // wants back in would.
+                        _ = tick.tick() => {
+                            if !swarm.is_connected(&victim_id) {
+                                let _ = swarm.dial(victim_addr.clone());
+                            }
+                        }
                         Some(write) = rx.recv() => match write {
                             RawWrite::Put(record) => {
                                 swarm.behaviour_mut().kademlia.put_record_to(record, std::iter::once(victim_id), kad::Quorum::One);
@@ -843,4 +849,41 @@ fn adv_14_dht_entries_go_only_under_their_own_keys() {
     assert!(eventually(10, || victim.dht_stats().providers_stored == 1), "{:?}", victim.dht_stats());
     assert_eq!(victim.local_dht(&provider_key).unwrap().1, vec![raw.peer_id]);
     assert!(victim.local_dht(record.key.as_ref()).unwrap().1.is_empty());
+}
+
+// ---------------------------------------------------------------------
+// ADV-15 — one forged DHT record gets its sender blocked at the connection
+// layer; the block ends with the 24-hour forgery window
+// ---------------------------------------------------------------------
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_15_a_dht_forger_is_blocked_until_the_window_closes() {
+    let dir = tempfile::tempdir().unwrap();
+    let victim = spawn(&dir, "victim", vec![]);
+    let raw = RawDht::spawn(&victim);
+
+    let mut forged = raw.signed(&id("adv15-forged"));
+    let last = forged.value.len() - 1;
+    forged.value[last] ^= 1;
+    raw.put(forged);
+    assert!(eventually(10, || victim.dht_stats().forgeries == 1), "{:?}", victim.dht_stats());
+
+    // Disconnected, and every redial refused.
+    assert!(eventually(10, || victim.connection_denials().blocked >= 3), "redials not refused: {:?}", victim.connection_denials());
+    raw.put(raw.signed(&id("adv15-while-blocked")));
+    std::thread::sleep(Duration::from_secs(1));
+    assert_eq!(victim.dht_stats().stored, 0, "a blocked peer's writes must not arrive");
+
+    // A minute short of the window: still blocked.
+    victim.skip_clock(Duration::from_millis(super::por::FORGERY_WINDOW_MS) - Duration::from_secs(60)).unwrap();
+    let before = victim.connection_denials().blocked;
+    assert!(eventually(5, || victim.connection_denials().blocked > before), "unblocked too early");
+
+    // The window closes: the peer is let back in and its writes are read again.
+    victim.skip_clock(Duration::from_secs(60)).unwrap();
+    assert!(eventually(10, || raw.is_connected()), "not reconnected after the window: {:?}", victim.connection_denials());
+    let good = raw.signed(&id("adv15-after"));
+    raw.put(good.clone());
+    assert!(eventually(10, || victim.dht_stats().stored >= 1), "{:?}", victim.dht_stats());
+    assert!(victim.local_dht(good.key.as_ref()).unwrap().0.is_some());
 }

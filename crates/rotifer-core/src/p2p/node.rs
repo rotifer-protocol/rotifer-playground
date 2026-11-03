@@ -22,6 +22,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use libp2p::futures::StreamExt;
+use libp2p::allow_block_list;
 use libp2p::autonat;
 use libp2p::connection_limits;
 use libp2p::dcutr;
@@ -88,6 +89,9 @@ enum Command {
     },
     /// What this node's own store holds under `key`: the record value and
     /// the providers.
+    /// Skip the node's monotonic clock forward, then recompute scores.
+    #[cfg(test)]
+    SkipClock { by: Duration, resp: oneshot::Sender<()> },
     #[cfg(test)]
     LocalDht {
         key: Vec<u8>,
@@ -259,6 +263,9 @@ struct NodeBehaviour {
     connection_limits: connection_limits::Behaviour,
     /// Denies new connections under memory pressure (process RSS vs system RAM).
     memory_connection_limits: memory_connection_limits::Behaviour,
+    /// Peers whose score is at or below the graylist threshold, whatever the
+    /// cause: refused and disconnected until the score rises again (A2 §8.2).
+    blocked: allow_block_list::Behaviour<allow_block_list::BlockedPeers>,
     kademlia: kad::Behaviour<GeneStore>,
     gossipsub: gossipsub::Behaviour,
     identify: identify::Behaviour,
@@ -335,12 +342,15 @@ pub struct ConnectionDenials {
     pub outbound_limit: u64,
     /// Connections in either direction refused under memory pressure.
     pub memory: u64,
+    /// Connections in either direction refused because the peer is blocked
+    /// (its score is at or below the graylist threshold, A2 §8.2).
+    pub blocked: u64,
 }
 
 impl ConnectionDenials {
     /// All refusals, whatever the cause.
     pub fn total(&self) -> u64 {
-        self.inbound_limit + self.outbound_limit + self.memory
+        self.inbound_limit + self.outbound_limit + self.memory + self.blocked
     }
 }
 
@@ -799,6 +809,15 @@ impl Node {
     pub(crate) fn local_dht(&self, key: &[u8]) -> Result<(Option<Vec<u8>>, Vec<Libp2pPeerId>), NetworkError> {
         let (tx, rx) = oneshot::channel();
         self.send_command(Command::LocalDht { key: key.to_vec(), resp: tx })?;
+        self.block_on_query(rx)
+    }
+
+    /// Move the node's monotonic clock (the one the forgery window runs on)
+    /// forward by `by`, then recompute scores and blocks.
+    #[cfg(test)]
+    pub(crate) fn skip_clock(&self, by: Duration) -> Result<(), NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::SkipClock { by, resp: tx })?;
         self.block_on_query(rx)
     }
 
@@ -1270,6 +1289,7 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
             NodeBehaviour {
                 connection_limits,
                 memory_connection_limits,
+                blocked: Default::default(),
                 kademlia,
                 gossipsub,
                 identify,
@@ -1290,6 +1310,13 @@ fn record_denial(denials: &Mutex<ConnectionDenials>, inbound: bool, cause: &Conn
         .downcast_ref::<memory_connection_limits::MemoryUsageLimitExceeded>()
         .is_some();
     let limit = cause.downcast_ref::<connection_limits::Exceeded>().is_some();
+    if cause.downcast_ref::<allow_block_list::Blocked>().is_some() {
+        if let Ok(mut d) = denials.lock() {
+            d.blocked += 1;
+        }
+        tracing::debug!(inbound, "connection refused: {cause}");
+        return;
+    }
     if !memory && !limit {
         tracing::debug!(inbound, "connection refused: {cause}");
         return;
@@ -1443,7 +1470,8 @@ async fn run_event_loop(
     // fires at once; with no peers yet that publish simply finds nobody.
     let heartbeats_topic = gossipsub::IdentTopic::new(HEARTBEATS_TOPIC);
     let _ = swarm.behaviour_mut().gossipsub.subscribe(&heartbeats_topic);
-    let started = std::time::Instant::now();
+    #[cfg_attr(not(test), allow(unused_mut))]
+    let mut started = MonoClock { started: std::time::Instant::now(), skipped: Duration::ZERO };
     let mut heartbeat_timer = tokio::time::interval(options.heartbeat_interval);
     heartbeat_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_heartbeat: Option<std::time::Instant> = None;
@@ -1942,6 +1970,12 @@ async fn run_event_loop(
                     }
                 }
                 #[cfg(test)]
+                Some(Command::SkipClock { by, resp }) => {
+                    started.skipped += by;
+                    refresh_scores(&mut swarm, &heartbeats, &scores, started);
+                    let _ = resp.send(());
+                }
+                #[cfg(test)]
                 Some(Command::LocalDht { key, resp }) => {
                     use libp2p::kad::store::RecordStore as _;
                     let key = kad::RecordKey::new(&key);
@@ -1985,8 +2019,22 @@ fn add_stats(dht: &Mutex<DhtStats>, n: DhtStats) {
     }
 }
 
+/// Monotonic time since the event loop started, the clock the A1 forgery
+/// window runs on. Tests skip it forward to see a 24-hour window close.
+#[derive(Clone, Copy)]
+struct MonoClock {
+    started: std::time::Instant,
+    skipped: Duration,
+}
+
+impl MonoClock {
+    fn elapsed(&self) -> Duration {
+        self.started.elapsed() + self.skipped
+    }
+}
+
 /// This node's heartbeat as of now.
-fn own_heartbeat(started: std::time::Instant, attestation: &Arc<Mutex<Option<String>>>) -> Vec<u8> {
+fn own_heartbeat(started: MonoClock, attestation: &Arc<Mutex<Option<String>>>) -> Vec<u8> {
     let token = attestation.lock().ok().and_then(|a| a.clone()).unwrap_or_default();
     heartbeat::encode_heartbeat(&WireNodeHeartbeat {
         // The network layer holds no gene store of its own yet, so a node
@@ -2002,28 +2050,46 @@ fn own_heartbeat(started: std::time::Instant, attestation: &Arc<Mutex<Option<Str
 
 /// Set every connected peer's GossipSub application score from the heartbeat
 /// desk, and record the resulting scores for [`Node::peer_score`].
+///
+/// A peer whose application score is at or below the graylist threshold is
+/// blocked and disconnected, whatever the cause (A2 §8.2); a blocked peer is
+/// let back in once its score rises, which for a forgery is when the 24-hour
+/// window closes, so no block outlasts it.
 fn refresh_scores(
     swarm: &mut Swarm<NodeBehaviour>,
     desk: &Mutex<HeartbeatDesk>,
     scores: &Mutex<HashMap<String, f64>>,
-    started: std::time::Instant,
+    started: MonoClock,
 ) {
     let connected: Vec<Libp2pPeerId> = swarm.connected_peers().copied().collect();
     let names: Vec<String> = connected.iter().map(|p| p.to_string()).collect();
-    let app = match desk.lock() {
-        Ok(d) => d.scores(
-            names.iter().map(String::as_str),
-            wall_clock_ms(),
-            started.elapsed().as_millis() as u64,
+    let blocked: Vec<Libp2pPeerId> = swarm.behaviour().blocked.blocked_peers().iter().copied().collect();
+    let blocked_names: Vec<String> = blocked.iter().map(|p| p.to_string()).collect();
+    let (now_ms, mono_ms) = (wall_clock_ms(), started.elapsed().as_millis() as u64);
+    // Blocked peers are scored on their own, so one that is not connected
+    // cannot take a registered bonus from one that is.
+    let (app, blocked_app) = match desk.lock() {
+        Ok(d) => (
+            d.scores(names.iter().map(String::as_str), now_ms, mono_ms),
+            d.scores(blocked_names.iter().map(String::as_str), now_ms, mono_ms),
         ),
         Err(_) => return,
     };
-    let gossipsub = &mut swarm.behaviour_mut().gossipsub;
+    let graylist = peer_score_params().1.graylist_threshold;
+    let behaviour = swarm.behaviour_mut();
     let mut now = HashMap::with_capacity(connected.len());
     for (peer, (name, score)) in connected.iter().zip(app) {
-        gossipsub.set_application_score(peer, score);
-        if let Some(total) = gossipsub.peer_score(peer) {
+        behaviour.gossipsub.set_application_score(peer, score);
+        if let Some(total) = behaviour.gossipsub.peer_score(peer) {
             now.insert(name.to_string(), total);
+        }
+        if score <= graylist {
+            behaviour.blocked.block_peer(*peer);
+        }
+    }
+    for (peer, (_, score)) in blocked.iter().zip(blocked_app) {
+        if score > graylist {
+            behaviour.blocked.unblock_peer(*peer);
         }
     }
     if let Ok(mut s) = scores.lock() {

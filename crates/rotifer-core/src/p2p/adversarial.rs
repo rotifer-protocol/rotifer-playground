@@ -634,6 +634,26 @@ enum RawWrite {
     Hold(libp2p::kad::Record),
     /// Put a peer and its addresses in the raw peer's routing table.
     Neighbour(libp2p::PeerId, Vec<libp2p::Multiaddr>),
+    /// Stop serving Kademlia, so the protocol leaves what Identify offers.
+    ClientMode,
+    /// Publish on the announcements topic (needs `gossip`).
+    Announce(Vec<u8>),
+}
+
+/// How a [`RawDht`] presents itself.
+struct RawOptions {
+    /// The Kademlia protocol name it serves.
+    kad_protocol: &'static str,
+    /// Listen on a loopback port, so Identify carries an address to dial.
+    listen: bool,
+    /// Also run GossipSub on the announcements topic.
+    gossip: bool,
+}
+
+impl Default for RawOptions {
+    fn default() -> Self {
+        Self { kad_protocol: super::gene_record::KAD_PROTOCOL, listen: false, gossip: false }
+    }
 }
 
 /// A peer that is not a `Node`: plain libp2p Kademlia on Rotifer's protocol
@@ -652,9 +672,13 @@ struct RawDht {
 
 impl RawDht {
     fn spawn(victim: &Node) -> Self {
+        Self::spawn_with(victim, RawOptions::default())
+    }
+
+    fn spawn_with(victim: &Node, options: RawOptions) -> Self {
         use libp2p::futures::StreamExt;
-        use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
-        use libp2p::{identify, kad, Multiaddr, StreamProtocol};
+        use libp2p::swarm::{behaviour::toggle::Toggle, NetworkBehaviour, SwarmEvent};
+        use libp2p::{gossipsub, identify, kad, Multiaddr, StreamProtocol};
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
 
@@ -665,10 +689,12 @@ impl RawDht {
             blocked: libp2p::allow_block_list::Behaviour<libp2p::allow_block_list::BlockedPeers>,
             kademlia: kad::Behaviour<kad::store::MemoryStore>,
             identify: identify::Behaviour,
+            gossipsub: Toggle<gossipsub::Behaviour>,
         }
 
         let key = libp2p::identity::Keypair::generate_ed25519();
         let peer_id = key.public().to_peer_id();
+        let RawOptions { kad_protocol, listen, gossip } = options;
         let victim_addr: Multiaddr = addr(victim).parse().expect("victim multiaddr");
         let victim_id: libp2p::PeerId = victim.local_peer_id().0.parse().expect("victim PeerId");
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<RawWrite>();
@@ -688,7 +714,7 @@ impl RawDht {
                     .expect("tcp")
                     .with_behaviour(|key| {
                         let id = key.public().to_peer_id();
-                        let mut config = kad::Config::new(StreamProtocol::new(super::gene_record::KAD_PROTOCOL));
+                        let mut config = kad::Config::new(StreamProtocol::new(kad_protocol));
                         // Large enough to send anything the node may receive.
                         config.set_max_packet_size(1 << 20);
                         let mut kademlia = kad::Behaviour::with_config(id, kad::store::MemoryStore::new(id), config);
@@ -697,12 +723,22 @@ impl RawDht {
                             blocked: Default::default(),
                             kademlia,
                             identify: identify::Behaviour::new(identify::Config::new("/rotifer/p2p/1".into(), key.public())),
+                            gossipsub: Toggle::from(gossip.then(|| {
+                                gossipsub::Behaviour::new(gossipsub::MessageAuthenticity::Signed(key.clone()), gossipsub::Config::default())
+                                    .expect("gossipsub")
+                            })),
                         }
                     })
                     .expect("behaviour")
                     .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
                     .build();
                 swarm.behaviour_mut().kademlia.add_address(&victim_id, victim_addr.clone());
+                if listen {
+                    swarm.listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap()).expect("listen");
+                }
+                if let Some(g) = swarm.behaviour_mut().gossipsub.as_mut() {
+                    g.subscribe(&gossipsub::IdentTopic::new(ANNOUNCEMENTS_TOPIC)).expect("subscribe");
+                }
                 let mut tick = tokio::time::interval(Duration::from_millis(100));
                 while !stop_t.load(Ordering::Relaxed) {
                     tokio::select! {
@@ -728,6 +764,14 @@ impl RawDht {
                                 swarm.behaviour_mut().blocked.block_peer(peer);
                                 for a in addrs {
                                     swarm.behaviour_mut().kademlia.add_address(&peer, a);
+                                }
+                            }
+                            RawWrite::ClientMode => {
+                                swarm.behaviour_mut().kademlia.set_mode(Some(kad::Mode::Client));
+                            }
+                            RawWrite::Announce(data) => {
+                                if let Some(g) = swarm.behaviour_mut().gossipsub.as_mut() {
+                                    let _ = g.publish(gossipsub::IdentTopic::new(ANNOUNCEMENTS_TOPIC), data);
                                 }
                             }
                         },
@@ -763,6 +807,14 @@ impl RawDht {
 
     fn neighbour(&self, peer: libp2p::PeerId, addrs: Vec<libp2p::Multiaddr>) {
         self.tx.send(RawWrite::Neighbour(peer, addrs)).expect("raw DHT peer running");
+    }
+
+    fn client_mode(&self) {
+        self.tx.send(RawWrite::ClientMode).expect("raw DHT peer running");
+    }
+
+    fn announce(&self, data: Vec<u8>) {
+        self.tx.send(RawWrite::Announce(data)).expect("raw DHT peer running");
     }
 
     fn provide(&self, key: Vec<u8>) {
@@ -953,7 +1005,10 @@ fn adv_16_largest_get_response_fits_the_packet_limit() {
     use super::gene_record::{record_key, MAX_RECORD_BYTES};
     let dir = tempfile::tempdir().unwrap();
     let victim = spawn(&dir, "victim", vec![]);
-    let raw = RawDht::spawn(&victim);
+    // Listening, so Identify gives the node an address and its Kad protocol
+    // to admit the peer by (A2 §8.1); before, the inbound connection's own
+    // address was fed to Kademlia unconditionally.
+    let raw = RawDht::spawn_with(&victim, RawOptions { listen: true, ..Default::default() });
 
     let key = record_key(&id("adv16"), &raw.peer_id);
     let value: Vec<u8> = (0..MAX_RECORD_BYTES).map(|i| i as u8).collect();
@@ -978,4 +1033,78 @@ fn adv_16_largest_get_response_fits_the_packet_limit() {
         "the node must read the largest response"
     );
     assert_eq!(got, Some(value));
+}
+
+// ---------------------------------------------------------------------
+// ADV-17 — admission to the routing table (A2 §8.1): connecting is not
+// enough, a peer must offer Rotifer's DHT protocol and an address
+// ---------------------------------------------------------------------
+
+/// Wait until the node has identified `raw`, so admission has been decided.
+fn identified(victim: &Node, raw: &RawDht) -> bool {
+    let id = raw.peer_id.to_string();
+    eventually(10, || victim.identified_peers().contains(&id))
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_17a_an_inbound_peer_without_an_address_stays_out_of_the_dht() {
+    let dir = tempfile::tempdir().unwrap();
+    let victim = spawn(&dir, "victim", vec![]);
+    // Rotifer's DHT protocol, but no listen address: nothing to dial back.
+    let raw = RawDht::spawn(&victim);
+    let id = raw.peer_id.to_string();
+    assert!(identified(&victim, &raw));
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(victim.connected_peers().contains(&id));
+    assert!(!victim.dht_peers().contains(&id), "dht peers: {:?}", victim.dht_peers());
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_17b_an_old_kad_peer_gossips_but_stays_out_of_the_dht() {
+    let dir = tempfile::tempdir().unwrap();
+    let victim = spawn(&dir, "victim", vec![]);
+    // As a 0.27–0.33 node: Rotifer identity and gossip, libp2p's default
+    // Kademlia name.
+    let old = RawDht::spawn_with(&victim, RawOptions { kad_protocol: "/ipfs/kad/1.0.0", listen: true, gossip: true });
+    let old_id = old.peer_id.to_string();
+    let old_record = old.signed(&id("adv17b-old"));
+    old.hold(old_record.clone());
+    // A current peer, for contrast.
+    let new = RawDht::spawn_with(&victim, RawOptions { listen: true, ..Default::default() });
+    let new_id = new.peer_id.to_string();
+    let new_record = new.signed(&id("adv17b-new"));
+    new.hold(new_record.clone());
+
+    // Gossip works with the old peer.
+    let gossiped = id("adv17b-gossip");
+    assert!(
+        eventually(20, || {
+            old.announce(encode_announcement(&announcement(&gossiped, now_ms())));
+            has(&victim, &gossiped)
+        }),
+        "the old peer's announcement did not arrive"
+    );
+    assert!(identified(&victim, &old) && identified(&victim, &new));
+    assert!(eventually(10, || victim.dht_peers().contains(&new_id)), "the current peer was not admitted");
+    assert!(victim.connected_peers().contains(&old_id));
+    assert!(!victim.dht_peers().contains(&old_id), "dht peers: {:?}", victim.dht_peers());
+    // The DHT reaches the current peer's record, never the old peer's.
+    assert!(eventually(10, || victim.get_record(new_record.key.as_ref()).is_ok_and(|v| v.is_some())));
+    assert_eq!(victim.get_record(old_record.key.as_ref()).ok().flatten(), None);
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_17c_a_peer_that_stops_offering_the_dht_leaves_the_routing_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let victim = spawn(&dir, "victim", vec![]);
+    let raw = RawDht::spawn_with(&victim, RawOptions { listen: true, ..Default::default() });
+    let id = raw.peer_id.to_string();
+    assert!(eventually(10, || victim.dht_peers().contains(&id)), "not admitted");
+    // Client mode drops the protocol; Identify pushes the change.
+    raw.client_mode();
+    assert!(eventually(10, || !victim.dht_peers().contains(&id)), "still in the routing table");
+    assert!(victim.connected_peers().contains(&id), "it stays connected");
 }

@@ -107,6 +107,19 @@ impl P2pNode {
         self.inner.discovered_peers()
     }
 
+    /// Peers in the DHT routing table right now (`PeerId` strings): only
+    /// those that offered Rotifer's DHT protocol.
+    #[napi]
+    pub fn dht_peers(&self) -> Vec<String> {
+        self.inner.dht_peers()
+    }
+
+    /// Peers with an open connection right now (`PeerId` strings), DHT or not.
+    #[napi]
+    pub fn connected_peers(&self) -> Vec<String> {
+        self.inner.connected_peers()
+    }
+
     /// Gene announcements accepted on the announcements topic (wire v1,
     /// validated before forwarding), newest per `(gene_id, publisher)`.
     #[napi]

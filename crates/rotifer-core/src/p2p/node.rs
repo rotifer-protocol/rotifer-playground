@@ -87,6 +87,8 @@ enum Command {
         key: Vec<u8>,
         resp: oneshot::Sender<Option<Vec<u8>>>,
     },
+    DhtPeers(oneshot::Sender<Vec<String>>),
+    ConnectedPeers(oneshot::Sender<Vec<String>>),
     StartProviding {
         key: Vec<u8>,
         resp: oneshot::Sender<Result<(), NetworkError>>,
@@ -621,6 +623,27 @@ impl Node {
             .lock()
             .map(|peers| peers.iter().cloned().collect())
             .unwrap_or_default()
+    }
+
+    /// Peers in this node's Kademlia routing table now: those that speak
+    /// Rotifer's DHT protocol (A2 design v2 §8.1). Empty when the node is not
+    /// running.
+    pub fn dht_peers(&self) -> Vec<String> {
+        let (tx, rx) = oneshot::channel();
+        if self.send_command(Command::DhtPeers(tx)).is_err() {
+            return Vec::new();
+        }
+        self.block_on_query(rx).unwrap_or_default()
+    }
+
+    /// Peers this node holds a connection to now, whether or not they are in
+    /// the DHT. Empty when the node is not running.
+    pub fn connected_peers(&self) -> Vec<String> {
+        let (tx, rx) = oneshot::channel();
+        if self.send_command(Command::ConnectedPeers(tx)).is_err() {
+            return Vec::new();
+        }
+        self.block_on_query(rx).unwrap_or_default()
     }
 
     /// Peers this node has completed an Identify exchange with (ADR-304). Empty
@@ -1624,9 +1647,10 @@ async fn run_event_loop(
                 SwarmEvent::ConnectionEstablished {
                     peer_id, endpoint, ..
                 } => {
-                    // Feed the connected peer's address into Kademlia so it
-                    // enters the routing table — this drives discovery of
-                    // dialed (e.g. bootstrap) peers.
+                    // Kademlia is not fed here: a peer enters the routing
+                    // table only once Identify shows it speaks Rotifer's DHT
+                    // protocol (below), or when Kademlia itself confirms the
+                    // protocol on a connection we dialled (A2 design v2 §8.1).
                     let addr = endpoint.get_remote_address().clone();
                     // Remember only addresses we dialled ourselves: those are
                     // reachable again by definition. An inbound connection's
@@ -1637,7 +1661,6 @@ async fn run_event_loop(
                     {
                         remember(&mut met, &addr, &peer_id);
                     }
-                    feed_kad(&mut swarm.behaviour_mut().kademlia, &peer_id, addr);
                 }
                 // Refusals by our own limits are counted by cause so load
                 // shedding is observable (ADR-304 D2); a transport failure
@@ -1850,15 +1873,26 @@ async fn run_event_loop(
                     if let Ok(mut ids) = identified.lock() {
                         ids.insert(peer_id.to_string());
                     }
-                    // Feed the peer's advertised listen addresses into Kademlia
-                    // to improve routing — standard Identify usage (ADR-304) —
-                    // and remember them so a restart can re-dial this peer
-                    // without any bootstrap node.
+                    // Remember the peer's listen addresses so a restart can
+                    // re-dial it without any bootstrap node. Feed them into
+                    // Kademlia only if the peer speaks Rotifer's DHT protocol:
+                    // a node from 0.27–0.33 (libp2p's default name) or one
+                    // that stopped offering it stays out of the routing table,
+                    // while it keeps gossiping (A2 design v2 §8.1).
+                    let speaks_dht = info.protocols.iter().any(|p| p.as_ref() == gene_record::KAD_PROTOCOL);
+                    if !speaks_dht {
+                        swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+                        if let Ok(mut peers) = discovered.lock() {
+                            peers.remove(&peer_id.to_string());
+                        }
+                    }
                     for addr in info.listen_addrs {
                         if let Ok(mut met) = met_peers.lock() {
                             remember(&mut met, &addr, &peer_id);
                         }
-                        feed_kad(&mut swarm.behaviour_mut().kademlia, &peer_id, addr);
+                        if speaks_dht {
+                            feed_kad(&mut swarm.behaviour_mut().kademlia, &peer_id, addr);
+                        }
                     }
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(mdns::Event::Discovered(found))) => {
@@ -2034,6 +2068,18 @@ async fn run_event_loop(
                             ))));
                         }
                     }
+                }
+                Some(Command::DhtPeers(resp)) => {
+                    let peers = swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .kbuckets()
+                        .flat_map(|bucket| bucket.iter().map(|e| e.node.key.preimage().to_string()).collect::<Vec<_>>())
+                        .collect();
+                    let _ = resp.send(peers);
+                }
+                Some(Command::ConnectedPeers(resp)) => {
+                    let _ = resp.send(swarm.connected_peers().map(|p| p.to_string()).collect());
                 }
                 Some(Command::StartProviding { key, resp }) => {
                     let result = swarm
@@ -3605,6 +3651,19 @@ mod tests {
         assert!(matches!(node.put_record(&gene_key, b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"/rotifer/gene/", b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"other/key", b"x"), Err(NetworkError::NotConnected)));
+    }
+
+    #[test]
+    fn peer_lists_are_empty_before_start_and_after_stop() {
+        let mut node = Node::new(cfg(0)).expect("build");
+        assert!(node.dht_peers().is_empty());
+        assert!(node.connected_peers().is_empty());
+        node.start().expect("start");
+        assert!(node.dht_peers().is_empty(), "a lone node has no DHT peers");
+        assert!(node.connected_peers().is_empty(), "a lone node has no connections");
+        node.stop().expect("stop");
+        assert!(node.dht_peers().is_empty());
+        assert!(node.connected_peers().is_empty());
     }
 
     #[test]

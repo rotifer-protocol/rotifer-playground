@@ -165,6 +165,9 @@ export async function runDaemon(
         peerId: node.peerId(),
         listenAddrs: node.listenAddrs(),
         peers: node.discoveredPeers().length,
+        // An older native addon lacks these; leave them out rather than fail.
+        ...(node.dhtPeers ? { dhtPeers: node.dhtPeers().length } : {}),
+        ...(node.connectedPeers ? { connectedPeers: node.connectedPeers().length } : {}),
         startedAt,
       });
       return;

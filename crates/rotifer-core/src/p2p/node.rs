@@ -829,9 +829,14 @@ impl Node {
     /// Store a record in the Kademlia DHT, replicated to the closest peers.
     /// Blocks until the write quorum is reached (or times out). Keys under
     /// `/rotifer/gene/` are refused: gene records are frozen (v1) and only
-    /// ever written signed, through the gene record path.
-    pub fn put_record(&self, key: &[u8], value: &[u8]) -> Result<(), NetworkError> {
-        if key.starts_with(super::gene_record::KEY_PREFIX.as_bytes()) {
+    /// ever written signed, through the gene record path. Provider keys are
+    /// refused too: they hold provider records, never values (v1 §2.2).
+    ///
+    /// Crate-private (A2 R4): the node stores nothing but gene records, so
+    /// only tests call it until the publish path (design §7) does.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn put_record(&self, key: &[u8], value: &[u8]) -> Result<(), NetworkError> {
+        if key.starts_with(super::gene_record::KEY_PREFIX.as_bytes()) || gene_store::is_provider_key(key) {
             return Err(NetworkError::ReservedKey(String::from_utf8_lossy(key).into_owned()));
         }
         let (tx, rx) = oneshot::channel();
@@ -846,9 +851,27 @@ impl Node {
         }
     }
 
+    /// Sign `announcement` with this node's key and store it in the DHT under
+    /// its record key (v1 §2.1), returning the value written. Tests only
+    /// until the publish path (design §7) gives it callers.
+    #[cfg(test)]
+    pub(crate) fn put_gene_record(&self, announcement: &super::GeneAnnouncement) -> Result<Vec<u8>, NetworkError> {
+        let encoded = gene_record::encode_announcement_message(announcement);
+        let value = gene_record::sign_record(&self.keypair, &encoded)
+            .ok_or_else(|| NetworkError::Config("the node key is not Ed25519".into()))?;
+        let key = gene_record::record_key(&announcement.gene_id, &self.keypair.public().to_peer_id());
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::PutRecord { key, value: value.clone(), resp: tx })?;
+        self.block_on_query(rx)??;
+        Ok(value)
+    }
+
     /// Look up a record in the Kademlia DHT, returning its value if found.
     /// Blocks until the query resolves (or times out).
-    pub fn get_record(&self, key: &[u8]) -> Result<Option<Vec<u8>>, NetworkError> {
+    ///
+    /// Crate-private (A2 R4) until discover (design §6) is built on it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn get_record(&self, key: &[u8]) -> Result<Option<Vec<u8>>, NetworkError> {
         let (tx, rx) = oneshot::channel();
         self.send_command(Command::GetRecord {
             key: key.to_vec(),
@@ -2959,8 +2982,16 @@ mod tests {
     #[test]
     #[cfg_attr(not(feature = "p2p-integration"), ignore = "two-node integration: real Kademlia DHT put/get over loopback — enable the p2p-integration feature or run with --ignored")]
     fn two_nodes_dht_put_get() {
-        let key = b"gene/abc";
-        let value = b"announcement-bytes-123";
+        let gene_id = format!("v2:{}", "ab".repeat(32));
+        let announcement = super::super::GeneAnnouncement {
+            gene_id: gene_id.clone(),
+            name: "dht-round-trip".into(),
+            domain: "test".into(),
+            fidelity: "Wrapped".into(),
+            ir_spec: String::new(),
+            version: "1.0.0".into(),
+            timestamp_ms: wall_clock_ms(),
+        };
 
         let a_id = std::env::temp_dir().join("rotifer-dht-a.pem");
         let b_id = std::env::temp_dir().join("rotifer-dht-b.pem");
@@ -2993,22 +3024,28 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
 
-        // A stores a record; B must be able to read it back from the DHT.
-        a.put_record(key, value).expect("A put_record");
+        // A publishes a signed gene record; B must read the same bytes back
+        // from the DHT, and they are the §2.6 canonical encoding.
+        let written = a.put_gene_record(&announcement).expect("A put_gene_record");
+        let key = super::super::gene_record::record_key(&gene_id, &a.keypair.public().to_peer_id());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         let mut got = None;
         while std::time::Instant::now() < deadline {
-            if let Ok(Some(v)) = b.get_record(key) {
+            if let Ok(Some(v)) = b.get_record(&key) {
                 got = Some(v);
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        assert_eq!(
-            got.as_deref(),
-            Some(&value[..]),
-            "B must read A's record from the DHT"
-        );
+        assert_eq!(got.as_deref(), Some(&written[..]), "B must read A's record from the DHT, byte for byte");
+        let canonical = super::super::gene_record::validate_record(&key, &written, wall_clock_ms())
+            .expect("a valid record")
+            .canonical;
+        assert_eq!(written, canonical, "what A wrote is the canonical encoding");
+
+        // A key outside the gene namespace is not stored, so B finds nothing.
+        assert!(a.put_record(b"gene/abc", b"announcement-bytes-123").is_err(), "a non-gene key must be refused");
+        assert_eq!(b.get_record(b"gene/abc").expect("B get_record"), None);
 
         let _ = std::fs::remove_file(&a_id);
         let _ = std::fs::remove_file(&b_id);
@@ -3476,6 +3513,19 @@ mod tests {
         assert!(matches!(node.put_record(&gene_key, b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"/rotifer/gene/", b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"other/key", b"x"), Err(NetworkError::NotConnected)));
+    }
+
+    #[test]
+    fn generic_put_refuses_provider_keys() {
+        // A provider key holds provider records only (v1 §2.2), so the
+        // generic put refuses it before reaching the event loop.
+        let node = Node::new(cfg(0)).expect("build");
+        let provider_key = super::super::gene_record::provider_key(&format!("v2:{}", "ab".repeat(32))).unwrap();
+        assert!(matches!(node.put_record(&provider_key, b"x"), Err(NetworkError::ReservedKey(_))));
+        // Same length, different multihash prefix: not a provider key.
+        let mut other = provider_key.clone();
+        other[0] = 0x13;
+        assert!(matches!(node.put_record(&other, b"x"), Err(NetworkError::NotConnected)));
     }
 
     #[test]

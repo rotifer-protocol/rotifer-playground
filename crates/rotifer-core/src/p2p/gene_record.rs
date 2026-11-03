@@ -278,8 +278,10 @@ pub fn validate_record(key: &[u8], value: &[u8], now_ms: u64) -> Result<ValidRec
         return Err(RecordRejection::FromTheFuture);
     }
     // 8. Signature over the raw announcement bytes. Cofactorless, with R
-    // compared byte for byte and not checked for small order: never
-    // `verify_strict`, which refuses a small-order R the rules accept.
+    // compared byte for byte (so a non-canonical R never matches) and not
+    // checked for small order: never the cofactored equation, which accepts
+    // what this refuses, and never `verify_strict`, which refuses a
+    // small-order R the rules accept.
     let signature: [u8; SIGNATURE_LEN] = signature.try_into().map_err(|_| RecordRejection::BadSignature)?;
     key.verify(&signed_message(ann_bytes), &Signature::from_bytes(&signature))
         .map_err(|_| RecordRejection::BadSignature)?;
@@ -573,7 +575,7 @@ mod tests {
     fn dht_vectors_get_the_reference_verdicts() {
         let doc = vectors();
         let list = doc["vectors"].as_array().expect("vectors");
-        assert!(list.len() >= 91, "the vector set shrank: {}", list.len());
+        assert!(list.len() >= 101, "the vector set shrank: {}", list.len());
         for v in list {
             let name = v["name"].as_str().unwrap();
             let key = v["key"].as_str().unwrap().as_bytes();

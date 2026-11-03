@@ -176,6 +176,24 @@ def lenient_verify(pub, msg, sig):
     return compress(add(mul(s, B), mul(k, neg(a)))) == sig[:32]
 
 
+def cofactored_verify(pub, msg, sig):
+    """The cofactored equation [8]([S]B - [k]A - R) = identity, with R decoded
+    leniently (y >= p reduced). §2.4 rule 7 forbids it; the generator only uses
+    it to prove that V21d-V21f tell the two equations apart."""
+    a = decompress(pub)
+    y = int.from_bytes(sig[:32], "little")
+    sign, y = y >> 255, (y & ((1 << 255) - 1)) % P
+    x = recover_x(y, sign)
+    if x is None and (y * y - 1) % P == 0:
+        x = 0
+    s = int.from_bytes(sig[32:], "little")
+    if a is None or x is None or s >= L:
+        return False
+    k = h_int(sig[:32], pub, msg) % L
+    diff = add(add(mul(s, B), mul(k, neg(a))), neg((x, y, 1, x * y % P)))
+    return same(mul(8, diff), IDENTITY)
+
+
 def torsion_encodings():
     t8 = decompress(BLACKLIST[4])
     assert not same(mul(4, t8), IDENTITY) and same(mul(8, t8), IDENTITY)
@@ -284,7 +302,9 @@ MAX_FUTURE = 300 * 1000
 DOMAIN = b"rotifer-gene-record-v1"
 PUBLISHER_PREFIX = bytes([0x00, 0x24, 0x08, 0x01, 0x12, 0x20])
 B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-GENE_ID = re.compile(r"^v2:[0-9a-f]{64}$")
+# Exactly 67 bytes: "v2:" and 64 of 0-9a-f, nothing before or after. Always
+# fullmatch: Python's `$` also matches before a final newline.
+GENE_ID = re.compile(r"v2:[0-9a-f]{64}")
 ANN_SCHEMA = {1: "utf8", 2: "utf8", 3: "utf8", 4: "utf8", 5: "utf8", 6: "utf8", 7: "uint"}
 REC_SCHEMA = {1: "bytes", 2: "bytes", 3: "bytes"}
 
@@ -328,7 +348,7 @@ def sign_record(seed, announcement):
 def check_fields(a):
     """The field rules, as frozen in GeneRecord v1 (§2.5 rule 13) — not imported
     from the gossip format, which may change without changing this."""
-    if not GENE_ID.match(a[1]):
+    if not GENE_ID.fullmatch(a[1]):
         return False
     if len(a[2].encode()) > 128:
         return False
@@ -354,7 +374,7 @@ def validate(key_text, value, now):
     # 2. key shape
     rest = key_text[len(PREFIX):] if key_text.startswith(PREFIX) else None
     parts = rest.split("/", 1) if rest is not None else []
-    if len(parts) != 2 or not GENE_ID.match(parts[0]):
+    if len(parts) != 2 or not GENE_ID.fullmatch(parts[0]):
         return ("reject", 2, "bad_key")
     gene, named = parts[0], b58decode(parts[1]) if len(parts[1]) <= 64 else None
     if named is None or len(named) != 38 or named[:6] != PUBLISHER_PREFIX:
@@ -532,6 +552,11 @@ def main():
     s_id = (h_int(r_id, PUB_1[6:], msg) % L) * a_scalar % L
     v21c = with_sig(base, r_id + s_id.to_bytes(32, "little"))
     add_vector("V21c-small-order-r-is-accepted", rkey(), v21c, accept(v21c))
+    # The largest 10-byte varint the grammar allows (10th byte 0x01, value >= 2^63),
+    # in an unknown field: a reader keeping varints in a signed or float type
+    # would refuse it.
+    v2g = sign_record(SEED_1, announcement(extra=key(9, 0) + b"\xff" * 9 + b"\x01"))
+    add_vector("V2g-10-byte-varint-10th-byte-0x01", rkey(), v2g, accept(v2g))
     # A mixed-order key A' + T (T of order 8) is accepted (§2.4 rule 4): S = r + k·a
     # with k ≡ 0 (mod 8), so [k]T vanishes and cofactorless verification holds.
     t8 = decompress(BLACKLIST[4])
@@ -556,6 +581,9 @@ def main():
     add_vector("V24e-key-publisher-multibase-z", rkey(publisher="z" + b58(PUB_1)), base, reject(2, "bad_key"))
     add_vector("V24f-key-trailing-slash", rkey() + "/", base, reject(2, "bad_key"))
     add_vector("V24g-key-names-39-bytes", rkey(publisher=PUB_1 + b"\0"), base, reject(2, "bad_key"))
+    gene_nl = GENE + "\n"
+    add_vector("V24h-key-gene-id-trailing-newline", rkey(gene=gene_nl), base, reject(2, "bad_key"))
+    add_vector("V24i-key-and-announcement-gene-id-trailing-newline", rkey(gene=gene_nl), sign_record(SEED_1, announcement(gene=gene_nl)), reject(2, "bad_key"))
     alias42 = bytes([0x00, 0x2A]) + PUB_1[2:] + bytes.fromhex("1a04deadbeef")
     assert len(alias42) == 44
     add_vector("V3-key-names-a-44-byte-publisher-42-byte-digest", rkey(publisher=alias42), record(base_ann, alias42, base_sig), reject(2, "bad_key"))
@@ -655,7 +683,32 @@ def main():
     add_vector("V25a-signed-without-the-domain", rkey(), with_sig(base, sign(SEED_1, base_ann)), reject(8, "bad_signature"))
     le = DOMAIN + b"\0" + len(base_ann).to_bytes(4, "little") + base_ann
     add_vector("V25b-length-little-endian", rkey(), with_sig(base, sign(SEED_1, le)), reject(8, "bad_signature"))
+    # Valid only under the cofactored equation RFC 8032 5.1.7 also permits;
+    # rule 7 forbids it. Each is refused by the cofactorless byte comparison.
+    t8 = decompress(BLACKLIST[4])
+    r_t = compress(add(mul(12345, B), t8))
+    sig_t = r_t + ((12345 + (h_int(r_t, PUB_1[6:], msg) % L) * a_scalar) % L).to_bytes(32, "little")
+    assert not verify(PUB_1[6:], msg, sig_t) and cofactored_verify(PUB_1[6:], msg, sig_t)
+    add_vector("V21d-r-plus-torsion-cofactored-only", rkey(), with_sig(base, sig_t), reject(8, "bad_signature"))
+    r_nc = (1 + P).to_bytes(32, "little")
+    sig_nc = r_nc + ((h_int(r_nc, PUB_1[6:], msg) % L) * a_scalar % L).to_bytes(32, "little")
+    assert not verify(PUB_1[6:], msg, sig_nc) and cofactored_verify(PUB_1[6:], msg, sig_nc)
+    add_vector("V21e-non-canonical-r-identity", rkey(), with_sig(base, sig_nc), reject(8, "bad_signature"))
+    for r in range(1, 1000):
+        r_m = compress(mul(r, B))
+        k_m = h_int(r_m, mixed, msg) % L
+        if k_m % 8:
+            sig_m = r_m + ((r + k_m * a_scalar) % L).to_bytes(32, "little")
+            break
+    assert not verify(mixed, msg, sig_m) and cofactored_verify(mixed, msg, sig_m)
+    add_vector("V21f-mixed-order-key-k-not-0-mod-8", rkey(publisher=mixed_pub), record(base_ann, mixed_pub, sig_m), reject(8, "bad_signature"))
     add_vector("V25c-domain-without-zero-byte", rkey(), with_sig(base, sign(SEED_1, DOMAIN + len(base_ann).to_bytes(4, "big") + base_ann)), reject(8, "bad_signature"))
+
+    # ---- two failures in one record: the earlier step is the verdict (§2.8)
+    add_vector("V28a-stale-and-bad-signature", rkey(), with_sig(base, flipped), reject(7, "stale"), now=TS + MAX_AGE + 1)
+    add_vector("V28b-bad-field-and-bad-signature", rkey(), record(announcement(domain=""), PUB_1, base_sig), reject(6, "bad_announcement"))
+    add_vector("V28c-other-publisher-and-bad-field", rkey(publisher=PUB_2), record(announcement(domain=""), PUB_1, base_sig), reject(5, "bad_publisher"))
+    add_vector("V28d-bad-outer-and-other-publisher", rkey(publisher=PUB_2), base + ld(3, base_sig), reject(4, "malformed_record"))
 
     # ---- replacement under one key (§2.7 rule 2)
     def replace_vector(name, stored, incoming, expect):

@@ -486,10 +486,10 @@ mod tests {
         let key = Keypair::generate_ed25519();
         let mut store = GeneStore::new(PeerId::random());
         let now = Instant::now();
-        for n in 0..(RECORDS_PER_PUBLISHER as u32 + 10) {
+        for n in 0..74 {
             assert_eq!(store.admit_record(signed(&key, n, NOW_MS - 1000), NOW_MS, now, anonymous), Admission::Stored);
         }
-        assert_eq!(store.record_counts(), (0, RECORDS_PER_PUBLISHER));
+        assert_eq!(store.record_counts(), (0, 64));
     }
 
     #[test]
@@ -497,11 +497,11 @@ mod tests {
         let account = Holder::Registered { iss: "https://rotifer.dev".into(), sub: "acct".into() };
         let mut store = GeneStore::new(PeerId::random());
         let now = Instant::now();
-        for n in 0..(RECORDS_PER_PUBLISHER as u32 + 5) {
+        for n in 0..69 {
             let key = Keypair::generate_ed25519();
             assert_eq!(store.admit_record(signed(&key, n, NOW_MS - 1000), NOW_MS, now, |_| account.clone()), Admission::Stored);
         }
-        assert_eq!(store.record_counts(), (RECORDS_PER_PUBLISHER, 0));
+        assert_eq!(store.record_counts(), (64, 0));
     }
 
     #[test]
@@ -510,7 +510,7 @@ mod tests {
         let now = Instant::now();
         // Fill the whole store with anonymous publishers, 16 records each.
         let mut n = 0;
-        while store.record_counts().1 < MAX_RECORDS {
+        while store.record_counts().1 < 1024 {
             let key = Keypair::generate_ed25519();
             for _ in 0..16 {
                 store.admit_record(signed(&key, n, NOW_MS - 1000), NOW_MS, now, anonymous);
@@ -522,31 +522,46 @@ mod tests {
         let account = Holder::Registered { iss: "i".into(), sub: "s".into() };
         let key = Keypair::generate_ed25519();
         assert_eq!(store.admit_record(signed(&key, n, NOW_MS - 1000), NOW_MS, now, |_| account.clone()), Admission::Stored);
-        assert_eq!(store.record_counts(), (1, MAX_RECORDS - 1));
+        assert_eq!(store.record_counts(), (1, 1023));
         // Another anonymous newcomer only displaces another anonymous record.
         let key = Keypair::generate_ed25519();
         assert_eq!(store.admit_record(signed(&key, n + 1, NOW_MS - 1000), NOW_MS, now, anonymous), Admission::Stored);
-        assert_eq!(store.record_counts(), (1, MAX_RECORDS - 1));
+        assert_eq!(store.record_counts(), (1, 1023));
     }
 
     #[test]
     fn provider_slots_keep_each_class_its_share() {
         let mut store = GeneStore::new(PeerId::random());
         let now = Instant::now();
-        let peers: Vec<PeerId> = (0..PROVIDERS_PER_KEY).map(|_| PeerId::random()).collect();
+        let peers: Vec<PeerId> = (0..20).map(|_| PeerId::random()).collect();
         for p in &peers {
             assert_eq!(store.admit_provider(provider(1, *p), now, anonymous(p)), ProviderAdmission::Stored);
         }
         // Registered newcomers displace anonymous entries until each class
         // holds its share; then they only displace each other.
-        for i in 0..(PROVIDERS_PER_KEY as u32) {
+        for i in 0..20 {
             let p = PeerId::random();
             let holder = Holder::Registered { iss: "i".into(), sub: format!("acct-{i}") };
             assert_eq!(store.admit_provider(provider(1, p), now, holder), ProviderAdmission::Stored);
         }
         let key = provider(1, PeerId::random()).key;
         let anonymous_left = store.providers(&key).iter().filter(|r| peers.contains(&r.provider)).count();
-        assert_eq!((store.providers(&key).len(), anonymous_left), (PROVIDERS_PER_KEY, PROVIDER_SHARE));
+        assert_eq!((store.providers(&key).len(), anonymous_left), (20, 10));
+    }
+
+    #[test]
+    fn the_budgets_are_the_ruled_values() {
+        // Design v2 §5.3, as ruled in v2 §13 #1. Written out, so a changed
+        // constant fails here rather than moving its own expectation.
+        assert_eq!(MAX_RECORDS, 1024);
+        assert_eq!(ANONYMOUS_RECORDS, 512);
+        assert_eq!(RECORDS_PER_PUBLISHER, 64);
+        assert_eq!(PROVIDERS_PER_KEY, 20);
+        assert_eq!(PROVIDER_SHARE, 10);
+        assert_eq!(MAX_PROVIDER_KEYS, 1024);
+        assert_eq!(MAX_PROVIDER_ENTRIES, 8192);
+        assert_eq!(PROVIDER_ADDRS, 8);
+        assert_eq!(PROVIDER_ADDR_BYTES, 512);
     }
 
     #[test]
@@ -566,7 +581,7 @@ mod tests {
         let addrs = (1..=20u16).map(|p| format!("/ip4/10.0.0.1/tcp/{p}").parse().unwrap()).collect();
         let rec = ProviderRecord::new(gene_record::provider_key(&gene(1)).unwrap(), peer, addrs);
         store.admit_provider(rec.clone(), Instant::now(), anonymous(&peer));
-        assert_eq!(store.providers(&rec.key)[0].addresses.len(), PROVIDER_ADDRS);
+        assert_eq!(store.providers(&rec.key)[0].addresses.len(), 8);
     }
 
     #[test]

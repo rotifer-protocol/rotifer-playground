@@ -3556,19 +3556,29 @@ mod tests {
         // T20: the forgery charge assumes a PUT comes from the node that chose
         // to send it. Turning any of these back on breaks that premise.
         let config = format!("{:?}", kad_config());
-        for field in [
-            "record_replication_interval: None",
-            "record_publication_interval: None",
-            "provider_publication_interval: None",
-            "caching: Disabled",
-            "record_ttl: Some(86400s)",
-            "provider_record_ttl: Some(86400s)",
-            "max_packet_size: 65536",
-            "record_filtering: FilterBoth",
-            "\"/rotifer/gene-discovery/1.0.0\"",
+        // Each field's own value, read up to the next delimiter: a field
+        // whose name ends another's (record_ttl, provider_record_ttl) cannot
+        // stand in for it.
+        let field = |name: &str| -> Option<&str> {
+            [", ", "{ "].iter().find_map(|lead| {
+                let start = config.find(&format!("{lead}{name}: "))? + lead.len() + name.len() + 2;
+                let rest = &config[start..];
+                Some(&rest[..rest.find([',', ' ']).unwrap_or(rest.len())])
+            })
+        };
+        for (name, value) in [
+            ("record_replication_interval", "None"),
+            ("record_publication_interval", "None"),
+            ("provider_publication_interval", "None"),
+            ("caching", "Disabled"),
+            ("record_ttl", "Some(86400s)"),
+            ("provider_record_ttl", "Some(86400s)"),
+            ("max_packet_size", "65536"),
+            ("record_filtering", "FilterBoth"),
         ] {
-            assert!(config.contains(field), "{field} missing from {config}");
+            assert_eq!(field(name), Some(value), "{name} in {config}");
         }
+        assert!(config.contains("protocol_names: [\"/rotifer/gene-discovery/1.0.0\"]"), "{config}");
     }
 
     #[test]

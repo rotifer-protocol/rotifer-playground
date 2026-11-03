@@ -850,6 +850,31 @@ fn adv_13_dht_write_flood_is_rate_limited() {
 }
 
 // ---------------------------------------------------------------------
+// ADV-13b — provider writes share the same per-peer limit
+// ---------------------------------------------------------------------
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_13b_add_provider_flood_is_rate_limited() {
+    let dir = tempfile::tempdir().unwrap();
+    let victim = spawn(&dir, "victim", vec![]);
+    let raw = RawDht::spawn(&victim);
+    for n in 0..150 {
+        raw.provide(super::gene_record::provider_key(&id(&format!("adv13b-{n}"))).unwrap());
+    }
+    assert!(
+        eventually(30, || {
+            let s = victim.dht_stats();
+            s.providers_stored + s.rate_limited == 150
+        }),
+        "not all writes arrived: {:?}",
+        victim.dht_stats()
+    );
+    let stats = victim.dht_stats();
+    assert!(stats.providers_stored >= 128 && stats.providers_stored <= 130, "{stats:?}");
+    assert!(stats.rate_limited >= 20, "{stats:?}");
+}
+
+// ---------------------------------------------------------------------
 // ADV-14 — each kind of DHT entry goes only under its own kind of key
 // ---------------------------------------------------------------------
 #[test]

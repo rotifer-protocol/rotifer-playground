@@ -36,9 +36,10 @@ use libp2p::relay;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionDenied, DialError, ListenError, NetworkBehaviour, SwarmEvent};
-use libp2p::{Multiaddr, PeerId as Libp2pPeerId, Swarm};
+use libp2p::{Multiaddr, PeerId as Libp2pPeerId, StreamProtocol, Swarm};
 use tokio::sync::{mpsc, oneshot};
 
+use super::gene_record;
 use super::heartbeat::{self, HEARTBEATS_TOPIC, WireNodeHeartbeat};
 use super::peerstore;
 use super::por::{self, Decision, FetchJob, Fetched, HeartbeatDesk, HeartbeatStats, KeyStore, PeerAttestation};
@@ -173,6 +174,67 @@ fn push_bounded(buf: &mut Vec<ReceivedMessage>, msg: ReceivedMessage, cap: usize
         let excess = buf.len() - cap;
         buf.drain(..excess);
     }
+}
+
+/// Addresses this node feeds Kademlia per peer, and the longest it feeds.
+/// Kademlia hands every closer peer's addresses out in its answers and keeps
+/// no limit of its own, so these bound the answers (see [`KAD_MAX_PACKET`]).
+const KAD_ADDRS_PER_PEER: usize = 8;
+const KAD_ADDR_MAX_BYTES: usize = 128;
+
+/// Largest Kademlia message, sent or received (ADR-340 修订一, review C7).
+/// The largest is a GET_VALUE answer: one 8192-byte record with its key and
+/// framing, plus k = 20 closer peers, each a 38-byte PeerId and up to
+/// [`KAD_ADDRS_PER_PEER`] addresses of up to [`KAD_ADDR_MAX_BYTES`]:
+///
+/// ```text
+/// 8192 + 256 + 20 × (2 + 38 + 8 × (2 + 128) + 16) = 8448 + 20 × 1096 = 30 368 bytes
+/// ```
+///
+/// libp2p's default, 16 KiB, would fail such an answer outright. This is
+/// twice the sum, for the addresses Kademlia records by itself from
+/// connections. Every node must use the same value: a smaller limit on the
+/// asking side refuses the answer.
+const KAD_MAX_PACKET: usize = 64 * 1024;
+const _: () = assert!(
+    gene_record::MAX_RECORD_BYTES + 256 + 20 * (2 + 38 + KAD_ADDRS_PER_PEER * (2 + KAD_ADDR_MAX_BYTES) + 16)
+        <= KAD_MAX_PACKET / 2
+);
+
+/// Kademlia as GeneRecord v1 needs it (ADR-340 修订一 §2.2; A2 design §3).
+/// Replication, republication and caching are off, so a PUT reaching this
+/// node comes from the node that chose to send it: the premise that lets a
+/// bad record be charged to its sender. The A2 announce loop republishes
+/// instead, re-signing each time.
+fn kad_config() -> kad::Config {
+    let ttl = Some(Duration::from_millis(gene_record::STORE_TTL_MS));
+    let mut config = kad::Config::new(StreamProtocol::new(gene_record::KAD_PROTOCOL));
+    config
+        .set_caching(kad::Caching::Disabled)
+        .set_replication_interval(None)
+        .set_publication_interval(None)
+        .set_provider_publication_interval(None)
+        .set_record_ttl(ttl)
+        .set_provider_record_ttl(ttl)
+        .set_max_packet_size(KAD_MAX_PACKET);
+    config
+}
+
+/// Feed `addr` into Kademlia's routing table for `peer`, within the
+/// per-peer bounds above.
+fn feed_kad(kademlia: &mut kad::Behaviour<MemoryStore>, peer: &Libp2pPeerId, addr: Multiaddr) {
+    if addr.as_ref().len() > KAD_ADDR_MAX_BYTES {
+        return;
+    }
+    let known = kademlia.kbucket(*peer).and_then(|bucket| {
+        bucket.iter().find(|e| e.node.key.preimage() == peer).map(|e| (e.node.value.len(), e.node.value.iter().any(|a| a == &addr)))
+    });
+    if let Some((count, present)) = known
+        && (present || count >= KAD_ADDRS_PER_PEER)
+    {
+        return;
+    }
+    kademlia.add_address(peer, addr);
 }
 
 #[derive(NetworkBehaviour)]
@@ -1118,7 +1180,7 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
         .map_err(|e| NetworkError::Transport(format!("relay client transport: {e}")))?
         .with_behaviour(|key, relay_client| {
             let peer_id = key.public().to_peer_id();
-            let mut kademlia = kad::Behaviour::new(peer_id, MemoryStore::new(peer_id));
+            let mut kademlia = kad::Behaviour::with_config(peer_id, MemoryStore::new(peer_id), kad_config());
             kademlia.set_mode(Some(kad::Mode::Server));
             let mut gossipsub = gossipsub::Behaviour::new(
                 gossipsub::MessageAuthenticity::Signed(key.clone()),
@@ -1434,7 +1496,7 @@ async fn run_event_loop(
                     {
                         remember(&mut met, &addr, &peer_id);
                     }
-                    swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                    feed_kad(&mut swarm.behaviour_mut().kademlia, &peer_id, addr);
                 }
                 // Refusals by our own limits are counted by cause so load
                 // shedding is observable (ADR-304 D2); a transport failure
@@ -1655,7 +1717,7 @@ async fn run_event_loop(
                         if let Ok(mut met) = met_peers.lock() {
                             remember(&mut met, &addr, &peer_id);
                         }
-                        swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                        feed_kad(&mut swarm.behaviour_mut().kademlia, &peer_id, addr);
                     }
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(mdns::Event::Discovered(found))) => {
@@ -3156,6 +3218,40 @@ mod tests {
             (thresholds.gossip_threshold, thresholds.publish_threshold, thresholds.graylist_threshold),
             (-10.0, -50.0, -80.0)
         );
+    }
+
+    #[test]
+    fn kad_replication_republication_and_caching_stay_off() {
+        // T20: the forgery charge assumes a PUT comes from the node that chose
+        // to send it. Turning any of these back on breaks that premise.
+        let config = format!("{:?}", kad_config());
+        for field in [
+            "record_replication_interval: None",
+            "record_publication_interval: None",
+            "provider_publication_interval: None",
+            "caching: Disabled",
+            "record_ttl: Some(86400s)",
+            "provider_record_ttl: Some(86400s)",
+            "max_packet_size: 65536",
+            "\"/rotifer/gene-discovery/1.0.0\"",
+        ] {
+            assert!(config.contains(field), "{field} missing from {config}");
+        }
+    }
+
+    #[test]
+    fn kademlia_is_fed_at_most_eight_short_addresses_per_peer() {
+        let id = Libp2pPeerId::random();
+        let mut kademlia = kad::Behaviour::with_config(id, MemoryStore::new(id), kad_config());
+        let peer = Libp2pPeerId::random();
+        let long: Multiaddr = format!("/dns4/{}.example/tcp/1", "a".repeat(120)).parse().unwrap();
+        feed_kad(&mut kademlia, &peer, long);
+        assert!(kademlia.kbucket(peer).is_none_or(|b| b.iter().all(|e| e.node.key.preimage() != &peer)), "a long address is not fed");
+        for port in 1..=12u16 {
+            feed_kad(&mut kademlia, &peer, format!("/ip4/10.0.0.1/tcp/{port}").parse().unwrap());
+        }
+        let count = kademlia.kbucket(peer).and_then(|b| b.iter().find(|e| e.node.key.preimage() == &peer).map(|e| e.node.value.len()));
+        assert_eq!(count, Some(KAD_ADDRS_PER_PEER));
     }
 
     #[test]

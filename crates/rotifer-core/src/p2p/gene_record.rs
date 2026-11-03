@@ -2,7 +2,8 @@
 //!
 //! A record is one publisher's signed claim that it has a gene. It lives at
 //! `/rotifer/gene/<gene_id>/<publisher>` so publishers never overwrite each
-//! other; `/rotifer/gene/<gene_id>` carries provider records listing them.
+//! other. Provider records listing them live at the gene ID's own SHA-256
+//! digest as a sha2-256 multihash ([`provider_key`]).
 //!
 //! [`validate_record`] is the whole receiving-side contract, applied in a fixed
 //! order; the first failing check is the verdict, and only a failed publisher
@@ -206,9 +207,20 @@ impl ValidRecord {
     }
 }
 
-/// Key of the provider records for `gene_id`.
-pub fn provider_key(gene_id: &str) -> Vec<u8> {
-    format!("{KEY_PREFIX}{gene_id}").into_bytes()
+/// Multihash header of a sha2-256 digest: code 0x12, length 32.
+pub const SHA2_256_MULTIHASH: [u8; 2] = [0x12, 0x20];
+
+/// Key of the provider records for `gene_id`: the 32 bytes its 64 hex digits
+/// spell, as a sha2-256 multihash (34 bytes). A v2 ID already is a SHA-256
+/// digest, so it is not hashed again. A multihash key fits go-libp2p-kad-dht's
+/// 80-byte key limit and decodes as a CID in js-libp2p. `None` unless
+/// `gene_id` is a v2 ID.
+pub fn provider_key(gene_id: &str) -> Option<Vec<u8>> {
+    if !is_gene_id(gene_id) {
+        return None;
+    }
+    let digest = hex::decode(&gene_id[3..]).ok()?;
+    Some([&SHA2_256_MULTIHASH[..], &digest].concat())
 }
 
 /// Key of `publisher`'s record for `gene_id`.
@@ -691,10 +703,32 @@ mod tests {
     }
 
     #[test]
+    fn provider_key_is_the_gene_ids_digest_as_a_multihash() {
+        let digest: Vec<u8> = (0..32).map(|i| i * 7 + 1).collect();
+        let id = format!("v2:{}", hex::encode(&digest));
+        let key = provider_key(&id).expect("v2 id");
+        assert_eq!(key.len(), 34);
+        assert_eq!(key[..2], [0x12, 0x20]);
+        assert_eq!(key[2..], digest[..]);
+        for bad in ["v1:00", &format!("v2:{}", "AB".repeat(32)), &format!("{id}\n"), &id[..66]] {
+            assert_eq!(provider_key(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn provider_keys_match_the_reference() {
+        let list = vectors()["provider_keys"].as_array().expect("provider_keys").clone();
+        assert!(list.len() >= 4, "provider key vectors: {}", list.len());
+        for v in &list {
+            let id = v["gene_id"].as_str().unwrap();
+            assert_eq!(provider_key(id), Some(unhex(&v["key"])), "{id}");
+        }
+    }
+
+    #[test]
     fn keys_spell_the_gene_and_publisher() {
         let id = format!("v2:{}", "ab".repeat(32));
         let peer = PeerId::random();
-        assert_eq!(provider_key(&id), format!("/rotifer/gene/{id}").into_bytes());
         assert_eq!(record_key(&id, &peer), format!("/rotifer/gene/{id}/{}", peer.to_base58()).into_bytes());
     }
 }

@@ -3163,7 +3163,7 @@ mod tests {
         // Refused before reaching the event loop, so an unstarted node shows
         // it; any other key gets as far as "not connected".
         let node = Node::new(cfg(0)).expect("build");
-        let gene_key = super::super::gene_record::provider_key(&format!("v2:{}", "ab".repeat(32)));
+        let gene_key = super::super::gene_record::record_key(&format!("v2:{}", "ab".repeat(32)), &Libp2pPeerId::random());
         assert!(matches!(node.put_record(&gene_key, b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"/rotifer/gene/", b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"other/key", b"x"), Err(NetworkError::NotConnected)));

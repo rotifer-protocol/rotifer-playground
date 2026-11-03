@@ -309,6 +309,12 @@ ANN_SCHEMA = {1: "utf8", 2: "utf8", 3: "utf8", 4: "utf8", 5: "utf8", 6: "utf8", 
 REC_SCHEMA = {1: "bytes", 2: "bytes", 3: "bytes"}
 
 
+def provider_key(gid):
+    """The provider-record key: G's 32-byte digest as a sha2-256 multihash."""
+    assert GENE_ID.fullmatch(gid)
+    return bytes([0x12, 0x20]) + bytes.fromhex(gid[3:])
+
+
 def b58(data):
     n = int.from_bytes(data, "big")
     out = ""
@@ -736,6 +742,10 @@ def main():
         "generator": "scripts/p2p-dht-v1-reference.py",
         "verdicts": "accept | reject (dropped, not charged) | reject-charged (one forgery against the PUT's sender)",
         "vectors": vectors,
+        "provider_keys": [
+            {"gene_id": g, "key": provider_key(g).hex()}
+            for g in (GENE, OTHER_GENE, "v2:" + "0" * 64, "v2:" + "f" * 64)
+        ],
     }, sys.stdout, indent=2)
     sys.stdout.write("\n")
 

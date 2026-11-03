@@ -22,6 +22,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use libp2p::futures::StreamExt;
+use libp2p::allow_block_list;
 use libp2p::autonat;
 use libp2p::connection_limits;
 use libp2p::dcutr;
@@ -29,16 +30,18 @@ use libp2p::gossipsub;
 use libp2p::identify;
 use libp2p::memory_connection_limits;
 use libp2p::identity::Keypair;
-use libp2p::kad::{self, store::MemoryStore};
+use libp2p::kad;
 use libp2p::mdns;
 use libp2p::multiaddr::Protocol;
 use libp2p::relay;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionDenied, DialError, ListenError, NetworkBehaviour, SwarmEvent};
-use libp2p::{Multiaddr, PeerId as Libp2pPeerId, Swarm};
+use libp2p::{Multiaddr, PeerId as Libp2pPeerId, StreamProtocol, Swarm};
 use tokio::sync::{mpsc, oneshot};
 
+use super::gene_record;
+use super::gene_store::{self, Admission, GeneStore, Holder, ProviderAdmission, WriteLimiter};
 use super::heartbeat::{self, HEARTBEATS_TOPIC, WireNodeHeartbeat};
 use super::peerstore;
 use super::por::{self, Decision, FetchJob, Fetched, HeartbeatDesk, HeartbeatStats, KeyStore, PeerAttestation};
@@ -83,6 +86,24 @@ enum Command {
     GetRecord {
         key: Vec<u8>,
         resp: oneshot::Sender<Option<Vec<u8>>>,
+    },
+    StartProviding {
+        key: Vec<u8>,
+        resp: oneshot::Sender<Result<(), NetworkError>>,
+    },
+    FindProviders {
+        key: Vec<u8>,
+        resp: oneshot::Sender<Vec<Libp2pPeerId>>,
+    },
+    /// Skip the node's monotonic clock forward, then recompute scores.
+    #[cfg(test)]
+    SkipClock { by: Duration, resp: oneshot::Sender<()> },
+    /// What this node's own store holds under `key`: the record value and
+    /// the providers.
+    #[cfg(test)]
+    LocalDht {
+        key: Vec<u8>,
+        resp: oneshot::Sender<(Option<Vec<u8>>, Vec<Libp2pPeerId>)>,
     },
 }
 
@@ -159,7 +180,7 @@ fn peer_score_params() -> (gossipsub::PeerScoreParams, gossipsub::PeerScoreThres
 }
 
 /// Wall-clock Unix milliseconds (announcement freshness is wall-clock based).
-fn wall_clock_ms() -> u64 {
+pub(crate) fn wall_clock_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -175,6 +196,69 @@ fn push_bounded(buf: &mut Vec<ReceivedMessage>, msg: ReceivedMessage, cap: usize
     }
 }
 
+/// Addresses this node feeds Kademlia per peer, and the longest it feeds.
+/// Kademlia hands every closer peer's addresses out in its answers and keeps
+/// no limit of its own, so these bound the answers (see [`KAD_MAX_PACKET`]).
+const KAD_ADDRS_PER_PEER: usize = 8;
+const KAD_ADDR_MAX_BYTES: usize = 128;
+
+/// Largest Kademlia message, sent or received (ADR-340 修订一, review C7).
+/// The largest is a GET_VALUE answer: one 8192-byte record with its key and
+/// framing, plus k = 20 closer peers, each a 38-byte PeerId and up to
+/// [`KAD_ADDRS_PER_PEER`] addresses of up to [`KAD_ADDR_MAX_BYTES`]:
+///
+/// ```text
+/// 8192 + 256 + 20 × (2 + 38 + 8 × (2 + 128) + 16) = 8448 + 20 × 1096 = 30 368 bytes
+/// ```
+///
+/// libp2p's default, 16 KiB, would fail such an answer outright. This is
+/// twice the sum, for the addresses Kademlia records by itself from
+/// connections. Every node must use the same value: a smaller limit on the
+/// asking side refuses the answer.
+const KAD_MAX_PACKET: usize = 64 * 1024;
+const _: () = assert!(
+    gene_record::MAX_RECORD_BYTES + 256 + 20 * (2 + 38 + KAD_ADDRS_PER_PEER * (2 + KAD_ADDR_MAX_BYTES) + 16)
+        <= KAD_MAX_PACKET / 2
+);
+
+/// Kademlia as GeneRecord v1 needs it (ADR-340 修订一 §2.2; A2 design §3).
+/// Whatever a peer sends is handed up for [`GeneStore`] to admit instead of
+/// being stored as is (`FilterBoth`). Replication, republication and caching are off, so a PUT reaching this
+/// node comes from the node that chose to send it: the premise that lets a
+/// bad record be charged to its sender. The A2 announce loop republishes
+/// instead, re-signing each time.
+fn kad_config() -> kad::Config {
+    let ttl = Some(Duration::from_millis(gene_record::STORE_TTL_MS));
+    let mut config = kad::Config::new(StreamProtocol::new(gene_record::KAD_PROTOCOL));
+    config
+        .set_record_filtering(kad::StoreInserts::FilterBoth)
+        .set_caching(kad::Caching::Disabled)
+        .set_replication_interval(None)
+        .set_publication_interval(None)
+        .set_provider_publication_interval(None)
+        .set_record_ttl(ttl)
+        .set_provider_record_ttl(ttl)
+        .set_max_packet_size(KAD_MAX_PACKET);
+    config
+}
+
+/// Feed `addr` into Kademlia's routing table for `peer`, within the
+/// per-peer bounds above.
+fn feed_kad(kademlia: &mut kad::Behaviour<GeneStore>, peer: &Libp2pPeerId, addr: Multiaddr) {
+    if addr.as_ref().len() > KAD_ADDR_MAX_BYTES {
+        return;
+    }
+    let known = kademlia.kbucket(*peer).and_then(|bucket| {
+        bucket.iter().find(|e| e.node.key.preimage() == peer).map(|e| (e.node.value.len(), e.node.value.iter().any(|a| a == &addr)))
+    });
+    if let Some((count, present)) = known
+        && (present || count >= KAD_ADDRS_PER_PEER)
+    {
+        return;
+    }
+    kademlia.add_address(peer, addr);
+}
+
 #[derive(NetworkBehaviour)]
 struct NodeBehaviour {
     // The limits come first. libp2p offers a new connection to each behaviour
@@ -187,7 +271,10 @@ struct NodeBehaviour {
     connection_limits: connection_limits::Behaviour,
     /// Denies new connections under memory pressure (process RSS vs system RAM).
     memory_connection_limits: memory_connection_limits::Behaviour,
-    kademlia: kad::Behaviour<MemoryStore>,
+    /// Peers whose score is at or below the graylist threshold, whatever the
+    /// cause: refused and disconnected until the score rises again (A2 §8.2).
+    blocked: allow_block_list::Behaviour<allow_block_list::BlockedPeers>,
+    kademlia: kad::Behaviour<GeneStore>,
     gossipsub: gossipsub::Behaviour,
     identify: identify::Behaviour,
     /// NAT traversal (ADR-304 D1): AutoNAT asks peers to dial it back to learn
@@ -263,12 +350,15 @@ pub struct ConnectionDenials {
     pub outbound_limit: u64,
     /// Connections in either direction refused under memory pressure.
     pub memory: u64,
+    /// Connections in either direction refused because the peer is blocked
+    /// (its score is at or below the graylist threshold, A2 §8.2).
+    pub blocked: u64,
 }
 
 impl ConnectionDenials {
     /// All refusals, whatever the cause.
     pub fn total(&self) -> u64 {
-        self.inbound_limit + self.outbound_limit + self.memory
+        self.inbound_limit + self.outbound_limit + self.memory + self.blocked
     }
 }
 
@@ -297,6 +387,27 @@ pub struct NatTraversal {
     pub hole_punch_succeeded: u64,
     /// Hole-punch attempts that failed; the relayed connection stays in use.
     pub hole_punch_failed: u64,
+}
+
+/// What became of the DHT writes peers sent this node (A2).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DhtStats {
+    /// Value records stored, or replacing an older copy.
+    pub stored: u64,
+    /// Older than the copy already held: dropped.
+    pub not_newer: u64,
+    /// Failed the GeneRecord v1 checks: dropped.
+    pub rejected: u64,
+    /// Of those, forgeries held against the sender.
+    pub forgeries: u64,
+    /// Provider records stored.
+    pub providers_stored: u64,
+    /// Provider records under a key that is not a provider key: dropped.
+    pub providers_bad_key: u64,
+    /// No room under the budgets: dropped.
+    pub over_budget: u64,
+    /// Over the sender's write limit: dropped.
+    pub rate_limited: u64,
 }
 
 /// Shared state handles the event loop updates and the synchronous API reads.
@@ -332,6 +443,7 @@ struct NodeShared {
     heartbeats: Arc<Mutex<HeartbeatDesk>>,
     /// Connected peers' GossipSub scores, as of the last recompute.
     scores: Arc<Mutex<HashMap<String, f64>>>,
+    dht: Arc<Mutex<DhtStats>>,
 }
 
 /// Fixed listen ports currently bound by live nodes in this process. libp2p's
@@ -388,6 +500,8 @@ pub struct Node {
     heartbeats: Arc<Mutex<HeartbeatDesk>>,
     /// Connected peers' GossipSub scores, as of the last recompute.
     scores: Arc<Mutex<HashMap<String, f64>>>,
+    /// What became of peers' DHT writes.
+    dht: Arc<Mutex<DhtStats>>,
     /// How often this node publishes its heartbeat.
     heartbeat_interval: Duration,
     /// How often peer scores are recomputed besides after each heartbeat.
@@ -476,6 +590,7 @@ impl Node {
             attestation: Arc::new(Mutex::new(None)),
             heartbeats: Arc::new(Mutex::new(HeartbeatDesk::new(Vec::new(), KeyStore::default()))),
             scores: Arc::new(Mutex::new(HashMap::new())),
+            dht: Arc::new(Mutex::new(DhtStats::default())),
             heartbeat_interval: Duration::from_secs(heartbeat::HEARTBEAT_INTERVAL_SECS),
             score_refresh_interval: por::SCORE_REFRESH_INTERVAL,
             autonat_on_loopback: false,
@@ -696,12 +811,40 @@ impl Node {
         self.unregistered.lock().map(|n| *n).unwrap_or(0)
     }
 
+    /// What this node's own DHT store holds under `key`: the record value,
+    /// and the providers.
+    #[cfg(test)]
+    pub(crate) fn local_dht(&self, key: &[u8]) -> Result<(Option<Vec<u8>>, Vec<Libp2pPeerId>), NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::LocalDht { key: key.to_vec(), resp: tx })?;
+        self.block_on_query(rx)
+    }
+
+    /// Move the node's monotonic clock (the one the forgery window runs on)
+    /// forward by `by`, then recompute scores and blocks.
+    #[cfg(test)]
+    pub(crate) fn skip_clock(&self, by: Duration) -> Result<(), NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::SkipClock { by, resp: tx })?;
+        self.block_on_query(rx)
+    }
+
+    /// What became of the DHT writes peers sent this node.
+    pub fn dht_stats(&self) -> DhtStats {
+        self.dht.lock().map(|d| *d).unwrap_or_default()
+    }
+
     /// Store a record in the Kademlia DHT, replicated to the closest peers.
     /// Blocks until the write quorum is reached (or times out). Keys under
     /// `/rotifer/gene/` are refused: gene records are frozen (v1) and only
-    /// ever written signed, through the gene record path.
-    pub fn put_record(&self, key: &[u8], value: &[u8]) -> Result<(), NetworkError> {
-        if key.starts_with(super::gene_record::KEY_PREFIX.as_bytes()) {
+    /// ever written signed, through the gene record path. Provider keys are
+    /// refused too: they hold provider records, never values (v1 §2.2).
+    ///
+    /// Crate-private (A2 R4): the node stores nothing but gene records, so
+    /// only tests call it until the publish path (design §7) does.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn put_record(&self, key: &[u8], value: &[u8]) -> Result<(), NetworkError> {
+        if key.starts_with(super::gene_record::KEY_PREFIX.as_bytes()) || gene_store::is_provider_key(key) {
             return Err(NetworkError::ReservedKey(String::from_utf8_lossy(key).into_owned()));
         }
         let (tx, rx) = oneshot::channel();
@@ -716,15 +859,54 @@ impl Node {
         }
     }
 
+    /// Sign `announcement` with this node's key and store it in the DHT under
+    /// its record key (v1 §2.1), returning the value written. Tests only
+    /// until the publish path (design §7) gives it callers.
+    #[cfg(test)]
+    pub(crate) fn put_gene_record(&self, announcement: &super::GeneAnnouncement) -> Result<Vec<u8>, NetworkError> {
+        let encoded = gene_record::encode_announcement_message(announcement);
+        let value = gene_record::sign_record(&self.keypair, &encoded)
+            .ok_or_else(|| NetworkError::Config("the node key is not Ed25519".into()))?;
+        let key = gene_record::record_key(&announcement.gene_id, &self.keypair.public().to_peer_id());
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::PutRecord { key, value: value.clone(), resp: tx })?;
+        self.block_on_query(rx)??;
+        Ok(value)
+    }
+
     /// Look up a record in the Kademlia DHT, returning its value if found.
     /// Blocks until the query resolves (or times out).
-    pub fn get_record(&self, key: &[u8]) -> Result<Option<Vec<u8>>, NetworkError> {
+    ///
+    /// Crate-private (A2 R4) until discover (design §6) is built on it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn get_record(&self, key: &[u8]) -> Result<Option<Vec<u8>>, NetworkError> {
         let (tx, rx) = oneshot::channel();
         self.send_command(Command::GetRecord {
             key: key.to_vec(),
             resp: tx,
         })?;
         self.block_on_query(rx)
+    }
+
+    /// Announce in the DHT that this node provides `gene_id`, under its
+    /// provider key (v1 §2.2). Returns once the record is in this node's own
+    /// store and the announcement to the closest peers has started. A gene
+    /// ID that is not v2 has no provider key and is an error.
+    pub fn start_providing_gene(&self, gene_id: &str) -> Result<(), NetworkError> {
+        let key = super::gene_record::provider_key(gene_id).ok_or_else(|| NetworkError::NotV2GeneId(gene_id.into()))?;
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::StartProviding { key, resp: tx })?;
+        self.block_on_query(rx)?
+    }
+
+    /// The peers the DHT knows to provide `gene_id`. Blocks until the query
+    /// resolves (or times out). A gene ID that is not v2 has no provider key
+    /// and is an error.
+    pub fn find_gene_providers(&self, gene_id: &str) -> Result<Vec<PeerId>, NetworkError> {
+        let key = super::gene_record::provider_key(gene_id).ok_or_else(|| NetworkError::NotV2GeneId(gene_id.into()))?;
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::FindProviders { key, resp: tx })?;
+        Ok(self.block_on_query(rx)?.into_iter().map(|p| PeerId(p.to_string())).collect())
     }
 
     /// Hand a command to the running event loop.
@@ -810,6 +992,7 @@ impl Node {
             attestation: Arc::clone(&self.attestation),
             heartbeats: Arc::clone(&self.heartbeats),
             scores: Arc::clone(&self.scores),
+            dht: Arc::clone(&self.dht),
         };
         let (ready_tx, ready_rx) = oneshot::channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -1118,7 +1301,7 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
         .map_err(|e| NetworkError::Transport(format!("relay client transport: {e}")))?
         .with_behaviour(|key, relay_client| {
             let peer_id = key.public().to_peer_id();
-            let mut kademlia = kad::Behaviour::new(peer_id, MemoryStore::new(peer_id));
+            let mut kademlia = kad::Behaviour::with_config(peer_id, GeneStore::new(peer_id), kad_config());
             kademlia.set_mode(Some(kad::Mode::Server));
             let mut gossipsub = gossipsub::Behaviour::new(
                 gossipsub::MessageAuthenticity::Signed(key.clone()),
@@ -1158,6 +1341,7 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
             NodeBehaviour {
                 connection_limits,
                 memory_connection_limits,
+                blocked: Default::default(),
                 kademlia,
                 gossipsub,
                 identify,
@@ -1178,6 +1362,13 @@ fn record_denial(denials: &Mutex<ConnectionDenials>, inbound: bool, cause: &Conn
         .downcast_ref::<memory_connection_limits::MemoryUsageLimitExceeded>()
         .is_some();
     let limit = cause.downcast_ref::<connection_limits::Exceeded>().is_some();
+    if cause.downcast_ref::<allow_block_list::Blocked>().is_some() {
+        if let Ok(mut d) = denials.lock() {
+            d.blocked += 1;
+        }
+        tracing::debug!(inbound, "connection refused: {cause}");
+        return;
+    }
     if !memory && !limit {
         tracing::debug!(inbound, "connection refused: {cause}");
         return;
@@ -1252,6 +1443,7 @@ async fn run_event_loop(
         attestation,
         heartbeats,
         scores,
+        dht,
     } = shared;
     // Per-peer flood defence (§8.6); lives in the single-threaded event loop.
     let mut security = super::security::Security::new();
@@ -1330,7 +1522,8 @@ async fn run_event_loop(
     // fires at once; with no peers yet that publish simply finds nobody.
     let heartbeats_topic = gossipsub::IdentTopic::new(HEARTBEATS_TOPIC);
     let _ = swarm.behaviour_mut().gossipsub.subscribe(&heartbeats_topic);
-    let started = std::time::Instant::now();
+    #[cfg_attr(not(test), allow(unused_mut))]
+    let mut started = MonoClock { started: std::time::Instant::now(), skipped: Duration::ZERO };
     let mut heartbeat_timer = tokio::time::interval(options.heartbeat_interval);
     heartbeat_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_heartbeat: Option<std::time::Instant> = None;
@@ -1356,8 +1549,18 @@ async fn run_event_loop(
     let mut pending_put: HashMap<kad::QueryId, oneshot::Sender<Result<(), NetworkError>>> =
         HashMap::new();
     let mut pending_get: HashMap<kad::QueryId, oneshot::Sender<Option<Vec<u8>>>> = HashMap::new();
+    let mut pending_providers: HashMap<kad::QueryId, (oneshot::Sender<Vec<Libp2pPeerId>>, HashSet<Libp2pPeerId>)> =
+        HashMap::new();
+    // Inbound DHT writes per peer (A2 design §4 step 1), and the sweep that
+    // drops expired entries without waiting for a query (§5.4).
+    let mut writes = WriteLimiter::default();
+    let mut sweep_timer = tokio::time::interval(gene_store::SWEEP_INTERVAL);
+    sweep_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
+            _ = sweep_timer.tick() => {
+                swarm.behaviour_mut().kademlia.store_mut().sweep(std::time::Instant::now());
+            }
             _ = peer_flush.tick() => {
                 // A clean shutdown persists peers too, but daemons are often
                 // killed rather than stopped; flushing periodically bounds how
@@ -1434,7 +1637,7 @@ async fn run_event_loop(
                     {
                         remember(&mut met, &addr, &peer_id);
                     }
-                    swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                    feed_kad(&mut swarm.behaviour_mut().kademlia, &peer_id, addr);
                 }
                 // Refusals by our own limits are counted by cause so load
                 // shedding is observable (ADR-304 D2); a transport failure
@@ -1655,7 +1858,7 @@ async fn run_event_loop(
                         if let Ok(mut met) = met_peers.lock() {
                             remember(&mut met, &addr, &peer_id);
                         }
-                        swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                        feed_kad(&mut swarm.behaviour_mut().kademlia, &peer_id, addr);
                     }
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(mdns::Event::Discovered(found))) => {
@@ -1711,9 +1914,77 @@ async fn run_event_loop(
                         }
                     }
                 }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(kad::Event::InboundRequest {
+                    request: kad::InboundRequest::PutRecord { source, record: Some(record), .. },
+                })) => {
+                    // A2 design §4. Kad has already acknowledged the PUT, so
+                    // the sender never learns what became of it.
+                    let mut counted = DhtStats::default();
+                    if !writes.allow(&source, std::time::Instant::now()) {
+                        counted.rate_limited = 1;
+                    } else {
+                        let now_ms = wall_clock_ms();
+                        let admission = {
+                            let desk = heartbeats.lock().ok();
+                            let holder_of = |p: &Libp2pPeerId| holder(desk.as_deref(), p, now_ms);
+                            swarm.behaviour_mut().kademlia.store_mut().admit_record(record, now_ms, std::time::Instant::now(), holder_of)
+                        };
+                        match admission {
+                            Admission::Stored | Admission::Replaced => counted.stored = 1,
+                            Admission::NotNewer => counted.not_newer = 1,
+                            Admission::OverBudget => counted.over_budget = 1,
+                            Admission::Rejected(why) => {
+                                counted.rejected = 1;
+                                tracing::debug!(%source, step = why.step(), reason = why.reason(), "DHT record refused");
+                                if why.is_forgery() {
+                                    // Only steps 5 and 8: no honest v1 node
+                                    // builds or relays such a record, and with
+                                    // replication off it came from `source`.
+                                    counted.forgeries = 1;
+                                    if let Ok(mut desk) = heartbeats.lock() {
+                                        desk.record_forgery(&source.to_string(), started.elapsed().as_millis() as u64);
+                                    }
+                                    refresh_scores(&mut swarm, &heartbeats, &scores, started);
+                                }
+                            }
+                        }
+                    }
+                    add_stats(&dht, counted);
+                }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(kad::Event::InboundRequest {
+                    request: kad::InboundRequest::AddProvider { record: Some(record) },
+                })) => {
+                    // Kad has already checked that the provider is the peer
+                    // that sent it. Nothing on this path is charged.
+                    let mut counted = DhtStats::default();
+                    let source = record.provider;
+                    if !writes.allow(&source, std::time::Instant::now()) {
+                        counted.rate_limited = 1;
+                    } else {
+                        let who = holder(heartbeats.lock().ok().as_deref(), &source, wall_clock_ms());
+                        match swarm.behaviour_mut().kademlia.store_mut().admit_provider(record, std::time::Instant::now(), who) {
+                            ProviderAdmission::Stored => counted.providers_stored = 1,
+                            ProviderAdmission::BadKey => counted.providers_bad_key = 1,
+                            ProviderAdmission::OverBudget => counted.over_budget = 1,
+                        }
+                    }
+                    add_stats(&dht, counted);
+                }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
-                    kad::Event::OutboundQueryProgressed { id, result, .. },
+                    kad::Event::OutboundQueryProgressed { id, result, step, .. },
                 )) => match result {
+                    kad::QueryResult::GetProviders(outcome) => {
+                        if let Some((_, found)) = pending_providers.get_mut(&id)
+                            && let Ok(kad::GetProvidersOk::FoundProviders { providers, .. }) = outcome
+                        {
+                            found.extend(providers);
+                        }
+                        if step.last
+                            && let Some((tx, found)) = pending_providers.remove(&id)
+                        {
+                            let _ = tx.send(found.into_iter().collect());
+                        }
+                    }
                     kad::QueryResult::PutRecord(outcome) => {
                         if let Some(tx) = pending_put.remove(&id) {
                             let _ = tx.send(outcome.map(|_| ()).map_err(|e| {
@@ -1764,6 +2035,34 @@ async fn run_event_loop(
                         }
                     }
                 }
+                Some(Command::StartProviding { key, resp }) => {
+                    let result = swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .start_providing(kad::RecordKey::new(&key))
+                        .map(|_| ())
+                        .map_err(|e| NetworkError::Transport(format!("start providing: {e:?}")));
+                    let _ = resp.send(result);
+                }
+                Some(Command::FindProviders { key, resp }) => {
+                    let id = swarm.behaviour_mut().kademlia.get_providers(kad::RecordKey::new(&key));
+                    pending_providers.insert(id, (resp, HashSet::new()));
+                }
+                #[cfg(test)]
+                Some(Command::SkipClock { by, resp }) => {
+                    started.skipped += by;
+                    refresh_scores(&mut swarm, &heartbeats, &scores, started);
+                    let _ = resp.send(());
+                }
+                #[cfg(test)]
+                Some(Command::LocalDht { key, resp }) => {
+                    use libp2p::kad::store::RecordStore as _;
+                    let key = kad::RecordKey::new(&key);
+                    let store = swarm.behaviour_mut().kademlia.store_mut();
+                    let value = store.get(&key).map(|r| r.value.clone());
+                    let providers = store.providers(&key).into_iter().map(|p| p.provider).collect();
+                    let _ = resp.send((value, providers));
+                }
                 Some(Command::GetRecord { key, resp }) => {
                     let query_id = swarm
                         .behaviour_mut()
@@ -1777,8 +2076,44 @@ async fn run_event_loop(
 
 }
 
+/// Who a DHT publisher or provider counts as: its pseudonym if it is validly
+/// registered on this node, else its PeerId (A2 design §5.1).
+fn holder(desk: Option<&HeartbeatDesk>, peer: &Libp2pPeerId, now_ms: u64) -> Holder {
+    match desk.and_then(|d| d.registration(&peer.to_string(), now_ms / 1000)) {
+        Some((iss, sub)) => Holder::Registered { iss, sub },
+        None => Holder::Anonymous(*peer),
+    }
+}
+
+fn add_stats(dht: &Mutex<DhtStats>, n: DhtStats) {
+    if let Ok(mut d) = dht.lock() {
+        d.stored += n.stored;
+        d.not_newer += n.not_newer;
+        d.rejected += n.rejected;
+        d.forgeries += n.forgeries;
+        d.providers_stored += n.providers_stored;
+        d.providers_bad_key += n.providers_bad_key;
+        d.over_budget += n.over_budget;
+        d.rate_limited += n.rate_limited;
+    }
+}
+
+/// Monotonic time since the event loop started, the clock the A1 forgery
+/// window runs on. Tests skip it forward to see a 24-hour window close.
+#[derive(Clone, Copy)]
+struct MonoClock {
+    started: std::time::Instant,
+    skipped: Duration,
+}
+
+impl MonoClock {
+    fn elapsed(&self) -> Duration {
+        self.started.elapsed() + self.skipped
+    }
+}
+
 /// This node's heartbeat as of now.
-fn own_heartbeat(started: std::time::Instant, attestation: &Arc<Mutex<Option<String>>>) -> Vec<u8> {
+fn own_heartbeat(started: MonoClock, attestation: &Arc<Mutex<Option<String>>>) -> Vec<u8> {
     let token = attestation.lock().ok().and_then(|a| a.clone()).unwrap_or_default();
     heartbeat::encode_heartbeat(&WireNodeHeartbeat {
         // The network layer holds no gene store of its own yet, so a node
@@ -1794,28 +2129,46 @@ fn own_heartbeat(started: std::time::Instant, attestation: &Arc<Mutex<Option<Str
 
 /// Set every connected peer's GossipSub application score from the heartbeat
 /// desk, and record the resulting scores for [`Node::peer_score`].
+///
+/// A peer whose application score is at or below the graylist threshold is
+/// blocked and disconnected, whatever the cause (A2 §8.2); a blocked peer is
+/// let back in once its score rises, which for a forgery is when the 24-hour
+/// window closes, so no block outlasts it.
 fn refresh_scores(
     swarm: &mut Swarm<NodeBehaviour>,
     desk: &Mutex<HeartbeatDesk>,
     scores: &Mutex<HashMap<String, f64>>,
-    started: std::time::Instant,
+    started: MonoClock,
 ) {
     let connected: Vec<Libp2pPeerId> = swarm.connected_peers().copied().collect();
     let names: Vec<String> = connected.iter().map(|p| p.to_string()).collect();
-    let app = match desk.lock() {
-        Ok(d) => d.scores(
-            names.iter().map(String::as_str),
-            wall_clock_ms(),
-            started.elapsed().as_millis() as u64,
+    let blocked: Vec<Libp2pPeerId> = swarm.behaviour().blocked.blocked_peers().iter().copied().collect();
+    let blocked_names: Vec<String> = blocked.iter().map(|p| p.to_string()).collect();
+    let (now_ms, mono_ms) = (wall_clock_ms(), started.elapsed().as_millis() as u64);
+    // Blocked peers are scored on their own, so one that is not connected
+    // cannot take a registered bonus from one that is.
+    let (app, blocked_app) = match desk.lock() {
+        Ok(d) => (
+            d.scores(names.iter().map(String::as_str), now_ms, mono_ms),
+            d.scores(blocked_names.iter().map(String::as_str), now_ms, mono_ms),
         ),
         Err(_) => return,
     };
-    let gossipsub = &mut swarm.behaviour_mut().gossipsub;
+    let graylist = peer_score_params().1.graylist_threshold;
+    let behaviour = swarm.behaviour_mut();
     let mut now = HashMap::with_capacity(connected.len());
     for (peer, (name, score)) in connected.iter().zip(app) {
-        gossipsub.set_application_score(peer, score);
-        if let Some(total) = gossipsub.peer_score(peer) {
+        behaviour.gossipsub.set_application_score(peer, score);
+        if let Some(total) = behaviour.gossipsub.peer_score(peer) {
             now.insert(name.to_string(), total);
+        }
+        if score <= graylist {
+            behaviour.blocked.block_peer(*peer);
+        }
+    }
+    for (peer, (_, score)) in blocked.iter().zip(blocked_app) {
+        if score > graylist {
+            behaviour.blocked.unblock_peer(*peer);
         }
     }
     if let Ok(mut s) = scores.lock() {
@@ -2157,7 +2510,7 @@ mod tests {
         #[derive(NetworkBehaviour)]
         struct Foreign {
             identify: identify::Behaviour,
-            kademlia: kad::Behaviour<MemoryStore>,
+            kademlia: kad::Behaviour<kad::store::MemoryStore>,
         }
 
         let dir = tempfile::tempdir().expect("temp dir");
@@ -2180,7 +2533,7 @@ mod tests {
                 .expect("tcp")
                 .with_behaviour(|key| {
                     let id = key.public().to_peer_id();
-                    let mut kademlia = kad::Behaviour::new(id, MemoryStore::new(id));
+                    let mut kademlia = kad::Behaviour::new(id, kad::store::MemoryStore::new(id));
                     kademlia.set_mode(Some(kad::Mode::Server));
                     Foreign {
                         identify: identify::Behaviour::new(identify::Config::new(
@@ -2685,8 +3038,16 @@ mod tests {
     #[test]
     #[cfg_attr(not(feature = "p2p-integration"), ignore = "two-node integration: real Kademlia DHT put/get over loopback — enable the p2p-integration feature or run with --ignored")]
     fn two_nodes_dht_put_get() {
-        let key = b"gene/abc";
-        let value = b"announcement-bytes-123";
+        let gene_id = format!("v2:{}", "ab".repeat(32));
+        let announcement = super::super::GeneAnnouncement {
+            gene_id: gene_id.clone(),
+            name: "dht-round-trip".into(),
+            domain: "test".into(),
+            fidelity: "Wrapped".into(),
+            ir_spec: String::new(),
+            version: "1.0.0".into(),
+            timestamp_ms: wall_clock_ms(),
+        };
 
         let a_id = std::env::temp_dir().join("rotifer-dht-a.pem");
         let b_id = std::env::temp_dir().join("rotifer-dht-b.pem");
@@ -2719,25 +3080,57 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
 
-        // A stores a record; B must be able to read it back from the DHT.
-        a.put_record(key, value).expect("A put_record");
+        // A publishes a signed gene record; B must read the same bytes back
+        // from the DHT, and they are the §2.6 canonical encoding.
+        let written = a.put_gene_record(&announcement).expect("A put_gene_record");
+        let key = super::super::gene_record::record_key(&gene_id, &a.keypair.public().to_peer_id());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         let mut got = None;
         while std::time::Instant::now() < deadline {
-            if let Ok(Some(v)) = b.get_record(key) {
+            if let Ok(Some(v)) = b.get_record(&key) {
                 got = Some(v);
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        assert_eq!(
-            got.as_deref(),
-            Some(&value[..]),
-            "B must read A's record from the DHT"
-        );
+        assert_eq!(got.as_deref(), Some(&written[..]), "B must read A's record from the DHT, byte for byte");
+        let canonical = super::super::gene_record::validate_record(&key, &written, wall_clock_ms())
+            .expect("a valid record")
+            .canonical;
+        assert_eq!(written, canonical, "what A wrote is the canonical encoding");
+
+        // A key outside the gene namespace is not stored, so B finds nothing.
+        assert!(a.put_record(b"gene/abc", b"announcement-bytes-123").is_err(), "a non-gene key must be refused");
+        assert_eq!(b.get_record(b"gene/abc").expect("B get_record"), None);
 
         let _ = std::fs::remove_file(&a_id);
         let _ = std::fs::remove_file(&b_id);
+    }
+
+    // -----------------------------------------------------------------
+    // Two-node provider records: A provides a gene, B finds A (integration)
+    // -----------------------------------------------------------------
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "two-node integration: real Kademlia provider records over loopback — enable the p2p-integration feature or run with --ignored")]
+    fn two_nodes_find_gene_providers() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut a = Node::with_keypair_path(NetworkConfig { bootstrap_peers: vec![], ..cfg(0) }, dir.path().join("a.id")).expect("A build");
+        a.start().expect("A start");
+        let a_addr = a.listen_addrs().into_iter().next().expect("A listen address");
+        let mut b = Node::with_keypair_path(NetworkConfig { bootstrap_peers: vec![a_addr], ..cfg(0) }, dir.path().join("b.id")).expect("B build");
+        b.start().expect("B start");
+        let b_peer = b.local_peer_id().0;
+        assert!(wait_until(10, || a.discovered_peers().contains(&b_peer)), "A did not discover B");
+
+        let gene_id = format!("v2:{}", "cd".repeat(32));
+        a.start_providing_gene(&gene_id).expect("A provides");
+        let a_peer = a.local_peer_id();
+        assert!(
+            wait_until(10, || b.find_gene_providers(&gene_id).is_ok_and(|p| p.contains(&a_peer))),
+            "B must find A as a provider"
+        );
+        let other = format!("v2:{}", "ef".repeat(32));
+        assert_eq!(b.find_gene_providers(&other).expect("B find"), vec![], "nobody provides another gene");
     }
 
     // -----------------------------------------------------------------
@@ -3159,6 +3552,51 @@ mod tests {
     }
 
     #[test]
+    fn kad_replication_republication_and_caching_stay_off() {
+        // T20: the forgery charge assumes a PUT comes from the node that chose
+        // to send it. Turning any of these back on breaks that premise.
+        let config = format!("{:?}", kad_config());
+        // Each field's own value, read up to the next delimiter: a field
+        // whose name ends another's (record_ttl, provider_record_ttl) cannot
+        // stand in for it.
+        let field = |name: &str| -> Option<&str> {
+            [", ", "{ "].iter().find_map(|lead| {
+                let start = config.find(&format!("{lead}{name}: "))? + lead.len() + name.len() + 2;
+                let rest = &config[start..];
+                Some(&rest[..rest.find([',', ' ']).unwrap_or(rest.len())])
+            })
+        };
+        for (name, value) in [
+            ("record_replication_interval", "None"),
+            ("record_publication_interval", "None"),
+            ("provider_publication_interval", "None"),
+            ("caching", "Disabled"),
+            ("record_ttl", "Some(86400s)"),
+            ("provider_record_ttl", "Some(86400s)"),
+            ("max_packet_size", "65536"),
+            ("record_filtering", "FilterBoth"),
+        ] {
+            assert_eq!(field(name), Some(value), "{name} in {config}");
+        }
+        assert!(config.contains("protocol_names: [\"/rotifer/gene-discovery/1.0.0\"]"), "{config}");
+    }
+
+    #[test]
+    fn kademlia_is_fed_at_most_eight_short_addresses_per_peer() {
+        let id = Libp2pPeerId::random();
+        let mut kademlia = kad::Behaviour::with_config(id, GeneStore::new(id), kad_config());
+        let peer = Libp2pPeerId::random();
+        let long: Multiaddr = format!("/dns4/{}.example/tcp/1", "a".repeat(120)).parse().unwrap();
+        feed_kad(&mut kademlia, &peer, long);
+        assert!(kademlia.kbucket(peer).is_none_or(|b| b.iter().all(|e| e.node.key.preimage() != &peer)), "a long address is not fed");
+        for port in 1..=12u16 {
+            feed_kad(&mut kademlia, &peer, format!("/ip4/10.0.0.1/tcp/{port}").parse().unwrap());
+        }
+        let count = kademlia.kbucket(peer).and_then(|b| b.iter().find(|e| e.node.key.preimage() == &peer).map(|e| e.node.value.len()));
+        assert_eq!(count, Some(KAD_ADDRS_PER_PEER));
+    }
+
+    #[test]
     fn generic_put_refuses_gene_record_keys() {
         // Refused before reaching the event loop, so an unstarted node shows
         // it; any other key gets as far as "not connected".
@@ -3167,6 +3605,33 @@ mod tests {
         assert!(matches!(node.put_record(&gene_key, b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"/rotifer/gene/", b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"other/key", b"x"), Err(NetworkError::NotConnected)));
+    }
+
+    #[test]
+    fn provider_api_refuses_gene_ids_that_are_not_v2() {
+        // Refused before reaching the event loop, so an unstarted node shows
+        // it; a v2 ID gets as far as "not connected".
+        let node = Node::new(cfg(0)).expect("build");
+        for bad in ["v1:abc", "gene-name", "v2:XYZ", "", &format!("v2:{}", "ab".repeat(31))] {
+            assert!(matches!(node.start_providing_gene(bad), Err(NetworkError::NotV2GeneId(ref g)) if g == bad), "{bad:?}");
+            assert!(matches!(node.find_gene_providers(bad), Err(NetworkError::NotV2GeneId(ref g)) if g == bad), "{bad:?}");
+        }
+        let good = format!("v2:{}", "ab".repeat(32));
+        assert!(matches!(node.start_providing_gene(&good), Err(NetworkError::NotConnected)));
+        assert!(matches!(node.find_gene_providers(&good), Err(NetworkError::NotConnected)));
+    }
+
+    #[test]
+    fn generic_put_refuses_provider_keys() {
+        // A provider key holds provider records only (v1 §2.2), so the
+        // generic put refuses it before reaching the event loop.
+        let node = Node::new(cfg(0)).expect("build");
+        let provider_key = super::super::gene_record::provider_key(&format!("v2:{}", "ab".repeat(32))).unwrap();
+        assert!(matches!(node.put_record(&provider_key, b"x"), Err(NetworkError::ReservedKey(_))));
+        // Same length, different multihash prefix: not a provider key.
+        let mut other = provider_key.clone();
+        other[0] = 0x13;
+        assert!(matches!(node.put_record(&other, b"x"), Err(NetworkError::NotConnected)));
     }
 
     #[test]

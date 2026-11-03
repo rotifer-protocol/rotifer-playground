@@ -11,16 +11,18 @@
  * daemons can reach: they differ only after a bucket eviction (over 20 peers
  * in one bucket). Rust tests ADV-17a–c cover what keeps a peer out of both.
  *
- * The daemons need a native addon with `dhtPeers` and `searchGene`. An older
- * installed addon (the platform package) has neither; the test is then
- * skipped and says so. `ROTIFER_E2E_CLI` points it at another CLI build, e.g.
- * one whose platform package is the addon built from this tree.
+ * The daemons need a native addon with `dhtPeers`. An older installed addon
+ * (the platform package) lacks it; the test is then skipped and says so, and
+ * runs by itself once a released addon has it. `ROTIFER_E2E_CLI` points it
+ * at another CLI build, e.g. one whose platform package is the addon built
+ * from this tree.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 
 const CLI = process.env.ROTIFER_E2E_CLI ?? join(__dirname, "..", "..", "dist", "index.js");
 const ROOT = mkdtempSync(join(tmpdir(), "rotifer-status-peers-"));
@@ -66,20 +68,40 @@ async function until(secs: number, check: () => Promise<boolean>): Promise<boole
   return false;
 }
 
+/**
+ * Whether the CLI's native addon reports `dhtPeers`. Decided before the tests
+ * are collected, so `it.skipIf` can use it: a child process loads the CLI's
+ * own binding, makes a throwaway node, answers and exits.
+ */
+function addonHasDhtPeers(): boolean {
+  const binding = pathToFileURL(join(dirname(CLI), "utils", "binding.js")).href;
+  const probe = [
+    `const { loadP2pNode } = await import(${JSON.stringify(binding)});`,
+    `const node = loadP2pNode("127.0.0.1", 0, [], false);`,
+    `console.log(typeof node?.dhtPeers === "function" ? "yes" : "no");`,
+    `process.exit(0);`,
+  ].join("\n");
+  try {
+    const out = execFileSync("node", ["--input-type=module", "-e", probe], {
+      env: { ...process.env, HOME: join(ROOT, "probe") },
+      timeout: 20_000,
+      encoding: "utf-8",
+    });
+    return out.trim().endsWith("yes");
+  } catch {
+    return false;
+  }
+}
+
+const HAS_DHT_PEERS = addonHasDhtPeers();
+if (!HAS_DHT_PEERS) console.warn("skipped: no native addon, or it predates dhtPeers/connectedPeers");
+
 const homeA = join(ROOT, "a");
 const homeB = join(ROOT, "b");
 
 describe("network /status peer counts on real daemons", () => {
-  let skipReason = "";
-
-  beforeAll(async () => {
-    const out = cli(homeA, "network", "start", "--port", "0", "--no-mdns");
-    if (out.toLowerCase().includes("unavailable")) {
-      skipReason = "no native addon";
-      return;
-    }
-    const a = await status(homeA);
-    if (a.dhtPeers === undefined) skipReason = "the native addon predates dhtPeers/connectedPeers";
+  beforeAll(() => {
+    if (HAS_DHT_PEERS) cli(homeA, "network", "start", "--port", "0", "--no-mdns");
   }, 30_000);
 
   afterAll(() => {
@@ -88,11 +110,7 @@ describe("network /status peer counts on real daemons", () => {
     rmSync(ROOT, { recursive: true, force: true });
   });
 
-  it("counts a peer as connected only while it is, and keeps it in the DHT count after it leaves", async (ctx) => {
-    if (skipReason) {
-      console.warn(`skipped: ${skipReason}`);
-      ctx.skip();
-    }
+  it.skipIf(!HAS_DHT_PEERS)("counts a peer as connected only while it is, and keeps it in the DHT count after it leaves", async () => {
     const a = await status(homeA);
     expect(a).toMatchObject({ peers: 0, dhtPeers: 0, connectedPeers: 0 });
 

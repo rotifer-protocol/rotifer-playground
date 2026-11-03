@@ -1203,6 +1203,17 @@ fn adv_18_an_announced_gene_is_found_from_another_node() {
 
 #[test]
 #[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_18_read_back_counts_only_other_nodes() {
+    // §7.1: the read-back counts valid copies on other nodes. A lone node
+    // holds its own copy, which must not count.
+    let dir = tempfile::tempdir().unwrap();
+    let a = spawn(&dir, "a", vec![]);
+    let report = a.announce(&labelled(&id("adv18-lone"), "lone", now_ms())).expect("announce");
+    assert_eq!(report.readable_from, 0, "{report:?}");
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
 fn adv_18a_several_honest_publishers_are_all_found() {
     // T4: two honest publishers and one attacker on one gene.
     let dir = tempfile::tempdir().unwrap();
@@ -1324,6 +1335,9 @@ fn adv_18e_colluding_responders_cannot_crowd_out_a_publisher_heard_on_gossip() {
     }));
     let found = gene_search(&victim, &gene);
     assert!(hit(&found, &honest.peer_id).is_some(), "{found:?}");
+    // Found in the DHT too, so its record lookup ran: gossip seeds come first
+    // (§6.1 rule 1). Without seeds the gossip copy alone shows, as Gossip.
+    assert_eq!(hit(&found, &honest.peer_id).map(|h| h.source), Some(HitSource::Both), "{found:?}");
     // Whether a colluder's candidate is also turned away depends on timing:
     // a fake's lookup ends at once with no record and gives its place back
     // (§6.1 rule 3), so the budget may never be full at one moment. ADV-18d

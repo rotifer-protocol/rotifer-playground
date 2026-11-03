@@ -267,6 +267,32 @@ describe("network search: JSON shape (§10.1)", () => {
     expect(out.cloud.status).toBe("skipped");
     expect(process.exitCode).toBe(0);
   });
+
+  // Design v1 §4: P2P times out with the daemon up → whatever it had by 3 s,
+  // marked partial, exit 0. Zero results is still an answer.
+  const deadlineHint = "P2P results may be incomplete: the 3 s search deadline or a candidate limit was hit.";
+
+  it("a v2 ID search that hits its deadline with nothing is an empty, partial answer, exit 0", async () => {
+    daemonAnswers({ hits: [], timedOut: true, partial: true });
+    await run("search", V2_ID);
+    expect(process.exitCode).toBe(0);
+    expect(text()).toContain("P2P network (0)");
+    expect(text()).toContain(deadlineHint);
+    expect(text()).not.toContain("did not answer");
+    expect(text()).not.toContain("not searched");
+  });
+
+  it("a keyword search that hits its deadline with nothing is an empty, partial answer, exit 0", async () => {
+    cloudRows = [cloudRow("summarizer")];
+    daemonAnswers({ hits: [], timedOut: true, partial: true });
+    await run("search", "summarize");
+    expect(process.exitCode).toBe(0);
+    expect(text()).toContain("Rotifer Cloud (1)");
+    expect(text()).toContain("P2P network (0)");
+    expect(text()).toContain(deadlineHint);
+    expect(text()).not.toContain("did not answer");
+    expect(text()).not.toContain("not searched");
+  });
 });
 
 describe("network search: when a side fails (RFC §5.3)", () => {

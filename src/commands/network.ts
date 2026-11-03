@@ -212,6 +212,15 @@ function cloudFailure(cloud: CloudPart): string {
     : "Rotifer Cloud is unreachable or returned an error";
 }
 
+/**
+ * The daemon ran the search: it finished, or stopped at its 3 s deadline with
+ * what it had (design §10.1: the deadline always makes the result partial).
+ * A control request that got no reply has nothing and is not partial.
+ */
+function hasDaemonAnswered(p2p: P2pPart): boolean {
+  return p2p.status === "ok" || (p2p.status === "timeout" && p2p.partial);
+}
+
 function p2pFailure(p2p: P2pPart): string {
   if (p2p.status === "daemon_not_running") return "the P2P daemon is not running";
   return p2p.status === "timeout" ? "the P2P daemon did not answer in time" : "the P2P search failed";
@@ -220,7 +229,7 @@ function p2pFailure(p2p: P2pPart): string {
 function printSearch(out: NetworkSearchOutput): void {
   display.header(`Gene Search  "${escapeTerminal(out.query)}"`, { separator: false });
   const { cloud, p2p } = out;
-  const hasP2pAnswer = p2p.status === "ok" || (p2p.status === "timeout" && p2p.genes.length > 0);
+  const hasP2pAnswer = hasDaemonAnswered(p2p);
 
   if (cloud.status === "skipped") {
     display.info("Rotifer Cloud skipped: it cannot look up v2 gene IDs.");
@@ -524,7 +533,7 @@ export const networkCommand = new Command("network")
       .action(async (query: string) => {
         const out = await networkSearch(query);
         const isCloudOk = out.cloud.status === "ok";
-        const isP2pOk = out.p2p.status === "ok" || (out.p2p.status === "timeout" && out.p2p.genes.length > 0);
+        const isP2pOk = hasDaemonAnswered(out.p2p);
         display.renderResult(out, printSearch);
         if (!isCloudOk && !isP2pOk) {
           if (!display.isJsonMode()) {

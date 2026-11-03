@@ -743,7 +743,7 @@ def main():
         "verdicts": "accept | reject (dropped, not charged) | reject-charged (one forgery against the PUT's sender)",
         "vectors": vectors,
         "provider_keys": [
-            {"gene_id": g, "key": provider_key(g).hex()}
+            {"gene_id": g, "multihash": provider_key(g).hex()}
             for g in (GENE, OTHER_GENE, "v2:" + "0" * 64, "v2:" + "f" * 64)
         ],
     }, sys.stdout, indent=2)

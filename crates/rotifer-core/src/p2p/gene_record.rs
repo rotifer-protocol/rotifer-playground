@@ -721,7 +721,7 @@ mod tests {
         assert!(list.len() >= 4, "provider key vectors: {}", list.len());
         for v in &list {
             let id = v["gene_id"].as_str().unwrap();
-            assert_eq!(provider_key(id), Some(unhex(&v["key"])), "{id}");
+            assert_eq!(provider_key(id), Some(unhex(&v["multihash"])), "{id}");
         }
     }
 

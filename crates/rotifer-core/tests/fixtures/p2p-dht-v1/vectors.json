@@ -898,19 +898,19 @@
   "provider_keys": [
     {
       "gene_id": "v2:a8c860cdc35a7997fde0aaa73f241356166442ea0fa4ebcff37081c3cc6caf6a",
-      "key": "1220a8c860cdc35a7997fde0aaa73f241356166442ea0fa4ebcff37081c3cc6caf6a"
+      "multihash": "1220a8c860cdc35a7997fde0aaa73f241356166442ea0fa4ebcff37081c3cc6caf6a"
     },
     {
       "gene_id": "v2:04cc0e7fdd09675dfe6486b97fff03acf197d36dd28ae8b649693517ba390736",
-      "key": "122004cc0e7fdd09675dfe6486b97fff03acf197d36dd28ae8b649693517ba390736"
+      "multihash": "122004cc0e7fdd09675dfe6486b97fff03acf197d36dd28ae8b649693517ba390736"
     },
     {
       "gene_id": "v2:0000000000000000000000000000000000000000000000000000000000000000",
-      "key": "12200000000000000000000000000000000000000000000000000000000000000000"
+      "multihash": "12200000000000000000000000000000000000000000000000000000000000000000"
     },
     {
       "gene_id": "v2:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-      "key": "1220ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "multihash": "1220ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     }
   ]
 }

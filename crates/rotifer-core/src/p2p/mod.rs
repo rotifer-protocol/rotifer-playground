@@ -218,6 +218,10 @@ pub enum NetworkError {
     UnregisteredTopic(String),
     #[error("key is reserved for gene records: {0}")]
     ReservedKey(String),
+    /// Provider records are kept only under a v2 gene ID's multihash (v1
+    /// §2.2); any other ID has no provider key.
+    #[error("not a v2 gene ID, so it has no provider key: {0}")]
+    NotV2GeneId(String),
     #[error("invalid configuration: {0}")]
     Config(String),
 }

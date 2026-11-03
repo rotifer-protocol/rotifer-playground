@@ -87,11 +87,19 @@ enum Command {
         key: Vec<u8>,
         resp: oneshot::Sender<Option<Vec<u8>>>,
     },
-    /// What this node's own store holds under `key`: the record value and
-    /// the providers.
+    StartProviding {
+        key: Vec<u8>,
+        resp: oneshot::Sender<Result<(), NetworkError>>,
+    },
+    FindProviders {
+        key: Vec<u8>,
+        resp: oneshot::Sender<Vec<Libp2pPeerId>>,
+    },
     /// Skip the node's monotonic clock forward, then recompute scores.
     #[cfg(test)]
     SkipClock { by: Duration, resp: oneshot::Sender<()> },
+    /// What this node's own store holds under `key`: the record value and
+    /// the providers.
     #[cfg(test)]
     LocalDht {
         key: Vec<u8>,
@@ -880,6 +888,27 @@ impl Node {
         self.block_on_query(rx)
     }
 
+    /// Announce in the DHT that this node provides `gene_id`, under its
+    /// provider key (v1 §2.2). Returns once the record is in this node's own
+    /// store and the announcement to the closest peers has started. A gene
+    /// ID that is not v2 has no provider key and is an error.
+    pub fn start_providing_gene(&self, gene_id: &str) -> Result<(), NetworkError> {
+        let key = super::gene_record::provider_key(gene_id).ok_or_else(|| NetworkError::NotV2GeneId(gene_id.into()))?;
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::StartProviding { key, resp: tx })?;
+        self.block_on_query(rx)?
+    }
+
+    /// The peers the DHT knows to provide `gene_id`. Blocks until the query
+    /// resolves (or times out). A gene ID that is not v2 has no provider key
+    /// and is an error.
+    pub fn find_gene_providers(&self, gene_id: &str) -> Result<Vec<PeerId>, NetworkError> {
+        let key = super::gene_record::provider_key(gene_id).ok_or_else(|| NetworkError::NotV2GeneId(gene_id.into()))?;
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::FindProviders { key, resp: tx })?;
+        Ok(self.block_on_query(rx)?.into_iter().map(|p| PeerId(p.to_string())).collect())
+    }
+
     /// Hand a command to the running event loop.
     fn send_command(&self, command: Command) -> Result<(), NetworkError> {
         match &self.cmd_tx {
@@ -1520,6 +1549,8 @@ async fn run_event_loop(
     let mut pending_put: HashMap<kad::QueryId, oneshot::Sender<Result<(), NetworkError>>> =
         HashMap::new();
     let mut pending_get: HashMap<kad::QueryId, oneshot::Sender<Option<Vec<u8>>>> = HashMap::new();
+    let mut pending_providers: HashMap<kad::QueryId, (oneshot::Sender<Vec<Libp2pPeerId>>, HashSet<Libp2pPeerId>)> =
+        HashMap::new();
     // Inbound DHT writes per peer (A2 design §4 step 1), and the sweep that
     // drops expired entries without waiting for a query (§5.4).
     let mut writes = WriteLimiter::default();
@@ -1940,8 +1971,20 @@ async fn run_event_loop(
                     add_stats(&dht, counted);
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
-                    kad::Event::OutboundQueryProgressed { id, result, .. },
+                    kad::Event::OutboundQueryProgressed { id, result, step, .. },
                 )) => match result {
+                    kad::QueryResult::GetProviders(outcome) => {
+                        if let Some((_, found)) = pending_providers.get_mut(&id)
+                            && let Ok(kad::GetProvidersOk::FoundProviders { providers, .. }) = outcome
+                        {
+                            found.extend(providers);
+                        }
+                        if step.last
+                            && let Some((tx, found)) = pending_providers.remove(&id)
+                        {
+                            let _ = tx.send(found.into_iter().collect());
+                        }
+                    }
                     kad::QueryResult::PutRecord(outcome) => {
                         if let Some(tx) = pending_put.remove(&id) {
                             let _ = tx.send(outcome.map(|_| ()).map_err(|e| {
@@ -1991,6 +2034,19 @@ async fn run_event_loop(
                             ))));
                         }
                     }
+                }
+                Some(Command::StartProviding { key, resp }) => {
+                    let result = swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .start_providing(kad::RecordKey::new(&key))
+                        .map(|_| ())
+                        .map_err(|e| NetworkError::Transport(format!("start providing: {e:?}")));
+                    let _ = resp.send(result);
+                }
+                Some(Command::FindProviders { key, resp }) => {
+                    let id = swarm.behaviour_mut().kademlia.get_providers(kad::RecordKey::new(&key));
+                    pending_providers.insert(id, (resp, HashSet::new()));
                 }
                 #[cfg(test)]
                 Some(Command::SkipClock { by, resp }) => {
@@ -3052,6 +3108,32 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
+    // Two-node provider records: A provides a gene, B finds A (integration)
+    // -----------------------------------------------------------------
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "two-node integration: real Kademlia provider records over loopback — enable the p2p-integration feature or run with --ignored")]
+    fn two_nodes_find_gene_providers() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut a = Node::with_keypair_path(NetworkConfig { bootstrap_peers: vec![], ..cfg(0) }, dir.path().join("a.id")).expect("A build");
+        a.start().expect("A start");
+        let a_addr = a.listen_addrs().into_iter().next().expect("A listen address");
+        let mut b = Node::with_keypair_path(NetworkConfig { bootstrap_peers: vec![a_addr], ..cfg(0) }, dir.path().join("b.id")).expect("B build");
+        b.start().expect("B start");
+        let b_peer = b.local_peer_id().0;
+        assert!(wait_until(10, || a.discovered_peers().contains(&b_peer)), "A did not discover B");
+
+        let gene_id = format!("v2:{}", "cd".repeat(32));
+        a.start_providing_gene(&gene_id).expect("A provides");
+        let a_peer = a.local_peer_id();
+        assert!(
+            wait_until(10, || b.find_gene_providers(&gene_id).is_ok_and(|p| p.contains(&a_peer))),
+            "B must find A as a provider"
+        );
+        let other = format!("v2:{}", "ef".repeat(32));
+        assert_eq!(b.find_gene_providers(&other).expect("B find"), vec![], "nobody provides another gene");
+    }
+
+    // -----------------------------------------------------------------
     // A3 — NAT traversal client and connection limits (ADR-304 D1–D2)
     // -----------------------------------------------------------------
 
@@ -3513,6 +3595,20 @@ mod tests {
         assert!(matches!(node.put_record(&gene_key, b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"/rotifer/gene/", b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"other/key", b"x"), Err(NetworkError::NotConnected)));
+    }
+
+    #[test]
+    fn provider_api_refuses_gene_ids_that_are_not_v2() {
+        // Refused before reaching the event loop, so an unstarted node shows
+        // it; a v2 ID gets as far as "not connected".
+        let node = Node::new(cfg(0)).expect("build");
+        for bad in ["v1:abc", "gene-name", "v2:XYZ", "", &format!("v2:{}", "ab".repeat(31))] {
+            assert!(matches!(node.start_providing_gene(bad), Err(NetworkError::NotV2GeneId(ref g)) if g == bad), "{bad:?}");
+            assert!(matches!(node.find_gene_providers(bad), Err(NetworkError::NotV2GeneId(ref g)) if g == bad), "{bad:?}");
+        }
+        let good = format!("v2:{}", "ab".repeat(32));
+        assert!(matches!(node.start_providing_gene(&good), Err(NetworkError::NotConnected)));
+        assert!(matches!(node.find_gene_providers(&good), Err(NetworkError::NotConnected)));
     }
 
     #[test]

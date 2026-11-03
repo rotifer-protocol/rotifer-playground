@@ -621,3 +621,226 @@ fn await_raw_control(node: &Node, sender: &RawSender, from: u32) {
     }
     panic!("no raw-control announcement from round {from} on reached the node within 20s");
 }
+
+// ---------------------------------------------------------------------
+// DHT (A2): a peer writes straight into the victim's Kademlia store
+// ---------------------------------------------------------------------
+
+/// What [`RawDht`] is told to send.
+enum RawWrite {
+    Put(libp2p::kad::Record),
+    Provide(Vec<u8>),
+}
+
+/// A peer that is not a `Node`: plain libp2p Kademlia on Rotifer's protocol
+/// name, with none of its rules, as a broken or hostile implementation would
+/// be. It identifies as Rotifer so the Identify guard keeps the connection,
+/// and sends each write straight to the victim.
+struct RawDht {
+    peer_id: libp2p::PeerId,
+    key: libp2p::identity::Keypair,
+    tx: tokio::sync::mpsc::UnboundedSender<RawWrite>,
+    connected: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl RawDht {
+    fn spawn(victim: &Node) -> Self {
+        use libp2p::futures::StreamExt;
+        use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
+        use libp2p::{identify, kad, Multiaddr, StreamProtocol};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        #[derive(NetworkBehaviour)]
+        struct Raw {
+            kademlia: kad::Behaviour<kad::store::MemoryStore>,
+            identify: identify::Behaviour,
+        }
+
+        let key = libp2p::identity::Keypair::generate_ed25519();
+        let peer_id = key.public().to_peer_id();
+        let victim_addr: Multiaddr = addr(victim).parse().expect("victim multiaddr");
+        let victim_id: libp2p::PeerId = victim.local_peer_id().0.parse().expect("victim PeerId");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<RawWrite>();
+        let connected = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (connected_t, stop_t, key_t) = (Arc::clone(&connected), Arc::clone(&stop), key.clone());
+        let thread = std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("runtime");
+            rt.block_on(async move {
+                let mut swarm = libp2p::SwarmBuilder::with_existing_identity(key_t)
+                    .with_tokio()
+                    .with_tcp(
+                        libp2p::tcp::Config::default(),
+                        libp2p::noise::Config::new,
+                        libp2p::yamux::Config::default,
+                    )
+                    .expect("tcp")
+                    .with_behaviour(|key| {
+                        let id = key.public().to_peer_id();
+                        let config = kad::Config::new(StreamProtocol::new(super::gene_record::KAD_PROTOCOL));
+                        let mut kademlia = kad::Behaviour::with_config(id, kad::store::MemoryStore::new(id), config);
+                        kademlia.set_mode(Some(kad::Mode::Server));
+                        Raw {
+                            kademlia,
+                            identify: identify::Behaviour::new(identify::Config::new("/rotifer/p2p/1".into(), key.public())),
+                        }
+                    })
+                    .expect("behaviour")
+                    .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
+                    .build();
+                swarm.behaviour_mut().kademlia.add_address(&victim_id, victim_addr.clone());
+                let _ = swarm.dial(victim_addr);
+                let mut tick = tokio::time::interval(Duration::from_millis(100));
+                while !stop_t.load(Ordering::Relaxed) {
+                    tokio::select! {
+                        _ = tick.tick() => {}
+                        Some(write) = rx.recv() => match write {
+                            RawWrite::Put(record) => {
+                                swarm.behaviour_mut().kademlia.put_record_to(record, std::iter::once(victim_id), kad::Quorum::One);
+                            }
+                            RawWrite::Provide(k) => {
+                                let _ = swarm.behaviour_mut().kademlia.start_providing(kad::RecordKey::new(&k));
+                            }
+                        },
+                        event = swarm.select_next_some() => match event {
+                            SwarmEvent::ConnectionEstablished { peer_id, .. } if peer_id == victim_id => {
+                                connected_t.store(true, Ordering::Relaxed);
+                            }
+                            SwarmEvent::ConnectionClosed { peer_id, num_established: 0, .. } if peer_id == victim_id => {
+                                connected_t.store(false, Ordering::Relaxed);
+                            }
+                            _ => {}
+                        },
+                    }
+                }
+            });
+        });
+        let raw = Self { peer_id, key, tx, connected, stop, thread: Some(thread) };
+        assert!(eventually(10, || raw.is_connected()), "the raw DHT peer did not connect");
+        raw
+    }
+
+    fn is_connected(&self) -> bool {
+        self.connected.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn put(&self, record: libp2p::kad::Record) {
+        self.tx.send(RawWrite::Put(record)).expect("raw DHT peer running");
+    }
+
+    fn provide(&self, key: Vec<u8>) {
+        self.tx.send(RawWrite::Provide(key)).expect("raw DHT peer running");
+    }
+
+    /// A valid record for `gene`, signed by this peer, published now.
+    fn signed(&self, gene: &str) -> libp2p::kad::Record {
+        let ann = super::gene_record::encode_announcement_message(&announcement(gene, now_ms()));
+        let value = super::gene_record::sign_record(&self.key, &ann).expect("sign");
+        libp2p::kad::Record::new(super::gene_record::record_key(gene, &self.peer_id), value)
+    }
+}
+
+impl Drop for RawDht {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+fn eventually(secs: u64, mut check: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < deadline {
+        if check() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    check()
+}
+
+// ---------------------------------------------------------------------
+// ADV-12 — a forged DHT record is dropped and held against its sender; a
+// valid one from the same sender is stored
+// ---------------------------------------------------------------------
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_12_forged_dht_record_is_dropped_and_charged() {
+    let dir = tempfile::tempdir().unwrap();
+    let victim = spawn(&dir, "victim", vec![]);
+    let raw = RawDht::spawn(&victim);
+
+    let good = raw.signed(&id("adv12-good"));
+    raw.put(good.clone());
+    assert!(eventually(10, || victim.dht_stats().stored == 1), "control record not stored: {:?}", victim.dht_stats());
+    let canonical = super::gene_record::validate_record(good.key.as_ref(), &good.value, now_ms()).unwrap().canonical;
+    assert_eq!(victim.local_dht(good.key.as_ref()).unwrap().0, Some(canonical));
+
+    let mut forged = raw.signed(&id("adv12-forged"));
+    let last = forged.value.len() - 1;
+    forged.value[last] ^= 1;
+    raw.put(forged.clone());
+    assert!(eventually(10, || victim.dht_stats().forgeries == 1), "forgery not charged: {:?}", victim.dht_stats());
+    assert_eq!(victim.local_dht(forged.key.as_ref()).unwrap().0, None);
+    assert_eq!(victim.dht_stats().stored, 1);
+}
+
+// ---------------------------------------------------------------------
+// ADV-13 — one peer's DHT writes are rate-limited: a burst of 128, then 10
+// a minute
+// ---------------------------------------------------------------------
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_13_dht_write_flood_is_rate_limited() {
+    let dir = tempfile::tempdir().unwrap();
+    let victim = spawn(&dir, "victim", vec![]);
+    let raw = RawDht::spawn(&victim);
+    for n in 0..150 {
+        raw.put(raw.signed(&id(&format!("adv13-{n}"))));
+    }
+    assert!(
+        eventually(20, || {
+            let s = victim.dht_stats();
+            s.stored + s.rate_limited == 150
+        }),
+        "not all writes arrived: {:?}",
+        victim.dht_stats()
+    );
+    let stats = victim.dht_stats();
+    assert!(stats.stored >= 128 && stats.stored <= 130, "{stats:?}");
+    assert!(stats.rate_limited >= 20, "{stats:?}");
+}
+
+// ---------------------------------------------------------------------
+// ADV-14 — each kind of DHT entry goes only under its own kind of key
+// ---------------------------------------------------------------------
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_14_dht_entries_go_only_under_their_own_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let victim = spawn(&dir, "victim", vec![]);
+    let raw = RawDht::spawn(&victim);
+    let gene = id("adv14");
+    let provider_key = super::gene_record::provider_key(&gene).unwrap();
+    let record = raw.signed(&gene);
+
+    // A value record under a non-gene key or a provider key: refused at step 2.
+    for key in [b"/other/key".to_vec(), provider_key.clone()] {
+        raw.put(libp2p::kad::Record::new(key.clone(), record.value.clone()));
+        assert!(eventually(10, || victim.local_dht(&key).is_ok_and(|(v, _)| v.is_none())));
+    }
+    assert!(eventually(10, || victim.dht_stats().rejected == 2), "{:?}", victim.dht_stats());
+    assert_eq!(victim.dht_stats().forgeries, 0, "a misplaced record is not a forgery");
+
+    // A provider record under a record key: refused. Under a provider key: stored.
+    raw.provide(record.key.to_vec());
+    assert!(eventually(10, || victim.dht_stats().providers_bad_key == 1), "{:?}", victim.dht_stats());
+    raw.provide(provider_key.clone());
+    assert!(eventually(10, || victim.dht_stats().providers_stored == 1), "{:?}", victim.dht_stats());
+    assert_eq!(victim.local_dht(&provider_key).unwrap().1, vec![raw.peer_id]);
+    assert!(victim.local_dht(record.key.as_ref()).unwrap().1.is_empty());
+}

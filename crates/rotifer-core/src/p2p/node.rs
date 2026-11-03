@@ -29,7 +29,7 @@ use libp2p::gossipsub;
 use libp2p::identify;
 use libp2p::memory_connection_limits;
 use libp2p::identity::Keypair;
-use libp2p::kad::{self, store::MemoryStore};
+use libp2p::kad;
 use libp2p::mdns;
 use libp2p::multiaddr::Protocol;
 use libp2p::relay;
@@ -40,6 +40,7 @@ use libp2p::{Multiaddr, PeerId as Libp2pPeerId, StreamProtocol, Swarm};
 use tokio::sync::{mpsc, oneshot};
 
 use super::gene_record;
+use super::gene_store::{self, Admission, GeneStore, Holder, ProviderAdmission, WriteLimiter};
 use super::heartbeat::{self, HEARTBEATS_TOPIC, WireNodeHeartbeat};
 use super::peerstore;
 use super::por::{self, Decision, FetchJob, Fetched, HeartbeatDesk, HeartbeatStats, KeyStore, PeerAttestation};
@@ -84,6 +85,13 @@ enum Command {
     GetRecord {
         key: Vec<u8>,
         resp: oneshot::Sender<Option<Vec<u8>>>,
+    },
+    /// What this node's own store holds under `key`: the record value and
+    /// the providers.
+    #[cfg(test)]
+    LocalDht {
+        key: Vec<u8>,
+        resp: oneshot::Sender<(Option<Vec<u8>>, Vec<Libp2pPeerId>)>,
     },
 }
 
@@ -160,7 +168,7 @@ fn peer_score_params() -> (gossipsub::PeerScoreParams, gossipsub::PeerScoreThres
 }
 
 /// Wall-clock Unix milliseconds (announcement freshness is wall-clock based).
-fn wall_clock_ms() -> u64 {
+pub(crate) fn wall_clock_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -202,7 +210,8 @@ const _: () = assert!(
 );
 
 /// Kademlia as GeneRecord v1 needs it (ADR-340 修订一 §2.2; A2 design §3).
-/// Replication, republication and caching are off, so a PUT reaching this
+/// Whatever a peer sends is handed up for [`GeneStore`] to admit instead of
+/// being stored as is (`FilterBoth`). Replication, republication and caching are off, so a PUT reaching this
 /// node comes from the node that chose to send it: the premise that lets a
 /// bad record be charged to its sender. The A2 announce loop republishes
 /// instead, re-signing each time.
@@ -210,6 +219,7 @@ fn kad_config() -> kad::Config {
     let ttl = Some(Duration::from_millis(gene_record::STORE_TTL_MS));
     let mut config = kad::Config::new(StreamProtocol::new(gene_record::KAD_PROTOCOL));
     config
+        .set_record_filtering(kad::StoreInserts::FilterBoth)
         .set_caching(kad::Caching::Disabled)
         .set_replication_interval(None)
         .set_publication_interval(None)
@@ -222,7 +232,7 @@ fn kad_config() -> kad::Config {
 
 /// Feed `addr` into Kademlia's routing table for `peer`, within the
 /// per-peer bounds above.
-fn feed_kad(kademlia: &mut kad::Behaviour<MemoryStore>, peer: &Libp2pPeerId, addr: Multiaddr) {
+fn feed_kad(kademlia: &mut kad::Behaviour<GeneStore>, peer: &Libp2pPeerId, addr: Multiaddr) {
     if addr.as_ref().len() > KAD_ADDR_MAX_BYTES {
         return;
     }
@@ -249,7 +259,7 @@ struct NodeBehaviour {
     connection_limits: connection_limits::Behaviour,
     /// Denies new connections under memory pressure (process RSS vs system RAM).
     memory_connection_limits: memory_connection_limits::Behaviour,
-    kademlia: kad::Behaviour<MemoryStore>,
+    kademlia: kad::Behaviour<GeneStore>,
     gossipsub: gossipsub::Behaviour,
     identify: identify::Behaviour,
     /// NAT traversal (ADR-304 D1): AutoNAT asks peers to dial it back to learn
@@ -361,6 +371,27 @@ pub struct NatTraversal {
     pub hole_punch_failed: u64,
 }
 
+/// What became of the DHT writes peers sent this node (A2).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DhtStats {
+    /// Value records stored, or replacing an older copy.
+    pub stored: u64,
+    /// Older than the copy already held: dropped.
+    pub not_newer: u64,
+    /// Failed the GeneRecord v1 checks: dropped.
+    pub rejected: u64,
+    /// Of those, forgeries held against the sender.
+    pub forgeries: u64,
+    /// Provider records stored.
+    pub providers_stored: u64,
+    /// Provider records under a key that is not a provider key: dropped.
+    pub providers_bad_key: u64,
+    /// No room under the budgets: dropped.
+    pub over_budget: u64,
+    /// Over the sender's write limit: dropped.
+    pub rate_limited: u64,
+}
+
 /// Shared state handles the event loop updates and the synchronous API reads.
 struct NodeShared {
     listen_addrs: Arc<Mutex<Vec<String>>>,
@@ -394,6 +425,7 @@ struct NodeShared {
     heartbeats: Arc<Mutex<HeartbeatDesk>>,
     /// Connected peers' GossipSub scores, as of the last recompute.
     scores: Arc<Mutex<HashMap<String, f64>>>,
+    dht: Arc<Mutex<DhtStats>>,
 }
 
 /// Fixed listen ports currently bound by live nodes in this process. libp2p's
@@ -450,6 +482,8 @@ pub struct Node {
     heartbeats: Arc<Mutex<HeartbeatDesk>>,
     /// Connected peers' GossipSub scores, as of the last recompute.
     scores: Arc<Mutex<HashMap<String, f64>>>,
+    /// What became of peers' DHT writes.
+    dht: Arc<Mutex<DhtStats>>,
     /// How often this node publishes its heartbeat.
     heartbeat_interval: Duration,
     /// How often peer scores are recomputed besides after each heartbeat.
@@ -538,6 +572,7 @@ impl Node {
             attestation: Arc::new(Mutex::new(None)),
             heartbeats: Arc::new(Mutex::new(HeartbeatDesk::new(Vec::new(), KeyStore::default()))),
             scores: Arc::new(Mutex::new(HashMap::new())),
+            dht: Arc::new(Mutex::new(DhtStats::default())),
             heartbeat_interval: Duration::from_secs(heartbeat::HEARTBEAT_INTERVAL_SECS),
             score_refresh_interval: por::SCORE_REFRESH_INTERVAL,
             autonat_on_loopback: false,
@@ -758,6 +793,20 @@ impl Node {
         self.unregistered.lock().map(|n| *n).unwrap_or(0)
     }
 
+    /// What this node's own DHT store holds under `key`: the record value,
+    /// and the providers.
+    #[cfg(test)]
+    pub(crate) fn local_dht(&self, key: &[u8]) -> Result<(Option<Vec<u8>>, Vec<Libp2pPeerId>), NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::LocalDht { key: key.to_vec(), resp: tx })?;
+        self.block_on_query(rx)
+    }
+
+    /// What became of the DHT writes peers sent this node.
+    pub fn dht_stats(&self) -> DhtStats {
+        self.dht.lock().map(|d| *d).unwrap_or_default()
+    }
+
     /// Store a record in the Kademlia DHT, replicated to the closest peers.
     /// Blocks until the write quorum is reached (or times out). Keys under
     /// `/rotifer/gene/` are refused: gene records are frozen (v1) and only
@@ -872,6 +921,7 @@ impl Node {
             attestation: Arc::clone(&self.attestation),
             heartbeats: Arc::clone(&self.heartbeats),
             scores: Arc::clone(&self.scores),
+            dht: Arc::clone(&self.dht),
         };
         let (ready_tx, ready_rx) = oneshot::channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -1180,7 +1230,7 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
         .map_err(|e| NetworkError::Transport(format!("relay client transport: {e}")))?
         .with_behaviour(|key, relay_client| {
             let peer_id = key.public().to_peer_id();
-            let mut kademlia = kad::Behaviour::with_config(peer_id, MemoryStore::new(peer_id), kad_config());
+            let mut kademlia = kad::Behaviour::with_config(peer_id, GeneStore::new(peer_id), kad_config());
             kademlia.set_mode(Some(kad::Mode::Server));
             let mut gossipsub = gossipsub::Behaviour::new(
                 gossipsub::MessageAuthenticity::Signed(key.clone()),
@@ -1314,6 +1364,7 @@ async fn run_event_loop(
         attestation,
         heartbeats,
         scores,
+        dht,
     } = shared;
     // Per-peer flood defence (§8.6); lives in the single-threaded event loop.
     let mut security = super::security::Security::new();
@@ -1418,8 +1469,16 @@ async fn run_event_loop(
     let mut pending_put: HashMap<kad::QueryId, oneshot::Sender<Result<(), NetworkError>>> =
         HashMap::new();
     let mut pending_get: HashMap<kad::QueryId, oneshot::Sender<Option<Vec<u8>>>> = HashMap::new();
+    // Inbound DHT writes per peer (A2 design §4 step 1), and the sweep that
+    // drops expired entries without waiting for a query (§5.4).
+    let mut writes = WriteLimiter::default();
+    let mut sweep_timer = tokio::time::interval(gene_store::SWEEP_INTERVAL);
+    sweep_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
+            _ = sweep_timer.tick() => {
+                swarm.behaviour_mut().kademlia.store_mut().sweep(std::time::Instant::now());
+            }
             _ = peer_flush.tick() => {
                 // A clean shutdown persists peers too, but daemons are often
                 // killed rather than stopped; flushing periodically bounds how
@@ -1773,6 +1832,62 @@ async fn run_event_loop(
                         }
                     }
                 }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(kad::Event::InboundRequest {
+                    request: kad::InboundRequest::PutRecord { source, record: Some(record), .. },
+                })) => {
+                    // A2 design §4. Kad has already acknowledged the PUT, so
+                    // the sender never learns what became of it.
+                    let mut counted = DhtStats::default();
+                    if !writes.allow(&source, std::time::Instant::now()) {
+                        counted.rate_limited = 1;
+                    } else {
+                        let now_ms = wall_clock_ms();
+                        let admission = {
+                            let desk = heartbeats.lock().ok();
+                            let holder_of = |p: &Libp2pPeerId| holder(desk.as_deref(), p, now_ms);
+                            swarm.behaviour_mut().kademlia.store_mut().admit_record(record, now_ms, std::time::Instant::now(), holder_of)
+                        };
+                        match admission {
+                            Admission::Stored | Admission::Replaced => counted.stored = 1,
+                            Admission::NotNewer => counted.not_newer = 1,
+                            Admission::OverBudget => counted.over_budget = 1,
+                            Admission::Rejected(why) => {
+                                counted.rejected = 1;
+                                tracing::debug!(%source, step = why.step(), reason = why.reason(), "DHT record refused");
+                                if why.is_forgery() {
+                                    // Only steps 5 and 8: no honest v1 node
+                                    // builds or relays such a record, and with
+                                    // replication off it came from `source`.
+                                    counted.forgeries = 1;
+                                    if let Ok(mut desk) = heartbeats.lock() {
+                                        desk.record_forgery(&source.to_string(), started.elapsed().as_millis() as u64);
+                                    }
+                                    refresh_scores(&mut swarm, &heartbeats, &scores, started);
+                                }
+                            }
+                        }
+                    }
+                    add_stats(&dht, counted);
+                }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(kad::Event::InboundRequest {
+                    request: kad::InboundRequest::AddProvider { record: Some(record) },
+                })) => {
+                    // Kad has already checked that the provider is the peer
+                    // that sent it. Nothing on this path is charged.
+                    let mut counted = DhtStats::default();
+                    let source = record.provider;
+                    if !writes.allow(&source, std::time::Instant::now()) {
+                        counted.rate_limited = 1;
+                    } else {
+                        let who = holder(heartbeats.lock().ok().as_deref(), &source, wall_clock_ms());
+                        match swarm.behaviour_mut().kademlia.store_mut().admit_provider(record, std::time::Instant::now(), who) {
+                            ProviderAdmission::Stored => counted.providers_stored = 1,
+                            ProviderAdmission::BadKey => counted.providers_bad_key = 1,
+                            ProviderAdmission::OverBudget => counted.over_budget = 1,
+                        }
+                    }
+                    add_stats(&dht, counted);
+                }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
                     kad::Event::OutboundQueryProgressed { id, result, .. },
                 )) => match result {
@@ -1826,6 +1941,15 @@ async fn run_event_loop(
                         }
                     }
                 }
+                #[cfg(test)]
+                Some(Command::LocalDht { key, resp }) => {
+                    use libp2p::kad::store::RecordStore as _;
+                    let key = kad::RecordKey::new(&key);
+                    let store = swarm.behaviour_mut().kademlia.store_mut();
+                    let value = store.get(&key).map(|r| r.value.clone());
+                    let providers = store.providers(&key).into_iter().map(|p| p.provider).collect();
+                    let _ = resp.send((value, providers));
+                }
                 Some(Command::GetRecord { key, resp }) => {
                     let query_id = swarm
                         .behaviour_mut()
@@ -1837,6 +1961,28 @@ async fn run_event_loop(
         }
     }
 
+}
+
+/// Who a DHT publisher or provider counts as: its pseudonym if it is validly
+/// registered on this node, else its PeerId (A2 design §5.1).
+fn holder(desk: Option<&HeartbeatDesk>, peer: &Libp2pPeerId, now_ms: u64) -> Holder {
+    match desk.and_then(|d| d.registration(&peer.to_string(), now_ms / 1000)) {
+        Some((iss, sub)) => Holder::Registered { iss, sub },
+        None => Holder::Anonymous(*peer),
+    }
+}
+
+fn add_stats(dht: &Mutex<DhtStats>, n: DhtStats) {
+    if let Ok(mut d) = dht.lock() {
+        d.stored += n.stored;
+        d.not_newer += n.not_newer;
+        d.rejected += n.rejected;
+        d.forgeries += n.forgeries;
+        d.providers_stored += n.providers_stored;
+        d.providers_bad_key += n.providers_bad_key;
+        d.over_budget += n.over_budget;
+        d.rate_limited += n.rate_limited;
+    }
 }
 
 /// This node's heartbeat as of now.
@@ -2219,7 +2365,7 @@ mod tests {
         #[derive(NetworkBehaviour)]
         struct Foreign {
             identify: identify::Behaviour,
-            kademlia: kad::Behaviour<MemoryStore>,
+            kademlia: kad::Behaviour<kad::store::MemoryStore>,
         }
 
         let dir = tempfile::tempdir().expect("temp dir");
@@ -2242,7 +2388,7 @@ mod tests {
                 .expect("tcp")
                 .with_behaviour(|key| {
                     let id = key.public().to_peer_id();
-                    let mut kademlia = kad::Behaviour::new(id, MemoryStore::new(id));
+                    let mut kademlia = kad::Behaviour::new(id, kad::store::MemoryStore::new(id));
                     kademlia.set_mode(Some(kad::Mode::Server));
                     Foreign {
                         identify: identify::Behaviour::new(identify::Config::new(
@@ -3233,6 +3379,7 @@ mod tests {
             "record_ttl: Some(86400s)",
             "provider_record_ttl: Some(86400s)",
             "max_packet_size: 65536",
+            "record_filtering: FilterBoth",
             "\"/rotifer/gene-discovery/1.0.0\"",
         ] {
             assert!(config.contains(field), "{field} missing from {config}");
@@ -3242,7 +3389,7 @@ mod tests {
     #[test]
     fn kademlia_is_fed_at_most_eight_short_addresses_per_peer() {
         let id = Libp2pPeerId::random();
-        let mut kademlia = kad::Behaviour::with_config(id, MemoryStore::new(id), kad_config());
+        let mut kademlia = kad::Behaviour::with_config(id, GeneStore::new(id), kad_config());
         let peer = Libp2pPeerId::random();
         let long: Multiaddr = format!("/dns4/{}.example/tcp/1", "a".repeat(120)).parse().unwrap();
         feed_kad(&mut kademlia, &peer, long);

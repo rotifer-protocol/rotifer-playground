@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod cloud_sync;
 pub mod gene_record;
+pub mod gene_store;
 pub mod heartbeat;
 pub mod messages;
 pub mod node;

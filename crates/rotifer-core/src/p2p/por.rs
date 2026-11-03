@@ -712,12 +712,7 @@ impl HeartbeatDesk {
                 TokenCheck::Forged(how) => {
                     tracing::debug!(%source, ?how, "forged heartbeat attestation; rejected");
                     self.stats.forged += 1;
-                    let entry = self.entry(source, mono_ms);
-                    entry.forged += 1;
-                    if entry.forged_at.len() >= COUNTED_FORGERIES {
-                        entry.forged_at.pop_front();
-                    }
-                    entry.forged_at.push_back(mono_ms);
+                    self.record_forgery(source, mono_ms);
                     return (Decision::Reject, fetch);
                 }
             },
@@ -745,6 +740,28 @@ impl HeartbeatDesk {
         entry.exp = claims.as_ref().map(|c| c.exp);
         self.stats.applied += 1;
         (Decision::Accept, fetch)
+    }
+
+    /// Hold one certain forgery against the authenticated `source`: a forged
+    /// heartbeat token, or a DHT record failing its publisher binding or
+    /// signature (A2). It counts for [`FORGERY_WINDOW_MS`].
+    pub fn record_forgery(&mut self, source: &str, mono_ms: u64) {
+        let entry = self.entry(source, mono_ms);
+        entry.forged += 1;
+        if entry.forged_at.len() >= COUNTED_FORGERIES {
+            entry.forged_at.pop_front();
+        }
+        entry.forged_at.push_back(mono_ms);
+    }
+
+    /// The issuer and pseudonym `peer` is validly registered under at
+    /// `now_s`, if any.
+    pub fn registration(&self, peer: &str, now_s: u64) -> Option<(String, String)> {
+        let a = self.peers.get(peer)?;
+        if a.status != AttestationStatus::Valid || now_s > a.exp?.saturating_add(CLOCK_SKEW_SECS) {
+            return None;
+        }
+        Some((a.iss.clone()?, a.sub.clone()?))
     }
 
     /// Record a finished JWKS fetch; returns the next fetch to start.

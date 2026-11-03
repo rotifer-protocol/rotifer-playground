@@ -112,11 +112,16 @@ export const networkCommand = new Command("network")
             peerId: string;
             listenAddrs: string[];
             peers: number;
+            dhtPeers?: number;
+            connectedPeers?: number;
           };
           display.kv("Status", c.success("● Running"));
           display.kv("PeerId", s.peerId);
           for (const addr of s.listenAddrs) display.kv("Listening", addr);
           display.kv("Discovered peers", String(s.peers));
+          // Absent when the daemon predates these counts.
+          if (s.connectedPeers !== undefined) display.kv("Connected peers", String(s.connectedPeers));
+          if (s.dhtPeers !== undefined) display.kv("DHT peers", String(s.dhtPeers));
         } else {
           display.kv("Status", c.muted("○ Not running"));
           display.kv("Listen Port", String(config.listen_port));

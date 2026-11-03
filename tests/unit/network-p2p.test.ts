@@ -69,6 +69,25 @@ describe("network status", () => {
     expect(kvArgs()).toContain("PID-1");
   });
 
+  it("shows connected and DHT peer counts when the daemon reports them", async () => {
+    vi.mocked(controlRequest).mockResolvedValue(
+      ctrlOk({ peerId: "PID-1", listenAddrs: [], peers: 2, dhtPeers: 1, connectedPeers: 3 })
+    );
+    await networkCommand.parseAsync(["status"], { from: "user" });
+    const calls = vi.mocked(display.kv).mock.calls;
+    expect(calls).toContainEqual(["Connected peers", "3"]);
+    expect(calls).toContainEqual(["DHT peers", "1"]);
+    expect(calls).toContainEqual(["Discovered peers", "2"]);
+  });
+
+  it("leaves the new counts out for a daemon that does not report them", async () => {
+    vi.mocked(controlRequest).mockResolvedValue(ctrlOk({ peerId: "PID-1", listenAddrs: [], peers: 2 }));
+    await networkCommand.parseAsync(["status"], { from: "user" });
+    const labels = vi.mocked(display.kv).mock.calls.map((c) => c[0]);
+    expect(labels).not.toContain("Connected peers");
+    expect(labels).not.toContain("DHT peers");
+  });
+
   it("shows not-running when there is no daemon", async () => {
     vi.mocked(controlRequest).mockResolvedValue(null);
     await networkCommand.parseAsync(["status"], { from: "user" });

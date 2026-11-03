@@ -161,6 +161,10 @@ export interface P2pNodeHandle {
   peerId(): string;
   listenAddrs(): string[];
   discoveredPeers(): string[];
+  /** Peers in the DHT routing table right now (absent in addons before A2 §8.1). */
+  dhtPeers?(): string[];
+  /** Peers with an open connection right now, DHT or not (absent likewise). */
+  connectedPeers?(): string[];
   receivedAnnouncements(): ReceivedAnnouncement[];
   /** Announce the local gene `name` under `genesRoot`; returns its v2 ID. */
   announceLocalGene(genesRoot: string, name: string): string;

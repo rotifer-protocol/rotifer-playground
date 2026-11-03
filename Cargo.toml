@@ -38,6 +38,10 @@ serde_jcs = "0.2"
 # P2P wire format v1 (crates/rotifer-core/proto/p2p-wire-v1.proto), hand-written
 # derive types — no build-time protoc. Already in the tree via libp2p-identity.
 prost = "0.14"
+# DHT GeneRecord v1 (crates/rotifer-core/proto/p2p-dht-v1.proto) needs the
+# weak-key check libp2p-identity does not expose. Already in the tree via
+# libp2p-identity, same version.
+ed25519-dalek = "3"
 wasm-encoder = "0.251"
 wasmparser = "0.251"
 libp2p = { version = "0.57", default-features = false }

@@ -22,7 +22,13 @@ A.4.3 checks the `.proto`'s sha256, A.4.3b checks the hand-written prost tags
 against it, and A.4.4 decodes and re-encodes golden vectors from an
 independent encoder (`scripts/p2p-wire-v1-reference.py`). Gene ID v2 is pinned
 the same way in `gene_id::tests`, against vectors from
-`scripts/gene-id-v2-reference.py`.
+`scripts/gene-id-v2-reference.py`. The DHT gene record v1 is pinned in
+`gene_record::tests`: the `.proto`'s sha256, its tags, and vectors from
+`scripts/p2p-dht-v1-reference.py` — an independent implementation with its own
+protobuf reader and its own Ed25519 — which must get the same verdict in Rust:
+accept with the same stored bytes, or the same refusing step and the same
+grade (`reject`, or `reject-charged` when the sender is held to a forgery).
+Rust also signs with the script's key and must produce its bytes exactly.
 
 ## Tier 1 — unit tests
 

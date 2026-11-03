@@ -69,10 +69,17 @@ export interface ControlResult {
  * Send a control request to the running daemon. Returns null when no daemon is
  * recorded or it is unreachable (so callers can report "not running").
  */
+/**
+ * Control routes that work on the network take longer than the default 5 s:
+ * a search answers by its 3 s deadline; an announce runs three 3 s steps.
+ */
+const ROUTE_TIMEOUT_MS: Record<string, number> = { "/search": 4000, "/announce": 15000 };
+
 export function controlRequest(
   method: string,
   path: string,
-  body?: unknown
+  body?: unknown,
+  timeoutMs = ROUTE_TIMEOUT_MS[path] ?? 5000,
 ): Promise<ControlResult | null> {
   const state = readDaemonState();
   if (!state) return Promise.resolve(null);
@@ -94,7 +101,7 @@ export function controlRequest(
               }
             : {}),
         },
-        timeout: 5000,
+        timeout: timeoutMs,
       },
       (res) => {
         let data = "";
@@ -184,16 +191,61 @@ export async function runDaemon(
       let data = "";
       req.on("data", (chunk) => (data += chunk));
       req.on("end", () => {
+        let g: { genesRoot?: string; name?: string };
         try {
-          const g = JSON.parse(data) as { genesRoot?: string; name?: string };
+          g = JSON.parse(data) as typeof g;
           if (!g.genesRoot || !g.name) throw new Error("genesRoot and name are required");
-          // The native node builds the wire record itself (v2 ID, fields,
-          // IR spec version), so every field has a single implementation.
-          const geneId = node.announceLocalGene(g.genesRoot, g.name);
-          send(200, { ok: true, geneId });
+        } catch (err) {
+          send(400, { error: (err as Error).message });
+          return;
+        }
+        // The native node builds the wire record itself (v2 ID, fields,
+        // IR spec version), so every field has a single implementation.
+        if (node.announceLocalGeneReport) {
+          node.announceLocalGeneReport(g.genesRoot, g.name).then(
+            (report) => send(200, { ok: true, geneId: report.geneId, report }),
+            (err: Error) => send(400, { error: err.message }),
+          );
+          return;
+        }
+        try {
+          send(200, { ok: true, geneId: node.announceLocalGene(g.genesRoot, g.name) });
         } catch (err) {
           send(400, { error: (err as Error).message });
         }
+      });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/search") {
+      let data = "";
+      req.on("data", (chunk) => (data += chunk));
+      req.on("end", () => {
+        let q: { geneId?: string; keyword?: string };
+        try {
+          q = JSON.parse(data) as typeof q;
+        } catch {
+          send(400, { error: "body must be JSON" });
+          return;
+        }
+        // An older native addon cannot search; say so instead of failing.
+        const run =
+          typeof q.geneId === "string"
+            ? node.searchGene?.(q.geneId)
+            : typeof q.keyword === "string"
+              ? node.searchKeyword?.(q.keyword)
+              : null;
+        if (run === null) {
+          send(400, { error: "geneId or keyword is required" });
+          return;
+        }
+        if (run === undefined) {
+          send(501, { error: "this native addon cannot search; update the CLI" });
+          return;
+        }
+        run.then(
+          (result) => send(200, result),
+          (err: Error) => send(400, { error: err.message }),
+        );
       });
       return;
     }

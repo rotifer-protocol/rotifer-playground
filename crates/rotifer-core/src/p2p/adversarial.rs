@@ -638,6 +638,8 @@ enum RawWrite {
     ClientMode,
     /// Publish on the announcements topic (needs `gossip`).
     Announce(Vec<u8>),
+    /// List these peers as providers of `key` when asked.
+    FakeProviders(Vec<u8>, Vec<libp2p::PeerId>),
 }
 
 /// How a [`RawDht`] presents itself.
@@ -774,6 +776,15 @@ impl RawDht {
                                     let _ = g.publish(gossipsub::IdentTopic::new(ANNOUNCEMENTS_TOPIC), data);
                                 }
                             }
+                            RawWrite::FakeProviders(k, peers) => {
+                                use kad::store::RecordStore as _;
+                                // Kad hands out a provider only with an address.
+                                let nowhere: libp2p::Multiaddr = "/ip4/127.0.0.1/tcp/1".parse().unwrap();
+                                for p in peers {
+                                    let record = kad::ProviderRecord::new(kad::RecordKey::new(&k), p, vec![nowhere.clone()]);
+                                    swarm.behaviour_mut().kademlia.store_mut().add_provider(record).expect("raw provider store");
+                                }
+                            }
                         },
                         event = swarm.select_next_some() => match event {
                             SwarmEvent::ConnectionEstablished { peer_id, .. } if peer_id == victim_id => {
@@ -815,6 +826,10 @@ impl RawDht {
 
     fn announce(&self, data: Vec<u8>) {
         self.tx.send(RawWrite::Announce(data)).expect("raw DHT peer running");
+    }
+
+    fn fake_providers(&self, key: Vec<u8>, peers: Vec<libp2p::PeerId>) {
+        self.tx.send(RawWrite::FakeProviders(key, peers)).expect("raw DHT peer running");
     }
 
     fn provide(&self, key: Vec<u8>) {
@@ -1107,4 +1122,316 @@ fn adv_17c_a_peer_that_stops_offering_the_dht_leaves_the_routing_table() {
     raw.client_mode();
     assert!(eventually(10, || !victim.dht_peers().contains(&id)), "still in the routing table");
     assert!(victim.connected_peers().contains(&id), "it stays connected");
+}
+
+// ---------------------------------------------------------------------
+// ADV-18 — searching the network (A2 design v2 §6): candidates are capped
+// per responder, every fetched record is checked, a bad answer costs its
+// sender nothing, and a search ends at its deadline
+// ---------------------------------------------------------------------
+
+use super::discover::{HitSource, SearchOutcome, SearchQuery};
+
+fn labelled(gene_id: &str, name: &str, timestamp_ms: u64) -> GeneAnnouncement {
+    GeneAnnouncement { name: name.into(), ..announcement(gene_id, timestamp_ms) }
+}
+
+fn peer_of(node: &Node) -> libp2p::PeerId {
+    node.local_peer_id().0.parse().expect("PeerId")
+}
+
+fn in_dht(node: &Node, peer: &libp2p::PeerId) -> bool {
+    let p = peer.to_string();
+    eventually(10, || node.dht_peers().contains(&p))
+}
+
+fn gene_search(node: &Node, gene: &str) -> SearchOutcome {
+    node.search(SearchQuery::GeneId(gene.into())).expect("search")
+}
+
+fn hit<'a>(outcome: &'a SearchOutcome, publisher: &libp2p::PeerId) -> Option<&'a super::discover::SearchHit> {
+    let p = publisher.to_string();
+    outcome.hits.iter().find(|h| h.publisher == p)
+}
+
+/// A record under `publisher`'s key carrying `announcement` and the
+/// signature bytes of `real`, which therefore do not verify.
+fn forged_as(publisher: &libp2p::PeerId, announcement: &GeneAnnouncement, real: &[u8]) -> libp2p::kad::Record {
+    use prost::Message as _;
+    use super::gene_record::{encode_announcement_message, record_key, WireGeneRecord};
+    let signature = WireGeneRecord::decode(real).expect("real record").signature;
+    let value = WireGeneRecord {
+        announcement: encode_announcement_message(announcement),
+        publisher: publisher.to_bytes(),
+        signature,
+    }
+    .encode_to_vec();
+    libp2p::kad::Record::new(record_key(&announcement.gene_id, publisher), value)
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_18_an_announced_gene_is_found_from_another_node() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = spawn(&dir, "a", vec![]);
+    let b = spawn(&dir, "b", vec![addr(&a)]);
+    assert!(in_dht(&a, &peer_of(&b)));
+    await_control(&a, &b, "adv18-mesh");
+    let gene = id("adv18");
+    let report = a.announce(&labelled(&gene, "summarize-lite", now_ms())).expect("announce");
+    assert_eq!(report.gene_id, gene);
+    assert!(report.gossip_peers >= 1, "{report:?}");
+    assert!(report.record_sent >= 1 && report.record_acked >= 1, "{report:?}");
+    assert!(report.readable_from >= 1, "{report:?}");
+
+    // B heard it on gossip and finds it in the DHT.
+    let found = gene_search(&b, &gene);
+    let h = hit(&found, &peer_of(&a)).expect("B finds A");
+    assert_eq!((h.announcement.name.as_str(), h.source), ("summarize-lite", HitSource::Both));
+    assert!(!found.timed_out && !found.partial, "{found:?}");
+    // C joins afterwards: it never heard the gossip, so only the DHT finds it.
+    let c = spawn(&dir, "c", vec![addr(&a)]);
+    assert!(in_dht(&c, &peer_of(&a)));
+    let found = gene_search(&c, &gene);
+    assert_eq!(hit(&found, &peer_of(&a)).map(|h| h.source), Some(HitSource::Dht), "{found:?}");
+    // A keyword reaches only what was heard on gossip.
+    let words = b.search(SearchQuery::Keyword("SUMMARIZE".into())).expect("keyword search");
+    assert_eq!(hit(&words, &peer_of(&a)).map(|h| h.source), Some(HitSource::Gossip));
+    let words = c.search(SearchQuery::Keyword("summarize".into())).expect("keyword search");
+    assert!(words.hits.is_empty(), "the DHT is never searched by keyword: {words:?}");
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_18a_several_honest_publishers_are_all_found() {
+    // T4: two honest publishers and one attacker on one gene.
+    let dir = tempfile::tempdir().unwrap();
+    let victim = spawn(&dir, "victim", vec![]);
+    let a = spawn(&dir, "a", vec![addr(&victim)]);
+    let b = spawn(&dir, "b", vec![addr(&victim)]);
+    let raw = RawDht::spawn_with(&victim, RawOptions { listen: true, ..Default::default() });
+    for p in [peer_of(&a), peer_of(&b), raw.peer_id] {
+        assert!(in_dht(&victim, &p));
+    }
+    let gene = id("adv18a");
+    a.store_own_record(&labelled(&gene, "from-a", now_ms())).unwrap();
+    b.store_own_record(&labelled(&gene, "from-b", now_ms())).unwrap();
+    a.start_providing_gene(&gene).unwrap();
+    b.start_providing_gene(&gene).unwrap();
+    // The attacker lists itself and holds a record under A's key that it
+    // signed itself.
+    let theft = raw.signed(&gene);
+    raw.hold(libp2p::kad::Record::new(super::gene_record::record_key(&gene, &peer_of(&a)), theft.value));
+    raw.provide(super::gene_record::provider_key(&gene).unwrap());
+    let found = gene_search(&victim, &gene);
+    assert_eq!(hit(&found, &peer_of(&a)).map(|h| h.announcement.name.as_str()), Some("from-a"), "{found:?}");
+    assert_eq!(hit(&found, &peer_of(&b)).map(|h| h.announcement.name.as_str()), Some("from-b"), "{found:?}");
+    assert!(hit(&found, &raw.peer_id).is_none());
+    assert_eq!(found.hits.len(), 2);
+}
+
+/// A victim, an honest publisher holding its record only in its own store,
+/// and a raw peer holding a forged copy under the honest key.
+fn forged_answer_setup(dir: &tempfile::TempDir, gene: &str) -> (Node, Node, RawDht) {
+    let victim = spawn(dir, "victim", vec![]);
+    let honest = spawn(dir, "honest", vec![addr(&victim)]);
+    let raw = RawDht::spawn_with(&victim, RawOptions { listen: true, ..Default::default() });
+    assert!(in_dht(&victim, &peer_of(&honest)) && in_dht(&victim, &raw.peer_id));
+    let ts = now_ms();
+    let key = honest.store_own_record(&labelled(gene, "honest", ts)).unwrap();
+    honest.start_providing_gene(gene).unwrap();
+    // Newer, so it would win if it were let through.
+    let (real, _) = honest.local_dht(&key).unwrap();
+    raw.hold(forged_as(&peer_of(&honest), &labelled(gene, "forged", ts + 1), &real.expect("own record")));
+    (victim, honest, raw)
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_18b_a_forged_answer_does_not_hide_the_valid_record() {
+    // T10.
+    let dir = tempfile::tempdir().unwrap();
+    let gene = id("adv18b");
+    let (victim, honest, _raw) = forged_answer_setup(&dir, &gene);
+    let found = gene_search(&victim, &gene);
+    let h = hit(&found, &peer_of(&honest)).expect("the honest record is found");
+    assert_eq!(h.announcement.name, "honest");
+    assert_eq!(found.hits.len(), 1);
+    assert!(victim.dht_stats().invalid_results >= 1, "{:?}", victim.dht_stats());
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_18c_answering_a_search_with_a_forgery_costs_nothing() {
+    // T11: the responder may be a stale or innocent store.
+    let dir = tempfile::tempdir().unwrap();
+    let gene = id("adv18c");
+    let (victim, _honest, raw) = forged_answer_setup(&dir, &gene);
+    let before = victim.peer_score(&raw.peer_id.to_string());
+    let found = gene_search(&victim, &gene);
+    assert_eq!(found.hits.len(), 1);
+    assert!(victim.dht_stats().invalid_results >= 1);
+    assert_eq!(victim.dht_stats().forgeries, 0);
+    assert_eq!(victim.peer_score(&raw.peer_id.to_string()), before);
+    assert!(raw.is_connected(), "not disconnected");
+    assert!(victim.dht_peers().contains(&raw.peer_id.to_string()));
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_18d_a_responder_flooding_candidates_does_not_hide_the_honest_one() {
+    // T23.
+    let dir = tempfile::tempdir().unwrap();
+    let victim = spawn(&dir, "victim", vec![]);
+    let honest = spawn(&dir, "honest", vec![addr(&victim)]);
+    let raw = RawDht::spawn_with(&victim, RawOptions { listen: true, ..Default::default() });
+    assert!(in_dht(&victim, &peer_of(&honest)) && in_dht(&victim, &raw.peer_id));
+    let gene = id("adv18d");
+    let provider = super::gene_record::provider_key(&gene).unwrap();
+    raw.fake_providers(provider, (0..20).map(|_| libp2p::PeerId::random()).collect());
+    honest.store_own_record(&labelled(&gene, "honest", now_ms())).unwrap();
+    honest.start_providing_gene(&gene).unwrap();
+    let started = Instant::now();
+    let found = gene_search(&victim, &gene);
+    assert!(started.elapsed() < Duration::from_millis(3500), "{:?}", started.elapsed());
+    assert!(hit(&found, &peer_of(&honest)).is_some(), "{found:?}");
+    assert!(found.partial, "fifteen candidates were turned away");
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_18e_colluding_responders_cannot_crowd_out_a_publisher_heard_on_gossip() {
+    // T23b: four responders, five fakes each, offer as many candidates as
+    // the whole budget.
+    let dir = tempfile::tempdir().unwrap();
+    let victim = spawn(&dir, "victim", vec![]);
+    let gene = id("adv18e");
+    let provider = super::gene_record::provider_key(&gene).unwrap();
+    let colluders: Vec<RawDht> = (0..4).map(|_| RawDht::spawn_with(&victim, RawOptions { listen: true, ..Default::default() })).collect();
+    for c in &colluders {
+        assert!(in_dht(&victim, &c.peer_id));
+        c.fake_providers(provider.clone(), (0..5).map(|_| libp2p::PeerId::random()).collect());
+    }
+    // The honest publisher only gossips, and serves its own record.
+    let honest = RawDht::spawn_with(&victim, RawOptions { listen: true, gossip: true, ..Default::default() });
+    assert!(in_dht(&victim, &honest.peer_id));
+    let record = honest.signed(&gene);
+    honest.hold(record.clone());
+    let ann = super::gene_record::validate_record(record.key.as_ref(), &record.value, now_ms()).unwrap().announcement;
+    assert!(eventually(20, || {
+        honest.announce(encode_announcement(&ann));
+        has(&victim, &gene)
+    }));
+    let found = gene_search(&victim, &gene);
+    assert!(hit(&found, &honest.peer_id).is_some(), "{found:?}");
+    // Whether a colluder's candidate is also turned away depends on timing:
+    // a fake's lookup ends at once with no record and gives its place back
+    // (§6.1 rule 3), so the budget may never be full at one moment. ADV-18d
+    // and the discover unit tests cover turning candidates away.
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_18f_freshness_is_judged_when_the_search_runs() {
+    // T24.
+    let dir = tempfile::tempdir().unwrap();
+    let victim = spawn(&dir, "victim", vec![]);
+    let publisher = spawn(&dir, "publisher", vec![addr(&victim)]);
+    await_control(&publisher, &victim, "adv18f-mesh");
+    let gene = id("adv18f");
+    let ann = labelled(&gene, "aging", now_ms());
+    assert!(eventually(20, || {
+        let _ = publisher.publish(ANNOUNCEMENTS_TOPIC, &encode_announcement(&ann));
+        has(&victim, &gene)
+    }));
+    let handle = victim.handle().unwrap();
+    let query = || SearchQuery::Keyword("aging".into());
+    let now = handle.search_at(query(), now_ms(), Duration::from_secs(3)).unwrap();
+    assert_eq!(now.hits.len(), 1);
+    let later = ann.timestamp_ms + super::gene_record::MAX_AGE_MS + 1;
+    let then = handle.search_at(query(), later, Duration::from_secs(3)).unwrap();
+    assert!(then.hits.is_empty(), "older than 48 h at query time: {then:?}");
+    let by_id = handle.search_at(SearchQuery::GeneId(gene.clone()), later, Duration::from_secs(3)).unwrap();
+    assert!(by_id.hits.is_empty(), "{by_id:?}");
+    assert!(has(&victim, &gene), "`network received` still shows it");
+}
+
+/// A TCP port that accepts connections and never says anything.
+struct Blackhole {
+    port: u16,
+    _thread: std::thread::JoinHandle<()>,
+}
+
+impl Blackhole {
+    fn open() -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let thread = std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for s in listener.incoming().flatten() {
+                held.push(s);
+            }
+        });
+        Self { port, _thread: thread }
+    }
+
+    fn peer(&self, node: &Node) {
+        let addr = format!("/ip4/127.0.0.1/tcp/{}", self.port).parse().unwrap();
+        node.add_dht_address(libp2p::PeerId::random(), addr).unwrap();
+    }
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_18g_stuck_searches_end_at_the_deadline_and_stop_their_queries() {
+    // T26.
+    let dir = tempfile::tempdir().unwrap();
+    let victim = spawn(&dir, "victim", vec![]);
+    let hole = Blackhole::open();
+    for _ in 0..3 {
+        hole.peer(&victim);
+    }
+    let handle = victim.handle().unwrap();
+    let started = Instant::now();
+    let searches: Vec<_> = (0..5)
+        .map(|i| {
+            let h = handle.clone();
+            std::thread::spawn(move || h.search(SearchQuery::GeneId(id(&format!("adv18g-{i}")))).unwrap())
+        })
+        .collect();
+    // The node keeps answering while they run.
+    std::thread::sleep(Duration::from_millis(500));
+    let asked = Instant::now();
+    let _ = victim.dht_peers();
+    assert!(asked.elapsed() < Duration::from_secs(1), "{:?}", asked.elapsed());
+    for s in searches {
+        let outcome = s.join().unwrap();
+        assert!(outcome.timed_out && outcome.partial, "{outcome:?}");
+    }
+    let took = started.elapsed();
+    assert!(took >= Duration::from_secs(3) && took < Duration::from_millis(3500), "{took:?}");
+    assert!(eventually(1, || victim.live_search_queries().unwrap() == 0), "Kad queries outlived their search");
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_18h_identical_searches_in_flight_share_one_execution() {
+    let dir = tempfile::tempdir().unwrap();
+    let victim = spawn(&dir, "victim", vec![]);
+    let hole = Blackhole::open();
+    hole.peer(&victim);
+    let handle = victim.handle().unwrap();
+    let gene = id("adv18h");
+    let searches: Vec<_> = (0..3)
+        .map(|_| {
+            let (h, g) = (handle.clone(), gene.clone());
+            std::thread::spawn(move || h.search(SearchQuery::GeneId(g)).unwrap())
+        })
+        .collect();
+    let outcomes: Vec<SearchOutcome> = searches.into_iter().map(|s| s.join().unwrap()).collect();
+    assert!(outcomes.iter().all(|o| o.timed_out));
+    assert_eq!(victim.search_runs().unwrap(), 1);
+    // A search that is not a v2 ID is refused before it runs.
+    assert!(victim.search(SearchQuery::GeneId("v1:abc".into())).is_err());
+    assert_eq!(victim.search_runs().unwrap(), 1);
 }

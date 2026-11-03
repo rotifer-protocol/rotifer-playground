@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { execSync } from "node:child_process";
+import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, existsSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -8,14 +8,18 @@ import { hasNativeGeneIdV2 } from "../../src/utils/binding.js";
 const TEST_DIR = join(tmpdir(), `rotifer-net-test-${Date.now()}`);
 const CLI = join(__dirname, "..", "..", "dist", "index.js");
 
-function run(args: string, opts: { cwd?: string } = {}): {
+// Nothing here may reach the production Cloud: the endpoint is a closed
+// local port unless a test starts its own stand-in.
+const NO_CLOUD = "http://127.0.0.1:9";
+
+function run(args: string, opts: { cwd?: string; cloud?: string } = {}): {
   stdout: string;
   exitCode: number;
 } {
   try {
     const stdout = execSync(`node "${CLI}" ${args}`, {
       cwd: opts.cwd || TEST_DIR,
-      env: { ...process.env, HOME: TEST_DIR },
+      env: { ...process.env, HOME: TEST_DIR, ROTIFER_CLOUD_ENDPOINT: opts.cloud ?? NO_CLOUD },
       timeout: 15_000,
       encoding: "utf-8",
     });
@@ -26,6 +30,29 @@ function run(args: string, opts: { cwd?: string } = {}): {
       exitCode: err.status ?? 1,
     };
   }
+}
+
+/**
+ * A stand-in Rotifer Cloud in a child process (the CLI runs through the
+ * blocking execSync, so an in-process server could not answer). Every
+ * search returns `rows`.
+ */
+async function startCloud(rows: unknown[]): Promise<{ endpoint: string; stop: () => void }> {
+  const code = `
+    const rows = ${JSON.stringify(JSON.stringify(rows))};
+    require("node:http").createServer((q, r) => { q.resume(); r.setHeader("content-type", "application/json"); r.end(rows); })
+      .listen(0, "127.0.0.1", function () { console.log(this.address().port); });`;
+  const child: ChildProcess = spawn("node", ["-e", code], { stdio: ["ignore", "pipe", "inherit"] });
+  const port = await new Promise<string>((resolve) => child.stdout!.once("data", (d) => resolve(String(d).trim())));
+  return { endpoint: `http://127.0.0.1:${port}`, stop: () => child.kill() };
+}
+
+function cloudGene(name: string) {
+  return {
+    id: "11111111-1111-1111-1111-111111111111", name, domain: "test", version: "1.0.0", fidelity: "Native",
+    description: null, wasm_size: 1, downloads: 0, reputation_score: null,
+    created_at: "2026-11-01T00:00:00Z", updated_at: "2026-11-01T00:00:00Z", owner_username: "e2e", total_count: 1,
+  };
 }
 
 // Most checks exercise the no-daemon paths a fresh environment hits (commands
@@ -118,12 +145,36 @@ describe("rotifer network commands", () => {
     expect(result.stdout).toContain("rotifer network start");
   });
 
-  it("network search falls back to Cloud search when no daemon is up", () => {
+  it("network search falls back to Cloud search when no daemon is up", async () => {
+    const cloud = await startCloud([cloudGene("e2e-unique-cloud-gene")]);
+    try {
+      const result = run("network search test-query", { cloud: cloud.endpoint });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("e2e-unique-cloud-gene");
+      expect(result.stdout).toContain("Rotifer Cloud (1)");
+      expect(result.stdout).toContain("rotifer network start");
+      expect(result.stdout).not.toContain("not yet available");
+    } finally {
+      cloud.stop();
+    }
+  });
+
+  it("network search shows an empty Cloud list when Cloud has no match", async () => {
+    const cloud = await startCloud([]);
+    try {
+      const result = run("network search test-query", { cloud: cloud.endpoint });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Rotifer Cloud (0)");
+    } finally {
+      cloud.stop();
+    }
+  });
+
+  it("network search fails, naming both causes, with no daemon and no Cloud", () => {
     const result = run("network search test-query");
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout.toLowerCase()).toContain("not running");
-    expect(result.stdout).toContain("not yet available");
-    expect(result.stdout).toContain("rotifer search");
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("Rotifer Cloud is unreachable or returned an error");
+    expect(result.stdout).toContain("the P2P daemon is not running");
   });
 
   it("network announce errors on a missing gene", () => {

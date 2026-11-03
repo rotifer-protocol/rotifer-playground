@@ -19,7 +19,8 @@ use std::sync::{Arc, Mutex};
 // Kept at the crate root, not a submodule: the cdylib linker strips an
 // unreferenced submodule's napi registration ctor, so the class must live here.
 use rotifer_core::p2p::messages::{encode_announcement, local_announcement, ANNOUNCEMENTS_TOPIC};
-use rotifer_core::p2p::node::Node as CoreNode;
+use rotifer_core::p2p::discover::{SearchOutcome, SearchQuery};
+use rotifer_core::p2p::node::{AnnounceReport, Node as CoreNode, NodeHandle};
 use rotifer_core::p2p::NetworkConfig;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -37,6 +38,111 @@ pub struct ReceivedGeneAnnouncement {
     pub publisher: String,
     /// Same as `publisher`; kept for callers written against the pre-v1 shape.
     pub source: Option<String>,
+}
+
+/// One publisher's copy of a gene found by a network search.
+#[napi(object)]
+pub struct NetworkSearchHit {
+    pub gene_id: String,
+    pub name: String,
+    pub domain: String,
+    pub version: String,
+    pub fidelity: String,
+    pub ir_spec: String,
+    pub timestamp_ms: f64,
+    pub publisher: String,
+    /// `dht`, `gossip` or `both`.
+    pub source: String,
+    /// The publisher's registered account as this node knows it; absent for
+    /// an unregistered publisher. Only for counting distinct accounts.
+    pub account: Option<String>,
+}
+
+/// What a network search found within its 3-second deadline.
+#[napi(object)]
+pub struct NetworkSearchResult {
+    pub hits: Vec<NetworkSearchHit>,
+    /// The deadline was hit with lookups still running.
+    pub timed_out: bool,
+    /// Results may be incomplete (deadline or a candidate cap).
+    pub partial: bool,
+}
+
+/// What one announce observed (design v2 §10.2): only measured counts.
+#[napi(object)]
+pub struct NetworkAnnounceReport {
+    pub gene_id: String,
+    pub gossip_peers: u32,
+    pub record_sent: u32,
+    pub record_acked: u32,
+    pub readable_from: u32,
+}
+
+pub struct SearchTask {
+    handle: NodeHandle,
+    query: Option<SearchQuery>,
+}
+
+impl Task for SearchTask {
+    type Output = SearchOutcome;
+    type JsValue = NetworkSearchResult;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        let query = self.query.take().ok_or_else(|| Error::from_reason("search already ran"))?;
+        self.handle.search(query).map_err(|e| Error::from_reason(format!("search: {e}")))
+    }
+
+    fn resolve(&mut self, _env: Env, out: Self::Output) -> Result<Self::JsValue> {
+        let hits = out
+            .hits
+            .into_iter()
+            .map(|h| NetworkSearchHit {
+                gene_id: h.announcement.gene_id,
+                name: h.announcement.name,
+                domain: h.announcement.domain,
+                version: h.announcement.version,
+                fidelity: h.announcement.fidelity,
+                ir_spec: h.announcement.ir_spec,
+                timestamp_ms: h.announcement.timestamp_ms as f64,
+                publisher: h.publisher,
+                source: h.source.as_str().into(),
+                account: h.account,
+            })
+            .collect();
+        Ok(NetworkSearchResult { hits, timed_out: out.timed_out, partial: out.partial })
+    }
+}
+
+pub struct AnnounceTask {
+    handle: NodeHandle,
+    genes_root: String,
+    name: String,
+}
+
+impl Task for AnnounceTask {
+    type Output = AnnounceReport;
+    type JsValue = NetworkAnnounceReport;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        let announcement = local_announcement(std::path::Path::new(&self.genes_root), &self.name, now_ms())
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        self.handle.announce(&announcement).map_err(|e| Error::from_reason(format!("announce: {e}")))
+    }
+
+    fn resolve(&mut self, _env: Env, r: Self::Output) -> Result<Self::JsValue> {
+        let n = |v: usize| u32::try_from(v).unwrap_or(u32::MAX);
+        Ok(NetworkAnnounceReport {
+            gene_id: r.gene_id,
+            gossip_peers: n(r.gossip_peers),
+            record_sent: n(r.record_sent),
+            record_acked: n(r.record_acked),
+            readable_from: n(r.readable_from),
+        })
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 /// A live libp2p P2P node driven from the TS CLI, so `rotifer network` can run
@@ -159,6 +265,33 @@ impl P2pNode {
             .publish(ANNOUNCEMENTS_TOPIC, &bytes)
             .map_err(|e| Error::from_reason(format!("publish announcement: {e}")))?;
         Ok(announcement.gene_id)
+    }
+
+    /// Look one v2 gene ID up in the DHT and among announcements heard on
+    /// gossip. Resolves within about 3 seconds; off the JS thread.
+    #[napi(ts_return_type = "Promise<NetworkSearchResult>")]
+    pub fn search_gene(&self, gene_id: String) -> Result<AsyncTask<SearchTask>> {
+        self.search_task(SearchQuery::GeneId(gene_id))
+    }
+
+    /// Match `query` against the name and domain of announcements heard on
+    /// gossip (case-insensitive). Never searches the DHT.
+    #[napi(ts_return_type = "Promise<NetworkSearchResult>")]
+    pub fn search_keyword(&self, query: String) -> Result<AsyncTask<SearchTask>> {
+        self.search_task(SearchQuery::Keyword(query))
+    }
+
+    fn search_task(&self, query: SearchQuery) -> Result<AsyncTask<SearchTask>> {
+        let handle = self.inner.handle().map_err(|e| Error::from_reason(format!("search: {e}")))?;
+        Ok(AsyncTask::new(SearchTask { handle, query: Some(query) }))
+    }
+
+    /// Announce the local gene `name`: gossip, then the signed DHT record and
+    /// provider entry, then a read-back. Resolves with what was observed.
+    #[napi(ts_return_type = "Promise<NetworkAnnounceReport>")]
+    pub fn announce_local_gene_report(&self, genes_root: String, name: String) -> Result<AsyncTask<AnnounceTask>> {
+        let handle = self.inner.handle().map_err(|e| Error::from_reason(format!("announce: {e}")))?;
+        Ok(AsyncTask::new(AnnounceTask { handle, genes_root, name }))
     }
 
     /// Stop the swarm and release the listen port.

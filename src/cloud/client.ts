@@ -247,11 +247,12 @@ async function fetchSearchGenes(body: {
   p_sort: "newest" | "relevance" | "downloads" | "reputation";
   p_limit: number;
   p_offset: number;
-}): Promise<SearchGeneRow[]> {
+}, signal?: AbortSignal): Promise<SearchGeneRow[]> {
   const res = await cloudFetch(apiUrl("/rpc/search_genes"), {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
   });
   return handleResponse<SearchGeneRow[]>(res);
 }
@@ -264,6 +265,8 @@ export async function listGenes(options: {
   sort?: string;
   page?: number;
   perPage?: number;
+  /** Aborts the request(s), e.g. on a caller's timeout. */
+  signal?: AbortSignal;
 }): Promise<CloudGeneListResponse> {
   const limit =
     Number.isFinite(options.perPage) && (options.perPage as number) > 0
@@ -286,7 +289,7 @@ export async function listGenes(options: {
     p_offset: offset,
   };
 
-  const rows = await fetchSearchGenes(requestBody);
+  const rows = await fetchSearchGenes(requestBody, options.signal);
   const genes = rows.map(mapSearchGene);
 
   let total = parseExactSearchTotal(rows);
@@ -300,7 +303,7 @@ export async function listGenes(options: {
       total = offset + rows.length;
       isTotalExact = true;
     } else {
-      const countRows = await fetchSearchGenes({ ...requestBody, p_limit: 1, p_offset: 0 });
+      const countRows = await fetchSearchGenes({ ...requestBody, p_limit: 1, p_offset: 0 }, options.signal);
       total = parseExactSearchTotal(countRows);
       isTotalExact = total != null;
     }

@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.34.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.33.1...v0.34.0) (2026-11-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **p2p:** nodes on 0.27-0.33 still connect and gossip with this version, but no longer share its DHT. Upgrade the bootstrap node, or keep a remembered upgraded peer.
+
+### Features
+
+* **node-attestation:** Cloud-side PoR issuing reference implementation (not deployed, migration deferred) ([#536](https://github.com/rotifer-protocol/rotifer-playground/issues/536)) ([7f58f1a](https://github.com/rotifer-protocol/rotifer-playground/commit/7f58f1a704a13f830028da0d48b41c7454d6b0c0))
+* **p2p:** A2 PR-2 — GeneStore inbound pipeline, abuse limits, expiring connection block ([#542](https://github.com/rotifer-protocol/rotifer-playground/issues/542)) ([d7664ce](https://github.com/rotifer-protocol/rotifer-playground/commit/d7664ce15cfa5a8d1eec0a98967e99cd2bad39ab))
+* **p2p:** admit peers to the DHT only when Identify shows Rotifer's DHT (A2, PR-2b) ([#543](https://github.com/rotifer-protocol/rotifer-playground/issues/543)) ([4a618da](https://github.com/rotifer-protocol/rotifer-playground/commit/4a618da5d2528627c4728e9aab7d602f9d00b649))
+* **p2p:** freeze the DHT gene record v1 and its receiving-side checks (A2, PR-1) ([#541](https://github.com/rotifer-protocol/rotifer-playground/issues/541)) ([83f6809](https://github.com/rotifer-protocol/rotifer-playground/commit/83f6809adf482b78ade5dc1699582e40bfa909dd))
+* **p2p:** GossipSub peer scores from proof of registration (A1, PR-2) ([#539](https://github.com/rotifer-protocol/rotifer-playground/issues/539)) ([2173de3](https://github.com/rotifer-protocol/rotifer-playground/commit/2173de3c12a4f2fec265667abd65d73d9babb51a))
+* **p2p:** NAT traversal client and RFC connection limits (A3) ([#537](https://github.com/rotifer-protocol/rotifer-playground/issues/537)) ([ed84a14](https://github.com/rotifer-protocol/rotifer-playground/commit/ed84a143736c9571a7ed2ca59fec63f77fe2b683))
+* **p2p:** node heartbeats carrying a checked proof of registration (A1, PR-1) ([#538](https://github.com/rotifer-protocol/rotifer-playground/issues/538)) ([1da7e6d](https://github.com/rotifer-protocol/rotifer-playground/commit/1da7e6d86a736ae6c4d3bdfb21ff9e89e1de3819))
+* **p2p:** republish every 12 h, keep the announce table, add network withdraw (A2, PR-4) ([#545](https://github.com/rotifer-protocol/rotifer-playground/issues/545)) ([a0b34f9](https://github.com/rotifer-protocol/rotifer-playground/commit/a0b34f96fbfd17d488b257b2083f605ab8200e67))
+* **p2p:** rotifer network search; announce writes the DHT (A2, PR-3) ([#544](https://github.com/rotifer-protocol/rotifer-playground/issues/544)) ([3bcbfe2](https://github.com/rotifer-protocol/rotifer-playground/commit/3bcbfe2d7b3172dd8e81e537cd4998b9449a72f1))
+* **p2p:** upgrade libp2p to 0.57 and discover LAN peers by mDNS ([#532](https://github.com/rotifer-protocol/rotifer-playground/issues/532)) ([ca590f2](https://github.com/rotifer-protocol/rotifer-playground/commit/ca590f2b3d258906e81a7b57ec1d30ed8b73eccd))
+
+
+### Bug Fixes
+
+* **p2p:** ignore gossip on topics with no registered validator ([#533](https://github.com/rotifer-protocol/rotifer-playground/issues/533)) ([f7b96d3](https://github.com/rotifer-protocol/rotifer-playground/commit/f7b96d39a52eb57e3027e638a262cb1bb93506ff))
+* **p2p:** refuse publishing on unregistered topics; pin the non-Rotifer hang-up time (A4b) ([#535](https://github.com/rotifer-protocol/rotifer-playground/issues/535)) ([ab46b46](https://github.com/rotifer-protocol/rotifer-playground/commit/ab46b46df4db315b72325905de5042dc928b91b6))
+
 ## [0.33.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.33.0...v0.33.1) (2026-11-01)
 
 

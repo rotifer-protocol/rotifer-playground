@@ -4,19 +4,18 @@ import base from "./vitest.config";
 /**
  * The test configuration Stryker runs against.
  *
- * Two differences from the normal run, both forced by how Stryker executes:
+ * One rule for every test it runs, and two differences from the normal run,
+ * all forced by how Stryker executes:
  *
- * Three unit tests excluded — Stryker's vitest runner executes in worker
- * threads, where `process.chdir()` throws, and these three call it. One failing
- * test in the dry run aborts the whole pass before a single mutant is tried.
- * Setting `pool: "forks"` does not help: the runner overrides the pool.
+ * No test here may call `process.chdir()`. Stryker's vitest runner executes
+ * in worker threads, where it throws, and one failing test in the dry run
+ * aborts the whole pass before a single mutant is tried. Setting
+ * `pool: "forks"` does not help: the runner overrides the pool. A test that
+ * needs a working directory mocks `process.cwd` instead (#405, #548). The
+ * last three tests that called chdir (run-command, network-p2p, config) were
+ * moved over in #548 and are no longer excluded.
  *
- * Excluding them costs no killing power here, which was checked rather than
- * assumed: they exercise `commands/run`, `commands/network` and `utils/config`,
- * and none of the three mutated files appears in any of them. They still run
- * in `npm test`, which is where they count.
- *
- * The black-box suites excluded for the same reason, on the same evidence.
+ * The black-box suites are excluded because they cannot kill a mutant.
  * They drive the CLI by spawning `node dist/index.js`, so the code under test
  * runs in a child process that Stryker never instruments — a mutant cannot die
  * there no matter how thorough the assertion. What they can do is abort the
@@ -43,9 +42,6 @@ export default mergeConfig(
     test: {
       exclude: [
         ...(base.test?.exclude ?? []),
-        "tests/unit/run-command.test.ts",
-        "tests/unit/network-p2p.test.ts",
-        "tests/unit/config.test.ts",
         "tests/e2e/**",
         "tests/edge/**",
         "tests/resilience/**",

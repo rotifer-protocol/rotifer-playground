@@ -152,6 +152,40 @@ export interface ReceivedAnnouncement {
   source?: string;
 }
 
+/** One publisher's copy of a gene found by a network search (mirrors Rust). */
+export interface NetworkSearchHit {
+  geneId: string;
+  name: string;
+  domain: string;
+  version: string;
+  fidelity: string;
+  irSpec: string;
+  timestampMs: number;
+  publisher: string;
+  /** Where it was found: `dht`, `gossip` or `both`. */
+  source: "dht" | "gossip" | "both";
+  /** The publisher's registered account as the node knows it; absent if unregistered. */
+  account?: string;
+}
+
+/** What a network search found within its 3-second deadline. */
+export interface NetworkSearchResult {
+  hits: NetworkSearchHit[];
+  /** The deadline was hit with lookups still running. */
+  timedOut: boolean;
+  /** Results may be incomplete (deadline or a candidate cap). */
+  partial: boolean;
+}
+
+/** Counts one announce observed (A2 design v2 §10.2). */
+export interface NetworkAnnounceReport {
+  geneId: string;
+  gossipPeers: number;
+  recordSent: number;
+  recordAcked: number;
+  readableFrom: number;
+}
+
 /**
  * Subset of the native `P2pNode` class surfaced to the CLI. Method names are
  * camelCase (napi converts the Rust snake_case automatically).
@@ -168,6 +202,12 @@ export interface P2pNodeHandle {
   receivedAnnouncements(): ReceivedAnnouncement[];
   /** Announce the local gene `name` under `genesRoot`; returns its v2 ID. */
   announceLocalGene(genesRoot: string, name: string): string;
+  /** Search the DHT and gossip for one v2 ID (absent in addons before A2 PR-3). */
+  searchGene?(geneId: string): Promise<NetworkSearchResult>;
+  /** Match name or domain among announcements heard on gossip (absent likewise). */
+  searchKeyword?(query: string): Promise<NetworkSearchResult>;
+  /** Announce over gossip and the DHT, reporting what was observed (absent likewise). */
+  announceLocalGeneReport?(genesRoot: string, name: string): Promise<NetworkAnnounceReport>;
   stop(): void;
 }
 

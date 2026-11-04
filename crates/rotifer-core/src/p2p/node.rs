@@ -40,6 +40,7 @@ use libp2p::swarm::{ConnectionDenied, DialError, ListenError, NetworkBehaviour, 
 use libp2p::{Multiaddr, PeerId as Libp2pPeerId, StreamProtocol, Swarm};
 use tokio::sync::{mpsc, oneshot};
 
+use super::discover::{self, Discovery, HitSource, SearchHit, SearchOutcome, SearchQuery};
 use super::gene_record;
 use super::gene_store::{self, Admission, GeneStore, Holder, ProviderAdmission, WriteLimiter};
 use super::heartbeat::{self, HEARTBEATS_TOPIC, WireNodeHeartbeat};
@@ -58,6 +59,9 @@ const LISTEN_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long a DHT put/get blocks for its query to resolve.
 const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How often the event loop checks search and announce deadlines.
+const SEARCH_TICK: Duration = Duration::from_millis(50);
 
 /// How often remembered peers are flushed to disk while running. A clean stop
 /// also persists them; this only bounds the loss when a daemon is killed.
@@ -97,6 +101,47 @@ enum Command {
         key: Vec<u8>,
         resp: oneshot::Sender<Vec<Libp2pPeerId>>,
     },
+    /// Search the network (A2 design §6); answered by `deadline`.
+    Search {
+        query: SearchQuery,
+        now_ms: u64,
+        deadline: std::time::Instant,
+        resp: oneshot::Sender<SearchOutcome>,
+    },
+    /// The peers closest to `key` found by `deadline`.
+    ClosestPeers {
+        key: Vec<u8>,
+        deadline: std::time::Instant,
+        resp: oneshot::Sender<Vec<Libp2pPeerId>>,
+    },
+    /// Store this node's own record, then send it to `peers`. Answers how
+    /// many it was sent to and how many acknowledged it by `deadline`.
+    PutRecordTo {
+        key: Vec<u8>,
+        value: Vec<u8>,
+        peers: Vec<Libp2pPeerId>,
+        deadline: std::time::Instant,
+        resp: oneshot::Sender<Result<(usize, usize), NetworkError>>,
+    },
+    /// Look `key` up until `deadline`; answers how many other nodes
+    /// returned a valid record.
+    ReadBack {
+        key: Vec<u8>,
+        now_ms: u64,
+        deadline: std::time::Instant,
+        resp: oneshot::Sender<usize>,
+    },
+    /// Peers subscribed to the announcements topic.
+    AnnouncementReach(oneshot::Sender<usize>),
+    /// Kad queries of finished searches that are still alive.
+    #[cfg(test)]
+    LiveSearchQueries(oneshot::Sender<usize>),
+    /// Searches executed (shared ones count once).
+    #[cfg(test)]
+    SearchRuns(oneshot::Sender<u64>),
+    /// Put a peer and address in the routing table.
+    #[cfg(test)]
+    AddDhtAddress { peer: Libp2pPeerId, addr: Multiaddr },
     /// Skip the node's monotonic clock forward, then recompute scores.
     #[cfg(test)]
     SkipClock { by: Duration, resp: oneshot::Sender<()> },
@@ -342,6 +387,14 @@ pub struct ReceivedMessage {
 /// and the event loop.
 type ReceivedMessages = Arc<Mutex<Vec<ReceivedMessage>>>;
 
+/// An announce's record write in flight: who waits for (sent, acknowledged),
+/// and how many nodes it was sent to.
+type PendingPutTo = (oneshot::Sender<Result<(usize, usize), NetworkError>>, usize);
+
+/// An announce's read-back in flight: who waits for the count, the record
+/// key, the time freshness is judged at, and the nodes that returned it.
+type PendingReadBack = (oneshot::Sender<usize>, Vec<u8>, u64, HashSet<Libp2pPeerId>);
+
 /// Connections this node refused under its own limits (ADR-304 D2, P2P RFC
 /// §4.1.4), by cause. Transport failures are not refusals and are not counted.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -410,6 +463,9 @@ pub struct DhtStats {
     pub over_budget: u64,
     /// Over the sender's write limit: dropped.
     pub rate_limited: u64,
+    /// Values this node's searches fetched that failed the record checks:
+    /// dropped, and nobody charged (A2 design §6.1 rule 4).
+    pub invalid_results: u64,
 }
 
 /// Shared state handles the event loop updates and the synchronous API reads.
@@ -800,22 +856,75 @@ impl Node {
     /// newest: a content ID can have many publishers, and each one's latest
     /// announcement replaces its earlier ones, never another publisher's.
     pub fn received_announcements(&self) -> Vec<(super::GeneAnnouncement, String)> {
-        use super::messages::{ANNOUNCEMENTS_TOPIC, Verdict, validate_gossip};
         // Messages were validated on arrival; re-validate against the time
         // they arrived at so a long-running node keeps showing them.
-        let mut latest: Vec<(super::GeneAnnouncement, String)> = Vec::new();
-        for m in self.received_messages() {
-            let (true, Some(source)) = (m.topic == ANNOUNCEMENTS_TOPIC, m.source) else { continue };
-            let Verdict::Accept(ann) = validate_gossip(&m.data, Some(&source), m.received_at_ms) else {
-                continue;
-            };
-            match latest.iter_mut().find(|(a, s)| a.gene_id == ann.gene_id && *s == source) {
-                Some(slot) if slot.0.timestamp_ms <= ann.timestamp_ms => slot.0 = ann,
-                Some(_) => {}
-                None => latest.push((ann, source)),
-            }
+        latest_announcements(&self.received_messages())
+    }
+
+    /// The announcements a search may show at `now_ms`: as
+    /// [`Self::received_announcements`], minus any older than 48 h then
+    /// (A2 design §6.3).
+    pub fn heard_announcements(&self, now_ms: u64) -> Vec<(super::GeneAnnouncement, String)> {
+        let mut heard = self.received_announcements();
+        heard.retain(|(a, _)| discover::is_fresh(a, now_ms));
+        heard
+    }
+
+    /// A handle for searching and announcing from another thread.
+    pub fn handle(&self) -> Result<NodeHandle, NetworkError> {
+        match (&self.cmd_tx, &self.runtime) {
+            (Some(cmd_tx), Some(runtime)) => Ok(NodeHandle {
+                cmd_tx: cmd_tx.clone(),
+                runtime: runtime.handle().clone(),
+                keypair: self.keypair.clone(),
+            }),
+            _ => Err(NetworkError::NotConnected),
         }
-        latest
+    }
+
+    /// See [`NodeHandle::search`].
+    pub fn search(&self, query: SearchQuery) -> Result<SearchOutcome, NetworkError> {
+        self.handle()?.search(query)
+    }
+
+    /// See [`NodeHandle::announce`].
+    pub fn announce(&self, announcement: &super::GeneAnnouncement) -> Result<AnnounceReport, NetworkError> {
+        self.handle()?.announce(announcement)
+    }
+
+    /// Kad queries of finished searches still alive.
+    #[cfg(test)]
+    pub(crate) fn live_search_queries(&self) -> Result<usize, NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::LiveSearchQueries(tx))?;
+        self.block_on_query(rx)
+    }
+
+    /// Searches executed so far; identical searches in flight count once.
+    #[cfg(test)]
+    pub(crate) fn search_runs(&self) -> Result<u64, NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::SearchRuns(tx))?;
+        self.block_on_query(rx)
+    }
+
+    /// Sign `announcement` and keep the record in this node's own store
+    /// only, sending it nowhere. Returns its key.
+    #[cfg(test)]
+    pub(crate) fn store_own_record(&self, announcement: &super::GeneAnnouncement) -> Result<Vec<u8>, NetworkError> {
+        let value = gene_record::sign_record(&self.keypair, &gene_record::encode_announcement_message(announcement))
+            .ok_or_else(|| NetworkError::Config("the node key is not Ed25519".into()))?;
+        let key = gene_record::record_key(&announcement.gene_id, &self.peer_id);
+        let deadline = std::time::Instant::now();
+        let k = key.clone();
+        self.handle()?.ask(|resp| Command::PutRecordTo { key: k, value, peers: Vec::new(), deadline, resp })??;
+        Ok(key)
+    }
+
+    /// Put `peer` at `addr` in the routing table.
+    #[cfg(test)]
+    pub(crate) fn add_dht_address(&self, peer: Libp2pPeerId, addr: Multiaddr) -> Result<(), NetworkError> {
+        self.send_command(Command::AddDhtAddress { peer, addr })
     }
 
     /// Number of inbound messages rejected by wire-format validation.
@@ -1579,8 +1688,41 @@ async fn run_event_loop(
     let mut writes = WriteLimiter::default();
     let mut sweep_timer = tokio::time::interval(gene_store::SWEEP_INTERVAL);
     sweep_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Searches in flight by gene ID, and which search owns each query
+    // (A2 design §6). The tick enforces their deadlines (§6.2), and those of
+    // `announce`'s steps.
+    let mut searches: HashMap<String, ActiveSearch> = HashMap::new();
+    let mut search_owner: HashMap<kad::QueryId, String> = HashMap::new();
+    let mut closest: HashMap<kad::QueryId, (oneshot::Sender<Vec<Libp2pPeerId>>, Vec<Libp2pPeerId>)> = HashMap::new();
+    let mut puts_to: HashMap<kad::QueryId, PendingPutTo> = HashMap::new();
+    let mut read_backs: HashMap<kad::QueryId, PendingReadBack> = HashMap::new();
+    let mut query_deadlines: Vec<(std::time::Instant, kad::QueryId)> = Vec::new();
+    let mut search_tick = tokio::time::interval(SEARCH_TICK);
+    search_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    #[cfg(test)]
+    let mut finished_queries: HashSet<kad::QueryId> = HashSet::new();
+    #[cfg(test)]
+    let mut search_runs: u64 = 0;
     loop {
         tokio::select! {
+            _ = search_tick.tick() => {
+                let now = std::time::Instant::now();
+                let due: Vec<String> = searches.iter().filter(|(_, s)| s.deadline <= now).map(|(g, _)| g.clone()).collect();
+                for gene in due {
+                    let _queries = finish_search(&mut swarm.behaviour_mut().kademlia, &mut searches, &mut search_owner, &heartbeats, &gene);
+                    #[cfg(test)]
+                    finished_queries.extend(_queries);
+                }
+                query_deadlines.retain(|(at, id)| {
+                    if *at > now {
+                        return true;
+                    }
+                    if let Some(mut q) = swarm.behaviour_mut().kademlia.query_mut(id) {
+                        q.finish();
+                    }
+                    false
+                });
+            }
             _ = sweep_timer.tick() => {
                 swarm.behaviour_mut().kademlia.store_mut().sweep(std::time::Instant::now());
             }
@@ -2008,26 +2150,107 @@ async fn run_event_loop(
                     kad::Event::OutboundQueryProgressed { id, result, step, .. },
                 )) => match result {
                     kad::QueryResult::GetProviders(outcome) => {
-                        if let Some((_, found)) = pending_providers.get_mut(&id)
-                            && let Ok(kad::GetProvidersOk::FoundProviders { providers, .. }) = outcome
-                        {
-                            found.extend(providers);
+                        if let Some(gene) = search_owner.get(&id).cloned() {
+                            // One provider response is one responder (§6.1 rule 2).
+                            let mut settled = false;
+                            if let Some(search) = searches.get_mut(&gene) {
+                                if let Ok(kad::GetProvidersOk::FoundProviders { providers, .. }) = outcome {
+                                    for candidate in search.discovery.responder(providers) {
+                                        start_lookup(&mut swarm.behaviour_mut().kademlia, search, &mut search_owner, candidate);
+                                    }
+                                }
+                                if step.last {
+                                    search.providers = None;
+                                    search_owner.remove(&id);
+                                }
+                                settled = search.providers.is_none() && search.lookups.is_empty();
+                            }
+                            if settled {
+                                let _queries = finish_search(&mut swarm.behaviour_mut().kademlia, &mut searches, &mut search_owner, &heartbeats, &gene);
+                                #[cfg(test)]
+                                finished_queries.extend(_queries);
+                            }
+                        } else {
+                            if let Some((_, found)) = pending_providers.get_mut(&id)
+                                && let Ok(kad::GetProvidersOk::FoundProviders { providers, .. }) = outcome
+                            {
+                                found.extend(providers);
+                            }
+                            if step.last
+                                && let Some((tx, found)) = pending_providers.remove(&id)
+                            {
+                                let _ = tx.send(found.into_iter().collect());
+                            }
+                        }
+                    }
+                    kad::QueryResult::GetClosestPeers(outcome) => {
+                        if let Some((_, found)) = closest.get_mut(&id) {
+                            let peers = match outcome {
+                                Ok(ok) => ok.peers,
+                                Err(kad::GetClosestPeersError::Timeout { peers, .. }) => peers,
+                            };
+                            found.extend(peers.into_iter().map(|p| p.peer_id));
                         }
                         if step.last
-                            && let Some((tx, found)) = pending_providers.remove(&id)
+                            && let Some((tx, found)) = closest.remove(&id)
                         {
-                            let _ = tx.send(found.into_iter().collect());
+                            let _ = tx.send(found);
                         }
                     }
                     kad::QueryResult::PutRecord(outcome) => {
-                        if let Some(tx) = pending_put.remove(&id) {
+                        if let Some((tx, sent)) = puts_to.remove(&id) {
+                            let acked = match &outcome {
+                                Ok(_) => sent,
+                                Err(kad::PutRecordError::QuorumFailed { success, .. } | kad::PutRecordError::Timeout { success, .. }) => success.len(),
+                            };
+                            let _ = tx.send(Ok((sent, acked)));
+                        } else if let Some(tx) = pending_put.remove(&id) {
                             let _ = tx.send(outcome.map(|_| ()).map_err(|e| {
                                 NetworkError::Transport(format!("put record: {e:?}"))
                             }));
                         }
                     }
                     kad::QueryResult::GetRecord(outcome) => {
-                        if let Some(tx) = pending_get.remove(&id) {
+                        if let Some(gene) = search_owner.get(&id).cloned() {
+                            let mut settled = false;
+                            if let Some(search) = searches.get_mut(&gene)
+                                && let Some(&candidate) = search.lookups.get(&id)
+                            {
+                                // Checked under the key we chose; an invalid
+                                // value is dropped, the lookup goes on, and
+                                // nobody is charged (§6.1 rule 4).
+                                if let Ok(kad::GetRecordOk::FoundRecord(found)) = &outcome
+                                    && let Err(why) = search.discovery.record(candidate, &found.record.value)
+                                {
+                                    tracing::debug!(peer = ?found.peer, reason = why.reason(), "search result dropped");
+                                    add_stats(&dht, DhtStats { invalid_results: 1, ..DhtStats::default() });
+                                }
+                                if step.last {
+                                    search.lookups.remove(&id);
+                                    search_owner.remove(&id);
+                                    search.discovery.lookup_done(&candidate);
+                                }
+                                settled = search.providers.is_none() && search.lookups.is_empty();
+                            }
+                            if settled {
+                                let _queries = finish_search(&mut swarm.behaviour_mut().kademlia, &mut searches, &mut search_owner, &heartbeats, &gene);
+                                #[cfg(test)]
+                                finished_queries.extend(_queries);
+                            }
+                        } else if let Some((_, key, now_ms, readers)) = read_backs.get_mut(&id) {
+                            // Only other nodes count, and only a valid copy.
+                            if let Ok(kad::GetRecordOk::FoundRecord(found)) = &outcome
+                                && let Some(peer) = found.peer
+                                && gene_record::validate_record(key, &found.record.value, *now_ms).is_ok()
+                            {
+                                readers.insert(peer);
+                            }
+                            if step.last
+                                && let Some((tx, _, _, readers)) = read_backs.remove(&id)
+                            {
+                                let _ = tx.send(readers.len());
+                            }
+                        } else if let Some(tx) = pending_get.remove(&id) {
                             let value = match outcome {
                                 Ok(kad::GetRecordOk::FoundRecord(found)) => {
                                     Some(found.record.value)
@@ -2094,6 +2317,95 @@ async fn run_event_loop(
                     let id = swarm.behaviour_mut().kademlia.get_providers(kad::RecordKey::new(&key));
                     pending_providers.insert(id, (resp, HashSet::new()));
                 }
+                Some(Command::Search { query, now_ms, deadline, resp }) => {
+                    let mut heard = received.lock().map(|m| latest_announcements(&m)).unwrap_or_default();
+                    heard.retain(|(a, _)| discover::is_fresh(a, now_ms));
+                    match query {
+                        SearchQuery::Keyword(words) => {
+                            // Gossip only: the DHT is never searched by keyword.
+                            let hits = heard
+                                .into_iter()
+                                .filter(|(a, _)| discover::matches_keyword(a, &words))
+                                .map(|(a, p)| (a, p, HitSource::Gossip))
+                                .collect();
+                            let _ = resp.send(SearchOutcome { hits: with_accounts(hits, &heartbeats), ..SearchOutcome::default() });
+                        }
+                        SearchQuery::GeneId(gene) => {
+                            if let Some(running) = searches.get_mut(&gene) {
+                                running.waiters.push(resp);
+                            } else {
+                                #[cfg(test)]
+                                {
+                                    search_runs += 1;
+                                }
+                                heard.retain(|(a, _)| a.gene_id == gene);
+                                let mut discovery = Discovery::new(gene.clone(), now_ms, *swarm.local_peer_id());
+                                let seeds = discovery.seed(heard.iter().filter_map(|(_, p)| p.parse::<Libp2pPeerId>().ok()));
+                                let mut search = ActiveSearch {
+                                    discovery,
+                                    deadline,
+                                    heard,
+                                    providers: None,
+                                    lookups: HashMap::new(),
+                                    queries: Vec::new(),
+                                    waiters: vec![resp],
+                                };
+                                for candidate in seeds {
+                                    start_lookup(&mut swarm.behaviour_mut().kademlia, &mut search, &mut search_owner, candidate);
+                                }
+                                if let Some(key) = gene_record::provider_key(&gene) {
+                                    let id = swarm.behaviour_mut().kademlia.get_providers(kad::RecordKey::new(&key));
+                                    search.providers = Some(id);
+                                    search.queries.push(id);
+                                    search_owner.insert(id, gene.clone());
+                                }
+                                searches.insert(gene, search);
+                            }
+                        }
+                    }
+                }
+                Some(Command::ClosestPeers { key, deadline, resp }) => {
+                    let id = swarm.behaviour_mut().kademlia.get_closest_peers(key);
+                    closest.insert(id, (resp, Vec::new()));
+                    query_deadlines.push((deadline, id));
+                }
+                Some(Command::PutRecordTo { key, value, peers, deadline, resp }) => {
+                    use libp2p::kad::store::RecordStore as _;
+                    let record = kad::Record::new(key, value);
+                    if let Err(e) = swarm.behaviour_mut().kademlia.store_mut().put(record.clone()) {
+                        let _ = resp.send(Err(NetworkError::Transport(format!("own record refused: {e:?}"))));
+                    } else if peers.is_empty() {
+                        let _ = resp.send(Ok((0, 0)));
+                    } else {
+                        let sent = peers.len();
+                        let id = swarm.behaviour_mut().kademlia.put_record_to(record, peers.into_iter(), kad::Quorum::All);
+                        puts_to.insert(id, (resp, sent));
+                        query_deadlines.push((deadline, id));
+                    }
+                }
+                Some(Command::ReadBack { key, now_ms, deadline, resp }) => {
+                    let id = swarm.behaviour_mut().kademlia.get_record(kad::RecordKey::new(&key));
+                    read_backs.insert(id, (resp, key, now_ms, HashSet::new()));
+                    query_deadlines.push((deadline, id));
+                }
+                Some(Command::AnnouncementReach(resp)) => {
+                    let topic = gossipsub::IdentTopic::new(super::messages::ANNOUNCEMENTS_TOPIC).hash();
+                    let reach = swarm.behaviour().gossipsub.all_peers().filter(|(_, topics)| topics.contains(&&topic)).count();
+                    let _ = resp.send(reach);
+                }
+                #[cfg(test)]
+                Some(Command::LiveSearchQueries(resp)) => {
+                    let live = swarm.behaviour_mut().kademlia.iter_queries().filter(|q| finished_queries.contains(&q.id())).count();
+                    let _ = resp.send(live);
+                }
+                #[cfg(test)]
+                Some(Command::SearchRuns(resp)) => {
+                    let _ = resp.send(search_runs);
+                }
+                #[cfg(test)]
+                Some(Command::AddDhtAddress { peer, addr }) => {
+                    swarm.behaviour_mut().kademlia.add_address(&peer, addr);
+                }
                 #[cfg(test)]
                 Some(Command::SkipClock { by, resp }) => {
                     started.skipped += by;
@@ -2141,7 +2453,201 @@ fn add_stats(dht: &Mutex<DhtStats>, n: DhtStats) {
         d.providers_bad_key += n.providers_bad_key;
         d.over_budget += n.over_budget;
         d.rate_limited += n.rate_limited;
+        d.invalid_results += n.invalid_results;
     }
+}
+
+/// What `announce` saw (A2 design §7.1, §10.2), and nothing it did not: an
+/// acknowledgement does not prove a node kept the record, and provider
+/// records are not acknowledged at all.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnnounceReport {
+    pub gene_id: String,
+    /// Peers subscribed to the announcements topic when it was published.
+    pub gossip_peers: usize,
+    /// Nodes the DHT record was sent to.
+    pub record_sent: usize,
+    /// Of those, nodes that acknowledged it.
+    pub record_acked: usize,
+    /// Other nodes that returned a valid copy when read back.
+    pub readable_from: usize,
+}
+
+/// How long each network step of `announce` may take.
+const ANNOUNCE_STEP: Duration = Duration::from_secs(3);
+
+/// A handle on a running node that can be moved to another thread, so a
+/// search or an announcement runs off the caller's thread (the CLI daemon's
+/// control server stays responsive, design §6.2).
+#[derive(Clone)]
+pub struct NodeHandle {
+    cmd_tx: mpsc::UnboundedSender<Command>,
+    runtime: tokio::runtime::Handle,
+    keypair: Keypair,
+}
+
+impl NodeHandle {
+    fn ask<T>(&self, command: impl FnOnce(oneshot::Sender<T>) -> Command) -> Result<T, NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(command(tx))
+            .map_err(|_| NetworkError::Transport("event loop is not running".into()))?;
+        match self.runtime.block_on(async { tokio::time::timeout(QUERY_TIMEOUT, rx).await }) {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(_)) => Err(NetworkError::Transport("event loop dropped the response".into())),
+            Err(_) => Err(NetworkError::Timeout),
+        }
+    }
+
+    /// Search for a v2 gene ID or keywords (A2 design §6, §10.1). Answers
+    /// within [`discover::SEARCH_DEADLINE`].
+    pub fn search(&self, query: SearchQuery) -> Result<SearchOutcome, NetworkError> {
+        self.search_at(query, wall_clock_ms(), discover::SEARCH_DEADLINE)
+    }
+
+    /// [`Self::search`] as if the time were `now_ms`, answering within `within`.
+    pub(crate) fn search_at(&self, query: SearchQuery, now_ms: u64, within: Duration) -> Result<SearchOutcome, NetworkError> {
+        if let SearchQuery::GeneId(g) = &query
+            && gene_record::provider_key(g).is_none()
+        {
+            return Err(NetworkError::NotV2GeneId(g.clone()));
+        }
+        let deadline = std::time::Instant::now() + within;
+        self.ask(|resp| Command::Search { query, now_ms, deadline, resp })
+    }
+
+    /// Announce a gene (A2 design §7.1): on gossip, as a signed record in the
+    /// DHT, and as a provider; then read the record back.
+    pub fn announce(&self, announcement: &super::GeneAnnouncement) -> Result<AnnounceReport, NetworkError> {
+        use super::messages::{ANNOUNCEMENTS_TOPIC, encode_announcement};
+        let gene_id = announcement.gene_id.clone();
+        let provider = gene_record::provider_key(&gene_id).ok_or_else(|| NetworkError::NotV2GeneId(gene_id.clone()))?;
+        let value = gene_record::sign_record(&self.keypair, &gene_record::encode_announcement_message(announcement))
+            .ok_or_else(|| NetworkError::Config("the node key is not Ed25519".into()))?;
+        let key = gene_record::record_key(&gene_id, &self.keypair.public().to_peer_id());
+        let closed = |_| NetworkError::Transport("event loop is not running".into());
+
+        self.cmd_tx.send(Command::Subscribe(ANNOUNCEMENTS_TOPIC.into())).map_err(closed)?;
+        let gossip_peers = self.ask(Command::AnnouncementReach)?;
+        self.cmd_tx
+            .send(Command::Publish { topic: ANNOUNCEMENTS_TOPIC.into(), data: encode_announcement(announcement) })
+            .map_err(closed)?;
+
+        let peers = self.ask(|resp| Command::ClosestPeers {
+            key: key.clone(),
+            deadline: std::time::Instant::now() + ANNOUNCE_STEP,
+            resp,
+        })?;
+        let (record_sent, record_acked) = self.ask(|resp| Command::PutRecordTo {
+            key: key.clone(),
+            value,
+            peers,
+            deadline: std::time::Instant::now() + ANNOUNCE_STEP,
+            resp,
+        })??;
+        self.ask(|resp| Command::StartProviding { key: provider, resp })??;
+        let readable_from = self.ask(|resp| Command::ReadBack {
+            key,
+            now_ms: wall_clock_ms(),
+            deadline: std::time::Instant::now() + ANNOUNCE_STEP,
+            resp,
+        })?;
+        Ok(AnnounceReport { gene_id, gossip_peers, record_sent, record_acked, readable_from })
+    }
+}
+
+/// One gene-ID search in flight in the event loop.
+struct ActiveSearch {
+    discovery: Discovery,
+    deadline: std::time::Instant,
+    /// Fresh gossip-heard announcements of the gene.
+    heard: Vec<(super::GeneAnnouncement, String)>,
+    /// The provider query, until its last step.
+    providers: Option<kad::QueryId>,
+    /// Record lookups running, by query.
+    lookups: HashMap<kad::QueryId, Libp2pPeerId>,
+    /// Every query this search started.
+    queries: Vec<kad::QueryId>,
+    /// Callers waiting on this search: identical searches share it.
+    waiters: Vec<oneshot::Sender<SearchOutcome>>,
+}
+
+/// Start the record lookup of one candidate.
+fn start_lookup(
+    kademlia: &mut kad::Behaviour<GeneStore>,
+    search: &mut ActiveSearch,
+    owners: &mut HashMap<kad::QueryId, String>,
+    candidate: Libp2pPeerId,
+) {
+    let id = kademlia.get_record(kad::RecordKey::new(&search.discovery.key_of(&candidate)));
+    search.lookups.insert(id, candidate);
+    search.queries.push(id);
+    owners.insert(id, search.discovery.gene_id.clone());
+}
+
+/// Answer everyone waiting on the search for `gene` with what it has, and
+/// stop every query it still runs (design §6.2). Returns its queries.
+fn finish_search(
+    kademlia: &mut kad::Behaviour<GeneStore>,
+    searches: &mut HashMap<String, ActiveSearch>,
+    owners: &mut HashMap<kad::QueryId, String>,
+    heartbeats: &Mutex<HeartbeatDesk>,
+    gene: &str,
+) -> Vec<kad::QueryId> {
+    let Some(search) = searches.remove(gene) else { return Vec::new() };
+    let outstanding = search.providers.is_some() || !search.lookups.is_empty();
+    for id in &search.queries {
+        if let Some(mut q) = kademlia.query_mut(id) {
+            q.finish();
+        }
+        owners.remove(id);
+    }
+    let found = search.discovery.found().map(|(p, r)| (r.announcement.clone(), p.to_string())).collect::<Vec<_>>();
+    let merged = discover::merge(found, search.heard, search.discovery.now_ms);
+    let outcome = SearchOutcome {
+        hits: with_accounts(merged, heartbeats),
+        timed_out: outstanding,
+        partial: outstanding || search.discovery.capped,
+    };
+    for waiter in search.waiters {
+        let _ = waiter.send(outcome.clone());
+    }
+    search.queries
+}
+
+/// Attach each publisher's registered account as this node knows it (A1).
+fn with_accounts(merged: Vec<(super::GeneAnnouncement, String, HitSource)>, heartbeats: &Mutex<HeartbeatDesk>) -> Vec<SearchHit> {
+    let desk = heartbeats.lock().ok();
+    let now_s = wall_clock_ms() / 1000;
+    merged
+        .into_iter()
+        .map(|(announcement, publisher, source)| {
+            let account = desk
+                .as_deref()
+                .and_then(|d| d.registration(&publisher, now_s))
+                .map(|(iss, sub)| format!("{iss} {sub}"));
+            SearchHit { announcement, publisher, source, account }
+        })
+        .collect()
+}
+
+/// One entry per `(gene_id, publisher)`, the newest, from gossip messages
+/// validated again against the time they arrived.
+fn latest_announcements(messages: &[ReceivedMessage]) -> Vec<(super::GeneAnnouncement, String)> {
+    use super::messages::{ANNOUNCEMENTS_TOPIC, Verdict, validate_gossip};
+    let mut latest: Vec<(super::GeneAnnouncement, String)> = Vec::new();
+    for m in messages {
+        let (true, Some(source)) = (m.topic == ANNOUNCEMENTS_TOPIC, m.source.clone()) else { continue };
+        let Verdict::Accept(ann) = validate_gossip(&m.data, Some(&source), m.received_at_ms) else {
+            continue;
+        };
+        match latest.iter_mut().find(|(a, s)| a.gene_id == ann.gene_id && *s == source) {
+            Some(slot) if slot.0.timestamp_ms <= ann.timestamp_ms => slot.0 = ann,
+            Some(_) => {}
+            None => latest.push((ann, source)),
+        }
+    }
+    latest
 }
 
 /// Monotonic time since the event loop started, the clock the A1 forgery

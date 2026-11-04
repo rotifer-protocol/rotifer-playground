@@ -133,6 +133,13 @@ enum Command {
     },
     /// Peers subscribed to the announcements topic.
     AnnouncementReach(oneshot::Sender<usize>),
+    /// Stop providing `provider` and drop this node's own copy of `record`
+    /// (A2 design §7.3); copies on other nodes are left to expire.
+    Withdraw {
+        record: Vec<u8>,
+        provider: Vec<u8>,
+        resp: oneshot::Sender<()>,
+    },
     /// Kad queries of finished searches that are still alive.
     #[cfg(test)]
     LiveSearchQueries(oneshot::Sender<usize>),
@@ -890,6 +897,16 @@ impl Node {
     /// See [`NodeHandle::announce`].
     pub fn announce(&self, announcement: &super::GeneAnnouncement) -> Result<AnnounceReport, NetworkError> {
         self.handle()?.announce(announcement)
+    }
+
+    /// See [`NodeHandle::republish`].
+    pub fn republish(&self, announcement: &super::GeneAnnouncement) -> Result<RepublishReport, NetworkError> {
+        self.handle()?.republish(announcement)
+    }
+
+    /// See [`NodeHandle::withdraw`].
+    pub fn withdraw(&self, gene_id: &str) -> Result<(), NetworkError> {
+        self.handle()?.withdraw(gene_id)
     }
 
     /// Kad queries of finished searches still alive.
@@ -2313,6 +2330,12 @@ async fn run_event_loop(
                         .map_err(|e| NetworkError::Transport(format!("start providing: {e:?}")));
                     let _ = resp.send(result);
                 }
+                Some(Command::Withdraw { record, provider, resp }) => {
+                    let kademlia = &mut swarm.behaviour_mut().kademlia;
+                    kademlia.stop_providing(&kad::RecordKey::new(&provider));
+                    kademlia.remove_record(&kad::RecordKey::new(&record));
+                    let _ = resp.send(());
+                }
                 Some(Command::FindProviders { key, resp }) => {
                     let id = swarm.behaviour_mut().kademlia.get_providers(kad::RecordKey::new(&key));
                     pending_providers.insert(id, (resp, HashSet::new()));
@@ -2473,6 +2496,17 @@ pub struct AnnounceReport {
     pub readable_from: usize,
 }
 
+/// What one republish observed (A2 design §7.2): the record step of
+/// [`AnnounceReport`], without gossip or a read-back.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RepublishReport {
+    pub gene_id: String,
+    /// Nodes the DHT record was sent to.
+    pub record_sent: usize,
+    /// Of those, nodes that acknowledged it.
+    pub record_acked: usize,
+}
+
 /// How long each network step of `announce` may take.
 const ANNOUNCE_STEP: Duration = Duration::from_secs(3);
 
@@ -2533,19 +2567,7 @@ impl NodeHandle {
             .send(Command::Publish { topic: ANNOUNCEMENTS_TOPIC.into(), data: encode_announcement(announcement) })
             .map_err(closed)?;
 
-        let peers = self.ask(|resp| Command::ClosestPeers {
-            key: key.clone(),
-            deadline: std::time::Instant::now() + ANNOUNCE_STEP,
-            resp,
-        })?;
-        let (record_sent, record_acked) = self.ask(|resp| Command::PutRecordTo {
-            key: key.clone(),
-            value,
-            peers,
-            deadline: std::time::Instant::now() + ANNOUNCE_STEP,
-            resp,
-        })??;
-        self.ask(|resp| Command::StartProviding { key: provider, resp })??;
+        let (record_sent, record_acked) = self.publish_record(&key, value, provider)?;
         let readable_from = self.ask(|resp| Command::ReadBack {
             key,
             now_ms: wall_clock_ms(),
@@ -2553,6 +2575,46 @@ impl NodeHandle {
             resp,
         })?;
         Ok(AnnounceReport { gene_id, gossip_peers, record_sent, record_acked, readable_from })
+    }
+
+    /// Republish a gene (A2 design §7.2): the record, signed again with the
+    /// announcement's timestamp, and the provider entry. No gossip.
+    pub fn republish(&self, announcement: &super::GeneAnnouncement) -> Result<RepublishReport, NetworkError> {
+        let gene_id = announcement.gene_id.clone();
+        let provider = gene_record::provider_key(&gene_id).ok_or_else(|| NetworkError::NotV2GeneId(gene_id.clone()))?;
+        let value = gene_record::sign_record(&self.keypair, &gene_record::encode_announcement_message(announcement))
+            .ok_or_else(|| NetworkError::Config("the node key is not Ed25519".into()))?;
+        let key = gene_record::record_key(&gene_id, &self.keypair.public().to_peer_id());
+        let (record_sent, record_acked) = self.publish_record(&key, value, provider)?;
+        Ok(RepublishReport { gene_id, record_sent, record_acked })
+    }
+
+    /// Stop announcing a gene in the DHT (A2 design §7.3): stop providing it
+    /// and drop this node's own copy of the record. Copies other nodes
+    /// stored expire on their own.
+    pub fn withdraw(&self, gene_id: &str) -> Result<(), NetworkError> {
+        let provider = gene_record::provider_key(gene_id).ok_or_else(|| NetworkError::NotV2GeneId(gene_id.to_owned()))?;
+        let record = gene_record::record_key(gene_id, &self.keypair.public().to_peer_id());
+        self.ask(|resp| Command::Withdraw { record, provider, resp })
+    }
+
+    /// Send the record to the closest peers found, then provide the gene.
+    /// Answers how many the record was sent to and how many acknowledged it.
+    fn publish_record(&self, key: &[u8], value: Vec<u8>, provider: Vec<u8>) -> Result<(usize, usize), NetworkError> {
+        let peers = self.ask(|resp| Command::ClosestPeers {
+            key: key.to_vec(),
+            deadline: std::time::Instant::now() + ANNOUNCE_STEP,
+            resp,
+        })?;
+        let sent = self.ask(|resp| Command::PutRecordTo {
+            key: key.to_vec(),
+            value,
+            peers,
+            deadline: std::time::Instant::now() + ANNOUNCE_STEP,
+            resp,
+        })??;
+        self.ask(|resp| Command::StartProviding { key: provider, resp })??;
+        Ok(sent)
     }
 }
 

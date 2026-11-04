@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 // unreferenced submodule's napi registration ctor, so the class must live here.
 use rotifer_core::p2p::messages::{encode_announcement, local_announcement, ANNOUNCEMENTS_TOPIC};
 use rotifer_core::p2p::discover::{SearchOutcome, SearchQuery};
-use rotifer_core::p2p::node::{AnnounceReport, Node as CoreNode, NodeHandle};
+use rotifer_core::p2p::node::{AnnounceReport, Node as CoreNode, NodeHandle, RepublishReport};
 use rotifer_core::p2p::NetworkConfig;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -137,6 +137,53 @@ impl Task for AnnounceTask {
             record_sent: n(r.record_sent),
             record_acked: n(r.record_acked),
             readable_from: n(r.readable_from),
+        })
+    }
+}
+
+/// A gene republished on its schedule (A2 design §7.2).
+#[napi(object)]
+pub struct NetworkRepublishResult {
+    /// `republished`; `gone` when the gene's v2 ID can no longer be computed
+    /// from its files; `changed` when it computes to another ID. On `gone`
+    /// and `changed` nothing was sent.
+    pub outcome: String,
+    /// The ID computed from the files now (empty when `gone`).
+    pub gene_id: String,
+    pub record_sent: u32,
+    pub record_acked: u32,
+}
+
+pub struct RepublishTask {
+    handle: NodeHandle,
+    genes_root: String,
+    name: String,
+    gene_id: String,
+}
+
+impl Task for RepublishTask {
+    type Output = (String, String, Option<RepublishReport>);
+    type JsValue = NetworkRepublishResult;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        let Ok(announcement) = local_announcement(std::path::Path::new(&self.genes_root), &self.name, now_ms()) else {
+            return Ok(("gone".into(), String::new(), None));
+        };
+        if announcement.gene_id != self.gene_id {
+            return Ok(("changed".into(), announcement.gene_id, None));
+        }
+        let report = self.handle.republish(&announcement).map_err(|e| Error::from_reason(format!("republish: {e}")))?;
+        Ok(("republished".into(), announcement.gene_id, Some(report)))
+    }
+
+    fn resolve(&mut self, _env: Env, (outcome, gene_id, report): Self::Output) -> Result<Self::JsValue> {
+        let n = |v: usize| u32::try_from(v).unwrap_or(u32::MAX);
+        let report = report.unwrap_or_default();
+        Ok(NetworkRepublishResult {
+            outcome,
+            gene_id,
+            record_sent: n(report.record_sent),
+            record_acked: n(report.record_acked),
         })
     }
 }
@@ -292,6 +339,22 @@ impl P2pNode {
     pub fn announce_local_gene_report(&self, genes_root: String, name: String) -> Result<AsyncTask<AnnounceTask>> {
         let handle = self.inner.handle().map_err(|e| Error::from_reason(format!("announce: {e}")))?;
         Ok(AsyncTask::new(AnnounceTask { handle, genes_root, name }))
+    }
+
+    /// Republish the announced gene `name` (A2 design §7.2) if its files
+    /// still compute to `gene_id`: the record signed with a fresh timestamp
+    /// and the provider entry. No gossip.
+    #[napi(ts_return_type = "Promise<NetworkRepublishResult>")]
+    pub fn republish_local_gene(&self, genes_root: String, name: String, gene_id: String) -> Result<AsyncTask<RepublishTask>> {
+        let handle = self.inner.handle().map_err(|e| Error::from_reason(format!("republish: {e}")))?;
+        Ok(AsyncTask::new(RepublishTask { handle, genes_root, name, gene_id }))
+    }
+
+    /// Stop announcing `gene_id` in the DHT (A2 design §7.3): stop providing
+    /// it and drop this node's own copy of the record.
+    #[napi]
+    pub fn withdraw_gene(&self, gene_id: String) -> Result<()> {
+        self.inner.withdraw(&gene_id).map_err(|e| Error::from_reason(format!("withdraw: {e}")))
     }
 
     /// Stop the swarm and release the listen port.

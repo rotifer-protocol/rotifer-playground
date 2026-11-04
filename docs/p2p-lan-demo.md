@@ -122,6 +122,40 @@ Received Gene Announcements
   hello-world@0.1.0: general · Wrapped · from 12D3KooW…
 ```
 
+### A5. Search from B, then withdraw on A
+
+`network search` and `network withdraw` need a release after 0.33.1.
+
+```bash
+# on machine B: by the v2 gene ID A printed, or by a keyword
+rotifer network search v2:3f1c9a07e2b4…
+rotifer network search hello
+```
+
+A v2 gene ID is looked up in the DHT and among announcements B heard on
+gossip; a keyword matches only the announcements B heard, and also searches
+Rotifer Cloud. The two lists are shown separately. Add `--json` for scripts.
+
+`announce` also writes the gene to the DHT, and the daemon republishes it every
+12 hours (plus up to an hour of jitter) from `~/.rotifer/p2p/announced.json`,
+which survives a restart. Each republish reads the gene's files again: if
+they cannot be read at that moment, even briefly, the gene counts as deleted.
+It is dropped from the table and no longer announced; run
+`rotifer network announce` again to bring it back. To stop:
+
+```bash
+# on machine A
+rotifer network withdraw hello-world
+```
+
+A stops republishing and stops serving the gene. Other nodes are not told to
+delete it: copies they stored expire within 24 h of arriving, and a node that
+heard the announcement on gossip (B here) can still list it for up to 48 h.
+
+A record's time window bounds one claim. It does not bound a stolen node key:
+whoever holds the key can keep signing. Rotate the node key (delete
+`~/.rotifer/identity.pem`, restart) if it leaks.
+
 Stop any node with `rotifer network stop`.
 
 ## Path B — from-source build

@@ -349,6 +349,38 @@ describe("network search: when a side fails (RFC §5.3)", () => {
     expect(out.p2p.status).toBe("daemon_not_running");
   });
 
+  // Acceptance observation A: a daemon that never answers the control request
+  // is not a search that hit its 3 s deadline.
+  function daemonSilent() {
+    const realNow = Date.now.bind(Date);
+    let skipped = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + skipped);
+    vi.mocked(daemon.readDaemonState).mockReturnValue({ pid: 1, port: 1, token: "t", peerId: "me", startedAt: 0 });
+    vi.mocked(daemon.controlRequest).mockImplementation(async () => {
+      skipped += 4_000; // the request ran into its 4 s timeout
+      return null;
+    });
+  }
+
+  it("a daemon that does not answer the control request 'did not answer in time', with no P2P list", async () => {
+    cloudRows = [cloudRow("summarizer")];
+    daemonSilent();
+    await run("search", "summarize");
+    expect(process.exitCode).toBe(0);
+    expect(text()).toContain("P2P network not searched: the P2P daemon did not answer in time.");
+    expect(text()).not.toContain("P2P network (");
+    const out = await runJson("search", "summarize");
+    expect(out.p2p).toEqual({ status: "timeout", partial: false, genes: [] });
+  });
+
+  it("with a v2 ID and a silent daemon, the command fails naming the daemon", async () => {
+    daemonSilent();
+    await run("search", V2_ID);
+    expect(process.exitCode).toBe(1);
+    expect(text()).toContain("the P2P daemon did not answer in time");
+    expect(text()).not.toContain("P2P network (");
+  });
+
   it("an addon that cannot search is an error on the P2P side", async () => {
     cloudRows = [cloudRow("summarizer")];
     vi.mocked(daemon.readDaemonState).mockReturnValue({ pid: 1, port: 1, token: "t", peerId: "me", startedAt: 0 });

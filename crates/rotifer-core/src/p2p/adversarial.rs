@@ -1370,6 +1370,75 @@ fn adv_18f_freshness_is_judged_when_the_search_runs() {
     assert!(has(&victim, &gene), "`network received` still shows it");
 }
 
+/// The timestamp of the copy of `publisher`'s record for `gene` that `node`
+/// holds, if a valid one.
+fn held_timestamp(node: &Node, gene: &str, publisher: &libp2p::PeerId) -> Option<u64> {
+    let key = super::gene_record::record_key(gene, publisher);
+    let (value, _) = node.local_dht(&key).unwrap();
+    super::gene_record::validate_record(&key, &value?, now_ms()).ok().map(|v| v.announcement.timestamp_ms)
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_19_a_republish_refreshes_the_copies_others_hold() {
+    // A2 design §7.2: a republish signs again with a fresh timestamp, so the
+    // gene outlives the first record's 48 h.
+    let dir = tempfile::tempdir().unwrap();
+    let a = spawn(&dir, "a", vec![]);
+    let b = spawn(&dir, "b", vec![addr(&a)]);
+    assert!(in_dht(&a, &peer_of(&b)));
+    let gene = id("adv19");
+    let first = now_ms() - 3_600_000;
+    a.announce(&labelled(&gene, "kept", first)).expect("announce");
+    assert!(eventually(20, || held_timestamp(&b, &gene, &peer_of(&a)) == Some(first)));
+
+    let fresh = now_ms();
+    let report = a.republish(&labelled(&gene, "kept", fresh)).expect("republish");
+    assert_eq!(report.gene_id, gene);
+    assert!(report.record_sent >= 1 && report.record_acked >= 1, "{report:?}");
+    assert!(eventually(20, || held_timestamp(&b, &gene, &peer_of(&a)) == Some(fresh)));
+
+    // Past the first record's 48 h the gene is still found, in the DHT.
+    let later = first + super::gene_record::MAX_AGE_MS + 1;
+    let found = b.handle().unwrap().search_at(SearchQuery::GeneId(gene.clone()), later, Duration::from_secs(3)).unwrap();
+    let h = hit(&found, &peer_of(&a)).expect("still found after the first record's 48 h");
+    assert_eq!(h.announcement.timestamp_ms, fresh);
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "adversarial integration — enable the p2p-integration feature or run with --ignored")]
+fn adv_19a_withdraw_stops_serving_the_gene_and_leaves_others_to_expire() {
+    // T27 (A2 design §7.3).
+    let dir = tempfile::tempdir().unwrap();
+    let a = spawn(&dir, "a", vec![]);
+    let b = spawn(&dir, "b", vec![addr(&a)]);
+    assert!(in_dht(&a, &peer_of(&b)));
+    await_control(&a, &b, "adv19a-mesh");
+    let gene = id("adv19a");
+    let published = now_ms();
+    a.announce(&labelled(&gene, "gone-soon", published)).expect("announce");
+    assert!(eventually(20, || held_timestamp(&b, &gene, &peer_of(&a)).is_some()));
+
+    a.withdraw(&gene).expect("withdraw");
+    let own = super::gene_record::record_key(&gene, &peer_of(&a));
+    let provider = super::gene_record::provider_key(&gene).unwrap();
+    assert_eq!(a.local_dht(&own).unwrap().0, None, "A drops its own copy");
+    assert!(!a.local_dht(&provider).unwrap().1.contains(&peer_of(&a)), "A stops providing");
+
+    // B's copy is left to expire: found now, gone once older than 48 h.
+    assert!(hit(&gene_search(&b, &gene), &peer_of(&a)).is_some(), "B still holds a copy");
+    let later = published + super::gene_record::MAX_AGE_MS + 1;
+    let then = b.handle().unwrap().search_at(SearchQuery::GeneId(gene.clone()), later, Duration::from_secs(3)).unwrap();
+    assert!(then.hits.is_empty(), "{then:?}");
+
+    // With B gone, a node that joins later and knows only A finds nothing.
+    drop(b);
+    let d = spawn(&dir, "d", vec![addr(&a)]);
+    assert!(in_dht(&d, &peer_of(&a)));
+    let found = gene_search(&d, &gene);
+    assert!(found.hits.is_empty(), "{found:?}");
+}
+
 /// A TCP port that accepts connections and never says anything.
 struct Blackhole {
     port: u16,

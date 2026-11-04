@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { ensurePrivateDir, tightenPrivateFile } from "./private-fs.js";
 import { loadP2pNode } from "./binding.js";
+import { Republisher, announcedTablePath, type WithdrawMatch } from "./announce-table.js";
 
 const ROTIFER_HOME = join(
   process.env.HOME || process.env.USERPROFILE || "/tmp",
@@ -74,6 +75,9 @@ export interface ControlResult {
  * a search answers by its 3 s deadline; an announce runs three 3 s steps.
  */
 const ROUTE_TIMEOUT_MS: Record<string, number> = { "/search": 4000, "/announce": 15000 };
+
+/** The daemon's republish table (A2 design v2 §7.3). */
+const ANNOUNCED_TABLE = announcedTablePath(ROTIFER_HOME);
 
 export function controlRequest(
   method: string,
@@ -156,6 +160,20 @@ export async function runDaemon(
   const startedAt = Date.now();
   let isShuttingDown = false;
 
+  // Republishing needs an addon that can republish and withdraw (A2 PR-4).
+  const { republishLocalGene, withdrawGene } = node;
+  const republisher =
+    republishLocalGene && withdrawGene
+      ? new Republisher({
+          path: ANNOUNCED_TABLE,
+          republish: (e) => republishLocalGene.call(node, e.genesRoot, e.name, e.geneId),
+          withdraw: (geneId) => withdrawGene.call(node, geneId),
+          hasDhtPeer: () => (node.dhtPeers ? node.dhtPeers().length > 0 : true),
+          log: (line) => process.stderr.write(`${line}\n`),
+        })
+      : null;
+  republisher?.restore();
+
   const server = createServer((req, res) => {
     const send = (code: number, obj: unknown): void => {
       res.writeHead(code, { "content-type": "application/json" });
@@ -202,8 +220,12 @@ export async function runDaemon(
         // The native node builds the wire record itself (v2 ID, fields,
         // IR spec version), so every field has a single implementation.
         if (node.announceLocalGeneReport) {
-          node.announceLocalGeneReport(g.genesRoot, g.name).then(
-            (report) => send(200, { ok: true, geneId: report.geneId, report }),
+          const { genesRoot, name } = g;
+          node.announceLocalGeneReport(genesRoot, name).then(
+            (report) => {
+              republisher?.added({ genesRoot, name, geneId: report.geneId });
+              send(200, { ok: true, geneId: report.geneId, report });
+            },
             (err: Error) => send(400, { error: err.message }),
           );
           return;
@@ -249,6 +271,35 @@ export async function runDaemon(
       });
       return;
     }
+    if (req.method === "POST" && url.pathname === "/withdraw") {
+      let data = "";
+      req.on("data", (chunk) => (data += chunk));
+      req.on("end", () => {
+        let w: { geneId?: unknown; name?: unknown };
+        try {
+          w = JSON.parse(data) as typeof w;
+        } catch {
+          send(400, { error: "body must be JSON" });
+          return;
+        }
+        const match: WithdrawMatch | null =
+          typeof w.geneId === "string" ? { geneId: w.geneId } : typeof w.name === "string" ? { name: w.name } : null;
+        if (!match) {
+          send(400, { error: "geneId or name is required" });
+          return;
+        }
+        if (!republisher) {
+          send(501, { error: "this native addon cannot withdraw; update the CLI" });
+          return;
+        }
+        try {
+          send(200, { ok: true, withdrawn: republisher.withdraw(match) });
+        } catch (err) {
+          send(400, { error: (err as Error).message });
+        }
+      });
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/stop") {
       send(200, { ok: true });
       shutdown();
@@ -260,6 +311,7 @@ export async function runDaemon(
   function shutdown(): void {
     if (isShuttingDown) return;
     isShuttingDown = true;
+    republisher?.stop();
     try {
       node.stop();
     } catch {

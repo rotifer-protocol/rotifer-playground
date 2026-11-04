@@ -190,6 +190,15 @@ export interface NetworkAnnounceReport {
  * Subset of the native `P2pNode` class surfaced to the CLI. Method names are
  * camelCase (napi converts the Rust snake_case automatically).
  */
+/** One scheduled republish (A2 design v2 §7.2). */
+export interface NetworkRepublishResult {
+  /** `gone`: the files no longer compute a v2 ID; `changed`: they compute another one. */
+  outcome: string;
+  geneId: string;
+  recordSent: number;
+  recordAcked: number;
+}
+
 export interface P2pNodeHandle {
   start(): void;
   peerId(): string;
@@ -208,6 +217,10 @@ export interface P2pNodeHandle {
   searchKeyword?(query: string): Promise<NetworkSearchResult>;
   /** Announce over gossip and the DHT, reporting what was observed (absent likewise). */
   announceLocalGeneReport?(genesRoot: string, name: string): Promise<NetworkAnnounceReport>;
+  /** Republish the record and provider entry if the files still compute `geneId` (absent before A2 PR-4). */
+  republishLocalGene?(genesRoot: string, name: string, geneId: string): Promise<NetworkRepublishResult>;
+  /** Stop providing `geneId` and drop this node's own copy of its record (absent likewise). */
+  withdrawGene?(geneId: string): void;
   stop(): void;
 }
 

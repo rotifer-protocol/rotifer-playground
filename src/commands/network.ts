@@ -15,6 +15,14 @@ import {
   type ReceivedAnnouncement,
 } from "../utils/binding.js";
 import { listGenes } from "../cloud/client.js";
+import {
+  announcedTablePath,
+  matches,
+  readAnnouncedTable,
+  writeAnnouncedTable,
+  type AnnouncedGene,
+  type WithdrawMatch,
+} from "../utils/announce-table.js";
 import type { CloudGene } from "../cloud/types.js";
 import {
   controlRequest,
@@ -82,6 +90,18 @@ export const CLOUD_TIMEOUT_MS = 5000;
 const G18_NOTICE =
   "Publishing to the DHT makes this node's network addresses visible to anyone who looks up this gene ID.";
 const G18_FLAG = join(ROTIFER_HOME, "p2p", "dht-address-notice-shown");
+
+/**
+ * How long other nodes may still list a withdrawn gene: copies they stored
+ * expire within 24 h of arriving; an announcement heard on gossip is shown
+ * until it is 48 h old (design v2 §6.3, §7.3).
+ */
+const WITHDRAW_LIMITS =
+  "Other nodes are not told to delete it: copies they stored expire within 24 h of arriving, " +
+  "and a node that heard the announcement on gossip can still list it for up to 48 h.";
+const KEY_NOTICE =
+  "A record's time window bounds one claim. It does not bound a stolen node key: whoever holds the key " +
+  "can keep signing. Rotate the node key (delete ~/.rotifer/identity.pem, restart) if it leaks.";
 
 type SearchMode = "keyword" | "gene_id";
 
@@ -601,5 +621,42 @@ export const networkCommand = new Command("network")
             /* the notice is shown again next time */
           }
         }
+      })
+  )
+  .addCommand(
+    new Command("withdraw")
+      .description("Stop announcing a gene: no more republishing, and this node stops serving it")
+      .argument("<gene>", "gene name or v2 gene ID")
+      .addHelpText("after", `\n${WITHDRAW_LIMITS}\n${KEY_NOTICE}`)
+      .action(async (gene: string) => {
+        display.header("Gene Withdrawal");
+        const match: WithdrawMatch = V2_QUERY.test(gene) ? { geneId: gene } : { name: gene };
+        const result = await controlRequest("POST", "/withdraw", match);
+        let withdrawn: AnnouncedGene[];
+        if (!result) {
+          // No daemon: nothing is being served; only the table remembers it.
+          const path = announcedTablePath(ROTIFER_HOME);
+          const { entries, problem } = readAnnouncedTable(path);
+          if (problem) display.warn(problem);
+          withdrawn = entries.filter((e) => matches(e, match));
+          if (withdrawn.length > 0) writeAnnouncedTable(path, entries.filter((e) => !matches(e, match)));
+          display.info("The P2P daemon is not running: the gene was only removed from the republish table.");
+        } else if (!result.ok) {
+          display.error("Withdrawal failed", JSON.stringify(result.body));
+          process.exitCode = 1;
+          return;
+        } else {
+          withdrawn = (result.body as { withdrawn?: AnnouncedGene[] }).withdrawn ?? [];
+        }
+        if (withdrawn.length === 0) {
+          display.error(`'${escapeTerminal(gene)}' is not announced from this node`);
+          process.exitCode = 1;
+          return;
+        }
+        for (const w of withdrawn) {
+          display.success(`Stopped announcing '${escapeTerminal(w.name)}'`);
+          display.kv("Gene ID (v2)", w.geneId);
+        }
+        display.info(WITHDRAW_LIMITS);
       })
   );

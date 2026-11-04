@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -75,12 +75,12 @@ describe("getProjectRoot", () => {
   it("throws when not inside a rotifer project", () => {
     const isolatedDir = join(tmpdir(), "rotifer-no-root-" + randomUUID());
     mkdirSync(isolatedDir, { recursive: true });
-    const originalCwd = process.cwd();
-    process.chdir(isolatedDir);
+    // Look up from isolatedDir without process.chdir(): Stryker runs tests in worker threads, where chdir throws (#405).
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(isolatedDir);
     try {
       expect(() => getProjectRoot()).toThrow(/rotifer\.json/);
     } finally {
-      process.chdir(originalCwd);
+      cwdSpy.mockRestore();
       rmSync(isolatedDir, { recursive: true, force: true });
     }
   });

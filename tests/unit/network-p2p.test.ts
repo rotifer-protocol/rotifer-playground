@@ -38,24 +38,24 @@ import {
 import * as display from "../../src/utils/display.js";
 
 const WORK = join(tmpdir(), `rotifer-net2-${Date.now()}`);
-let origCwd: string;
+let cwdSpy: ReturnType<typeof vi.spyOn>;
 
 const ctrlOk = (body: unknown) => ({ ok: true, status: 200, body });
 const kvArgs = () => vi.mocked(display.kv).mock.calls.flat();
 
 beforeEach(() => {
   vi.clearAllMocks();
-  origCwd = process.cwd();
   mkdirSync(join(WORK, "genes", "test-gene"), { recursive: true });
   writeFileSync(
     join(WORK, "genes", "test-gene", "phenotype.json"),
     JSON.stringify({ name: "test-gene", domain: "test", version: "1.2.3", fidelity: "Native" })
   );
-  process.chdir(WORK);
+  // Point the commands at WORK without process.chdir(): Stryker runs tests in worker threads, where chdir throws (#405).
+  cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(WORK);
 });
 
 afterEach(() => {
-  process.chdir(origCwd);
+  cwdSpy.mockRestore();
   rmSync(WORK, { recursive: true, force: true });
   process.exitCode = 0;
 });

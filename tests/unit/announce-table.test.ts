@@ -7,9 +7,6 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync }
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  REPUBLISH_INTERVAL_MS,
-  REPUBLISH_JITTER_MS,
-  RESTORE_WAIT_MS,
   Republisher,
   announcedTablePath,
   readAnnouncedTable,
@@ -22,6 +19,11 @@ const ID_A = `v2:${"aa".repeat(32)}`;
 const ID_B = `v2:${"bb".repeat(32)}`;
 const ID_C = `v2:${"cc".repeat(32)}`;
 const HOUR = 3600 * 1000;
+// The design's numbers, written out: the module's own constants are not used,
+// so changing one of them turns these tests red.
+const REPUBLISH_INTERVAL_MS = 12 * 3600 * 1000;
+const REPUBLISH_JITTER_MS = 3_600_000;
+const RESTORE_WAIT_MS = 60_000;
 
 let home: string;
 let path: string;
@@ -230,5 +232,116 @@ describe("restore after a restart (§7.3, CEO ruling 2)", () => {
     expect(() => r.restore()).not.toThrow();
     expect(r.list()).toEqual([]);
     expect(log.mock.calls[0][0]).toContain("not valid JSON");
+  });
+});
+
+describe("withdraw while a republish is in flight (acceptance, PR-4 rework)", () => {
+  // The node runs the republish's put and start_providing when the promise
+  // settles, after the withdraw: the withdraw has to be repeated then.
+  function inFlight(settle: "resolve" | "reject") {
+    const events: string[] = [];
+    let finish!: () => void;
+    const republish = vi.fn(
+      (e: AnnouncedGene) =>
+        new Promise<RepublishOutcome>((resolve, reject) => {
+          events.push("republish started");
+          finish = () => {
+            events.push("republish finished");
+            if (settle === "resolve") resolve({ outcome: "republished", geneId: e.geneId, recordSent: 1, recordAcked: 1 });
+            else reject(new Error("put timed out"));
+          };
+        }),
+    );
+    const withdraw = vi.fn((id: string) => void events.push(`withdraw ${id}`));
+    const r = new Republisher({ path, republish, withdraw, hasDhtPeer: () => true, random: () => 0, log: vi.fn() });
+    return { r, events, withdraw, republish, finish: () => finish() };
+  }
+
+  for (const settle of ["resolve", "reject"] as const) {
+    it(`withdraws again after a restored republish that ${settle === "resolve" ? "succeeds" : "fails"}`, async () => {
+      writeAnnouncedTable(path, [gene("a", ID_A)]);
+      const { r, events, finish } = inFlight(settle);
+      r.restore();
+      expect(events).toEqual(["republish started"]);
+      expect(r.withdraw({ name: "a" })).toEqual([gene("a", ID_A)]);
+      finish();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(events).toEqual(["republish started", `withdraw ${ID_A}`, "republish finished", `withdraw ${ID_A}`]);
+      expect(saved()).toEqual([]);
+      await vi.advanceTimersByTimeAsync(3 * REPUBLISH_INTERVAL_MS);
+      expect(events.filter((e) => e === "republish started")).toHaveLength(1);
+    });
+  }
+
+  it("does not withdraw again when the same gene was announced again meanwhile", async () => {
+    writeAnnouncedTable(path, [gene("a", ID_A)]);
+    const { r, withdraw, finish } = inFlight("resolve");
+    r.restore();
+    r.withdraw({ name: "a" });
+    r.added(gene("a", ID_A));
+    finish();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(withdraw.mock.calls).toEqual([[ID_A]]);
+    expect(saved()).toEqual([gene("a", ID_A)]);
+  });
+});
+
+describe("withdraw changes the file and the schedule together (acceptance O3)", () => {
+  it("when the node call throws, the gene is already out of the file and is not restored", async () => {
+    const republish = vi.fn(async (e: AnnouncedGene) => ({ outcome: "republished", geneId: e.geneId, recordSent: 1, recordAcked: 1 }));
+    const r = new Republisher({
+      path,
+      republish,
+      withdraw: () => {
+        throw new Error("event loop is not running");
+      },
+      hasDhtPeer: () => true,
+      random: () => 0,
+    });
+    r.added(gene("a", ID_A));
+    r.added(gene("b", ID_B));
+    expect(() => r.withdraw({ name: "a" })).toThrow("event loop is not running");
+    expect(saved()).toEqual([gene("b", ID_B)]);
+    expect(r.list()).toEqual([gene("b", ID_B)]);
+    await vi.advanceTimersByTimeAsync(REPUBLISH_INTERVAL_MS);
+    expect(republish.mock.calls.map((c) => c[0].name)).toEqual(["b"]);
+    // After a restart the withdrawn gene stays withdrawn.
+    const { r: restarted, republish: again } = setup();
+    restarted.restore();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(again.mock.calls.map((c) => c[0].name)).toEqual(["b"]);
+  });
+
+  it("when the file cannot be written, nothing changes and the node is not called", () => {
+    const { r, withdraw } = setup();
+    r.added(gene("a", ID_A));
+    // The table is written through a temporary file; a directory in its place makes the write fail.
+    const tmp = `${path}.${process.pid}.tmp`;
+    mkdirSync(tmp);
+    try {
+      expect(() => r.withdraw({ name: "a" })).toThrow();
+    } finally {
+      rmSync(tmp, { recursive: true });
+    }
+    expect(withdraw).not.toHaveBeenCalled();
+    expect(r.list()).toEqual([gene("a", ID_A)]);
+    expect(saved()).toEqual([gene("a", ID_A)]);
+  });
+});
+
+describe("stop (acceptance O3)", () => {
+  it("cancels the restore wait: no republish after stop", async () => {
+    writeAnnouncedTable(path, [gene("a", ID_A)]);
+    let peers = false;
+    const { r, republish } = setup({ peers: () => peers });
+    r.restore();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(vi.getTimerCount()).toBe(1);
+    r.stop();
+    expect(vi.getTimerCount()).toBe(0);
+    peers = true;
+    await vi.advanceTimersByTimeAsync(2 * RESTORE_WAIT_MS);
+    expect(republish).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

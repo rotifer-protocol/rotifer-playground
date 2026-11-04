@@ -93,6 +93,8 @@ export interface RepublisherDeps {
 export class Republisher {
   private entries: AnnouncedGene[] = [];
   private readonly timers = new Map<AnnouncedGene, Timer>();
+  private restoreTimer: Timer | undefined;
+  private stopped = false;
   private readonly now: () => number;
   private readonly setTimer: (fn: () => void, ms: number) => Timer;
   private readonly clearTimer: (t: Timer) => void;
@@ -125,10 +127,12 @@ export class Republisher {
     if (entries.length === 0) return;
     const startedAt = this.now();
     const poll = (): void => {
+      this.restoreTimer = undefined;
+      if (this.stopped) return;
       if (this.deps.hasDhtPeer() || this.now() - startedAt >= RESTORE_WAIT_MS) {
         for (const entry of this.entries) void this.run(entry);
       } else {
-        this.setTimer(poll, RESTORE_POLL_MS);
+        this.restoreTimer = this.setTimer(poll, RESTORE_POLL_MS);
       }
     };
     poll();
@@ -148,19 +152,28 @@ export class Republisher {
     this.schedule(entry);
   }
 
-  /** Stop announcing the genes `match` names. Returns them. */
+  /**
+   * Stop announcing the genes `match` names. Returns them. The file is
+   * written first: if that fails nothing changes, and once it succeeds the
+   * gene stays withdrawn across a restart even if the node call throws.
+   */
   withdraw(match: WithdrawMatch): AnnouncedGene[] {
     const removed = this.entries.filter((e) => matches(e, match));
-    for (const entry of removed) {
-      this.forget(entry);
-      this.deps.withdraw(entry.geneId);
-    }
-    if (removed.length > 0) this.save();
+    if (removed.length === 0) return removed;
+    writeAnnouncedTable(
+      this.deps.path,
+      this.entries.filter((e) => !removed.includes(e)),
+    );
+    for (const entry of removed) this.forget(entry);
+    for (const entry of removed) this.deps.withdraw(entry.geneId);
     return removed;
   }
 
-  /** Cancel every pending republish (the daemon is stopping). */
+  /** Cancel every pending republish and the restore wait (the daemon is stopping). */
   stop(): void {
+    this.stopped = true;
+    if (this.restoreTimer !== undefined) this.clearTimer(this.restoreTimer);
+    this.restoreTimer = undefined;
     for (const t of this.timers.values()) this.clearTimer(t);
     this.timers.clear();
   }
@@ -193,7 +206,7 @@ export class Republisher {
     if (!this.entries.includes(entry)) return;
     try {
       const result = await this.deps.republish(entry);
-      if (!this.entries.includes(entry)) return; // withdrawn meanwhile
+      if (!this.entries.includes(entry)) return this.withdrawnMeanwhile(entry);
       if (result.outcome !== "republished") {
         // §7.2: the files are gone or compute another ID → drop and stop serving.
         this.log(`stopped republishing '${entry.name}' (${entry.geneId}): ${result.outcome}`);
@@ -204,8 +217,23 @@ export class Republisher {
       }
     } catch (err) {
       this.log(`republish of '${entry.name}' failed: ${(err as Error).message}`);
-      if (!this.entries.includes(entry)) return;
+      if (!this.entries.includes(entry)) return this.withdrawnMeanwhile(entry);
     }
     this.schedule(entry);
+  }
+
+  /**
+   * The gene was withdrawn while its republish was in flight. The withdraw
+   * ran first, so the republish may have put the record and started
+   * providing again: withdraw once more, unless the same ID was announced
+   * again in between.
+   */
+  private withdrawnMeanwhile(entry: AnnouncedGene): void {
+    if (this.entries.some((e) => e.geneId === entry.geneId)) return;
+    try {
+      this.deps.withdraw(entry.geneId);
+    } catch (err) {
+      this.log(`withdraw of '${entry.name}' after its republish failed: ${(err as Error).message}`);
+    }
   }
 }

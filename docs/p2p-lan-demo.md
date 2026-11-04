@@ -138,7 +138,10 @@ Rotifer Cloud. The two lists are shown separately. Add `--json` for scripts.
 
 `announce` also writes the gene to the DHT, and the daemon republishes it every
 12 hours (plus up to an hour of jitter) from `~/.rotifer/p2p/announced.json`,
-which survives a restart. To stop:
+which survives a restart. Each republish reads the gene's files again: if
+they cannot be read at that moment, even briefly, the gene counts as deleted.
+It is dropped from the table and no longer announced; run
+`rotifer network announce` again to bring it back. To stop:
 
 ```bash
 # on machine A

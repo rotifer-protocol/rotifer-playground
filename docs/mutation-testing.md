@@ -114,9 +114,21 @@ All ten mutants are killed. `auth.ts` went from 36.88% to 55.63%.
 
 ## Configuration notes
 
-`vitest.stryker.config.ts` excludes three test files that call
-`process.chdir()`. Stryker's vitest runner executes in worker threads, where
-that throws, and one failure in the dry run aborts the pass before any mutant
-is tried. The excluded files cover `commands/run`, `commands/network` and
-`utils/config` — none of the three mutated files — so nothing that could kill a
-mutant here was dropped. They still run under `npm test`.
+No test may call `process.chdir()`. Stryker's vitest runner executes in
+worker threads, where that throws, and one failure in the dry run aborts the
+pass before any mutant is tried. That is how the v0.34.0 run failed. A test
+that needs a working directory mocks `process.cwd` instead (#405, #548).
+`vitest.stryker.config.ts` used to exclude three test files for this reason
+(run-command, network-p2p, config). #548 moved them over to the mock, and they
+now run under Stryker like the rest. Measured when they came back: they add 21
+tests to the dry run, reach 25 mutants and kill none of them, so the score does
+not move.
+
+A local run can report timeouts that are not real. One full local run on
+2026-11-04 reported 30 timeouts and took 3 h 26 min, against none and six
+minutes in CI. Stryker counts a timeout as a detection, so these raised the
+score from 47.52 to 49.06. Re-running those mutants alone, with
+`npx stryker run --mutate "src/cloud/client.ts:45-45,..."` (whole-line ranges:
+the report's column numbers do not select the same mutants), turned all 30
+into 11 killed and 19 survived, with no timeout. Before you trust a timeout
+count from a local run, re-run those mutants the same way.

@@ -9,7 +9,7 @@
 
 **Rotifer Protocol** 的开发环境——构建基因、运行 Arena 竞争、通过 Cloud 共享、模拟代理进化。
 
-> **状态：** v0.33.x——Agent 有了记忆（规范 §38）。记忆属于 Agent、不属于某个基因，所以换了基因组也不会丢。`rotifer agent create --memory-quota <大小>` 设定 Agent 的配额（默认 10MB）；超出配额时，依次清掉最旧的 CACHE、PATTERN、CONTEXT 条目，PREFERENCE 条目永不自动清理。记忆存在项目的 `.rotifer/playground.db` 里，每次改动都记进 `.rotifer/audit.jsonl`；`rotifer agent memory list` / `delete` 可以查看和清除记忆，不会打印出值。在 `agent run` 里，按 Node 方式运行的基因通过 `ctx.memory` 使用记忆（SDK：`@rotifer/playground/memory`），编译成 WASM 的基因通过 `rotifer.readMemory` / `writeMemory` / `queryMemory` / `deleteMemory` 宿主函数使用；用 Javy 把 TypeScript 编译成 WASM 的基因暂时还接不到这些宿主函数。基因只能看到访问范围允许的条目（默认同一领域），条目的 `maxRetentionDays` 会被强制执行。云端的表结构和 `agent-memory` 边缘函数已在本仓库，但还没有部署：Rotifer Cloud 目前还不保存 Agent 记忆。`rotifer run` 现在会按基因的 schema 检查输入和输出，加 `--no-validate` 可以关掉。v0.32 起的内容依然成立：Arena 的 F(g) 是 0 到 1 的分数（ADR-346），之前版本算出的分数不做换算；`arena submit --cloud` 上传实际运行的档位；Hybrid 基因只许 https，每一次重定向都要重新对照基因允许的域名。v0.30 起的内容依然成立：F(g) 按赛季中位数打分，在覆盖度与健壮性真正测量之前（计划在 v1.0）仍标 `estimated`、不进排名；所有 CLI 路径都按基因 phenotype 声明的权限运行；发布执行规范 §47.5 T1。完整发布历史见 [CHANGELOG.md](CHANGELOG.md)。自动节点发现、跨公网连接与 L4 集体免疫在之后的里程碑，见下方[实现状态](#实现状态)。
+> **状态：** v0.34.x——实验性 P2P 节点现在能跨节点找基因，不再只是收听局域网公告。`rotifer network announce` 把基因写进 DHT，每 12 小时重发一次；公告清单在守护进程重启后仍保留，`rotifer network withdraw` 让本节点停止重发、停止提供某个基因（别的节点已经存下的副本会在 48 小时内自行过期）。`rotifer network search <关键词>` 用关键词匹配本节点收到过的公告，同时跑一次 Rotifer Cloud 搜索，两份结果分开列出；输入 v2 基因 ID 时到 DHT 里查，DHT 从不按关键词搜。收到的别家记录先检查再存，按发布者和总量设上限，反复越界的对端会被暂时拉黑。用 `--host 0.0.0.0` 启动的节点在局域网里靠 mDNS 互相发现，不用 `--bootstrap`（`--no-mdns` 可以关掉）；节点已升级到 libp2p 0.57，能经 relay 或打洞连通，并执行连接数与内存上限。没有注册校验器的 topic 上的 gossip 一律忽略。心跳可以带上 Cloud 签发的注册证明，对端会校验并用于 GossipSub 打分；Cloud 签发端已在本仓库，但还没有部署。不兼容变化：0.27–0.33 的节点仍能和本版连接、收发 gossip，但不再共用它的 DHT，请先升级引导节点。目前还没有公共引导节点和 relay，P2P 节点不手动启动就不运行。v0.33 起的内容依然成立：Agent 有了记忆（规范 §38），换了基因组也不会丢，存在 `.rotifer/playground.db`，每次改动记进 `.rotifer/audit.jsonl`；Rotifer Cloud 目前还不保存 Agent 记忆；`rotifer run` 会按基因的 schema 检查输入和输出（加 `--no-validate` 可以关掉）。v0.32 起的内容依然成立：Arena 的 F(g) 是 0 到 1 的分数（ADR-346），之前版本算出的分数不做换算；`arena submit --cloud` 上传实际运行的档位；Hybrid 基因只许 https，每一次重定向都要重新对照基因允许的域名。v0.30 起的内容依然成立：F(g) 按赛季中位数打分，在覆盖度与健壮性真正测量之前（计划在 v1.0）仍标 `estimated`、不进排名；所有 CLI 路径都按基因 phenotype 声明的权限运行；发布执行规范 §47.5 T1。完整发布历史见 [CHANGELOG.md](CHANGELOG.md)。跨公网连接与 L4 集体免疫在之后的里程碑，见下方[实现状态](#实现状态)。
 
 ---
 
@@ -267,7 +267,7 @@ bash demo.sh
 | **L0** | 内核层 | **~40%** | `L0Gate` 预执行检查（域、资源上限、文件系统），覆盖全部执行路径，含基因组内的每一步与 Node.js 降级路径；审计日志 | 逐基因权限策略、网络检查、伦理边界、状态锚定、信任根 |
 | **L1** | 合成层 | **~70%** | WASM 沙箱（wasmtime）、IR 编译器、Javy TS→WASM、NAPI 桥接 | `Synthesizer` 接口、完整 WASI 能力协商 |
 | **L2** | 校准层 | **~40%** | Schema 验证、沙箱测试、`--compliance` 检查 | 静态分析、受控试运行 |
-| **L3** | 竞争与交换层 | **~85%** | Arena 排名、F(g) 乘法模型、R(g) 声誉、Cloud Registry、实验性 P2P 节点（局域网基因公告，默认关闭） | 自动节点发现、跨公网 P2P、热加载、退役 |
+| **L3** | 竞争与交换层 | **~85%** | Arena 排名、F(g) 乘法模型、R(g) 声誉、Cloud Registry、实验性 P2P 节点（默认关闭：mDNS 局域网发现、基因公告、DHT 搜索） | 公共引导节点与 relay、跨公网 P2P、热加载、退役 |
 | **L4** | 集体免疫层 | **0%** | — | 威胁广播、紧急回滚、跨节点共识 |
 | **代数** | 组合代数 | **~90%** | Rust 五算子全实现；CLI 支持 Seq/Par/Cond/Try | DataFlowGraph |
 

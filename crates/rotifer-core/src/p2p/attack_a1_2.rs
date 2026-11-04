@@ -652,3 +652,189 @@ fn a1_2_eclipse_baseline_no_attacker() {
         dial_in: false,
     });
 }
+
+// ---------------------------------------------------------------------
+// Attack 3 — Sybil under one account. The issuer side (at most 3 unexpired,
+// unrevoked certificates per account, ADR-300 D5) is not re-run here; it
+// was verified on a real Supabase in #536. This is the receiver side: one
+// pseudonym runs six nodes, each with a valid token, and every one of them
+// heartbeats to the victim. How many get +20, where the rest still get in
+// (the victim's mesh and DHT routing table), and what happens when the
+// bonus holders leave.
+// ---------------------------------------------------------------------
+
+/// A valid PoR token for `peer` under `sub`, signed by `issuer` as key `k1`.
+fn por_token(issuer: &libp2p::identity::ed25519::Keypair, peer: &str, sub: &str) -> String {
+    use super::por::tests::{header, sign};
+    use super::por::{DEFAULT_ISSUER, MAX_LIFETIME_SECS};
+    let iat = now_ms() / 1000 - 60;
+    let claims = format!(
+        r#"{{"iss":"{DEFAULT_ISSUER}","sub":"{sub}","peer_id":"{peer}","iat":{iat},"exp":{}}}"#,
+        iat + MAX_LIFETIME_SECS
+    );
+    sign(issuer, &header("k1"), &claims)
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A1-2 attack — enable the p2p-integration feature or run with --ignored")]
+fn a1_2_sybil_one_account_gets_two_bonus_nodes_at_a_receiver() {
+    use super::por::tests::{jwks_json, JwksServer};
+    use super::por::{AttestationStatus, TrustAnchor, BONUS_PEERS_PER_PSEUDONYM, DEFAULT_ISSUER, REGISTERED_BONUS};
+    use std::collections::HashMap;
+
+    // Ten peers in all: libp2p's IP colocation penalty (P6, on by default)
+    // starts above ten peers from one IP, and every node here is on
+    // 127.0.0.1. Kept at ten so the scores are the PoR score alone; P6 is
+    // measured on its own below.
+    const SYBILS: usize = 6;
+    const OTHER_ACCOUNT: usize = 2;
+    const ANONYMOUS: usize = 2;
+    let dir = tempfile::tempdir().unwrap();
+    let issuer = libp2p::identity::ed25519::Keypair::generate();
+    let server = JwksServer::serve(jwks_json(&issuer, "k1", ""));
+    // Every node trusts the local test issuer only, so nothing is fetched
+    // from the real one.
+    let anchors = vec![TrustAnchor { iss: DEFAULT_ISSUER.into(), jwks_url: server.url.clone() }];
+    let cfg = |bootstrap: Vec<String>| NetworkConfig { trust_anchors: anchors.clone(), ..config(bootstrap) };
+
+    let mut victim = Node::with_keypair_path(cfg(vec![]), dir.path().join("victim.pem"))
+        .expect("build node")
+        .with_score_refresh_interval(Duration::from_secs(1));
+    victim.start().expect("start node");
+    victim.subscribe(ANNOUNCEMENTS_TOPIC).expect("subscribe");
+
+    // Joins one at a time, each decided by the victim before the next
+    // starts, so "the earliest two" is a known pair.
+    let join = |name: &str, sub: Option<&str>| -> Node {
+        let mut node = Node::with_keypair_path(cfg(vec![addr(&victim)]), dir.path().join(format!("{name}.pem")))
+            .expect("build node")
+            .with_heartbeat_interval(Duration::from_secs(2));
+        let me = node.local_peer_id().0;
+        if let Some(sub) = sub {
+            node.set_attestation(Some(por_token(&issuer, &me, sub))).expect("attestation");
+        }
+        node.start().expect("start node");
+        node.subscribe(ANNOUNCEMENTS_TOPIC).expect("subscribe");
+        let settled = eventually(30, || match sub {
+            Some(_) => victim.peer_attestation(&me).is_some_and(|a| a.status == AttestationStatus::Valid),
+            None => victim.peer_score(&me).is_some(),
+        });
+        assert!(settled, "{name}: the victim must have decided this node ({:?})", victim.heartbeat_stats());
+        node
+    };
+    let sybils: Vec<Node> = (0..SYBILS).map(|i| join(&format!("sybil-{i}"), Some("acct-sybil"))).collect();
+    let others: Vec<Node> = (0..OTHER_ACCOUNT).map(|i| join(&format!("other-{i}"), Some("acct-other"))).collect();
+    let anonymous: Vec<Node> = (0..ANONYMOUS).map(|i| join(&format!("anon-{i}"), None)).collect();
+
+    let ids = |nodes: &[Node]| -> Vec<String> { nodes.iter().map(|n| n.local_peer_id().0).collect() };
+    let groups: Vec<(&str, Vec<String>)> =
+        vec![("sybil", ids(&sybils)), ("other-account", ids(&others)), ("anonymous", ids(&anonymous))];
+    let report = |phase: &str| -> HashMap<&str, Vec<usize>> {
+        // Scores are recomputed every second here; let two rounds pass.
+        std::thread::sleep(Duration::from_secs(2));
+        let table = victim.dht_peers();
+        let mut mesh_seen: HashMap<String, usize> = HashMap::new();
+        const MESH_SAMPLES: usize = 10;
+        for _ in 0..MESH_SAMPLES {
+            for p in victim.mesh_peers(ANNOUNCEMENTS_TOPIC).expect("mesh") {
+                *mesh_seen.entry(p).or_default() += 1;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        let mut holders = HashMap::new();
+        for (name, group) in &groups {
+            let bonus: Vec<usize> = group
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| victim.peer_score(p) == Some(REGISTERED_BONUS))
+                .map(|(i, _)| i)
+                .collect();
+            let scores: Vec<String> =
+                group.iter().map(|p| victim.peer_score(p).map_or("-".into(), |s| format!("{s:+.0}"))).collect();
+            let in_table = group.iter().filter(|p| table.contains(p)).count();
+            let mesh_slots: usize = group.iter().map(|p| mesh_seen.get(p).copied().unwrap_or(0)).sum();
+            println!(
+                "A1-2 sybil phase={phase} group={name} nodes={} bonus_holders={bonus:?} scores=[{}] in_dht_table={in_table} \
+                 mean_in_mesh={:.1}",
+                group.len(),
+                scores.join(" "),
+                mesh_slots as f64 / MESH_SAMPLES as f64
+            );
+            holders.insert(*name, bonus);
+        }
+        let mesh_now = victim.mesh_peers(ANNOUNCEMENTS_TOPIC).expect("mesh").len();
+        println!("A1-2 sybil phase={phase} victim_connected={} mesh_size={mesh_now}", victim.connected_peers().len());
+        holders
+    };
+
+    let first = report("all-joined");
+    assert_eq!(BONUS_PEERS_PER_PSEUDONYM, 2);
+    assert_eq!(first["sybil"], vec![0, 1], "one account: the earliest two of six get +20, no more");
+    assert_eq!(first["other-account"], vec![0, 1], "another account is counted on its own");
+    assert!(first["anonymous"].is_empty());
+
+    // The two bonus holders leave: the next two move up, still two.
+    let mut sybils = sybils;
+    for mut n in sybils.drain(..2) {
+        n.stop().expect("stop");
+    }
+    let leaving = groups[0].1[..2].to_vec();
+    assert!(eventually(30, || leaving.iter().all(|p| victim.peer_score(p).is_none())), "the two must be gone");
+    let after = report("first-two-left");
+    assert_eq!(after["sybil"], vec![2, 3], "the quota moves to the next two, and stays at two");
+    drop((sybils, others, anonymous));
+}
+
+// ---------------------------------------------------------------------
+// Attack 3b — many nodes from one IP. The node sets only the application
+// score (P5); libp2p's IP colocation factor (P6) is left at its default
+// (weight −5, threshold 10), so above ten peers from one IP every peer from
+// that IP is scored −5 × (count − 10)², registered or not. Measured as
+// anonymous nodes join one by one from 127.0.0.1: the score of the first
+// one after each join.
+// ---------------------------------------------------------------------
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A1-2 attack — enable the p2p-integration feature or run with --ignored")]
+fn a1_2_sybil_more_than_ten_nodes_on_one_ip_are_scored_down_together() {
+    const NODES: usize = 15;
+    let dir = tempfile::tempdir().unwrap();
+    let mut victim = Node::with_keypair_path(config(vec![]), dir.path().join("victim.pem"))
+        .expect("build node")
+        .with_score_refresh_interval(Duration::from_secs(1));
+    victim.start().expect("start node");
+    victim.subscribe(ANNOUNCEMENTS_TOPIC).expect("subscribe");
+    let mut nodes: Vec<Node> = Vec::new();
+    let mut measured: Vec<(usize, f64)> = Vec::new();
+    for i in 0..NODES {
+        let node = spawn(&dir, &format!("same-ip-{i}"), vec![addr(&victim)]);
+        let me = node.local_peer_id().0;
+        assert!(eventually(20, || victim.peer_score(&me).is_some()), "node {i} must be scored");
+        nodes.push(node);
+        let first = nodes[0].local_peer_id().0;
+        let count = nodes.len();
+        let expected = -5.0 * (count.saturating_sub(10) as f64).powi(2);
+        // Scores are recomputed every second; wait for this count's value.
+        let settled = eventually(10, || victim.peer_score(&first) == Some(expected));
+        let score = victim.peer_score(&first).unwrap_or(f64::NAN);
+        let mesh = victim.mesh_peers(ANNOUNCEMENTS_TOPIC).expect("mesh").len();
+        println!("A1-2 same-ip peers={count} score_of_each={score:+.0} mesh_size={mesh} settled={settled}");
+        measured.push((count, score));
+    }
+    // What it costs: below −80 the victim drops everything from these
+    // peers, so an honest announcement from one of them is not heard.
+    std::thread::sleep(Duration::from_secs(3));
+    let gene = id("same-ip-announcement");
+    let heard_it = eventually(10, || {
+        let _ = nodes[0].publish(ANNOUNCEMENTS_TOPIC, &encode_announcement(&announcement(&gene, "same-ip")));
+        std::thread::sleep(Duration::from_millis(300));
+        heard(&victim, &gene)
+    });
+    let mesh = victim.mesh_peers(ANNOUNCEMENTS_TOPIC).expect("mesh").len();
+    println!("A1-2 same-ip peers={NODES} victim_hears_an_announcement_from_one_of_them={heard_it} mesh_size_after_3s={mesh}");
+    // The penalty is the libp2p default, as computed: none up to ten, then
+    // −5, −20, −45, −80 (graylisted below −80) …
+    for (count, score) in measured {
+        assert_eq!(score, -5.0 * (count.saturating_sub(10) as f64).powi(2), "{count} peers from one IP");
+    }
+}

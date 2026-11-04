@@ -437,19 +437,22 @@ describe("terminal control characters in claimed text (T25)", () => {
 describe("network announce: DHT report and the address notice (§10.2, G18)", () => {
   const flag = join(HOME, ".rotifer", "p2p", "dht-address-notice-shown");
   const notice = "Publishing to the DHT makes this node's network addresses visible";
-  let cwd: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    cwd = process.cwd();
     const work = mkdtempSync(join(tmpdir(), "rotifer-announce-"));
     mkdirSync(join(work, "genes", "g"), { recursive: true });
     writeFileSync(join(work, "genes", "g", "phenotype.json"), "{}");
-    process.chdir(work);
+    // Point `announce` at `work` without process.chdir(): Stryker runs tests in
+    // worker threads, where chdir throws, and one failure in its dry run aborts
+    // the whole mutation pass (#405). announce builds every path from
+    // process.cwd(), so this reaches the same files.
+    cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(work);
     rmSync(flag, { force: true });
     vi.mocked(binding.geneIdV2).mockReturnValue({ id: V2_ID });
   });
 
-  afterEach(() => process.chdir(cwd));
+  afterEach(() => cwdSpy.mockRestore());
 
   const report = { geneId: V2_ID, gossipPeers: 3, recordSent: 5, recordAcked: 4, readableFrom: 2 };
 

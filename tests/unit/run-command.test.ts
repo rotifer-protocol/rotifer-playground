@@ -5,13 +5,12 @@ import { tmpdir } from "node:os";
 
 describe("run command", () => {
   let projectDir: string;
-  let previousCwd: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.resetModules();
-    previousCwd = process.cwd();
     projectDir = mkdtempSync(join(tmpdir(), "rotifer-run-command-"));
     mkdirSync(join(projectDir, "genes", "test-gene"), { recursive: true });
 
@@ -31,13 +30,14 @@ describe("run command", () => {
     );
     writeFileSync(join(projectDir, "genes", "test-gene", "gene.ir.wasm"), "not-real-wasm");
 
-    process.chdir(projectDir);
+    // Point the project lookup at projectDir without process.chdir(): Stryker runs tests in worker threads, where chdir throws (#405).
+    cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(projectDir);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
-    process.chdir(previousCwd);
+    cwdSpy.mockRestore();
     logSpy.mockRestore();
     errorSpy.mockRestore();
     rmSync(projectDir, { recursive: true, force: true });

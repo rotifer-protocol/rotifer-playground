@@ -146,6 +146,12 @@ enum Command {
     /// Searches executed (shared ones count once).
     #[cfg(test)]
     SearchRuns(oneshot::Sender<u64>),
+    /// Established connections: (inbound, outbound).
+    #[cfg(test)]
+    ConnectionCounts(oneshot::Sender<(u32, u32)>),
+    /// Peers in this node's GossipSub mesh for `topic`.
+    #[cfg(test)]
+    MeshPeers { topic: String, resp: oneshot::Sender<Vec<String>> },
     /// Put a peer and address in the routing table.
     #[cfg(test)]
     AddDhtAddress { peer: Libp2pPeerId, addr: Multiaddr },
@@ -818,7 +824,7 @@ impl Node {
 
     /// Publish heartbeats this often instead of every five minutes (tests).
     #[cfg(test)]
-    fn with_heartbeat_interval(mut self, interval: Duration) -> Self {
+    pub(crate) fn with_heartbeat_interval(mut self, interval: Duration) -> Self {
         self.heartbeat_interval = interval;
         self
     }
@@ -922,6 +928,23 @@ impl Node {
     pub(crate) fn search_runs(&self) -> Result<u64, NetworkError> {
         let (tx, rx) = oneshot::channel();
         self.send_command(Command::SearchRuns(tx))?;
+        self.block_on_query(rx)
+    }
+
+    /// Established connections right now, as (inbound, outbound): who
+    /// dialled whom (P2P RFC §8.5 item 3).
+    #[cfg(test)]
+    pub(crate) fn connection_counts(&self) -> Result<(u32, u32), NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::ConnectionCounts(tx))?;
+        self.block_on_query(rx)
+    }
+
+    /// Peers in this node's GossipSub mesh for `topic` right now.
+    #[cfg(test)]
+    pub(crate) fn mesh_peers(&self, topic: &str) -> Result<Vec<String>, NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::MeshPeers { topic: topic.into(), resp: tx })?;
         self.block_on_query(rx)
     }
 
@@ -2424,6 +2447,17 @@ async fn run_event_loop(
                 #[cfg(test)]
                 Some(Command::SearchRuns(resp)) => {
                     let _ = resp.send(search_runs);
+                }
+                #[cfg(test)]
+                Some(Command::ConnectionCounts(resp)) => {
+                    let info = swarm.network_info();
+                    let c = info.connection_counters();
+                    let _ = resp.send((c.num_established_incoming(), c.num_established_outgoing()));
+                }
+                #[cfg(test)]
+                Some(Command::MeshPeers { topic, resp }) => {
+                    let hash = gossipsub::IdentTopic::new(topic).hash();
+                    let _ = resp.send(swarm.behaviour().gossipsub.mesh_peers(&hash).map(|p| p.to_string()).collect());
                 }
                 #[cfg(test)]
                 Some(Command::AddDhtAddress { peer, addr }) => {

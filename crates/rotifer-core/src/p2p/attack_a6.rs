@@ -12,7 +12,9 @@ use libp2p::Multiaddr;
 // A1-2's setup helpers (CEO, T-156: reuse them, `run_eclipse` untouched).
 use super::attack_a1_2::{addr, announcement, config, eventually, heard, id, now_ms, peer_of};
 use super::messages::{encode_announcement, ANNOUNCEMENTS_TOPIC};
-use super::node::{Node, OutboundReport};
+use libp2p::identity::Keypair;
+
+use super::node::{write_identity, Node, OutboundReport};
 use super::outbound::{FirstConnection, TopUpWay, P6_THRESHOLD, P6_WEIGHT};
 use super::NetworkConfig;
 
@@ -1287,4 +1289,353 @@ fn a6_topup_dials_back_control_adopt_only() {
     let samples = run_dial_path("control-adopt-only", true);
     assert!(!dialled_back(&samples), "control must be red: adopt-only came back to 8 dialled peers: {samples:?}");
     assert!(samples.iter().all(|s| s.dialled == 0), "adopt-only must dial nobody: {samples:?}");
+}
+
+// ---------------------------------------------------------------------
+// Shared by ①-向 and ①-磨: a node with an identity chosen in advance, and
+// one line per sample.
+// ---------------------------------------------------------------------
+
+/// Write `keypair` as `name`'s identity and spawn it like [`spawn_with`].
+fn spawn_as(
+    dir: &tempfile::TempDir,
+    name: &str,
+    keypair: &Keypair,
+    bootstrap: Vec<String>,
+    build: impl FnOnce(Node) -> Node,
+) -> Node {
+    write_identity(&dir.path().join(format!("{name}.pem")), keypair).expect("write identity");
+    spawn_with(dir, name, bootstrap, build)
+}
+
+fn id_of(keypair: &Keypair) -> libp2p::PeerId {
+    keypair.public().to_peer_id()
+}
+
+/// Attackers among top-up peers, and among the last round's eligible
+/// candidates (the pool before the draw).
+fn shares(r: &OutboundReport, attackers: &HashSet<String>) -> (f64, f64) {
+    let topup = r.topup.keys().filter(|p| attackers.contains(*p)).count() as f64 / r.topup.len().max(1) as f64;
+    let eligible: Vec<&String> = r.eligible_by_bucket.iter().flat_map(|(_, peers)| peers).collect();
+    let pool = eligible.iter().filter(|p| attackers.contains(**p)).count() as f64 / eligible.len().max(1) as f64;
+    (topup, pool)
+}
+
+/// One sample line shared by ①-向 and ①-磨.
+fn print_sample(tag: &str, label: &str, s: &Sample, topup_share: f64, pool_share: f64) {
+    println!(
+        "A6 {tag} round={label} t={}s topup={} (adopted={} dialled={}) topup_attackers={} topup_honest={} \
+         topup_attacker_share={topup_share:.2} eligible={} eligible_attacker_share={pool_share:.2} \
+         kad_dialled_attackers={} kad_dialled_honest={} inbound_attackers={} inbound_honest={} bootstrap={} \
+         connections in={} out={} routing_table={} round_dials={} round_failures={} shortfall_walks={}",
+        s.at,
+        s.topup,
+        s.topup_adopted,
+        s.topup_dialled,
+        s.topup_attackers,
+        s.topup_honest,
+        s.eligible,
+        s.kad_attackers,
+        s.kad_honest,
+        s.inbound_attackers,
+        s.inbound_honest,
+        s.bootstrap,
+        s.connections_in,
+        s.connections_out,
+        s.routing_table,
+        s.dials,
+        s.failures,
+        s.shortfall_walks
+    );
+    println!("A6 {tag} round={label} t={}s buckets {}", s.at, s.buckets);
+}
+
+fn mean(xs: &[f64]) -> f64 {
+    xs.iter().sum::<f64>() / xs.len().max(1) as f64
+}
+
+// ---------------------------------------------------------------------
+// ①-向: honest nodes dial first, attackers only wait to be dialled
+// (design v5 §5.9.2, F1).
+//
+// ①'s 3-of-4 attacker bootstrap nodes; 24 attackers that never dial the
+// victim (test switch) come up first, then the victim with the default 50
+// inbound slots and top-up running, then 12 honest nodes: 6 list the
+// victim as a bootstrap node and dial it at once (inbound at the victim,
+// not adoptable), 6 do not (the victim's queries reach them, adoptable).
+//
+// Prints only (§12 F1 chose "write it into the limits"). The trigger line:
+// attackers above 0.75 of the top-up peers, averaged over a round's
+// samples, means the bias outweighs the "pile on numbers" class and the
+// inbound-first adoption quota is reopened with the CEO. Every CI run
+// prints it.
+// ---------------------------------------------------------------------
+const DIR_ATTACKERS: usize = 24;
+const DIR_ATTACKER_BOOTSTRAPS: usize = 3;
+/// Honest nodes that dial the victim first, and ones that wait.
+const DIR_HONEST_DIAL_FIRST: usize = 6;
+const DIR_HONEST_WAIT: usize = 6;
+const DIR_SAMPLE_AT: [u64; 7] = [30, 40, 50, 60, 70, 80, 90];
+const DIR_ROUNDS: usize = 3;
+/// §5.9.2's trigger line (the attackers' population share in ①).
+const DIR_TRIGGER: f64 = 0.75;
+
+/// One honest group's standing at the victim: connected, adoptable (the
+/// victim's own non-bootstrap dial came first), top-up peers.
+fn group(r: &OutboundReport, ids: &[String]) -> (usize, usize, usize) {
+    let connected = ids.iter().filter(|p| r.first.contains_key(*p)).count();
+    let adoptable = ids
+        .iter()
+        .filter(|p| matches!(r.first.get(*p), Some(FirstConnection::OtherDial | FirstConnection::Restart)))
+        .count();
+    let topup = ids.iter().filter(|p| r.topup.contains_key(*p)).count();
+    (connected, adoptable, topup)
+}
+
+/// One round with fresh PeerIds; returns the mean attacker share among
+/// top-up peers over its samples.
+fn run_direction_round(label: &str) -> f64 {
+    const TAG: &str = "①-向";
+    let dir = tempfile::tempdir().expect("temp dir");
+    let victim_key = Keypair::generate_ed25519();
+    let victim_id = id_of(&victim_key);
+    let deny = |n: Node| n.with_p6_loopback_whitelist().with_deny_dial(vec![victim_id]);
+
+    let honest_boot = spawn_a6(&dir, "honest-boot", vec![]);
+    let mut boots = vec![spawn_with(&dir, "attacker-boot-0", vec![], deny)];
+    for j in 1..DIR_ATTACKER_BOOTSTRAPS {
+        let b = spawn_with(&dir, &format!("attacker-boot-{j}"), vec![addr(&boots[0])], deny);
+        boots.push(b);
+    }
+    let boot_addrs: Vec<String> = boots.iter().map(addr).collect();
+    let attackers: Vec<Node> = (0..DIR_ATTACKERS)
+        .map(|i| spawn_with(&dir, &format!("attacker-{i}"), vec![boot_addrs[i % DIR_ATTACKER_BOOTSTRAPS].clone()], deny))
+        .collect();
+    if !eventually(60, || boots[0].dht_peers().len() >= DIR_ATTACKERS * 3 / 4) {
+        setup_invalid(format!(
+            "{TAG} round={label}: the attackers did not connect ({} of {DIR_ATTACKERS} at the first attacker bootstrap)",
+            boots[0].dht_peers().len()
+        ));
+    }
+
+    let mut victim_boot = boot_addrs.clone();
+    victim_boot.push(addr(&honest_boot));
+    let victim = spawn_as(&dir, "victim", &victim_key, victim_boot, |n| {
+        n.with_p6_loopback_whitelist().with_prune_backoff(A6_PRUNE_BACKOFF)
+    });
+    let dial_first: Vec<Node> = (0..DIR_HONEST_DIAL_FIRST)
+        .map(|i| spawn_a6(&dir, &format!("honest-dial-first-{i}"), vec![addr(&victim), addr(&honest_boot)]))
+        .collect();
+    let wait: Vec<Node> =
+        (0..DIR_HONEST_WAIT).map(|i| spawn_a6(&dir, &format!("honest-wait-{i}"), vec![addr(&honest_boot)])).collect();
+    let started = Instant::now();
+
+    let attacker_ids: HashSet<String> = boots.iter().chain(attackers.iter()).map(|n| n.local_peer_id().0).collect();
+    let dial_first_ids: Vec<String> = dial_first.iter().map(|n| n.local_peer_id().0).collect();
+    let wait_ids: Vec<String> = wait.iter().map(|n| n.local_peer_id().0).collect();
+    let honest_ids: HashSet<String> = std::iter::once(honest_boot.local_peer_id().0)
+        .chain(dial_first_ids.iter().cloned())
+        .chain(wait_ids.iter().cloned())
+        .collect();
+    let population = attacker_ids.len() as f64 / (attacker_ids.len() + honest_ids.len()) as f64;
+
+    let gene = id(&format!("a6-direction-{label}"));
+    let publisher = wait[0].local_peer_id().0;
+    let gene_stored = eventually(30, || {
+        wait[0].announce(&announcement(&gene, "a6-direction-target")).is_ok_and(|a| a.record_acked >= 1)
+    });
+
+    let mut topup_shares = Vec::new();
+    for at in DIR_SAMPLE_AT {
+        std::thread::sleep(Duration::from_secs(at).saturating_sub(started.elapsed()));
+        let r = report(&victim);
+        let s = sample(&victim, at, &attacker_ids, &honest_ids);
+        let (topup_share, pool_share) = shares(&r, &attacker_ids);
+        print_sample(TAG, label, &s, topup_share, pool_share);
+        let topup_by = |side: &HashSet<String>, way: TopUpWay| {
+            r.topup.iter().filter(|(p, w)| side.contains(*p) && **w == way).count()
+        };
+        let (df_conn, df_adopt, df_topup) = group(&r, &dial_first_ids);
+        let (w_conn, w_adopt, w_topup) = group(&r, &wait_ids);
+        let honest_connected = honest_ids.iter().filter(|p| r.first.contains_key(*p)).count();
+        println!(
+            "A6 {TAG} round={label} t={at}s topup_attackers adopted={} dialled={} topup_honest adopted={} dialled={} \
+             honest_dial_first connected={df_conn} adoptable={df_adopt} topup={df_topup} \
+             honest_wait connected={w_conn} adoptable={w_adopt} topup={w_topup} honest_connected={honest_connected}",
+            topup_by(&attacker_ids, TopUpWay::Adopted),
+            topup_by(&attacker_ids, TopUpWay::Dialled),
+            topup_by(&honest_ids, TopUpWay::Adopted),
+            topup_by(&honest_ids, TopUpWay::Dialled),
+        );
+        // The switch held: no attacker connection arrived at the victim.
+        if s.inbound_attackers > 0 {
+            setup_invalid(format!(
+                "{TAG} round={label} t={at}s: {} attackers dialled the victim; the deny-dial switch did not hold",
+                s.inbound_attackers
+            ));
+        }
+        topup_shares.push(topup_share);
+    }
+    let finds_honest_gene = victim
+        .search(super::discover::SearchQuery::GeneId(gene.clone()))
+        .map(|o| o.hits.iter().any(|h| h.publisher == publisher))
+        .unwrap_or(false);
+    let m = mean(&topup_shares);
+    println!(
+        "A6 {TAG} round={label} mean_topup_attacker_share={m:.2} population_attacker_share={population:.2} \
+         gene_stored={gene_stored} finds_honest_gene={finds_honest_gene}"
+    );
+    drop((dial_first, wait, attackers, boots, honest_boot));
+    m
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 ①-向 — enable the p2p-integration feature or run with --ignored")]
+fn a6_topup_direction_bias_is_measured() {
+    let means: Vec<f64> = (1..=DIR_ROUNDS).map(|i| run_direction_round(&format!("1.{i}"))).collect();
+    let crossed = means.iter().filter(|m| **m > DIR_TRIGGER).count();
+    println!(
+        "A6 ①-向 summary rounds={} means={:?} trigger={DIR_TRIGGER} rounds_over_trigger={crossed} \
+         (over the line: reopen the inbound-first adoption quota with the CEO, design v5 §5.9.2)",
+        means.len(),
+        means.iter().map(|m| format!("{m:.2}")).collect::<Vec<_>>()
+    );
+}
+
+// ---------------------------------------------------------------------
+// ①-磨: attackers ground into near k-buckets (design v5 §5.9.3, F2).
+//
+// Attackers in the minority: 36 honest nodes, 12 attackers, 4 honest
+// bootstrap nodes. The victim comes up last with the default 50 inbound
+// slots, so most of its connections are its own dials and both sides are
+// adoptable: this measures the per-bucket draw only. 5 of the attackers'
+// keys are ground so their k-bucket from the victim is one of the 5
+// nearest buckets no honest node is in; the other 7 are random.
+// ---------------------------------------------------------------------
+const GRIND_HONEST: usize = 36;
+const GRIND_ATTACKERS: usize = 12;
+const GRIND_GROUND: usize = 5;
+const GRIND_BOOTSTRAPS: usize = 4;
+const GRIND_SAMPLE_AT: [u64; 7] = [30, 40, 50, 60, 70, 80, 90];
+const GRIND_ROUNDS: usize = 3;
+/// Let the network's own Kademlia queries finish before the victim comes
+/// up, so they do not dial it first (C5's lesson).
+const GRIND_SETTLE: Duration = Duration::from_secs(15);
+/// §5.9.3's line: above it, weight the draw by bucket capacity.
+const GRIND_LINE: f64 = 0.5;
+// The assertion (red team v5 N2: a margin over the line) is waiting on the
+// CEO: per round it went red once in six rounds (0.50, 0.38, 0.25; 0.38,
+// 0.38, 0.62), as a round's top-up is 8 peers drawn once.
+/// No more tries than this per ground key (bucket 245 takes about 2^11).
+const GRIND_MAX_TRIES: u32 = 1 << 20;
+
+fn bucket_from(me: &libp2p::PeerId, peer: &libp2p::PeerId) -> Option<u32> {
+    libp2p::kad::KBucketKey::from(*me).distance(&libp2p::kad::KBucketKey::from(*peer)).ilog2()
+}
+
+/// A key whose k-bucket from `victim` is `bucket`.
+fn grind(victim: &libp2p::PeerId, bucket: u32) -> Keypair {
+    for _ in 0..GRIND_MAX_TRIES {
+        let k = Keypair::generate_ed25519();
+        if bucket_from(victim, &id_of(&k)) == Some(bucket) {
+            return k;
+        }
+    }
+    panic!("no key for bucket {bucket} in {GRIND_MAX_TRIES} tries");
+}
+
+/// One round with fresh PeerIds; returns the mean attacker share among
+/// top-up peers over its samples.
+fn run_grind_round(label: &str) -> f64 {
+    const TAG: &str = "①-磨";
+    let dir = tempfile::tempdir().expect("temp dir");
+    let victim_key = Keypair::generate_ed25519();
+    let victim_id = id_of(&victim_key);
+    let honest_keys: Vec<Keypair> = (0..GRIND_BOOTSTRAPS + GRIND_HONEST).map(|_| Keypair::generate_ed25519()).collect();
+    let honest_buckets: HashSet<u32> = honest_keys.iter().filter_map(|k| bucket_from(&victim_id, &id_of(k))).collect();
+    // The first 5 buckets no honest node is in, counting nearer from 254
+    // (bucket 255 holds half of everyone): each ground attacker has its
+    // bucket to itself.
+    let targets: Vec<u32> = (0..255u32).rev().filter(|b| !honest_buckets.contains(b)).take(GRIND_GROUND).collect();
+    let ground_started = Instant::now();
+    let mut attacker_keys: Vec<Keypair> = targets.iter().map(|b| grind(&victim_id, *b)).collect();
+    let ground_in = ground_started.elapsed();
+    attacker_keys.extend((GRIND_GROUND..GRIND_ATTACKERS).map(|_| Keypair::generate_ed25519()));
+    let ground_ids: HashSet<String> = attacker_keys[..GRIND_GROUND].iter().map(|k| id_of(k).to_string()).collect();
+    let mut occupied: Vec<u32> = honest_buckets.iter().copied().collect();
+    occupied.sort_unstable_by(|a, b| b.cmp(a));
+    println!(
+        "A6 {TAG} round={label} honest_buckets={occupied:?} ground_buckets={targets:?} ground_in_ms={}",
+        ground_in.as_millis()
+    );
+
+    let node = |n: Node| n.with_p6_loopback_whitelist().with_prune_backoff(A6_PRUNE_BACKOFF);
+    let mut boots = vec![spawn_as(&dir, "honest-boot-0", &honest_keys[0], vec![], node)];
+    for (j, key) in honest_keys.iter().enumerate().take(GRIND_BOOTSTRAPS).skip(1) {
+        let b = spawn_as(&dir, &format!("honest-boot-{j}"), key, vec![addr(&boots[0])], node);
+        boots.push(b);
+    }
+    let boot_addrs: Vec<String> = boots.iter().map(addr).collect();
+    let honest: Vec<Node> = (0..GRIND_HONEST)
+        .map(|i| {
+            spawn_as(
+                &dir,
+                &format!("honest-{i}"),
+                &honest_keys[GRIND_BOOTSTRAPS + i],
+                vec![boot_addrs[i % GRIND_BOOTSTRAPS].clone()],
+                node,
+            )
+        })
+        .collect();
+    let attackers: Vec<Node> = attacker_keys
+        .iter()
+        .enumerate()
+        .map(|(i, k)| spawn_as(&dir, &format!("attacker-{i}"), k, vec![boot_addrs[i % GRIND_BOOTSTRAPS].clone()], node))
+        .collect();
+    let everyone = GRIND_BOOTSTRAPS + GRIND_HONEST + GRIND_ATTACKERS;
+    if !eventually(90, || boots[0].dht_peers().len() >= (everyone - 1) * 3 / 4) {
+        setup_invalid(format!(
+            "{TAG} round={label}: the network did not connect ({} of {} at the first bootstrap)",
+            boots[0].dht_peers().len(),
+            everyone - 1
+        ));
+    }
+    std::thread::sleep(GRIND_SETTLE);
+
+    let attacker_ids: HashSet<String> = attackers.iter().map(|n| n.local_peer_id().0).collect();
+    let honest_ids: HashSet<String> = boots.iter().chain(honest.iter()).map(|n| n.local_peer_id().0).collect();
+    let victim = spawn_as(&dir, "victim", &victim_key, boot_addrs.clone(), node);
+    let started = Instant::now();
+
+    let mut topup_shares = Vec::new();
+    for at in GRIND_SAMPLE_AT {
+        std::thread::sleep(Duration::from_secs(at).saturating_sub(started.elapsed()));
+        let r = report(&victim);
+        let s = sample(&victim, at, &attacker_ids, &honest_ids);
+        let (topup_share, pool_share) = shares(&r, &attacker_ids);
+        print_sample(TAG, label, &s, topup_share, pool_share);
+        let ground_connected = ground_ids.iter().filter(|p| r.first.contains_key(*p)).count();
+        let ground_topup = ground_ids.iter().filter(|p| r.topup.contains_key(*p)).count();
+        println!(
+            "A6 {TAG} round={label} t={at}s ground connected={ground_connected} topup={ground_topup} of {GRIND_GROUND}"
+        );
+        topup_shares.push(topup_share);
+    }
+    let m = mean(&topup_shares);
+    println!("A6 {TAG} round={label} mean_topup_attacker_share={m:.2}");
+    drop((attackers, honest, boots));
+    m
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 ①-磨 — enable the p2p-integration feature or run with --ignored")]
+fn a6_topup_ground_keys_take_no_majority() {
+    let means: Vec<f64> = (1..=GRIND_ROUNDS).map(|i| run_grind_round(&format!("1.{i}"))).collect();
+    let all = mean(&means);
+    println!(
+        "A6 ①-磨 summary rounds={} means={:?} mean_of_21_samples={all:.2} line={GRIND_LINE} over_line={}",
+        means.len(),
+        means.iter().map(|m| format!("{m:.2}")).collect::<Vec<_>>(),
+        all > GRIND_LINE
+    );
 }

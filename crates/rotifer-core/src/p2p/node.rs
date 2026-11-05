@@ -379,6 +379,87 @@ fn feed_kad(kademlia: &mut kad::Behaviour<GeneStore>, peer: &Libp2pPeerId, addr:
     kademlia.add_address(peer, addr);
 }
 
+/// Refuses this node's own dials to `peers`; connections they open are
+/// accepted as usual. Built only by tests (design v5 §5.9.2, ①-向:
+/// attackers that never dial the victim and only wait to be dialled).
+struct DenyDial {
+    peers: HashSet<Libp2pPeerId>,
+}
+
+/// Why [`DenyDial`] refused a dial.
+#[derive(Debug)]
+struct DialDenied(Libp2pPeerId);
+
+impl std::fmt::Display for DialDenied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "test switch: this node does not dial {}", self.0)
+    }
+}
+
+impl std::error::Error for DialDenied {}
+
+impl NetworkBehaviour for DenyDial {
+    type ConnectionHandler = libp2p::swarm::dummy::ConnectionHandler;
+    type ToSwarm = std::convert::Infallible;
+
+    fn handle_established_inbound_connection(
+        &mut self,
+        _connection_id: libp2p::swarm::ConnectionId,
+        _peer: Libp2pPeerId,
+        _local_addr: &Multiaddr,
+        _remote_addr: &Multiaddr,
+    ) -> Result<libp2p::swarm::THandler<Self>, ConnectionDenied> {
+        Ok(libp2p::swarm::dummy::ConnectionHandler)
+    }
+
+    fn handle_pending_outbound_connection(
+        &mut self,
+        _connection_id: libp2p::swarm::ConnectionId,
+        maybe_peer: Option<Libp2pPeerId>,
+        _addresses: &[Multiaddr],
+        _effective_role: libp2p::core::Endpoint,
+    ) -> Result<Vec<Multiaddr>, ConnectionDenied> {
+        match maybe_peer {
+            Some(peer) if self.peers.contains(&peer) => Err(ConnectionDenied::new(DialDenied(peer))),
+            _ => Ok(vec![]),
+        }
+    }
+
+    // A dial with no PeerId that turns out to reach a listed peer: closed
+    // before any behaviour sees it (the other side still saw it arrive).
+    fn handle_established_outbound_connection(
+        &mut self,
+        _connection_id: libp2p::swarm::ConnectionId,
+        peer: Libp2pPeerId,
+        _addr: &Multiaddr,
+        _role_override: libp2p::core::Endpoint,
+        _port_use: libp2p::core::transport::PortUse,
+    ) -> Result<libp2p::swarm::THandler<Self>, ConnectionDenied> {
+        if self.peers.contains(&peer) {
+            return Err(ConnectionDenied::new(DialDenied(peer)));
+        }
+        Ok(libp2p::swarm::dummy::ConnectionHandler)
+    }
+
+    fn on_swarm_event(&mut self, _event: libp2p::swarm::FromSwarm) {}
+
+    fn on_connection_handler_event(
+        &mut self,
+        _peer: Libp2pPeerId,
+        _connection_id: libp2p::swarm::ConnectionId,
+        event: libp2p::swarm::THandlerOutEvent<Self>,
+    ) {
+        match event {}
+    }
+
+    fn poll(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<libp2p::swarm::ToSwarm<Self::ToSwarm, libp2p::swarm::THandlerInEvent<Self>>> {
+        std::task::Poll::Pending
+    }
+}
+
 #[derive(NetworkBehaviour)]
 struct NodeBehaviour {
     // The limits come first. libp2p offers a new connection to each behaviour
@@ -394,6 +475,9 @@ struct NodeBehaviour {
     /// Peers whose score is at or below the graylist threshold, whatever the
     /// cause: refused and disconnected until the score rises again (A2 §8.2).
     blocked: allow_block_list::Behaviour<allow_block_list::BlockedPeers>,
+    /// Test switch (design v5 §5.9.2, ①-向): refuse this node's own dials
+    /// to the listed peers. Empty, and so never built, outside tests.
+    deny_dial: Toggle<DenyDial>,
     kademlia: kad::Behaviour<GeneStore>,
     gossipsub: gossipsub::Behaviour,
     identify: identify::Behaviour,
@@ -699,6 +783,8 @@ pub struct Node {
     colocation: Arc<Mutex<ColocationStats>>,
     /// Connection-policy settings (defaults outside tests).
     policy: PolicyOptions,
+    /// Peers this node never dials (test switch; empty outside tests).
+    deny_dial: Vec<Libp2pPeerId>,
     /// How often this node publishes its heartbeat.
     heartbeat_interval: Duration,
     /// How often peer scores are recomputed besides after each heartbeat.
@@ -794,6 +880,7 @@ impl Node {
             dialed: Arc::new(Mutex::new(Vec::new())),
             colocation: Arc::new(Mutex::new(ColocationStats::default())),
             policy: PolicyOptions::default(),
+            deny_dial: Vec::new(),
             heartbeat_interval: Duration::from_secs(heartbeat::HEARTBEAT_INTERVAL_SECS),
             score_refresh_interval: por::SCORE_REFRESH_INTERVAL,
             p5_p6_only_scores: false,
@@ -1021,6 +1108,14 @@ impl Node {
     pub(crate) fn with_outbound_paused(mut self, topup: bool, keeper: bool) -> Self {
         self.policy.topup_paused = topup;
         self.policy.keeper_paused = keeper;
+        self
+    }
+
+    /// Never dial `peers` (design v5 §5.9.2, ①-向: an attacker that only
+    /// waits to be dialled). Their connections in are accepted as usual.
+    #[cfg(test)]
+    pub(crate) fn with_deny_dial(mut self, peers: Vec<Libp2pPeerId>) -> Self {
+        self.deny_dial = peers;
         self
     }
 
@@ -1565,6 +1660,14 @@ fn try_read_keypair(path: &Path) -> Result<Option<Keypair>, NetworkError> {
     }
 }
 
+/// Write `keypair` where [`Node::with_keypair_path`] will load it, so a
+/// test can pick a node's PeerId before building it (design v5 §5.9.2,
+/// §5.9.3).
+#[cfg(test)]
+pub(crate) fn write_identity(path: &Path, keypair: &Keypair) -> std::io::Result<()> {
+    persist_keypair(path, keypair)
+}
+
 /// Serialize a keypair to PEM and write it atomically (mode 0600): a temp
 /// sibling is written then renamed onto `path`, so a concurrent reader never
 /// observes a partially-written file.
@@ -1662,6 +1765,7 @@ impl Node {
             score_refresh_interval: self.score_refresh_interval,
             p5_p6_only_scores: self.p5_p6_only_scores,
             policy: self.policy,
+            deny_dial: self.deny_dial.clone(),
         })
     }
 }
@@ -1686,6 +1790,8 @@ struct SwarmOptions {
     p5_p6_only_scores: bool,
     /// See `Node::policy`.
     policy: PolicyOptions,
+    /// See `Node::deny_dial`.
+    deny_dial: Vec<Libp2pPeerId>,
 }
 
 /// Parse `NetworkConfig::relays`. A relay is configured on purpose, so a bad
@@ -1802,6 +1908,9 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
                 connection_limits,
                 memory_connection_limits,
                 blocked: Default::default(),
+                deny_dial: Toggle::from(
+                    (!options.deny_dial.is_empty()).then(|| DenyDial { peers: options.deny_dial.iter().copied().collect() }),
+                ),
                 kademlia,
                 gossipsub,
                 identify,

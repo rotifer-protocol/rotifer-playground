@@ -252,12 +252,16 @@ const MESH_OUTBOUND_MIN: usize = 3;
 /// [`gossipsub_config_with`] with the default policy).
 #[cfg(test)]
 fn gossipsub_config() -> gossipsub::Config {
-    gossipsub_config_with(MESH_OUTBOUND_MIN, None)
+    gossipsub_config_with(MESH_OUTBOUND_MIN, None, None)
 }
 
 /// [`gossipsub_config`] with the mesh's self-dialled minimum and, for tests,
-/// the unsubscribe backoff overridden.
-fn gossipsub_config_with(mesh_outbound_min: usize, unsubscribe_backoff: Option<Duration>) -> gossipsub::Config {
+/// the unsubscribe and prune backoffs overridden.
+fn gossipsub_config_with(
+    mesh_outbound_min: usize,
+    unsubscribe_backoff: Option<Duration>,
+    prune_backoff: Option<Duration>,
+) -> gossipsub::Config {
     let mut builder = gossipsub::ConfigBuilder::default();
     builder
         .duplicate_cache_time(GOSSIP_DUPLICATE_CACHE)
@@ -268,6 +272,9 @@ fn gossipsub_config_with(mesh_outbound_min: usize, unsubscribe_backoff: Option<D
         .validate_messages();
     if let Some(backoff) = unsubscribe_backoff {
         builder.unsubscribe_backoff(backoff);
+    }
+    if let Some(backoff) = prune_backoff {
+        builder.prune_backoff(backoff);
     }
     builder.build().expect("gossipsub config is valid")
 }
@@ -559,6 +566,7 @@ pub(crate) struct OutboundReport {
 struct PolicyOptions {
     mesh_outbound_min: usize,
     unsubscribe_backoff: Option<Duration>,
+    prune_backoff: Option<Duration>,
     /// Exempt 127.0.0.1 from P6 (all loopback test nodes share it).
     p6_loopback_whitelist: bool,
     topup_paused: bool,
@@ -571,6 +579,7 @@ impl Default for PolicyOptions {
         Self {
             mesh_outbound_min: MESH_OUTBOUND_MIN,
             unsubscribe_backoff: None,
+            prune_backoff: None,
             p6_loopback_whitelist: false,
             topup_paused: false,
             keeper_paused: false,
@@ -987,6 +996,15 @@ impl Node {
     #[cfg(test)]
     pub(crate) fn with_unsubscribe_backoff(mut self, backoff: Duration) -> Self {
         self.policy.unsubscribe_backoff = Some(backoff);
+        self
+    }
+
+    /// GossipSub's prune backoff (production: libp2p's 60 s). Design v5
+    /// §5.1: ①'s re-formations use a short one on every node so that one
+    /// draw does not hold the next back; ①-稳 keeps the default.
+    #[cfg(test)]
+    pub(crate) fn with_prune_backoff(mut self, backoff: Duration) -> Self {
+        self.policy.prune_backoff = Some(backoff);
         self
     }
 
@@ -1707,7 +1725,11 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
             kademlia.set_mode(Some(kad::Mode::Server));
             let mut gossipsub = gossipsub::Behaviour::new(
                 gossipsub::MessageAuthenticity::Signed(key.clone()),
-                gossipsub_config_with(options.policy.mesh_outbound_min, options.policy.unsubscribe_backoff),
+                gossipsub_config_with(
+                    options.policy.mesh_outbound_min,
+                    options.policy.unsubscribe_backoff,
+                    options.policy.prune_backoff,
+                ),
             )
             .expect("gossipsub config is valid");
             let (mut params, thresholds) = peer_score_params();
@@ -2053,7 +2075,9 @@ async fn run_event_loop(
                 swarm.behaviour_mut().kademlia.store_mut().sweep(std::time::Instant::now());
             }
             _ = topup_timer.tick() => {
-                top_up(&mut swarm, &mut outbound);
+                if top_up(&mut swarm, &mut outbound) {
+                    walks.insert(swarm.behaviour_mut().kademlia.get_closest_peers(Libp2pPeerId::random()));
+                }
             }
             _ = walk_timer.tick() => {
                 // Its own timer: candidates keep arriving whether or not the
@@ -2847,8 +2871,8 @@ async fn run_event_loop(
                 Some(Command::SetOutboundPaused { topup, keeper, resp }) => {
                     outbound.topup_paused = topup;
                     outbound.keeper_paused = keeper;
-                    if !topup {
-                        top_up(&mut swarm, &mut outbound);
+                    if !topup && top_up(&mut swarm, &mut outbound) {
+                        walks.insert(swarm.behaviour_mut().kademlia.get_closest_peers(Libp2pPeerId::random()));
                     }
                     if !keeper {
                         keep_bootstrap(&mut swarm, &mut outbound);
@@ -2948,9 +2972,12 @@ fn dial_tagged(
 
 /// One top-up round (A6 design v5 §1.6–§1.7, [`Outbound::round`]): adopt
 /// the drawn candidates that are connected, dial the others.
-fn top_up(swarm: &mut Swarm<NodeBehaviour>, outbound: &mut Outbound) {
+/// One top-up round. Returns whether the round was short of candidates and
+/// a random walk should go out now (at most every
+/// [`outbound::SHORTFALL_WALK_EVERY`]; the caller owns the walk queries).
+fn top_up(swarm: &mut Swarm<NodeBehaviour>, outbound: &mut Outbound) -> bool {
     if outbound.topup_paused {
-        return;
+        return false;
     }
     let now = Instant::now();
     let me = *swarm.local_peer_id();
@@ -2983,6 +3010,7 @@ fn top_up(swarm: &mut Swarm<NodeBehaviour>, outbound: &mut Outbound) {
             outbound.topup_not_started(peer, now);
         }
     }
+    outbound.shortfall_walk(now)
 }
 
 /// Redial a bootstrap node if none is connected and the backoff allows
@@ -4833,6 +4861,13 @@ mod tests {
         assert_eq!(gossipsub_config().mesh_outbound_min(), 3);
         assert_eq!(PolicyOptions::default().mesh_outbound_min, 3);
         assert!(!PolicyOptions::default().p6_loopback_whitelist);
+        // The test-only backoffs leave production at libp2p's defaults.
+        assert_eq!(gossipsub_config().prune_backoff(), Duration::from_secs(60));
+        assert_eq!(gossipsub_config().unsubscribe_backoff(), Duration::from_secs(10));
+        assert_eq!(
+            (PolicyOptions::default().prune_backoff, PolicyOptions::default().unsubscribe_backoff),
+            (None, None)
+        );
     }
 
     #[test]

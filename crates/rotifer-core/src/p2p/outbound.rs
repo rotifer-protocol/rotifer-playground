@@ -40,6 +40,11 @@ pub(crate) const DIALS_PER_ROUND: usize = 8;
 pub(crate) const PEERSTORE_DIALS_PER_ROUND: usize = 2;
 /// A random walk (`get_closest_peers` of a random key) on its own timer.
 pub(crate) const RANDOM_WALK_INTERVAL: Duration = Duration::from_secs(60);
+/// A top-up round that cannot fill its budget asks for a random walk at
+/// once, at most this often (CEO 〔T-156〕 C4: "walk results join the
+/// candidate pool" assumes the walk goes out in time; the 60 s timer alone
+/// left ① short of candidates until t+60 s). One top-up period.
+pub(crate) const SHORTFALL_WALK_EVERY: Duration = Duration::from_secs(10);
 /// Per-peer cooldown after a failed top-up dial: doubles from the first value
 /// up to the cap, ±[`JITTER`]; a success clears it.
 pub(crate) const COOLDOWN_FIRST: Duration = Duration::from_secs(30);
@@ -200,6 +205,11 @@ pub struct TopUpRound {
     /// Top-up dials sent, and failed, since this node started.
     pub dials_total: usize,
     pub failures_total: usize,
+    /// The round chose fewer than its budget, and it sent a random walk.
+    pub short: bool,
+    pub walk_sent: bool,
+    /// Random walks sent for a short round since this node started.
+    pub shortfall_walks_total: usize,
 }
 
 // ---------------------------------------------------------------------
@@ -690,6 +700,8 @@ pub(crate) struct Outbound {
     adopted: HashSet<PeerId>,
     /// The last top-up round's readings (design v5 §5.1, F3).
     pub(crate) last_round: TopUpRound,
+    /// When a short round last sent a random walk.
+    shortfall_walk_at: Option<Instant>,
     /// When each connection from a bootstrap dial was established.
     up_since: HashMap<ConnectionId, Instant>,
     pub(crate) keeper: Keeper,
@@ -713,6 +725,7 @@ impl Outbound {
             walk_pool: Vec::new(),
             adopted: HashSet::new(),
             last_round: TopUpRound::default(),
+            shortfall_walk_at: None,
             adopt_only: false,
             keeper,
             book,
@@ -823,6 +836,7 @@ impl Outbound {
             eligible_by_bucket: by_bucket,
             dials_total: self.last_round.dials_total,
             failures_total: self.last_round.failures_total,
+            shortfall_walks_total: self.last_round.shortfall_walks_total,
             ..TopUpRound::default()
         };
         let budget = self.topup_budget();
@@ -838,6 +852,7 @@ impl Outbound {
         let mut rng = std::mem::replace(&mut self.rng, Rng::new(0));
         let chosen = choose(budget, sources, |p| self.eligible(p, me, is_connected(p), now), &mut rng);
         self.rng = rng;
+        self.last_round.short = chosen.len() < budget;
         let mut dial = Vec::new();
         for (peer, addrs) in chosen {
             if is_connected(&peer) {
@@ -849,6 +864,22 @@ impl Outbound {
             }
         }
         dial
+    }
+
+    /// Whether to send a random walk now: the last round was short, and no
+    /// short round sent one in the last [`SHORTFALL_WALK_EVERY`]. Records
+    /// the walk when it says yes.
+    pub(crate) fn shortfall_walk(&mut self, now: Instant) -> bool {
+        if !self.last_round.short || self.last_round.walk_sent {
+            return false;
+        }
+        if self.shortfall_walk_at.is_some_and(|at| now.saturating_duration_since(at) < SHORTFALL_WALK_EVERY) {
+            return false;
+        }
+        self.shortfall_walk_at = Some(now);
+        self.last_round.walk_sent = true;
+        self.last_round.shortfall_walks_total += 1;
+        true
     }
 
     /// Dialled-OK entries as top-up candidates.
@@ -1370,6 +1401,53 @@ mod tests {
         }
         let share = adopted as f64 / n as f64;
         assert!((0.45..0.55).contains(&share), "adopted share {share}");
+    }
+
+    /// C4 (CEO 〔T-156〕): a short round asks for a walk at once, at most
+    /// once per 10 s; a round that fills its budget does not.
+    #[test]
+    fn a_short_round_sends_one_walk_per_ten_seconds() {
+        let now = Instant::now();
+        let mut o = outbound(vec![addr(1)], now);
+        let me = peer();
+        let few: Vec<PeerId> = (0..3).map(|_| peer()).collect();
+        let none: HashSet<PeerId> = HashSet::new();
+        // 3 candidates for a budget of 8: short.
+        let _ = o.round(&me, one_bucket(&few), |p| none.contains(p), now, 0);
+        assert!(o.last_round.short, "3 candidates for 8: short");
+        assert!(o.shortfall_walk(now), "a short round sends a walk");
+        assert!(!o.shortfall_walk(now), "once per round");
+        // Short again 5 s later: within 10 s of the last walk, no walk.
+        let t5 = now + Duration::from_secs(5);
+        let _ = o.round(&me, one_bucket(&few), |p| none.contains(p), t5, 0);
+        assert!(o.last_round.short);
+        assert!(!o.shortfall_walk(t5), "within 10 s of the last one");
+        // Short again at +10 s: a walk again.
+        let t10 = now + SHORTFALL_WALK_EVERY;
+        let _ = o.round(&me, one_bucket(&few), |p| none.contains(p), t10, 0);
+        assert!(o.shortfall_walk(t10), "10 s on, a short round walks again");
+        assert_eq!(o.last_round.shortfall_walks_total, 2);
+    }
+
+    #[test]
+    fn a_round_that_fills_its_budget_sends_no_walk() {
+        let now = Instant::now();
+        let mut o = outbound(vec![addr(1)], now);
+        let me = peer();
+        let many: Vec<PeerId> = (0..20).map(|_| peer()).collect();
+        let none: HashSet<PeerId> = HashSet::new();
+        let dial = o.round(&me, one_bucket(&many), |p| none.contains(p), now, 0);
+        assert_eq!(dial.len(), 8, "20 candidates fill the budget of 8");
+        assert!(!o.last_round.short);
+        assert!(!o.shortfall_walk(now), "enough candidates: no walk");
+        // A round with no budget left (8 dials in flight) is not short either.
+        for (p, _) in &dial {
+            o.dialing(cid(), Some(*p), DialPurpose::TopUp);
+        }
+        let later = now + SHORTFALL_WALK_EVERY;
+        let _ = o.round(&me, one_bucket(&many), |p| none.contains(p), later, 0);
+        assert!(!o.last_round.short, "no budget left is not a shortfall");
+        assert!(!o.shortfall_walk(later));
     }
 
     #[test]

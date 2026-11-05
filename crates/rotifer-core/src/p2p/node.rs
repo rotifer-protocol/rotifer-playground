@@ -572,6 +572,9 @@ struct PolicyOptions {
     topup_paused: bool,
     keeper_paused: bool,
     adopt_only: bool,
+    /// Kademlia's periodic bootstrap (5 min) off (tests: red team v5 N3,
+    /// and telling top-up's dial from Kademlia's in the restart test).
+    kad_periodic_bootstrap_off: bool,
 }
 
 impl Default for PolicyOptions {
@@ -584,6 +587,7 @@ impl Default for PolicyOptions {
             topup_paused: false,
             keeper_paused: false,
             adopt_only: false,
+            kad_periodic_bootstrap_off: false,
         }
     }
 }
@@ -1013,6 +1017,15 @@ impl Node {
     pub(crate) fn with_outbound_paused(mut self, topup: bool, keeper: bool) -> Self {
         self.policy.topup_paused = topup;
         self.policy.keeper_paused = keeper;
+        self
+    }
+
+    /// Turn Kademlia's periodic bootstrap off. Its automatic bootstrap (a
+    /// query 500 ms after a peer enters a routing table of fewer than 20)
+    /// stays: libp2p-kad 0.49 offers no public switch for it.
+    #[cfg(test)]
+    pub(crate) fn with_kad_periodic_bootstrap_off(mut self) -> Self {
+        self.policy.kad_periodic_bootstrap_off = true;
         self
     }
 
@@ -1721,7 +1734,11 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
         .map_err(|e| NetworkError::Transport(format!("relay client transport: {e}")))?
         .with_behaviour(|key, relay_client| {
             let peer_id = key.public().to_peer_id();
-            let mut kademlia = kad::Behaviour::with_config(peer_id, GeneStore::new(peer_id), kad_config());
+            let mut kad_cfg = kad_config();
+            if options.policy.kad_periodic_bootstrap_off {
+                kad_cfg.set_periodic_bootstrap_interval(None);
+            }
+            let mut kademlia = kad::Behaviour::with_config(peer_id, GeneStore::new(peer_id), kad_cfg);
             kademlia.set_mode(Some(kad::Mode::Server));
             let mut gossipsub = gossipsub::Behaviour::new(
                 gossipsub::MessageAuthenticity::Signed(key.clone()),
@@ -1936,6 +1953,21 @@ async fn run_event_loop(
     outbound.adopt_only = options.policy.adopt_only;
     if outbound.keeper.is_empty() {
         tracing::debug!("no bootstrap peers configured: the bootstrap keeper has nothing to keep");
+    }
+    // The heard-of level goes into the routing table, as Identify's reports
+    // do while running (CEO 〔T-156〕 C1): restart still dials only the
+    // dialled-OK level, but top-up draws from the routing table, so a peer
+    // met through a Kademlia query is a top-up candidate again after a
+    // restart. Bounded like Identify's path: at most
+    // `peerstore::MAX_PERSISTED_PEERS` (64) stored addresses, each through
+    // `feed_kad` (≤ `KAD_ADDRS_PER_PEER` per peer, ≤ `KAD_ADDR_MAX_BYTES`
+    // each); a full k-bucket keeps its entries.
+    for addr in &remembered {
+        if let Some((peer, ma)) = outbound::split_dialable(addr)
+            && peer != local
+        {
+            feed_kad(&mut swarm.behaviour_mut().kademlia, &peer, ma);
+        }
     }
     for (i, ma) in bootstrap_addrs.into_iter().enumerate() {
         dial_tagged(&mut swarm, &mut outbound, ma.into(), None, DialPurpose::Bootstrap(i));
@@ -4064,13 +4096,35 @@ mod tests {
         ignore = "three-node integration: peer-store reconnect over loopback — enable the p2p-integration feature or run with --ignored"
     )]
     fn a_peer_met_through_a_dht_query_is_redialled_on_restart_without_bootstrap() {
+        let first = met_through_a_dht_query_then_restart("default", false);
+        println!("A6 C1 restart variant=default c_first={first:?}");
+    }
+
+    /// The same with Kademlia's periodic bootstrap off (CEO 〔T-156〕 C1
+    /// ruling): C must come back through top-up's own dial, not Kademlia's.
+    /// Kademlia's automatic bootstrap cannot be turned off, so the test
+    /// reads how C's first connection came about instead.
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "three-node integration: peer-store reconnect over loopback — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn a_peer_met_through_a_dht_query_comes_back_through_top_up() {
+        let first = met_through_a_dht_query_then_restart("kad-periodic-off", true);
+        assert_eq!(first, Some(outbound::FirstConnection::TopUp), "top-up itself must redial C");
+    }
+
+    /// B meets C through a Kademlia query, restarts with no bootstrap and A
+    /// gone, and must reconnect to C from its store. Returns how B's first
+    /// connection to C after the restart came about.
+    fn met_through_a_dht_query_then_restart(variant: &str, kad_periodic_off: bool) -> Option<outbound::FirstConnection> {
         // A6 part 1 keeps the restart behaviour above for every peer this node
         // dialled, not only bootstrap nodes: B meets C because a Kademlia
         // query of B's dialled it (C is not B's bootstrap node), then B
         // restarts with no bootstrap and A gone, and must find C from the
         // store alone. Restricting restart to a "dialled on purpose" level
         // (bootstrap, top-up) would turn this red until top-up exists.
-        let dir = std::env::temp_dir().join(format!("rotifer-peerstore-dht-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("rotifer-peerstore-dht-{variant}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("temp dir");
         let b_store = dir.join("b-peers.json");
@@ -4082,7 +4136,7 @@ mod tests {
         let a_addr = a.listen_addrs().into_iter().next().expect("A listen address");
 
         // C on a fixed port, so it is at the same address when B restarts.
-        let mut cfg_c = cfg(39872);
+        let mut cfg_c = cfg(if kad_periodic_off { 39873 } else { 39872 });
         cfg_c.bootstrap_peers = vec![a_addr.clone()];
         let mut c = Node::with_paths(cfg_c, dir.join("c.key"), dir.join("c-peers.json")).expect("C build");
         c.start().expect("C start");
@@ -4110,12 +4164,23 @@ mod tests {
         let mut cfg_b2 = cfg(0);
         cfg_b2.bootstrap_peers = vec![];
         let mut b2 = Node::with_paths(cfg_b2, dir.join("b.key"), b_store).expect("B restart");
+        if kad_periodic_off {
+            b2 = b2.with_kad_periodic_bootstrap_off();
+        }
         b2.start().expect("B restart start");
         await_peer(&b2, &c_peer, "B failed to reconnect to C (met through a DHT query) from the peer store");
+        let r = b2.outbound_report().expect("outbound report");
+        let first = r.first.get(&c_peer).copied();
+        let kad_dialled = r.first.values().filter(|f| **f == outbound::FirstConnection::OtherDial).count();
+        println!(
+            "A6 C1 restart variant={variant} c_first={first:?} topup_peers={} topup_dials_total={} kad_dialled={kad_dialled}",
+            r.topup_peers, r.last_round.dials_total
+        );
 
         let _ = b2.stop();
         let _ = c.stop();
         let _ = std::fs::remove_dir_all(&dir);
+        first
     }
 
     /// Poll until `node` has completed an Identify exchange with `peer`, or fail

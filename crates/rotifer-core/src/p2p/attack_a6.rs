@@ -76,6 +76,11 @@ const A6_ROUNDS: usize = 3;
 /// Rounds in a row without 24 inbound attackers (S4) before the setup is
 /// declared invalid.
 const A6_INVALID_MAX: usize = 3;
+/// How long the attackers get to fill the victim's inbound slots before the
+/// release. 20 s was enough on 8 cores but not on CI's 2 (21–23 of 24 at
+/// release, three invalid rounds in a row; run 42088947923). The
+/// precondition itself (all 24 slots) is unchanged.
+const A6_FILL_WITHIN_S: u64 = 60;
 /// Re-formations short of `mesh_n_low` that still have an honest peer: more
 /// than this many in a round make the round's setup invalid (F5).
 const A6_INVALID_WITH_HONEST_MAX: usize = 1;
@@ -338,7 +343,7 @@ fn run_round(p: &Policy, label: &str) -> Option<Readings> {
     let inbound_attackers = || {
         report(&victim).first.iter().filter(|(p, f)| **f == FirstConnection::Inbound && attacker_ids.contains(*p)).count()
     };
-    let filled = eventually(20, || inbound_attackers() == A6_VICTIM_INBOUND as usize);
+    let filled = eventually(A6_FILL_WITHIN_S, || inbound_attackers() == A6_VICTIM_INBOUND as usize);
     let at_release = inbound_attackers();
     println!(
         "A6 ① policy={} round={label} inbound_attackers_at_release={at_release} valid={}",
@@ -809,7 +814,11 @@ fn a6_bootstrap_keeper_reaches_the_live_one_listed_last() {
 fn a6_bootstrap_keeper_reconnects_only_one() {
     let dir = tempfile::tempdir().unwrap();
     let boots: Vec<Node> = (0..3).map(|i| spawn_quiet_bootstrap(&dir, &format!("boot-{i}"), 0)).collect();
-    let victim = spawn_with(&dir, "victim", boots.iter().map(addr).collect(), |n| n);
+    // Only the keeper may dial: top-up and the random walk are held, the
+    // same isolation as the quiet bootstrap nodes (CI run 42088947923 had 3
+    // connected again with keeper_dials 1->1).
+    let victim = spawn_with(&dir, "victim", boots.iter().map(addr).collect(), |n| n.with_outbound_paused(true, false));
+    victim.set_walk_paused(true).expect("hold the walk");
     assert!(eventually(10, || bootstraps_connected(&victim) == 3), "startup dials all three");
     std::thread::sleep(Duration::from_secs(6));
     let before = report(&victim).keeper_dials;
@@ -823,6 +832,14 @@ fn a6_bootstrap_keeper_reconnects_only_one() {
     std::thread::sleep(Duration::from_secs(10));
     let (later, later_dials) = (bootstraps_connected(&victim), report(&victim).keeper_dials);
     println!("A6 ② only_one reconnected={one} connected_10s_later={later} keeper_dials={dials}->{later_dials}");
+    // Who dialled each connection still up, by first-connection tag.
+    let r = report(&victim);
+    let tags: Vec<String> = boots
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| r.first.get(&b.local_peer_id().0).map(|f| format!("boot-{i}={f:?}")))
+        .collect();
+    println!("A6 ② only_one first_connections {}", tags.join(" "));
     assert!(one, "one bootstrap node back within 30 s");
     assert_eq!((later, later_dials), (1, dials), "one is enough: no further bootstrap dials");
 }

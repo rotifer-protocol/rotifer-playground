@@ -68,6 +68,35 @@ fn a6_bootstrap_keeper_redials_after_a_disconnect() {
     assert!(back, "the keeper must reconnect within 30 s");
 }
 
+/// Regression (T-156 acceptance round 2): a bootstrap node with no free
+/// inbound slot completes the handshake and then denies the connection. The
+/// keeper must treat that as a failure and back off 1 → 16 s (±20 %), not
+/// redial at once: before the fix it dialled about 2,500 times in 10 s.
+/// Shortest waits are 0.8, 1.6, 3.2, 6.4 s, so any 10 s window holds at most
+/// 4 dials (0.8 + 1.6 + 3.2 = 5.6 s, adding 6.4 s passes 10 s). It must keep
+/// trying: by 16 s, at least 3 dials (waits of at most 1.2, 2.4, 4.8 s).
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 keeper — enable the p2p-integration feature or run with --ignored")]
+fn a6_bootstrap_keeper_backs_off_from_a_full_bootstrap() {
+    let (d1, d2, d3) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let mut cfg = config(vec![]);
+    cfg.listen_port = 0;
+    let mut boot = Node::with_keypair_path(cfg, d1.path().join("boot.key")).expect("build").with_max_established_incoming(1);
+    boot.start().expect("start");
+    let filler = spawn_with(&d2, "filler", vec![addr(&boot)], |n| n);
+    assert!(eventually(10, || bootstraps_connected(&filler) == 1), "the filler takes the only inbound slot");
+    let victim = spawn_with(&d3, "victim", vec![addr(&boot)], |n| n);
+    std::thread::sleep(Duration::from_secs(6));
+    let at6 = report(&victim).keeper_dials;
+    std::thread::sleep(Duration::from_secs(10));
+    let at16 = report(&victim).keeper_dials;
+    let denied = boot.connection_denials().inbound_limit;
+    println!("A6 ② full_bootstrap keeper_dials at_6s={at6} at_16s={at16} in_10s={} boot_denied_inbound={denied}", at16 - at6);
+    let _ = boot.stop();
+    assert!(at16 - at6 <= 4, "backoff: at most 4 dials in any 10 s window, got {}", at16 - at6);
+    assert!(at16 >= 3, "the keeper must keep trying: at least 3 dials by 16 s, got {at16}");
+}
+
 /// Regression: the keeper redials from a fresh source port. Redialling from
 /// the listen port right after this node closed the connection reuses the
 /// same TCP 4-tuple, still in TIME_WAIT, and fails with "address in use" for

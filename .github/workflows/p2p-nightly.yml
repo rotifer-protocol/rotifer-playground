@@ -1,0 +1,34 @@
+name: P2P Nightly
+
+# A6's ①-稳 test and its control (crates/rotifer-core/src/p2p/attack_a6.rs,
+# design v5 §5.9.4) take about ten minutes each, so they run once a night
+# instead of in every PR's "P2P Integration Tests" job (CEO, T-156). They
+# are #[ignore] and this job runs them by name.
+#
+# If a night goes red, look for "A6 SETUP INVALID" in the log first: three
+# rounds in a row whose attackers did not fill the victim's inbound slots
+# fail the test without measuring anything.
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  steady:
+    name: A6 ①-稳 (production gossipsub, withheld messages)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+
+      - name: ①-稳 and its control (serial, real loopback nodes)
+        run: cargo test -p rotifer-core --features p2p-integration --lib p2p::attack_a6::a6_withheld_messages -- --ignored --test-threads=1 --nocapture

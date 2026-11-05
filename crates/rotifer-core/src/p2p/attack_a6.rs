@@ -1776,6 +1776,13 @@ fn a6_topup_ground_keys_take_no_majority() {
 // (F7). A red round reruns the test once with new PeerIds (S2); red in
 // both runs fails. The control cuts the victim off from every honest
 // node; delivery must then go red.
+//
+// Nightly only (CEO, T-156): about ten minutes each, so they are #[ignore]
+// and .github/workflows/p2p-nightly.yml runs them by name. A round whose
+// attackers do not fill the inbound slots is invalid and rerun; three in
+// a row fail the test with A6 SETUP INVALID. Readings so far had two
+// invalid rounds, one short of that, so a red night is first checked for
+// setup validity.
 // ---------------------------------------------------------------------
 const STEADY_FIRST: u64 = 30;
 const STEADY_LAST: u64 = 180;
@@ -2003,7 +2010,7 @@ fn run_steady_rounds(control: bool, run: usize) -> Vec<bool> {
 }
 
 #[test]
-#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 ①-稳 — enable the p2p-integration feature or run with --ignored")]
+#[ignore = "A6 ①-稳 — nightly only (CEO, T-156; .github/workflows/p2p-nightly.yml): run with --features p2p-integration -- --ignored"]
 fn a6_withheld_messages_still_reach_the_victim() {
     let first = run_steady_rounds(false, 1);
     println!("A6 ①-稳 run=1 delivered={first:?}");
@@ -2020,7 +2027,7 @@ fn a6_withheld_messages_still_reach_the_victim() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 ①-稳 — enable the p2p-integration feature or run with --ignored")]
+#[ignore = "A6 ①-稳 — nightly only (CEO, T-156; .github/workflows/p2p-nightly.yml): run with --features p2p-integration -- --ignored"]
 fn a6_withheld_messages_control_cut_off_from_honest() {
     let delivered = run_steady_rounds(true, 1);
     println!("A6 ①-稳 control delivered={delivered:?}");

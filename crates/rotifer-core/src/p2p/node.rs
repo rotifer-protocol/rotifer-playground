@@ -171,6 +171,9 @@ enum Command {
     SetOutboundPaused { topup: bool, keeper: bool, resp: oneshot::Sender<()> },
     #[cfg(test)]
     SetWalkPaused { paused: bool, resp: oneshot::Sender<()> },
+    /// Messages withheld so far.
+    #[cfg(test)]
+    Withheld(oneshot::Sender<u64>),
     /// Put these peers first among top-up's candidates (the K2 control).
     #[cfg(test)]
     PreferCandidates(Vec<(Libp2pPeerId, Vec<Multiaddr>)>),
@@ -538,6 +541,12 @@ pub struct ReceivedMessage {
     pub source: Option<String>,
     /// Wall-clock arrival time (Unix ms), the time validation ran against.
     pub received_at_ms: u64,
+    /// The peer that forwarded it, and whether it was in our mesh for the
+    /// topic then (design v5 §5.9.4, ①-稳: mesh push or IHAVE/IWANT).
+    #[cfg(test)]
+    pub via: String,
+    #[cfg(test)]
+    pub via_mesh: bool,
 }
 
 /// GossipSub messages received by the node, shared between the synchronous API
@@ -785,6 +794,9 @@ pub struct Node {
     policy: PolicyOptions,
     /// Peers this node never dials (test switch; empty outside tests).
     deny_dial: Vec<Libp2pPeerId>,
+    /// Authors whose messages this node ignores instead of forwarding (test
+    /// switch; empty outside tests).
+    withhold_from: HashSet<String>,
     /// How often this node publishes its heartbeat.
     heartbeat_interval: Duration,
     /// How often peer scores are recomputed besides after each heartbeat.
@@ -881,6 +893,7 @@ impl Node {
             colocation: Arc::new(Mutex::new(ColocationStats::default())),
             policy: PolicyOptions::default(),
             deny_dial: Vec::new(),
+            withhold_from: HashSet::new(),
             heartbeat_interval: Duration::from_secs(heartbeat::HEARTBEAT_INTERVAL_SECS),
             score_refresh_interval: por::SCORE_REFRESH_INTERVAL,
             p5_p6_only_scores: false,
@@ -1119,6 +1132,16 @@ impl Node {
         self
     }
 
+    /// Ignore every message written by one of `authors` (design v5 §5.9.4,
+    /// ①-稳: an attacker that withholds honest messages). An ignored message
+    /// leaves the message cache, so it is neither forwarded nor offered by
+    /// IHAVE (libp2p-gossipsub 0.50 `report_message_validation_result`).
+    #[cfg(test)]
+    pub(crate) fn with_withhold_from(mut self, authors: Vec<Libp2pPeerId>) -> Self {
+        self.withhold_from = authors.iter().map(|p| p.to_string()).collect();
+        self
+    }
+
     /// Turn Kademlia's periodic bootstrap off. Its automatic bootstrap (a
     /// query 500 ms after a peer enters a routing table of fewer than 20)
     /// stays: libp2p-kad 0.49 offers no public switch for it.
@@ -1287,6 +1310,14 @@ impl Node {
     pub(crate) fn set_walk_paused(&self, paused: bool) -> Result<(), NetworkError> {
         let (tx, rx) = oneshot::channel();
         self.send_command(Command::SetWalkPaused { paused, resp: tx })?;
+        self.block_on_query(rx)
+    }
+
+    /// Messages this node has withheld (see [`Self::with_withhold_from`]).
+    #[cfg(test)]
+    pub(crate) fn withheld(&self) -> Result<u64, NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::Withheld(tx))?;
         self.block_on_query(rx)
     }
 
@@ -1766,6 +1797,7 @@ impl Node {
             p5_p6_only_scores: self.p5_p6_only_scores,
             policy: self.policy,
             deny_dial: self.deny_dial.clone(),
+            withhold_from: self.withhold_from.clone(),
         })
     }
 }
@@ -1792,6 +1824,8 @@ struct SwarmOptions {
     policy: PolicyOptions,
     /// See `Node::deny_dial`.
     deny_dial: Vec<Libp2pPeerId>,
+    /// See `Node::withhold_from`.
+    withhold_from: HashSet<String>,
 }
 
 /// Parse `NetworkConfig::relays`. A relay is configured on purpose, so a bad
@@ -2072,6 +2106,9 @@ async fn run_event_loop(
     outbound.topup_paused = options.policy.topup_paused;
     outbound.keeper_paused = options.policy.keeper_paused;
     outbound.adopt_only = options.policy.adopt_only;
+    // Messages ①-稳's withhold switch has ignored.
+    #[cfg(test)]
+    let mut withheld: u64 = 0;
     if outbound.keeper.is_empty() {
         tracing::debug!("no bootstrap peers configured: the bootstrap keeper has nothing to keep");
     }
@@ -2464,9 +2501,17 @@ async fn run_event_loop(
                     // Only gene announcements are kept for the API; heartbeats
                     // update the heartbeat desk instead.
                     let mut surface = false;
+                    // ①-稳's test switch; the set is empty outside tests.
+                    let withhold = source.as_ref().is_some_and(|s| options.withhold_from.contains(s));
                     let acceptance = if security.record_message(&sender).is_err() {
                         if let Ok(mut n) = rate_limited.lock() {
                             *n += 1;
+                        }
+                        MessageAcceptance::Ignore
+                    } else if withhold {
+                        #[cfg(test)]
+                        {
+                            withheld += 1;
                         }
                         MessageAcceptance::Ignore
                     } else if let Some(validate) = topic_validator(&topic) {
@@ -2521,13 +2566,28 @@ async fn run_event_loop(
                         }
                         MessageAcceptance::Ignore
                     };
+                    #[cfg(test)]
+                    let via_mesh = swarm
+                        .behaviour()
+                        .gossipsub
+                        .mesh_peers(&message.topic)
+                        .any(|p| *p == propagation_source);
                     if surface
                         && matches!(acceptance, MessageAcceptance::Accept)
                         && let Ok(mut msgs) = received.lock()
                     {
                         push_bounded(
                             &mut msgs,
-                            ReceivedMessage { topic, data: message.data, source, received_at_ms: now_ms },
+                            ReceivedMessage {
+                                topic,
+                                data: message.data,
+                                source,
+                                received_at_ms: now_ms,
+                                #[cfg(test)]
+                                via: propagation_source.to_string(),
+                                #[cfg(test)]
+                                via_mesh,
+                            },
                             MAX_RECEIVED_MESSAGES,
                         );
                     }
@@ -3041,6 +3101,10 @@ async fn run_event_loop(
                 Some(Command::SetWalkPaused { paused, resp }) => {
                     outbound.walk_paused = paused;
                     let _ = resp.send(());
+                }
+                #[cfg(test)]
+                Some(Command::Withheld(resp)) => {
+                    let _ = resp.send(withheld);
                 }
                 #[cfg(test)]
                 Some(Command::PreferCandidates(peers)) => {
@@ -4062,7 +4126,7 @@ mod tests {
         for i in 0..10u8 {
             push_bounded(
                 &mut buf,
-                ReceivedMessage { topic: "t".into(), data: vec![i], source: None, received_at_ms: 0 },
+                ReceivedMessage { topic: "t".into(), data: vec![i], source: None, received_at_ms: 0, via: String::new(), via_mesh: false },
                 4,
             );
         }

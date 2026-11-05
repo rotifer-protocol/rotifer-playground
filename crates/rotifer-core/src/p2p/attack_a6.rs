@@ -1639,3 +1639,274 @@ fn a6_topup_ground_keys_take_no_majority() {
         all > GRIND_LINE
     );
 }
+
+// ---------------------------------------------------------------------
+// ①-稳: production gossipsub settings, no re-formation, attackers that
+// withhold honest messages (design v5 §5.9.4, F6 + F7).
+//
+// ①'s population (36 attackers, 12 honest, 3 of 4 bootstrap nodes the
+// attacker's, 24 inbound slots, top-up held until they are full). Every
+// gossipsub setting is libp2p's default here: no short `prune_backoff`,
+// no re-formation. Attackers ignore every message an honest node wrote,
+// so it leaves their cache: they neither forward it nor offer it by
+// IHAVE. The publisher and the victim never dial each other, so
+// `flood_publish` cannot hand the victim a message directly.
+//
+// From 30 s to 180 s after the release the publisher sends one
+// announcement every 10 s (16). Each must reach the victim within 10 s
+// (F7). A red round reruns the test once with new PeerIds (S2); red in
+// both runs fails. The control cuts the victim off from every honest
+// node; delivery must then go red.
+// ---------------------------------------------------------------------
+const STEADY_FIRST: u64 = 30;
+const STEADY_LAST: u64 = 180;
+const STEADY_EVERY: u64 = 10;
+/// F7's bound, a starting point to calibrate from the readings (heartbeat
+/// 1 s; IHAVE within 1–3 heartbeats).
+const STEADY_WITHIN_MS: u64 = 10_000;
+const STEADY_ROUNDS: usize = 3;
+
+struct Steady {
+    published: usize,
+    on_time: usize,
+    /// Per announcement: delay in ms (None: never arrived), whether it came
+    /// from a mesh peer.
+    arrivals: Vec<(Option<u64>, bool)>,
+    snapshots_with_honest: usize,
+    snapshots: usize,
+    longest_all_attacker_s: u64,
+}
+
+impl Steady {
+    fn delivered(&self) -> bool {
+        self.on_time == self.published
+    }
+}
+
+/// One round with fresh PeerIds; `None` when the attackers did not fill
+/// the 24 inbound slots before the release (as in ①).
+fn run_steady_round(label: &str, control: bool) -> Option<Steady> {
+    let tag = if control { "①-稳 control" } else { "①-稳" };
+    let dir = tempfile::tempdir().expect("temp dir");
+    let victim_key = Keypair::generate_ed25519();
+    let victim_id = id_of(&victim_key);
+    let honest_keys: Vec<Keypair> = (0..=A6_HONEST).map(|_| Keypair::generate_ed25519()).collect();
+    let honest_peers: Vec<libp2p::PeerId> = honest_keys.iter().map(id_of).collect();
+    let publisher_id = honest_peers[1];
+
+    let honest_build = |i: usize| {
+        move |n: Node| {
+            let n = n.with_p6_loopback_whitelist();
+            // The publisher never dials the victim; in the control no honest
+            // node does.
+            if control || i == 1 { n.with_deny_dial(vec![victim_id]) } else { n }
+        }
+    };
+    let honest_boot = spawn_as(&dir, "honest-boot", &honest_keys[0], vec![], honest_build(0));
+    let honest: Vec<Node> = (1..=A6_HONEST)
+        .map(|i| spawn_as(&dir, &format!("honest-{i}"), &honest_keys[i], vec![addr(&honest_boot)], honest_build(i)))
+        .collect();
+    let publisher = &honest[0];
+    if !eventually(60, || honest_boot.dht_peers().len() >= A6_HONEST * 3 / 4) {
+        setup_invalid(format!("{tag} round={label}: the honest side did not connect"));
+    }
+
+    let withhold = |n: Node| n.with_p6_loopback_whitelist().with_withhold_from(honest_peers.clone());
+    // In the control the attackers meet the honest side through their
+    // first bootstrap node, so they hold the announcements and withhold
+    // them; otherwise the control would be red for want of a path, not
+    // because of the withholding.
+    let first_boot = if control { vec![addr(&honest_boot)] } else { vec![] };
+    let mut boots = vec![spawn_with(&dir, "attacker-boot-0", first_boot, withhold)];
+    for j in 1..A6_ATTACKER_BOOTSTRAPS {
+        let b = spawn_with(&dir, &format!("attacker-boot-{j}"), vec![addr(&boots[0])], withhold);
+        boots.push(b);
+    }
+    let attacker_addrs: Vec<String> = boots.iter().map(addr).collect();
+    let mut victim_boot = attacker_addrs.clone();
+    if !control {
+        victim_boot.push(addr(&honest_boot));
+    }
+    let denied: Vec<libp2p::PeerId> = if control { honest_peers.clone() } else { vec![publisher_id] };
+    let victim = spawn_as(&dir, "victim", &victim_key, victim_boot, |n| {
+        n.with_max_established_incoming(A6_VICTIM_INBOUND)
+            .with_p6_loopback_whitelist()
+            .with_outbound_paused(true, true)
+            .with_deny_dial(denied)
+    });
+    let attackers: Vec<Node> = (0..A6_ATTACKERS)
+        .map(|i| {
+            spawn_with(
+                &dir,
+                &format!("attacker-{i}"),
+                vec![addr(&victim), attacker_addrs[i % A6_ATTACKER_BOOTSTRAPS].clone()],
+                withhold,
+            )
+        })
+        .collect();
+    let attacker_ids: HashSet<String> = boots.iter().chain(attackers.iter()).map(|n| n.local_peer_id().0).collect();
+    let honest_ids: HashSet<String> = honest_peers.iter().map(|p| p.to_string()).collect();
+    let publisher_name = publisher_id.to_string();
+
+    let inbound_attackers = || {
+        report(&victim).first.iter().filter(|(p, f)| **f == FirstConnection::Inbound && attacker_ids.contains(*p)).count()
+    };
+    let filled = eventually(20, || inbound_attackers() == A6_VICTIM_INBOUND as usize);
+    println!("A6 {tag} round={label} inbound_attackers_at_release={} valid={filled}", inbound_attackers());
+    if !filled {
+        return None;
+    }
+    let released = Instant::now();
+    victim.set_outbound_paused(false, false).expect("release");
+
+    let mut published: Vec<(String, u64)> = Vec::new();
+    let (mut with_honest, mut snapshots, mut streak, mut longest) = (0, 0, 0u64, 0u64);
+    for (k, at) in (STEADY_FIRST..=STEADY_LAST).step_by(STEADY_EVERY as usize).enumerate() {
+        std::thread::sleep(Duration::from_secs(at).saturating_sub(released.elapsed()));
+        let r = report(&victim);
+        if r.first.contains_key(&publisher_name) {
+            setup_invalid(format!("{tag} round={label} t={at}s: the victim is connected to the publisher"));
+        }
+        let mesh = victim.mesh_peers(ANNOUNCEMENTS_TOPIC).expect("mesh");
+        let mesh_honest = mesh.iter().filter(|p| honest_ids.contains(*p)).count();
+        let mesh_self_dialed = mesh.iter().filter(|p| r.first.get(*p).is_some_and(|f| f.is_outbound())).count();
+        let honest_connected = honest_ids.iter().filter(|p| r.first.contains_key(*p)).count();
+        let topup_honest = r.topup.keys().filter(|p| honest_ids.contains(*p)).count();
+        snapshots += 1;
+        if mesh_honest > 0 {
+            with_honest += 1;
+            streak = 0;
+        } else {
+            streak += STEADY_EVERY;
+            longest = longest.max(streak);
+        }
+        println!(
+            "A6 {tag} round={label} t={at}s mesh={} mesh_honest={mesh_honest} mesh_self_dialed={mesh_self_dialed} \
+             honest_connected={honest_connected} topup={} topup_honest={topup_honest}",
+            mesh.len(),
+            r.topup.len()
+        );
+        let gene = id(&format!("a6-steady-{label}-{control}-{k}"));
+        let ann = announcement(&gene, "a6-steady");
+        publisher.publish(ANNOUNCEMENTS_TOPIC, &encode_announcement(&ann)).expect("publish");
+        published.push((gene, ann.timestamp_ms));
+    }
+    let last_due = Duration::from_secs(STEADY_LAST) + Duration::from_millis(STEADY_WITHIN_MS + 1000);
+    std::thread::sleep(last_due.saturating_sub(released.elapsed()));
+
+    // Arrivals at the victim, from the publisher, by gene.
+    let mut arrived: std::collections::HashMap<String, (u64, String, bool)> = std::collections::HashMap::new();
+    for m in victim.received_messages() {
+        if m.topic != ANNOUNCEMENTS_TOPIC || m.source.as_deref() != Some(publisher_name.as_str()) {
+            continue;
+        }
+        if let super::messages::Verdict::Accept(a) =
+            super::messages::validate_gossip(&m.data, m.source.as_deref(), m.received_at_ms)
+        {
+            arrived.entry(a.gene_id).or_insert((m.received_at_ms, m.via, m.via_mesh));
+        }
+    }
+    let via_attacker = arrived.values().filter(|(_, via, _)| attacker_ids.contains(via)).count();
+    let withheld: u64 = boots.iter().chain(attackers.iter()).map(|n| n.withheld().unwrap_or(0)).sum();
+    println!("A6 {tag} round={label} attackers_withheld={withheld} arrived_via_attacker={via_attacker}");
+    // The preconditions: no announcement reached the victim through an
+    // attacker; in the control the attackers did hold and withhold them.
+    if via_attacker > 0 {
+        setup_invalid(format!(
+            "{tag} round={label}: {via_attacker} announcements reached the victim through an attacker; withholding did not hold"
+        ));
+    }
+    if control && withheld == 0 {
+        setup_invalid(format!("{tag} round={label}: the attackers withheld nothing; they never met the honest side"));
+    }
+    let mut arrivals = Vec::new();
+    for (k, (gene, sent_ms)) in published.iter().enumerate() {
+        let a = arrived.get(gene).map(|(at, _, mesh)| (at.saturating_sub(*sent_ms), *mesh));
+        println!(
+            "A6 {tag} round={label} announcement={k} delay_ms={} from={}",
+            a.map(|(d, _)| d.to_string()).unwrap_or_else(|| "never".into()),
+            match a {
+                Some((_, true)) => "mesh",
+                Some((_, false)) => "gossip",
+                None => "-",
+            }
+        );
+        arrivals.push((a.map(|(d, _)| d), a.is_some_and(|(_, m)| m)));
+    }
+    let on_time = arrivals.iter().filter(|(d, _)| d.is_some_and(|d| d <= STEADY_WITHIN_MS)).count();
+    let s = Steady {
+        published: published.len(),
+        on_time,
+        arrivals,
+        snapshots_with_honest: with_honest,
+        snapshots,
+        longest_all_attacker_s: longest,
+    };
+    let delays: Vec<u64> = s.arrivals.iter().filter_map(|(d, _)| *d).collect();
+    println!(
+        "A6 {tag} round={label} on_time={}/{} max_delay_ms={} from_mesh={} snapshots_with_honest={}/{} \
+         longest_all_attacker_s={} delivered={}",
+        s.on_time,
+        s.published,
+        delays.iter().max().map(|d| d.to_string()).unwrap_or_else(|| "-".into()),
+        s.arrivals.iter().filter(|(_, m)| *m).count(),
+        s.snapshots_with_honest,
+        s.snapshots,
+        s.longest_all_attacker_s,
+        ok(s.delivered())
+    );
+    drop((attackers, boots, honest, honest_boot));
+    Some(s)
+}
+
+/// Three valid rounds; whether each delivered every announcement on time.
+fn run_steady_rounds(control: bool, run: usize) -> Vec<bool> {
+    let mut delivered = Vec::new();
+    let (mut invalid_in_a_row, mut tried) = (0, 0);
+    while delivered.len() < STEADY_ROUNDS {
+        tried += 1;
+        match run_steady_round(&format!("{run}.{tried}"), control) {
+            Some(s) => {
+                invalid_in_a_row = 0;
+                delivered.push(s.delivered());
+            }
+            None => {
+                invalid_in_a_row += 1;
+                if invalid_in_a_row >= A6_INVALID_MAX {
+                    setup_invalid(format!(
+                        "①-稳: {invalid_in_a_row} rounds in a row without {A6_VICTIM_INBOUND} inbound attackers at release"
+                    ));
+                }
+            }
+        }
+    }
+    delivered
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 ①-稳 — enable the p2p-integration feature or run with --ignored")]
+fn a6_withheld_messages_still_reach_the_victim() {
+    let first = run_steady_rounds(false, 1);
+    println!("A6 ①-稳 run=1 delivered={first:?}");
+    if first.iter().all(|d| *d) {
+        return;
+    }
+    // S2: a red round reruns the test once with new PeerIds.
+    let second = run_steady_rounds(false, 2);
+    println!("A6 ①-稳 run=2 delivered={second:?}");
+    assert!(
+        second.iter().all(|d| *d),
+        "①-稳: an announcement missed the {STEADY_WITHIN_MS} ms bound in both runs ({first:?}, {second:?})"
+    );
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 ①-稳 — enable the p2p-integration feature or run with --ignored")]
+fn a6_withheld_messages_control_cut_off_from_honest() {
+    let delivered = run_steady_rounds(true, 1);
+    println!("A6 ①-稳 control delivered={delivered:?}");
+    assert!(
+        delivered.iter().all(|d| !*d),
+        "①-稳 control: with only attackers around, an announcement still arrived on time; the test is void, report to the CEO"
+    );
+}

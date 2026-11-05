@@ -2106,6 +2106,9 @@ async fn run_event_loop(
     outbound.topup_paused = options.policy.topup_paused;
     outbound.keeper_paused = options.policy.keeper_paused;
     outbound.adopt_only = options.policy.adopt_only;
+    // Addresses we dialled, held until Identify shows the peer speaks
+    // Rotifer's DHT (see `record_heard_of`).
+    let mut unconfirmed_dials: HashMap<Libp2pPeerId, Vec<Multiaddr>> = HashMap::new();
     // Messages ①-稳's withhold switch has ignored.
     #[cfg(test)]
     let mut withheld: u64 = 0;
@@ -2383,10 +2386,15 @@ async fn run_event_loop(
                     // reachable again by definition. An inbound connection's
                     // remote address is the peer's ephemeral source port, which
                     // is useless to dial back.
-                    if endpoint.is_dialer()
-                        && let Ok(mut met) = met_peers.lock()
-                    {
-                        remember(&mut met, &addr, &peer_id);
+                    if endpoint.is_dialer() {
+                        let known_dht = discovered.lock().is_ok_and(|d| d.contains(&peer_id.to_string()));
+                        if known_dht {
+                            if let Ok(mut met) = met_peers.lock() {
+                                remember(&mut met, &addr, &peer_id);
+                            }
+                        } else {
+                            note_unconfirmed_dial(&mut unconfirmed_dials, peer_id, addr);
+                        }
                     }
                 }
                 // Refusals by our own limits are counted by cause so load
@@ -2403,6 +2411,9 @@ async fn run_event_loop(
                     }
                 }
                 SwarmEvent::ConnectionClosed { peer_id, connection_id, num_established, .. } => {
+                    if num_established == 0 {
+                        unconfirmed_dials.remove(&peer_id);
+                    }
                     colocated.closed(connection_id);
                     if let Some(conns) = peer_conns.get_mut(&peer_id) {
                         conns.retain(|c| *c != connection_id);
@@ -2660,11 +2671,11 @@ async fn run_event_loop(
                             peers.remove(&peer_id.to_string());
                         }
                     }
-                    for addr in info.listen_addrs {
-                        if let Ok(mut met) = met_peers.lock() {
-                            remember(&mut met, &addr, &peer_id);
-                        }
-                        if speaks_dht {
+                    if let Ok(mut met) = met_peers.lock() {
+                        record_heard_of(&mut met, &mut unconfirmed_dials, &peer_id, speaks_dht, &info.listen_addrs);
+                    }
+                    if speaks_dht {
+                        for addr in info.listen_addrs {
                             feed_kad(&mut swarm.behaviour_mut().kademlia, &peer_id, addr);
                         }
                     }
@@ -3627,6 +3638,40 @@ fn spawn_jwks_fetch(job: FetchJob, tx: &mpsc::UnboundedSender<(FetchJob, Result<
         let result = por::fetch_jwks(&job.url);
         let _ = tx.send((job, result));
     });
+}
+
+/// Hold an address we dialled until Identify says whether the peer speaks
+/// Rotifer's DHT (at most `KAD_ADDRS_PER_PEER` per peer).
+fn note_unconfirmed_dial(unconfirmed: &mut HashMap<Libp2pPeerId, Vec<Multiaddr>>, peer: Libp2pPeerId, addr: Multiaddr) {
+    let held = unconfirmed.entry(peer).or_default();
+    if held.len() < KAD_ADDRS_PER_PEER && !held.contains(&addr) {
+        held.push(addr);
+    }
+}
+
+/// The heard-of level of the peer store records only peers that speak
+/// Rotifer's DHT (CEO 〔T-156〕). At startup that level feeds the routing
+/// table (design v5 §1.6), and top-up draws from the routing table, so a
+/// peer that does not answer Kademlia would only be a candidate that never
+/// helps a lookup. When Identify reports a peer, its held dialled addresses
+/// and its listen addresses are recorded if it speaks the DHT; otherwise
+/// they are dropped, along with anything recorded for it before.
+fn record_heard_of(
+    met: &mut Vec<String>,
+    unconfirmed: &mut HashMap<Libp2pPeerId, Vec<Multiaddr>>,
+    peer: &Libp2pPeerId,
+    speaks_dht: bool,
+    listen_addrs: &[Multiaddr],
+) {
+    let dialled = unconfirmed.remove(peer).unwrap_or_default();
+    if !speaks_dht {
+        let suffix = format!("/p2p/{peer}");
+        met.retain(|a| !a.ends_with(&suffix));
+        return;
+    }
+    for addr in dialled.iter().chain(listen_addrs) {
+        remember(met, addr, peer);
+    }
 }
 
 /// Record a peer address in dialable form (`<transport>/p2p/<peer-id>`, the same
@@ -5194,6 +5239,36 @@ mod tests {
         assert!(matches!(node.put_record(&gene_key, b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"/rotifer/gene/", b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"other/key", b"x"), Err(NetworkError::NotConnected)));
+    }
+
+    /// CEO 〔T-156〕: a peer that does not speak Rotifer's DHT never enters
+    /// the heard-of level, whether we dialled it or it listed addresses.
+    #[test]
+    fn a_peer_without_the_dht_is_not_heard_of() {
+        let (dht, plain) = (Libp2pPeerId::random(), Libp2pPeerId::random());
+        let dialled: Multiaddr = "/ip4/192.0.2.1/tcp/4001".parse().unwrap();
+        let listen: Vec<Multiaddr> = vec!["/ip4/192.0.2.2/tcp/4001".parse().unwrap()];
+        let (mut met, mut unconfirmed) = (Vec::new(), HashMap::new());
+        note_unconfirmed_dial(&mut unconfirmed, plain, dialled.clone());
+        note_unconfirmed_dial(&mut unconfirmed, dht, dialled.clone());
+        assert!(met.is_empty(), "nothing is heard of before Identify");
+        record_heard_of(&mut met, &mut unconfirmed, &plain, false, &listen);
+        assert!(met.is_empty(), "no DHT: neither the dialled nor the listen address is recorded");
+        record_heard_of(&mut met, &mut unconfirmed, &dht, true, &listen);
+        assert_eq!(met, vec![format!("{dialled}/p2p/{dht}"), format!("{}/p2p/{dht}", listen[0])]);
+        assert!(unconfirmed.is_empty(), "Identify settles every held address");
+    }
+
+    #[test]
+    fn a_peer_that_stops_offering_the_dht_leaves_the_heard_of_level() {
+        let (keep, gone) = (Libp2pPeerId::random(), Libp2pPeerId::random());
+        let listen: Vec<Multiaddr> = vec!["/ip4/192.0.2.3/tcp/4001".parse().unwrap()];
+        let (mut met, mut unconfirmed) = (Vec::new(), HashMap::new());
+        record_heard_of(&mut met, &mut unconfirmed, &keep, true, &listen);
+        record_heard_of(&mut met, &mut unconfirmed, &gone, true, &listen);
+        assert_eq!(met.len(), 2);
+        record_heard_of(&mut met, &mut unconfirmed, &gone, false, &listen);
+        assert_eq!(met, vec![format!("{}/p2p/{keep}", listen[0])]);
     }
 
     /// A node whose identity and peer store live in `dir`, never in

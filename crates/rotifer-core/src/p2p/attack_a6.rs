@@ -79,7 +79,8 @@ const A6_INVALID_MAX: usize = 3;
 /// How long the attackers get to fill the victim's inbound slots before the
 /// release. 20 s was enough on 8 cores but not on CI's 2 (21–23 of 24 at
 /// release, three invalid rounds in a row; run 42088947923). The
-/// precondition itself (all 24 slots) is unchanged.
+/// precondition itself (all 24 slots) is unchanged. ①-稳's rounds use the
+/// same wait.
 const A6_FILL_WITHIN_S: u64 = 60;
 /// Re-formations short of `mesh_n_low` that still have an honest peer: more
 /// than this many in a round make the round's setup invalid (F5).
@@ -1702,7 +1703,8 @@ fn a6_topup_ground_keys_take_no_majority() {
 // and .github/workflows/p2p-nightly.yml runs them by name. A round whose
 // attackers do not fill the inbound slots is invalid and rerun; three in
 // a row fail the test with A6 SETUP INVALID. Readings so far had two
-// invalid rounds, one short of that, so a red night is first checked for
+// invalid rounds, one short of that, with a 20 s fill wait; the wait is
+// now A6_FILL_WITHIN_S (60 s). A red night is still first checked for
 // setup validity.
 // ---------------------------------------------------------------------
 const STEADY_FIRST: u64 = 30;
@@ -1798,7 +1800,7 @@ fn run_steady_round(label: &str, control: bool) -> Option<Steady> {
     let inbound_attackers = || {
         report(&victim).first.iter().filter(|(p, f)| **f == FirstConnection::Inbound && attacker_ids.contains(*p)).count()
     };
-    let filled = eventually(20, || inbound_attackers() == A6_VICTIM_INBOUND as usize);
+    let filled = eventually(A6_FILL_WITHIN_S, || inbound_attackers() == A6_VICTIM_INBOUND as usize);
     println!("A6 {tag} round={label} inbound_attackers_at_release={} valid={filled}", inbound_attackers());
     if !filled {
         return None;

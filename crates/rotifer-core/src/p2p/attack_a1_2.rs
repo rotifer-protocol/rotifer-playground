@@ -399,6 +399,12 @@ fn a1_2_forged_dht_records_are_refused_unstored_and_unfindable() {
 // after it, gets through.
 // ---------------------------------------------------------------------
 
+/// The victim allows each peer 10 messages per 1000 ms window
+/// (`security.rs`); a message over that is ignored and counted as
+/// rate-limited, never as invalid. Each forged form waits this long first,
+/// so it lands in an empty window (T-160).
+const FORM_GAP: Duration = Duration::from_millis(1100);
+
 /// Publish valid controls from `raw` until the victim has heard one.
 fn await_control(victim: &Node, raw: &Raw, label: &str) {
     let gene = id(label);
@@ -439,7 +445,9 @@ fn a1_2_forged_gossip_announcements_are_refused_and_unfindable() {
     ];
 
     let invalid_before = victim.invalid_message_count();
+    let rate_limited_before = victim.rate_limited_count();
     for (n, (label, ann)) in forms.iter().enumerate() {
+        std::thread::sleep(FORM_GAP);
         raw.publish(encode_announcement(ann));
         await_control(&victim, &raw, &format!("gossip-control-{}", n + 1));
         let surfaced = heard(&victim, &ann.gene_id);
@@ -448,7 +456,15 @@ fn a1_2_forged_gossip_announcements_are_refused_and_unfindable() {
         assert!(!surfaced && !found, "{label}: a forged announcement must be refused");
     }
     let invalid = victim.invalid_message_count() - invalid_before;
-    println!("A1-2 forged-gossip rejected_and_counted={invalid} of {} forms", forms.len());
+    let rate_limited = victim.rate_limited_count() - rate_limited_before;
+    println!("A1-2 forged-gossip rejected_and_counted={invalid} of {} forms rate_limited={rate_limited}", forms.len());
+    // A rate-limited form is ignored before validation, so it would show up
+    // below as a form "silently ignored". Say what really happened.
+    assert_eq!(
+        rate_limited, 0,
+        "被限流了 (rate-limited): the victim rate-limited {rate_limited} message(s) from the attacker during the forms, \
+         so the count below proves nothing; the test's pacing is at fault, not validation"
+    );
     assert_eq!(invalid, forms.len() as u64, "every form is rejected and counted, none silently ignored");
 
     // Impersonation: unsigned messages naming an honest peer as their

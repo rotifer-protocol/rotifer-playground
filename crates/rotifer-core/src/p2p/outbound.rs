@@ -33,6 +33,8 @@ pub(crate) const KEEPER_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 pub(crate) struct Rng(u64);
 
 impl Rng {
+    /// A fixed seed, for repeatable unit tests.
+    #[cfg(test)]
     pub(crate) fn new(seed: u64) -> Self {
         Self(seed)
     }

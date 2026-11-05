@@ -102,9 +102,6 @@ struct Policy {
     /// Control for c+d: attackers first among top-up candidates, connected
     /// (adoptable) ones included.
     attackers_first: bool,
-    /// The CEO's quota experiment (〔T-156〕): adopt up to this many peers
-    /// that dialled in. `None` everywhere but the experiment.
-    inbound_quota: Option<usize>,
 }
 
 #[derive(Debug, Default)]
@@ -116,10 +113,6 @@ struct Sample {
     topup_honest: usize,
     topup_adopted: usize,
     topup_dialled: usize,
-    /// Adopted top-up peers whose first connection was inbound (only the
-    /// quota experiment can adopt them), by side.
-    adopted_inbound_attackers: usize,
-    adopted_inbound_honest: usize,
     mesh: usize,
     mesh_self_dialed: usize,
     mesh_honest: usize,
@@ -173,12 +166,6 @@ struct Verdict {
     e_rate: f64,
     /// Re-formations short of `mesh_n_low` that had an honest peer (F5).
     invalid_with_honest: usize,
-    /// Over the round's samples: the attackers' mean share of the top-up
-    /// peers, the mean honest top-up peers, the most inbound attackers
-    /// adopted (the quota experiment's readings).
-    topup_share: f64,
-    topup_honest: f64,
-    adopted_inbound_attackers: usize,
 }
 
 impl Verdict {
@@ -205,22 +192,7 @@ fn judge(r: &Readings) -> Verdict {
     let counted = r.reforms.iter().filter(|m| m.valid() || m.mesh_honest == 0).count();
     let e_rate = with_honest as f64 / counted.max(1) as f64;
     let invalid_with_honest = r.reforms.iter().filter(|m| !m.valid() && m.mesh_honest > 0).count();
-    let n = r.samples.len().max(1) as f64;
-    let topup_share =
-        r.samples.iter().map(|s| s.topup_attackers as f64 / s.topup.max(1) as f64).sum::<f64>() / n;
-    let topup_honest = r.samples.iter().map(|s| s.topup_honest as f64).sum::<f64>() / n;
-    let adopted_inbound_attackers = r.samples.iter().map(|s| s.adopted_inbound_attackers).max().unwrap_or(0);
-    Verdict {
-        a,
-        b,
-        cd,
-        e: e_rate >= A6_E_MIN,
-        e_rate,
-        invalid_with_honest,
-        topup_share,
-        topup_honest,
-        adopted_inbound_attackers,
-    }
+    Verdict { a, b, cd, e: e_rate >= A6_E_MIN, e_rate, invalid_with_honest }
 }
 
 /// The k-bucket `peer` falls in as seen from `me`.
@@ -254,10 +226,6 @@ fn sample(victim: &Node, at: u64, attackers: &HashSet<String>, honest: &HashSet<
         match way {
             TopUpWay::Adopted => s.topup_adopted += 1,
             TopUpWay::Dialled => s.topup_dialled += 1,
-        }
-        if *way == TopUpWay::Adopted && r.first.get(peer) == Some(&FirstConnection::Inbound) {
-            s.adopted_inbound_attackers += usize::from(attackers.contains(peer));
-            s.adopted_inbound_honest += usize::from(honest.contains(peer));
         }
     }
     for (peer, how) in &r.first {
@@ -348,19 +316,14 @@ fn run_round(p: &Policy, label: &str) -> Option<Readings> {
 
     let mut victim_boot = attacker_addrs.clone();
     victim_boot.push(addr(&honest_boot));
-    let (mesh_outbound_min, inbound_quota) = (p.mesh_outbound_min, p.inbound_quota);
+    let mesh_outbound_min = p.mesh_outbound_min;
     let victim = spawn_with(&dir, "victim", victim_boot, |n| {
-        let n = n
-            .with_max_established_incoming(A6_VICTIM_INBOUND)
+        n.with_max_established_incoming(A6_VICTIM_INBOUND)
             .with_p6_loopback_whitelist()
             .with_outbound_paused(true, true)
             .with_unsubscribe_backoff(A6_UNSUBSCRIBE_BACKOFF)
             .with_prune_backoff(A6_PRUNE_BACKOFF)
-            .with_mesh_outbound_min(mesh_outbound_min);
-        match inbound_quota {
-            Some(k) => n.with_inbound_adopt_quota(k),
-            None => n,
-        }
+            .with_mesh_outbound_min(mesh_outbound_min)
     });
     let attackers: Vec<Node> = (0..A6_ATTACKERS)
         .map(|i| {
@@ -403,8 +366,7 @@ fn run_round(p: &Policy, label: &str) -> Option<Readings> {
             "A6 ① policy={} round={label} t={}s topup={} (adopted={} dialled={}) topup_attackers={} topup_honest={} \
              mesh={} mesh_self_dialed={} mesh_honest={} kad_dialled_attackers={} kad_dialled_honest={} bootstrap={} \
              inbound_attackers={} inbound_honest={} connections in={} out={} \
-             routing_table={} eligible={} round_dials={} round_failures={} shortfall_walks={} \
-             adopted_inbound attackers={} honest={}",
+             routing_table={} eligible={} round_dials={} round_failures={} shortfall_walks={}",
             p.label,
             s.at,
             s.topup,
@@ -426,9 +388,7 @@ fn run_round(p: &Policy, label: &str) -> Option<Readings> {
             s.eligible,
             s.dials,
             s.failures,
-            s.shortfall_walks,
-            s.adopted_inbound_attackers,
-            s.adopted_inbound_honest
+            s.shortfall_walks
         );
         println!("A6 ① policy={} round={label} t={}s buckets {}", p.label, s.at, s.buckets);
         samples.push(s);
@@ -510,7 +470,7 @@ fn ok(pass: bool) -> &'static str {
 #[test]
 #[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
 fn a6_self_chosen_outbound_route1() {
-    let policy = Policy { label: "route1", topup: true, mesh_outbound_min: 3, attackers_first: false, inbound_quota: None };
+    let policy = Policy { label: "route1", topup: true, mesh_outbound_min: 3, attackers_first: false };
     let first = run_rounds(&policy, 1);
     if first.iter().all(Verdict::green) {
         return;
@@ -527,7 +487,7 @@ fn a6_self_chosen_outbound_route1() {
 #[test]
 #[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
 fn a6_self_chosen_outbound_control_a_no_topup() {
-    let policy = Policy { label: "control-a", topup: false, mesh_outbound_min: 3, attackers_first: false, inbound_quota: None };
+    let policy = Policy { label: "control-a", topup: false, mesh_outbound_min: 3, attackers_first: false };
     let verdicts = run_rounds(&policy, 1);
     assert!(verdicts.iter().any(|v| !v.a), "without top-up, a must go red: {verdicts:?}");
 }
@@ -537,7 +497,7 @@ fn a6_self_chosen_outbound_control_a_no_topup() {
 #[test]
 #[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
 fn a6_self_chosen_outbound_control_b_mesh_outbound_min_2() {
-    let policy = Policy { label: "control-b", topup: true, mesh_outbound_min: 2, attackers_first: false, inbound_quota: None };
+    let policy = Policy { label: "control-b", topup: true, mesh_outbound_min: 2, attackers_first: false };
     let verdicts = run_rounds(&policy, 1);
     assert!(verdicts.iter().any(|v| !v.b), "with mesh_outbound_min 2, b must go red: {verdicts:?}");
 }
@@ -547,7 +507,7 @@ fn a6_self_chosen_outbound_control_b_mesh_outbound_min_2() {
 #[test]
 #[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
 fn a6_self_chosen_outbound_control_cd_attackers_first() {
-    let policy = Policy { label: "control-cd", topup: true, mesh_outbound_min: 3, attackers_first: true, inbound_quota: None };
+    let policy = Policy { label: "control-cd", topup: true, mesh_outbound_min: 3, attackers_first: true };
     let verdicts = run_rounds(&policy, 1);
     assert!(verdicts.iter().any(|v| !v.cd), "with attackers first among candidates, c+d must go red: {verdicts:?}");
 }
@@ -558,7 +518,7 @@ fn a6_self_chosen_outbound_control_cd_attackers_first() {
 #[test]
 #[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
 fn a6_self_chosen_outbound_control_e_before_a6() {
-    let policy = Policy { label: "control-e", topup: false, mesh_outbound_min: 2, attackers_first: false, inbound_quota: None };
+    let policy = Policy { label: "control-e", topup: false, mesh_outbound_min: 2, attackers_first: false };
     let verdicts = run_rounds(&policy, 1);
     let red = verdicts.iter().filter(|v| !v.e).count();
     println!("A6 ① policy=control-e rounds_with_e_red={red} of {}", verdicts.len());
@@ -1420,11 +1380,12 @@ fn mean(xs: &[f64]) -> f64 {
 // victim as a bootstrap node and dial it at once (inbound at the victim,
 // not adoptable), 6 do not (the victim's queries reach them, adoptable).
 //
-// Prints only (§12 F1 chose "write it into the limits"). The trigger line:
-// attackers above 0.75 of the top-up peers, averaged over a round's
-// samples, means the bias outweighs the "pile on numbers" class and the
-// inbound-first adoption quota is reopened with the CEO. Every CI run
-// prints it.
+// Prints only (§12 F1: a limit, not a fix). The first runs went over the
+// old 0.75 line (0.75 / 1.00 / 0.88), and a quota experiment showed that
+// letting top-up adopt peers that dialled in hands the slots to inbound
+// attackers in ① (CEO, T-156, red team v6). So there is no line here any
+// more; the condition for reopening that question is B2's connection-churn
+// test (design v5 §1.7, §5.9.2). The bias is printed in every CI run.
 // ---------------------------------------------------------------------
 const DIR_ATTACKERS: usize = 24;
 const DIR_ATTACKER_BOOTSTRAPS: usize = 3;
@@ -1433,8 +1394,6 @@ const DIR_HONEST_DIAL_FIRST: usize = 6;
 const DIR_HONEST_WAIT: usize = 6;
 const DIR_SAMPLE_AT: [u64; 7] = [30, 40, 50, 60, 70, 80, 90];
 const DIR_ROUNDS: usize = 3;
-/// §5.9.2's trigger line (the attackers' population share in ①).
-const DIR_TRIGGER: f64 = 0.75;
 
 /// One honest group's standing at the victim: connected, adoptable (the
 /// victim's own non-bootstrap dial came first), top-up peers.
@@ -1450,8 +1409,7 @@ fn group(r: &OutboundReport, ids: &[String]) -> (usize, usize, usize) {
 
 /// One round with fresh PeerIds; returns the mean attacker share among
 /// top-up peers over its samples.
-/// `quota`: the CEO's quota experiment (〔T-156〕), `None` in the test.
-fn run_direction_round(label: &str, quota: Option<usize>) -> (f64, f64) {
+fn run_direction_round(label: &str) -> f64 {
     const TAG: &str = "①-向";
     let dir = tempfile::tempdir().expect("temp dir");
     let victim_key = Keypair::generate_ed25519();
@@ -1478,11 +1436,7 @@ fn run_direction_round(label: &str, quota: Option<usize>) -> (f64, f64) {
     let mut victim_boot = boot_addrs.clone();
     victim_boot.push(addr(&honest_boot));
     let victim = spawn_as(&dir, "victim", &victim_key, victim_boot, |n| {
-        let n = n.with_p6_loopback_whitelist().with_prune_backoff(A6_PRUNE_BACKOFF);
-        match quota {
-            Some(k) => n.with_inbound_adopt_quota(k),
-            None => n,
-        }
+        n.with_p6_loopback_whitelist().with_prune_backoff(A6_PRUNE_BACKOFF)
     });
     let dial_first: Vec<Node> = (0..DIR_HONEST_DIAL_FIRST)
         .map(|i| spawn_a6(&dir, &format!("honest-dial-first-{i}"), vec![addr(&victim), addr(&honest_boot)]))
@@ -1506,7 +1460,7 @@ fn run_direction_round(label: &str, quota: Option<usize>) -> (f64, f64) {
         wait[0].announce(&announcement(&gene, "a6-direction-target")).is_ok_and(|a| a.record_acked >= 1)
     });
 
-    let (mut topup_shares, mut topup_honest) = (Vec::new(), Vec::new());
+    let mut topup_shares = Vec::new();
     for at in DIR_SAMPLE_AT {
         std::thread::sleep(Duration::from_secs(at).saturating_sub(started.elapsed()));
         let r = report(&victim);
@@ -1522,14 +1476,11 @@ fn run_direction_round(label: &str, quota: Option<usize>) -> (f64, f64) {
         println!(
             "A6 {TAG} round={label} t={at}s topup_attackers adopted={} dialled={} topup_honest adopted={} dialled={} \
              honest_dial_first connected={df_conn} adoptable={df_adopt} topup={df_topup} \
-             honest_wait connected={w_conn} adoptable={w_adopt} topup={w_topup} honest_connected={honest_connected} \
-             adopted_inbound attackers={} honest={}",
+             honest_wait connected={w_conn} adoptable={w_adopt} topup={w_topup} honest_connected={honest_connected}",
             topup_by(&attacker_ids, TopUpWay::Adopted),
             topup_by(&attacker_ids, TopUpWay::Dialled),
             topup_by(&honest_ids, TopUpWay::Adopted),
             topup_by(&honest_ids, TopUpWay::Dialled),
-            s.adopted_inbound_attackers,
-            s.adopted_inbound_honest,
         );
         // The switch held: no attacker connection arrived at the victim.
         if s.inbound_attackers > 0 {
@@ -1539,7 +1490,6 @@ fn run_direction_round(label: &str, quota: Option<usize>) -> (f64, f64) {
             ));
         }
         topup_shares.push(topup_share);
-        topup_honest.push(s.topup_honest as f64);
     }
     let finds_honest_gene = victim
         .search(super::discover::SearchQuery::GeneId(gene.clone()))
@@ -1551,65 +1501,19 @@ fn run_direction_round(label: &str, quota: Option<usize>) -> (f64, f64) {
          gene_stored={gene_stored} finds_honest_gene={finds_honest_gene}"
     );
     drop((dial_first, wait, attackers, boots, honest_boot));
-    (m, mean(&topup_honest))
+    m
 }
 
 #[test]
 #[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 ①-向 — enable the p2p-integration feature or run with --ignored")]
 fn a6_topup_direction_bias_is_measured() {
-    let means: Vec<f64> = (1..=DIR_ROUNDS).map(|i| run_direction_round(&format!("1.{i}"), None).0).collect();
-    let crossed = means.iter().filter(|m| **m > DIR_TRIGGER).count();
+    let means: Vec<f64> = (1..=DIR_ROUNDS).map(|i| run_direction_round(&format!("1.{i}"))).collect();
     println!(
-        "A6 ①-向 summary rounds={} means={:?} trigger={DIR_TRIGGER} rounds_over_trigger={crossed} \
-         (over the line: reopen the inbound-first adoption quota with the CEO, design v5 §5.9.2)",
+        "A6 ①-向 summary rounds={} means={:?} (printed only: a known bias toward peers that wait to be dialled, \
+         design v5 §1.7; reopened by B2's connection-churn test, §5.9.2)",
         means.len(),
         means.iter().map(|m| format!("{m:.2}")).collect::<Vec<_>>()
     );
-}
-
-// ---------------------------------------------------------------------
-// The CEO's quota experiment (〔T-156〕): give peers whose first connection
-// was inbound an adoption quota of k = 2 (a test switch; production never
-// adopts them), and run ①-向 and ① with it on and off, three rounds each.
-// Question: does the quota lower ①-向's attacker share, and in ① does the
-// victim adopt inbound attackers and make a or c+d worse? Prints only; run
-// by name with --ignored (not part of any CI run).
-// ---------------------------------------------------------------------
-const QUOTA_K: usize = 2;
-
-#[test]
-#[ignore = "CEO quota experiment (T-156): run by name with --features p2p-integration -- --ignored"]
-fn a6_quota_experiment_direction() {
-    for (name, quota) in [("off", None), ("k2", Some(QUOTA_K))] {
-        let rounds: Vec<(f64, f64)> =
-            (1..=DIR_ROUNDS).map(|i| run_direction_round(&format!("quota-{name}.{i}"), quota)).collect();
-        println!(
-            "A6 quota-experiment ①-向 quota={name} attacker_share_of_topup={:?} honest_topup_mean={:?} mean_share={:.2}",
-            rounds.iter().map(|r| format!("{:.2}", r.0)).collect::<Vec<_>>(),
-            rounds.iter().map(|r| format!("{:.1}", r.1)).collect::<Vec<_>>(),
-            mean(&rounds.iter().map(|r| r.0).collect::<Vec<_>>())
-        );
-    }
-}
-
-#[test]
-#[ignore = "CEO quota experiment (T-156): run by name with --features p2p-integration -- --ignored"]
-fn a6_quota_experiment_route1() {
-    for (label, quota) in [("quota-off", None), ("quota-k2", Some(QUOTA_K))] {
-        let p = Policy { label, topup: true, mesh_outbound_min: 3, attackers_first: false, inbound_quota: quota };
-        let v = run_rounds(&p, 1);
-        println!(
-            "A6 quota-experiment ① policy={label} attacker_share_of_topup={:?} honest_topup_mean={:?} \
-             adopted_inbound_attackers_max={:?} a={:?} c+d={:?} e={:?} e_rate={:?}",
-            v.iter().map(|v| format!("{:.2}", v.topup_share)).collect::<Vec<_>>(),
-            v.iter().map(|v| format!("{:.1}", v.topup_honest)).collect::<Vec<_>>(),
-            v.iter().map(|v| v.adopted_inbound_attackers).collect::<Vec<_>>(),
-            v.iter().map(|v| ok(v.a)).collect::<Vec<_>>(),
-            v.iter().map(|v| ok(v.cd)).collect::<Vec<_>>(),
-            v.iter().map(|v| ok(v.e)).collect::<Vec<_>>(),
-            v.iter().map(|v| format!("{:.2}", v.e_rate)).collect::<Vec<_>>(),
-        );
-    }
 }
 
 // ---------------------------------------------------------------------

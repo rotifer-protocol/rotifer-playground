@@ -3701,7 +3701,8 @@ mod tests {
     // -----------------------------------------------------------------
     #[test]
     fn A_1_1_swarm_builder_default_config_starts() {
-        let mut node = Node::new(cfg(0)).expect("A.1.1 — default config must build a swarm");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let mut node = isolated(&node_dir, cfg(0)).expect("A.1.1 — default config must build a swarm");
         node.start().expect("A.1.1 — swarm must start");
         assert!(
             !node.listen_addrs().is_empty(),
@@ -3714,7 +3715,8 @@ mod tests {
     // -----------------------------------------------------------------
     #[test]
     fn A_1_2_custom_port_listen() {
-        let mut node = Node::new(cfg(9878)).expect("A.1.2 — custom port must build");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let mut node = isolated(&node_dir, cfg(9878)).expect("A.1.2 — custom port must build");
         node.start().expect("A.1.2 — port 9878 must bind");
         assert!(
             node.listen_addrs().iter().any(|a| a.contains("9878")),
@@ -3724,10 +3726,12 @@ mod tests {
 
     #[test]
     fn A_1_2_port_already_in_use_returns_transport_error() {
-        let mut first = Node::new(cfg(9879)).expect("A.1.2 — first node builds");
+        let first_dir = tempfile::tempdir().expect("temp dir");
+        let mut first = isolated(&first_dir, cfg(9879)).expect("A.1.2 — first node builds");
         first.start().expect("A.1.2 — first node starts");
 
-        let mut second = Node::new(cfg(9879)).expect("A.1.2 — second build is ok");
+        let second_dir = tempfile::tempdir().expect("temp dir");
+        let mut second = isolated(&second_dir, cfg(9879)).expect("A.1.2 — second build is ok");
         let err = second.start().expect_err("A.1.2 — second start must fail");
         assert!(matches!(err, NetworkError::Transport(_)));
     }
@@ -3739,11 +3743,13 @@ mod tests {
     fn A_1_3_drop_releases_port() {
         let port = 9880;
         {
-            let mut a = Node::new(cfg(port)).expect("A.1.3 — first build");
+            let a_dir = tempfile::tempdir().expect("temp dir");
+            let mut a = isolated(&a_dir, cfg(port)).expect("A.1.3 — first build");
             a.start().expect("A.1.3 — first start");
         }
         // Port should now be free again.
-        let mut b = Node::new(cfg(port)).expect("A.1.3 — second build");
+        let b_dir = tempfile::tempdir().expect("temp dir");
+        let mut b = isolated(&b_dir, cfg(port)).expect("A.1.3 — second build");
         b.start()
             .expect("A.1.3 — second start must succeed after drop");
     }
@@ -4049,7 +4055,8 @@ mod tests {
     fn A_1_7_bind_loopback_rejects_external() {
         let mut c = cfg(0);
         c.bootstrap_peers = vec!["/ip4/127.0.0.1/tcp/0".into()];
-        let mut node = Node::new(c).expect("A.1.7 — loopback build");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let mut node = isolated(&node_dir, c).expect("A.1.7 — loopback build");
         node.start().expect("A.1.7 — loopback bind");
         assert!(node.listen_addrs().iter().all(|a| !a.contains("0.0.0.0")));
     }
@@ -4064,7 +4071,8 @@ mod tests {
             "/dns4/no-such-host.invalid/tcp/9878".into(),
             "not-a-valid-multiaddr".into(),
         ];
-        let mut node = Node::new(c).expect("A.1.8 — build with unreachable bootstrap");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let mut node = isolated(&node_dir, c).expect("A.1.8 — build with unreachable bootstrap");
         // Should not panic — should return Ok with empty peer set.
         node.start()
             .expect("A.1.8 — start must succeed with unreachable bootstrap");
@@ -4076,10 +4084,12 @@ mod tests {
     #[test]
     fn A_1_9_port_conflict_isolation() {
         let port = 9881;
-        let mut first = Node::new(cfg(port)).expect("A.1.9 — first build");
+        let first_dir = tempfile::tempdir().expect("temp dir");
+        let mut first = isolated(&first_dir, cfg(port)).expect("A.1.9 — first build");
         first.start().expect("A.1.9 — first start");
 
-        let mut second = Node::new(cfg(port)).expect("A.1.9 — second build");
+        let second_dir = tempfile::tempdir().expect("temp dir");
+        let mut second = isolated(&second_dir, cfg(port)).expect("A.1.9 — second build");
         let err = second.start().expect_err("A.1.9 — second start must fail");
         assert!(matches!(err, NetworkError::Transport(_)));
 
@@ -5178,16 +5188,25 @@ mod tests {
     fn generic_put_refuses_gene_record_keys() {
         // Refused before reaching the event loop, so an unstarted node shows
         // it; any other key gets as far as "not connected".
-        let node = Node::new(cfg(0)).expect("build");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let node = isolated(&node_dir, cfg(0)).expect("build");
         let gene_key = super::super::gene_record::record_key(&format!("v2:{}", "ab".repeat(32)), &Libp2pPeerId::random());
         assert!(matches!(node.put_record(&gene_key, b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"/rotifer/gene/", b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"other/key", b"x"), Err(NetworkError::NotConnected)));
     }
 
+    /// A node whose identity and peer store live in `dir`, never in
+    /// `~/.rotifer`: a test must not read or write the user's own node state
+    /// (the restart-time peer-store feed made one test depend on it).
+    fn isolated(dir: &tempfile::TempDir, config: NetworkConfig) -> Result<Node, NetworkError> {
+        Node::with_paths(config, dir.path().join("identity.pem"), dir.path().join("peers.json"))
+    }
+
     #[test]
     fn peer_lists_are_empty_before_start_and_after_stop() {
-        let mut node = Node::new(cfg(0)).expect("build");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let mut node = isolated(&node_dir, cfg(0)).expect("build");
         assert!(node.dht_peers().is_empty());
         assert!(node.connected_peers().is_empty());
         node.start().expect("start");
@@ -5202,7 +5221,8 @@ mod tests {
     fn provider_api_refuses_gene_ids_that_are_not_v2() {
         // Refused before reaching the event loop, so an unstarted node shows
         // it; a v2 ID gets as far as "not connected".
-        let node = Node::new(cfg(0)).expect("build");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let node = isolated(&node_dir, cfg(0)).expect("build");
         for bad in ["v1:abc", "gene-name", "v2:XYZ", "", &format!("v2:{}", "ab".repeat(31))] {
             assert!(matches!(node.start_providing_gene(bad), Err(NetworkError::NotV2GeneId(ref g)) if g == bad), "{bad:?}");
             assert!(matches!(node.find_gene_providers(bad), Err(NetworkError::NotV2GeneId(ref g)) if g == bad), "{bad:?}");
@@ -5216,7 +5236,8 @@ mod tests {
     fn generic_put_refuses_provider_keys() {
         // A provider key holds provider records only (v1 §2.2), so the
         // generic put refuses it before reaching the event loop.
-        let node = Node::new(cfg(0)).expect("build");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let node = isolated(&node_dir, cfg(0)).expect("build");
         let provider_key = super::super::gene_record::provider_key(&format!("v2:{}", "ab".repeat(32))).unwrap();
         assert!(matches!(node.put_record(&provider_key, b"x"), Err(NetworkError::ReservedKey(_))));
         // Same length, different multihash prefix: not a provider key.

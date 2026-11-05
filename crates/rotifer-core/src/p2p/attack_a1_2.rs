@@ -26,7 +26,7 @@ use super::messages::{encode_announcement, ANNOUNCEMENTS_TOPIC};
 use super::node::Node;
 use super::{GeneAnnouncement, NetworkConfig};
 
-fn now_ms() -> u64 {
+pub(super) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -34,12 +34,12 @@ fn now_ms() -> u64 {
 }
 
 /// A syntactically valid v2 ID, distinct per label.
-fn id(label: &str) -> String {
+pub(super) fn id(label: &str) -> String {
     use sha2::{Digest, Sha256};
     format!("v2:{}", hex::encode(Sha256::digest(label.as_bytes())))
 }
 
-fn announcement(gene_id: &str, name: &str) -> GeneAnnouncement {
+pub(super) fn announcement(gene_id: &str, name: &str) -> GeneAnnouncement {
     GeneAnnouncement {
         gene_id: gene_id.into(),
         name: name.into(),
@@ -51,7 +51,7 @@ fn announcement(gene_id: &str, name: &str) -> GeneAnnouncement {
     }
 }
 
-fn eventually(secs: u64, mut check: impl FnMut() -> bool) -> bool {
+pub(super) fn eventually(secs: u64, mut check: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_secs(secs);
     while Instant::now() < deadline {
         if check() {
@@ -62,7 +62,7 @@ fn eventually(secs: u64, mut check: impl FnMut() -> bool) -> bool {
     check()
 }
 
-fn config(bootstrap: Vec<String>) -> NetworkConfig {
+pub(super) fn config(bootstrap: Vec<String>) -> NetworkConfig {
     NetworkConfig { listen_port: 0, enabled: true, bootstrap_peers: bootstrap, ..Default::default() }
 }
 
@@ -74,11 +74,11 @@ fn spawn(dir: &tempfile::TempDir, name: &str, bootstrap: Vec<String>) -> Node {
     node
 }
 
-fn addr(node: &Node) -> String {
+pub(super) fn addr(node: &Node) -> String {
     node.listen_addrs().into_iter().next().expect("listen addr")
 }
 
-fn peer_of(node: &Node) -> libp2p::PeerId {
+pub(super) fn peer_of(node: &Node) -> libp2p::PeerId {
     node.local_peer_id().0.parse().expect("PeerId")
 }
 
@@ -86,7 +86,7 @@ fn gene_search(node: &Node, gene: &str) -> SearchOutcome {
     node.search(SearchQuery::GeneId(gene.into())).expect("search")
 }
 
-fn heard(node: &Node, gene: &str) -> bool {
+pub(super) fn heard(node: &Node, gene: &str) -> bool {
     node.received_announcements().iter().any(|(a, _)| a.gene_id == gene)
 }
 

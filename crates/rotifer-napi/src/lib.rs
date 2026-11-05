@@ -22,6 +22,7 @@ use rotifer_core::p2p::messages::{encode_announcement, local_announcement, ANNOU
 use rotifer_core::p2p::discover::{SearchOutcome, SearchQuery};
 use rotifer_core::p2p::node::{AnnounceReport, Node as CoreNode, NodeHandle, RepublishReport};
 use rotifer_core::p2p::NetworkConfig;
+use rotifer_core::p2p::outbound::ColocationStats;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A gene announcement received from a peer, surfaced to the CLI. `publisher`
@@ -357,12 +358,113 @@ impl P2pNode {
         self.inner.withdraw(&gene_id).map_err(|e| Error::from_reason(format!("withdraw: {e}")))
     }
 
+    /// Cumulative same-IP counters (A6 design v3 §3.4), read-only: when
+    /// they move, the P6 trade-off needs another look.
+    #[napi]
+    pub fn colocation_stats(&self) -> NetworkColocationStats {
+        NetworkColocationStats::from(self.inner.colocation_stats())
+    }
+
     /// Stop the swarm and release the listen port.
     #[napi]
     pub fn stop(&mut self) -> Result<()> {
         self.inner
             .stop()
             .map_err(|e| Error::from_reason(format!("stop p2p node: {e}")))
+    }
+}
+
+/// [`rotifer_core::p2p::outbound::ColocationStats`] for JS (counts saturate
+/// at `u32::MAX`).
+#[napi(object)]
+#[derive(Debug, PartialEq, Eq)]
+pub struct NetworkColocationStats {
+    /// Distinct IPs that ever had more connected peers than P6's threshold.
+    pub ips_over_threshold: u32,
+    /// Most connected peers ever seen on one IP.
+    pub max_peers_on_one_ip: u32,
+    /// Distinct IPs over the threshold while one of their peers held a valid
+    /// proof of registration.
+    pub ips_over_threshold_with_registered_peer: u32,
+}
+
+impl From<ColocationStats> for NetworkColocationStats {
+    fn from(c: ColocationStats) -> Self {
+        let n = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+        Self {
+            ips_over_threshold: n(c.ips_over_threshold),
+            max_peers_on_one_ip: n(c.max_peers_on_one_ip),
+            ips_over_threshold_with_registered_peer: n(c.ips_over_threshold_with_registered_peer),
+        }
+    }
+}
+
+#[cfg(test)]
+mod colocation_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn node(dir: &std::path::Path, name: &str, bootstrap: Vec<String>) -> P2pNode {
+        let config = NetworkConfig {
+            listen_host: "127.0.0.1".into(),
+            listen_port: 0,
+            bootstrap_peers: bootstrap,
+            enabled: true,
+            mdns_enabled: false,
+            ..NetworkConfig::default()
+        };
+        let path = dir.join(format!("{name}.key"));
+        let mut p = P2pNode { inner: CoreNode::with_keypair_path(config, path).unwrap() };
+        p.start().unwrap();
+        p
+    }
+
+    /// The binding reads the core node's counters: 0 before a peer, and the
+    /// peer on 127.0.0.1 shows as one peer on one IP, which stays after it
+    /// leaves (the counters are cumulative).
+    #[test]
+    fn colocation_stats_reads_the_core_counters() {
+        let dir = std::env::temp_dir().join(format!("rotifer-napi-coloc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut a = node(&dir, "a", vec![]);
+        let none = NetworkColocationStats {
+            ips_over_threshold: 0,
+            max_peers_on_one_ip: 0,
+            ips_over_threshold_with_registered_peer: 0,
+        };
+        assert_eq!(a.colocation_stats(), none);
+        let addr = format!("{}/p2p/{}", a.listen_addrs()[0], a.peer_id());
+        let mut b = node(&dir, "b", vec![addr]);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while a.colocation_stats().max_peers_on_one_ip == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let one = NetworkColocationStats { max_peers_on_one_ip: 1, ..none };
+        assert_eq!(a.colocation_stats(), one, "B on 127.0.0.1 is one peer on one IP");
+        b.stop().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !a.connected_peers().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(a.connected_peers().is_empty(), "B has gone");
+        let after = a.colocation_stats();
+        assert_eq!(after, NetworkColocationStats { max_peers_on_one_ip: 1, ..none }, "cumulative: the most seen stays");
+        a.stop().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn colocation_stats_saturate_rather_than_wrap() {
+        let c = ColocationStats {
+            ips_over_threshold: u64::MAX,
+            max_peers_on_one_ip: 7,
+            ips_over_threshold_with_registered_peer: 1,
+        };
+        let v = NetworkColocationStats::from(c);
+        assert_eq!(
+            (v.ips_over_threshold, v.max_peers_on_one_ip, v.ips_over_threshold_with_registered_peer),
+            (u32::MAX, 7, 1)
+        );
     }
 }
 

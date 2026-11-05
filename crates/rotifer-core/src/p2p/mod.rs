@@ -20,6 +20,7 @@ pub mod gene_store;
 pub mod heartbeat;
 pub mod messages;
 pub mod node;
+pub mod outbound;
 pub mod peerstore;
 pub mod por;
 pub mod security;
@@ -35,6 +36,11 @@ mod adversarial;
 // A1-2 attack report (v0.9.5): forged announcements, Eclipse, Sybil.
 #[cfg(test)]
 mod attack_a1_2;
+
+// A6 connection policy acceptance (v0.9.5): self-chosen outbound peers,
+// bootstrap keeper, P6.
+#[cfg(test)]
+mod attack_a6;
 
 /// Protocol identifier for gene discovery.
 pub const GENE_DISCOVERY_PROTOCOL: &str = "/rotifer/gene-discovery/1.0.0";

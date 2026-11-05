@@ -27,6 +27,21 @@ const DAEMON_STATE = join(ROTIFER_HOME, "daemon.json");
 const TOKEN_HEADER = "x-rotifer-token";
 const CONTROL_HOST = "127.0.0.1";
 
+/** Cumulative same-IP counters from the native node (A6 design v3 §3.4). */
+export interface ColocationStats {
+  /** Distinct IPs that ever had more connected peers than P6's threshold. */
+  ipsOverThreshold: number;
+  /** Most connected peers ever seen on one IP. */
+  maxPeersOnOneIp: number;
+  /** Distinct IPs over the threshold while one of their peers held a valid proof of registration. */
+  ipsOverThresholdWithRegisteredPeer: number;
+}
+
+/** Addons before A6 lack `colocationStats`. */
+interface ColocationReader {
+  colocationStats?(): ColocationStats;
+}
+
 export interface DaemonState {
   pid: number;
   /** Loopback control-server port (OS-assigned). */
@@ -155,6 +170,7 @@ export async function runDaemon(
   }
   const node = maybeNode; // non-null below (incl. inside the control-server closure)
   node.start();
+  const { colocationStats } = node as typeof node & ColocationReader;
 
   const token = randomBytes(24).toString("hex");
   const startedAt = Date.now();
@@ -193,6 +209,8 @@ export async function runDaemon(
         // An older native addon lacks these; leave them out rather than fail.
         ...(node.dhtPeers ? { dhtPeers: node.dhtPeers().length } : {}),
         ...(node.connectedPeers ? { connectedPeers: node.connectedPeers().length } : {}),
+        // Cumulative same-IP counters (A6 design v3 §3.4); absent before A6.
+        ...(colocationStats ? { colocation: colocationStats.call(node) } : {}),
         startedAt,
       });
       return;

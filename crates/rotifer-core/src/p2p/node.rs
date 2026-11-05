@@ -169,6 +169,8 @@ enum Command {
     /// Hold or release top-up and the bootstrap keeper.
     #[cfg(test)]
     SetOutboundPaused { topup: bool, keeper: bool, resp: oneshot::Sender<()> },
+    #[cfg(test)]
+    SetWalkPaused { paused: bool, resp: oneshot::Sender<()> },
     /// Put these peers first among top-up's candidates (the K2 control).
     #[cfg(test)]
     PreferCandidates(Vec<(Libp2pPeerId, Vec<Multiaddr>)>),
@@ -558,6 +560,8 @@ pub(crate) struct OutboundReport {
     pub last_round: outbound::TopUpRound,
     /// The last round's eligible candidates per k-bucket index.
     pub eligible_by_bucket: Vec<(u32, Vec<String>)>,
+    /// Peers whose top-up dial failed and that are cooling down.
+    pub cooling: Vec<String>,
 }
 
 /// Connection-policy settings. Production always uses the defaults; the
@@ -1180,6 +1184,14 @@ impl Node {
     pub(crate) fn set_outbound_paused(&self, topup: bool, keeper: bool) -> Result<(), NetworkError> {
         let (tx, rx) = oneshot::channel();
         self.send_command(Command::SetOutboundPaused { topup, keeper, resp: tx })?;
+        self.block_on_query(rx)
+    }
+
+    /// Hold (`true`) or release the random walk.
+    #[cfg(test)]
+    pub(crate) fn set_walk_paused(&self, paused: bool) -> Result<(), NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::SetWalkPaused { paused, resp: tx })?;
         self.block_on_query(rx)
     }
 
@@ -2114,7 +2126,9 @@ async fn run_event_loop(
             _ = walk_timer.tick() => {
                 // Its own timer: candidates keep arriving whether or not the
                 // other sources run dry (design v3 §1.6).
-                walks.insert(swarm.behaviour_mut().kademlia.get_closest_peers(Libp2pPeerId::random()));
+                if !outbound.walk_paused {
+                    walks.insert(swarm.behaviour_mut().kademlia.get_closest_peers(Libp2pPeerId::random()));
+                }
             }
             _ = keeper_timer.tick() => {
                 keep_bootstrap(&mut swarm, &mut outbound);
@@ -2891,6 +2905,7 @@ async fn run_event_loop(
                         keeper_dials: outbound.keeper.dials(),
                         topup: outbound.topup_ways().into_iter().map(|(p, w)| (p.to_string(), w)).collect(),
                         last_round: outbound.last_round.clone(),
+                        cooling: outbound.cooldowns.cooling_peers(Instant::now()).iter().map(|p| p.to_string()).collect(),
                         eligible_by_bucket: outbound
                             .last_round
                             .eligible_by_bucket
@@ -2910,6 +2925,12 @@ async fn run_event_loop(
                         keep_bootstrap(&mut swarm, &mut outbound);
                         keeper_wake.as_mut().reset(keeper_deadline(&outbound).into());
                     }
+                    let _ = resp.send(());
+                }
+                #[cfg(test)]
+                #[cfg(test)]
+                Some(Command::SetWalkPaused { paused, resp }) => {
+                    outbound.walk_paused = paused;
                     let _ = resp.send(());
                 }
                 #[cfg(test)]

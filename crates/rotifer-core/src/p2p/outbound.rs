@@ -238,6 +238,12 @@ impl Cooldowns {
         self.by_peer.remove(peer);
     }
 
+    /// Peers cooling down at `now` (tests read them).
+    #[cfg(test)]
+    pub(crate) fn cooling_peers(&self, now: Instant) -> Vec<PeerId> {
+        self.by_peer.keys().filter(|p| self.cooling(p, now)).copied().collect()
+    }
+
     pub(crate) fn cooling(&self, peer: &PeerId, now: Instant) -> bool {
         self.by_peer.get(peer).is_some_and(|(_, until)| *until > now)
     }
@@ -710,6 +716,8 @@ pub(crate) struct Outbound {
     /// Test switches: hold top-up / the keeper; dial these first; adopt but
     /// never dial (the ①-拨 control, design v5 §5.9.1).
     pub(crate) adopt_only: bool,
+    /// Test switch: hold the random walk (①-拨's quiet mode, §5.9.1).
+    pub(crate) walk_paused: bool,
     pub(crate) topup_paused: bool,
     pub(crate) keeper_paused: bool,
     pub(crate) preferred: Vec<(PeerId, Vec<Multiaddr>)>,
@@ -727,6 +735,7 @@ impl Outbound {
             last_round: TopUpRound::default(),
             shortfall_walk_at: None,
             adopt_only: false,
+            walk_paused: false,
             keeper,
             book,
             rng,
@@ -870,7 +879,7 @@ impl Outbound {
     /// short round sent one in the last [`SHORTFALL_WALK_EVERY`]. Records
     /// the walk when it says yes.
     pub(crate) fn shortfall_walk(&mut self, now: Instant) -> bool {
-        if !self.last_round.short || self.last_round.walk_sent {
+        if self.walk_paused || !self.last_round.short || self.last_round.walk_sent {
             return false;
         }
         if self.shortfall_walk_at.is_some_and(|at| now.saturating_duration_since(at) < SHORTFALL_WALK_EVERY) {
@@ -1427,6 +1436,22 @@ mod tests {
         let _ = o.round(&me, one_bucket(&few), |p| none.contains(p), t10, 0);
         assert!(o.shortfall_walk(t10), "10 s on, a short round walks again");
         assert_eq!(o.last_round.shortfall_walks_total, 2);
+    }
+
+    /// ①-拨's quiet mode: a held walk holds the shortfall walk too.
+    #[test]
+    fn a_held_walk_holds_the_shortfall_walk() {
+        let now = Instant::now();
+        let mut o = outbound(vec![addr(1)], now);
+        let me = peer();
+        let few: Vec<PeerId> = (0..3).map(|_| peer()).collect();
+        let none: HashSet<PeerId> = HashSet::new();
+        o.walk_paused = true;
+        let _ = o.round(&me, one_bucket(&few), |p| none.contains(p), now, 0);
+        assert!(o.last_round.short);
+        assert!(!o.shortfall_walk(now), "walk held: no shortfall walk");
+        o.walk_paused = false;
+        assert!(o.shortfall_walk(now), "released: the short round walks");
     }
 
     #[test]

@@ -1064,3 +1064,227 @@ fn a6_p6_still_counts_a_peer_after_one_of_two_connections_closes() {
     );
 }
 
+// ---------------------------------------------------------------------
+// ①-拨: disconnect a batch, so top-up has to dial (design v5 §5.9.1, F3;
+// red team v5 N3).
+//
+// 1 bootstrap node and 16 honest nodes, the victim last: its Kademlia
+// queries dial most of them, so they are adoptable and top-up adopts 8.
+// The honest nodes are quiet from the start (top-up and random walk held;
+// they still answer): otherwise their own top-up finds the victim and
+// dials it first, which makes them inbound-first and not adoptable (first
+// try: 10 of 16 inbound-first, 6 adoptable, SETUP INVALID). And the victim
+// joins only once the honest nodes are all connected to one another:
+// Kademlia's automatic bootstrap (500 ms after a new entry, in a table of
+// fewer than 20) has no switch: a query still running when the victim
+// joins learns it from the answers and dials it first. So the victim waits
+// for a fully connected honest side and then DIAL_HONEST_SETTLE more.
+// Then the victim drops every peer it could adopt (top-up peers fall to 0)
+// and one of them is stopped. The dropped nodes go quiet (no top-up, no
+// keeper, no random walk, Kademlia's periodic bootstrap off from the start)
+// and the victim's own random walk is held, so the only outbound dials the
+// victim makes are top-up's. Top-up must get back to 8 by dialling.
+//
+// The stopped node is put first among top-up's candidates, so the first
+// round always dials it: otherwise 8 live candidates could fill the budget
+// and "a dial failed" would be left to chance. Preferred candidates still
+// pass top-up's eligibility, so a broken cooldown would redial it.
+// ---------------------------------------------------------------------
+
+const DIAL_HONEST: usize = 16;
+/// N3: 8 must be dialled back and 1 is stopped.
+const DIAL_ADOPTABLE_MIN: usize = 9;
+const DIAL_SETTLE: Duration = Duration::from_secs(60);
+/// Quiet time between a fully connected honest side and the victim joining.
+const DIAL_HONEST_SETTLE: Duration = Duration::from_secs(15);
+const DIAL_BACK_WITHIN: u64 = 40;
+const DIAL_WATCH_UNTIL: u64 = 60;
+const DIAL_SAMPLE_EVERY: u64 = 5;
+
+#[derive(Debug, Default, Clone)]
+struct DialSample {
+    at: u64,
+    topup: usize,
+    adopted: usize,
+    dialled: usize,
+    routing_table: usize,
+    eligible: usize,
+    /// Top-up dials sent and failed since the drop.
+    dials: usize,
+    failures: usize,
+    stopped_cooling: bool,
+    stopped_is_topup: bool,
+    /// Dropped nodes connected again by anything other than top-up.
+    reconnected_otherwise: usize,
+}
+
+/// A ①-拨 node: whitelist, Kademlia's periodic bootstrap off.
+fn spawn_dial(dir: &tempfile::TempDir, name: &str, bootstrap: Vec<String>) -> Node {
+    spawn_with(dir, name, bootstrap, |n| n.with_p6_loopback_whitelist().with_kad_periodic_bootstrap_off())
+}
+
+fn run_dial_path(label: &str, adopt_only: bool) -> Vec<DialSample> {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let boot = spawn_dial(&dir, "boot", vec![]);
+    let mut honest: Vec<Node> = (0..DIAL_HONEST)
+        .map(|i| {
+            let n = spawn_with(&dir, &format!("honest-{i}"), vec![addr(&boot)], |n| {
+                n.with_p6_loopback_whitelist().with_kad_periodic_bootstrap_off().with_outbound_paused(true, false)
+            });
+            n.set_walk_paused(true).expect("quiet");
+            n
+        })
+        .collect();
+    let full = |n: &Node| n.connected_peers().len() >= DIAL_HONEST;
+    let meshed = eventually(60, || full(&boot) && honest.iter().all(full));
+    let fewest = honest.iter().map(|n| n.connected_peers().len()).min().unwrap_or(0);
+    println!("A6 ①-拨 {label} honest side: fewest connections {fewest} of {DIAL_HONEST}, boot {}", boot.connected_peers().len());
+    if !meshed {
+        setup_invalid(format!("①-拨 {label}: the honest side is not fully connected within 60 s (fewest {fewest} of {DIAL_HONEST})"));
+    }
+    // Let the honest side's own Kademlia bootstrap queries finish: one still
+    // running when the victim joins learns it from the answers and dials it
+    // first (with no wait: 9 of 16 did; with this one, none).
+    std::thread::sleep(DIAL_HONEST_SETTLE);
+    let victim = spawn_with(&dir, "victim", vec![addr(&boot)], |n| {
+        let n = n.with_p6_loopback_whitelist().with_kad_periodic_bootstrap_off().with_outbound_paused(true, false);
+        if adopt_only { n.with_adopt_only() } else { n }
+    });
+    victim.set_outbound_paused(false, false).expect("release top-up");
+
+    // Precondition: 8 top-up peers, and at least 9 peers it could adopt (N3).
+    let adoptable = |r: &OutboundReport| {
+        r.first.values().filter(|f| matches!(f, FirstConnection::OtherDial | FirstConnection::Restart | FirstConnection::TopUp)).count()
+    };
+    let settled = eventually(DIAL_SETTLE.as_secs(), || {
+        let r = report(&victim);
+        r.topup_peers >= 8 && adoptable(&r) >= DIAL_ADOPTABLE_MIN
+    });
+    let vid = victim.local_peer_id().0;
+    let dialled_victim = honest.iter().filter(|n| report(n).first.get(&vid).is_some_and(|f| *f != FirstConnection::Inbound)).count();
+    let r = report(&victim);
+    println!(
+        "A6 ①-拨 {label} before: topup={} adoptable={} first_inbound={} connected={} honest_that_dialled_the_victim={dialled_victim}",
+        r.topup_peers,
+        adoptable(&r),
+        r.first.values().filter(|f| **f == FirstConnection::Inbound).count(),
+        victim.connected_peers().len()
+    );
+    if !settled {
+        setup_invalid(format!(
+            "①-拨 {label}: within {}s want topup >= 8 and adoptable >= {DIAL_ADOPTABLE_MIN}; got {} and {}",
+            DIAL_SETTLE.as_secs(),
+            r.topup_peers,
+            adoptable(&r)
+        ));
+    }
+
+    // The drop: quiet first, then stop one, hold the victim's walk, drop all.
+    let dropped: HashSet<String> = r
+        .first
+        .iter()
+        .filter(|(_, f)| matches!(f, FirstConnection::OtherDial | FirstConnection::Restart | FirstConnection::TopUp))
+        .map(|(p, _)| p.clone())
+        .collect();
+    for n in honest.iter().filter(|n| dropped.contains(&n.local_peer_id().0)) {
+        n.set_outbound_paused(true, true).expect("quiet");
+        n.set_walk_paused(true).expect("quiet");
+    }
+    let stopped_at = honest.iter().position(|n| dropped.contains(&n.local_peer_id().0)).expect("a dropped honest node");
+    let mut stopped_node = honest.remove(stopped_at);
+    let stopped = stopped_node.local_peer_id().0;
+    let stopped_addr: Multiaddr = addr(&stopped_node).parse().expect("addr");
+    victim.prefer_candidates(vec![(stopped.parse().expect("PeerId"), vec![stopped_addr])]).expect("prefer");
+    victim.set_walk_paused(true).expect("hold the walk");
+    let _ = stopped_node.stop();
+    for p in &dropped {
+        victim.disconnect(p.parse().expect("PeerId")).expect("disconnect");
+    }
+    let t0 = Instant::now();
+    let base = report(&victim).last_round;
+    let (dials0, failures0) = (base.dials_total, base.failures_total);
+
+    let mut samples = Vec::new();
+    let mut at = DIAL_SAMPLE_EVERY;
+    while at <= DIAL_WATCH_UNTIL {
+        std::thread::sleep(Duration::from_secs(at).saturating_sub(t0.elapsed()));
+        let r = report(&victim);
+        let s = DialSample {
+            at,
+            topup: r.topup_peers,
+            adopted: r.topup.values().filter(|w| **w == TopUpWay::Adopted).count(),
+            dialled: r.topup.values().filter(|w| **w == TopUpWay::Dialled).count(),
+            routing_table: r.last_round.routing_table,
+            eligible: r.last_round.eligible,
+            dials: r.last_round.dials_total - dials0,
+            failures: r.last_round.failures_total - failures0,
+            stopped_cooling: r.cooling.contains(&stopped),
+            stopped_is_topup: r.topup.contains_key(&stopped),
+            reconnected_otherwise: dropped
+                .iter()
+                .filter(|p| r.first.get(*p).is_some_and(|f| *f != FirstConnection::TopUp))
+                .count(),
+        };
+        println!(
+            "A6 ①-拨 {label} t0+{}s topup={} (adopted={} dialled={}) routing_table={} eligible={} dials={} failures={} \
+             stopped_cooling={} stopped_is_topup={} dropped_reconnected_otherwise={}",
+            s.at,
+            s.topup,
+            s.adopted,
+            s.dialled,
+            s.routing_table,
+            s.eligible,
+            s.dials,
+            s.failures,
+            s.stopped_cooling,
+            s.stopped_is_topup,
+            s.reconnected_otherwise
+        );
+        samples.push(s);
+        at += DIAL_SAMPLE_EVERY;
+    }
+    drop((honest, boot));
+    samples
+}
+
+/// The first assertion of §5.9.1: by t0+40 s top-up is back to 8, all dialled.
+fn dialled_back(samples: &[DialSample]) -> bool {
+    samples.iter().any(|s| s.at <= DIAL_BACK_WITHIN && s.topup >= 8 && s.adopted == 0 && s.dialled >= 8)
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_topup_dials_back_after_a_drop() {
+    let samples = run_dial_path("route1", false);
+    assert!(dialled_back(&samples), "top-up must be back to 8 dialled peers by t0+{DIAL_BACK_WITHIN}s: {samples:?}");
+    let by = |t: u64| samples.iter().filter(move |s| s.at <= t);
+    assert!(
+        by(DIAL_BACK_WITHIN).any(|s| s.dials >= 8 && s.failures >= 1),
+        "by t0+{DIAL_BACK_WITHIN}s at least 8 dials and 1 failure: {samples:?}"
+    );
+    assert!(samples.iter().all(|s| !s.stopped_is_topup), "the stopped node can never be a top-up peer");
+    // The failed one cools down: seen cooling, and the next round (10 s on)
+    // adds no failure.
+    let first_fail = samples.iter().find(|s| s.failures >= 1).expect("a failure");
+    assert!(first_fail.stopped_cooling, "the stopped node must be cooling once its dial failed: {first_fail:?}");
+    let next_round = samples.iter().find(|s| s.at >= first_fail.at + 10).expect("a sample a round later");
+    assert_eq!(
+        next_round.failures, first_fail.failures,
+        "the next round must not dial the cooling node again: {samples:?}"
+    );
+    // a, as always: from t0+40 s to t0+60 s top-up stays at 8.
+    assert!(
+        samples.iter().filter(|s| s.at >= DIAL_BACK_WITHIN).all(|s| s.topup >= 8),
+        "a: top-up peers >= 8 from t0+{DIAL_BACK_WITHIN}s to t0+{DIAL_WATCH_UNTIL}s: {samples:?}"
+    );
+}
+
+/// Control: adopt only, never dial. Top-up cannot come back, so the first
+/// assertion must be red; if it is not, something else dials in this setup.
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_topup_dials_back_control_adopt_only() {
+    let samples = run_dial_path("control-adopt-only", true);
+    assert!(!dialled_back(&samples), "control must be red: adopt-only came back to 8 dialled peers: {samples:?}");
+    assert!(samples.iter().all(|s| s.dialled == 0), "adopt-only must dial nobody: {samples:?}");
+}

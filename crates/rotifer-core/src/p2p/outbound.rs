@@ -716,6 +716,10 @@ pub(crate) struct Outbound {
     /// Test switches: hold top-up / the keeper; dial these first; adopt but
     /// never dial (the ①-拨 control, design v5 §5.9.1).
     pub(crate) adopt_only: bool,
+    /// Test switch for the CEO's quota experiment (〔T-156〕, design v5
+    /// §5.9.2): up to this many adopted peers may be ones that dialled in.
+    /// `None` (production) never adopts a peer that dialled in.
+    pub(crate) inbound_adopt_quota: Option<usize>,
     /// Test switch: hold the random walk (①-拨's quiet mode, §5.9.1).
     pub(crate) walk_paused: bool,
     pub(crate) topup_paused: bool,
@@ -735,6 +739,7 @@ impl Outbound {
             last_round: TopUpRound::default(),
             shortfall_walk_at: None,
             adopt_only: false,
+            inbound_adopt_quota: None,
             walk_paused: false,
             keeper,
             book,
@@ -784,9 +789,23 @@ impl Outbound {
     /// (Kademlia, mDNS, a restart dial), it is not a bootstrap node, and it
     /// is not a top-up peer already. A peer that dialled in never can.
     pub(crate) fn adoptable(&self, peer: &PeerId) -> bool {
-        matches!(self.first.get(peer), Some(FirstConnection::OtherDial | FirstConnection::Restart))
-            && !self.keeper.is_bootstrap(peer)
-            && !self.adopted.contains(peer)
+        let how = match self.first.get(peer) {
+            Some(FirstConnection::OtherDial | FirstConnection::Restart) => true,
+            Some(FirstConnection::Inbound) => self.inbound_quota_left(),
+            _ => false,
+        };
+        how && !self.keeper.is_bootstrap(peer) && !self.adopted.contains(peer)
+    }
+
+    /// Under the quota experiment's switch, whether another peer that
+    /// dialled in may be adopted.
+    fn inbound_quota_left(&self) -> bool {
+        self.inbound_adopt_quota.is_some_and(|k| self.adopted_inbound() < k)
+    }
+
+    /// Adopted peers whose first connection was inbound.
+    pub(crate) fn adopted_inbound(&self) -> usize {
+        self.adopted.iter().filter(|p| self.first.get(p) == Some(&FirstConnection::Inbound)).count()
     }
 
     fn topup_in_flight(&self) -> usize {
@@ -865,7 +884,11 @@ impl Outbound {
         let mut dial = Vec::new();
         for (peer, addrs) in chosen {
             if is_connected(&peer) {
-                // `eligible` admitted it, so it is adoptable.
+                // `eligible` admitted it, so it is adoptable; but one round
+                // may draw several that dialled in, so recheck the quota.
+                if self.first.get(&peer) == Some(&FirstConnection::Inbound) && !self.inbound_quota_left() {
+                    continue;
+                }
                 self.adopted.insert(peer);
                 self.last_round.adopted += 1;
             } else if !self.adopt_only {
@@ -1582,6 +1605,29 @@ mod tests {
         let dial = o.round(&me, one_bucket(&all), |p| *p == kad, now, 0);
         assert!(dial.is_empty());
         assert_eq!(o.topup_peers(), 1);
+    }
+
+    /// The quota experiment's switch (〔T-156〕): without it a peer that
+    /// dialled in is never adopted; with quota k, at most k are, even when
+    /// one round draws more.
+    #[test]
+    fn inbound_peers_are_adopted_only_under_the_quota_switch() {
+        let now = Instant::now();
+        let me = peer();
+        let inbound: Vec<PeerId> = (0..5).map(|_| peer()).collect();
+        for quota in [None, Some(2)] {
+            let mut o = outbound(vec![addr(1)], now);
+            o.inbound_adopt_quota = quota;
+            for p in &inbound {
+                o.established(cid(), *p, false, true, &addr(3), at(now));
+            }
+            let dial = o.round(&me, one_bucket(&inbound), |_| true, now, 0);
+            assert!(dial.is_empty());
+            assert_eq!(o.adopted_inbound(), quota.unwrap_or(0), "quota {quota:?}");
+            assert_eq!(o.topup_peers(), quota.unwrap_or(0));
+            o.round(&me, one_bucket(&inbound), |_| true, now, 0);
+            assert_eq!(o.adopted_inbound(), quota.unwrap_or(0), "a later round adds none past the quota");
+        }
     }
 
     #[test]

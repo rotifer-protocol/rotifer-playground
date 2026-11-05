@@ -669,6 +669,9 @@ struct PolicyOptions {
     topup_paused: bool,
     keeper_paused: bool,
     adopt_only: bool,
+    /// The quota experiment (〔T-156〕): adopt up to this many peers that
+    /// dialled in.
+    inbound_adopt_quota: Option<usize>,
     /// Kademlia's periodic bootstrap (5 min) off (tests: red team v5 N3,
     /// and telling top-up's dial from Kademlia's in the restart test).
     kad_periodic_bootstrap_off: bool,
@@ -684,6 +687,7 @@ impl Default for PolicyOptions {
             topup_paused: false,
             keeper_paused: false,
             adopt_only: false,
+            inbound_adopt_quota: None,
             kad_periodic_bootstrap_off: false,
         }
     }
@@ -1155,6 +1159,14 @@ impl Node {
     #[cfg(test)]
     pub(crate) fn with_adopt_only(mut self) -> Self {
         self.policy.adopt_only = true;
+        self
+    }
+
+    /// The CEO's quota experiment (〔T-156〕, design v5 §5.9.2): top-up may
+    /// adopt up to `k` peers whose first connection was inbound.
+    #[cfg(test)]
+    pub(crate) fn with_inbound_adopt_quota(mut self, k: usize) -> Self {
+        self.policy.inbound_adopt_quota = Some(k);
         self
     }
 
@@ -2106,6 +2118,7 @@ async fn run_event_loop(
     outbound.topup_paused = options.policy.topup_paused;
     outbound.keeper_paused = options.policy.keeper_paused;
     outbound.adopt_only = options.policy.adopt_only;
+    outbound.inbound_adopt_quota = options.policy.inbound_adopt_quota;
     // Addresses we dialled, held until Identify shows the peer speaks
     // Rotifer's DHT (see `record_heard_of`).
     let mut unconfirmed_dials: HashMap<Libp2pPeerId, Vec<Multiaddr>> = HashMap::new();

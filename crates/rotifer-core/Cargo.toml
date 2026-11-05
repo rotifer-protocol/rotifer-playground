@@ -73,6 +73,10 @@ p2p-integration = []
 # p2p-integration. Run: `cargo test -p rotifer-core --features k10-repro --lib
 # a6_p6_still_counts -- --test-threads=1` (expected to fail until K10 is fixed).
 k10-repro = ["p2p-integration"]
+# A6 ①-稳 and its control (T-156) take about ten minutes each, so they are
+# ignored unless this is on and run nightly (.github/workflows/p2p-nightly.yml,
+# with --ignored). Multi-node loopback tests, so it implies p2p-integration.
+p2p-nightly = ["p2p-integration"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

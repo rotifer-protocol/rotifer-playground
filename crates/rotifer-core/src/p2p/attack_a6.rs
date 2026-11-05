@@ -1914,7 +1914,7 @@ fn run_steady_rounds(control: bool, run: usize) -> Vec<bool> {
 }
 
 #[test]
-#[ignore = "A6 ①-稳 — nightly only (CEO, T-156; .github/workflows/p2p-nightly.yml): run with --features p2p-integration -- --ignored"]
+#[cfg_attr(not(feature = "p2p-nightly"), ignore = "A6 ①-稳 — nightly only (CEO, T-156; .github/workflows/p2p-nightly.yml): run with --features p2p-nightly, or --features p2p-integration -- --ignored")]
 fn a6_withheld_messages_still_reach_the_victim() {
     let first = run_steady_rounds(false, 1);
     println!("A6 ①-稳 run=1 delivered={first:?}");
@@ -1931,7 +1931,7 @@ fn a6_withheld_messages_still_reach_the_victim() {
 }
 
 #[test]
-#[ignore = "A6 ①-稳 — nightly only (CEO, T-156; .github/workflows/p2p-nightly.yml): run with --features p2p-integration -- --ignored"]
+#[cfg_attr(not(feature = "p2p-nightly"), ignore = "A6 ①-稳 — nightly only (CEO, T-156; .github/workflows/p2p-nightly.yml): run with --features p2p-nightly, or --features p2p-integration -- --ignored")]
 fn a6_withheld_messages_control_cut_off_from_honest() {
     let delivered = run_steady_rounds(true, 1);
     println!("A6 ①-稳 control delivered={delivered:?}");

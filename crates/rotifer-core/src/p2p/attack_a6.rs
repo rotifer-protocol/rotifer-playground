@@ -833,47 +833,58 @@ fn a6_bootstrap_keeper_reconnects_only_one() {
 // ---------------------------------------------------------------------
 
 const A6_ORDINARY: usize = 24;
-const A6_ORDINARY_FALLBACK: usize = 30;
 const A6_OUTBOUND_ONLY: usize = 30;
+/// The control's inbound cap on ordinary nodes (A6 design v1's limit).
+const A6_ORDINARY_INBOUND_CONTROL: u32 = 8;
 
-/// Whether every ordinary node reached 8 self-dialled peers, and whether a
-/// shortfall came from running out of pairs (a node dialled first by more
-/// than n − 1 − 8 others).
-fn run_outbound_only(ordinary_n: usize) -> (bool, bool) {
+/// Whether every outbound-only node connected within 30 s, and whether
+/// every one heard an announcement (design v5 §5.4). Ordinary nodes take
+/// at most `ordinary_inbound` connections in (the default when `None`).
+/// Each ordinary node's self-dialled peers at 60 s are printed only (§10
+/// row 1).
+fn run_outbound_only(label: &str, ordinary_inbound: Option<u32>) -> (bool, bool) {
     let dir = tempfile::tempdir().unwrap();
     let started = Instant::now();
-    let first = spawn_listed(&dir, "ordinary-0", vec![]);
+    let ordinary_build = move |n: Node| {
+        let n = n.with_p6_loopback_whitelist();
+        match ordinary_inbound {
+            Some(cap) => n.with_max_established_incoming(cap),
+            None => n,
+        }
+    };
+    let first = spawn_with(&dir, "ordinary-0", vec![], ordinary_build);
     let mut ordinary = vec![first];
-    for i in 1..ordinary_n {
-        let n = spawn_listed(&dir, &format!("ordinary-{i}"), vec![addr(&ordinary[0])]);
+    for i in 1..A6_ORDINARY {
+        let n = spawn_with(&dir, &format!("ordinary-{i}"), vec![addr(&ordinary[0])], ordinary_build);
         ordinary.push(n);
     }
     let ordinary_addrs: Vec<String> = ordinary.iter().map(addr).collect();
     let dial_only: Vec<Node> = (0..A6_OUTBOUND_ONLY)
         .map(|i| {
-            spawn_with(&dir, &format!("outbound-only-{i}"), vec![ordinary_addrs[i % ordinary_n].clone()], |n| {
+            spawn_with(&dir, &format!("outbound-only-{i}"), vec![ordinary_addrs[i % A6_ORDINARY].clone()], |n| {
                 n.with_max_established_incoming(0).with_p6_loopback_whitelist()
             })
         })
         .collect();
     let joined_at = Instant::now();
     let all_connected = eventually(30, || dial_only.iter().all(|n| !n.connected_peers().is_empty()));
-    let gene = id(&format!("a6-outbound-only-{ordinary_n}"));
-    let heard_all = eventually(30u64.saturating_sub(joined_at.elapsed().as_secs()).max(5), || {
+    let connected_count = dial_only.iter().filter(|n| !n.connected_peers().is_empty()).count();
+    let gene = id(&format!("a6-outbound-only-{label}"));
+    let _ = eventually(30u64.saturating_sub(joined_at.elapsed().as_secs()).max(5), || {
         let _ = ordinary[1].publish(ANNOUNCEMENTS_TOPIC, &encode_announcement(&announcement(&gene, "a6-outbound-only")));
         std::thread::sleep(Duration::from_millis(500));
         dial_only.iter().all(|n| heard(n, &gene))
     });
     let heard_count = dial_only.iter().filter(|n| heard(n, &gene)).count();
     println!(
-        "A6 ③ ordinary={ordinary_n} outbound_only={A6_OUTBOUND_ONLY} all_connected={all_connected} heard={heard_count}/{A6_OUTBOUND_ONLY} \
-         heard_all={heard_all} after={:.1}s",
+        "A6 ③ {label} ordinary={A6_ORDINARY} ordinary_inbound={} outbound_only={A6_OUTBOUND_ONLY} \
+         connected={connected_count}/{A6_OUTBOUND_ONLY} heard={heard_count}/{A6_OUTBOUND_ONLY} after={:.1}s",
+        ordinary_inbound.map(|c| c.to_string()).unwrap_or_else(|| "default".into()),
         joined_at.elapsed().as_secs_f64()
     );
     std::thread::sleep(Duration::from_secs(60).saturating_sub(started.elapsed()));
     let ordinary_ids: HashSet<String> = ordinary.iter().map(|n| n.local_peer_id().0).collect();
     let mut short = 0;
-    let mut exhausted = false;
     for (i, n) in ordinary.iter().enumerate() {
         let r = report(n);
         let self_dialled = r.first.values().filter(|f| f.is_outbound()).count();
@@ -883,38 +894,43 @@ fn run_outbound_only(ordinary_n: usize) -> (bool, bool) {
             .filter(|(p, f)| **f == FirstConnection::Inbound && ordinary_ids.contains(*p))
             .count();
         let by_kind = |k: FirstConnection| r.first.values().filter(|f| **f == k).count();
+        let topup_by = |w: TopUpWay| r.topup.values().filter(|x| **x == w).count();
         println!(
-            "A6 ③ ordinary={ordinary_n} node={i} self_dialled={self_dialled} topup={} bootstrap={} kad_dialled={} \
-             dialled_in_by_ordinary={dialled_in_by_ordinary} inbound_total={}",
-            r.topup_peers,
+            "A6 ③ {label} node={i} self_dialled={self_dialled} topup={} (adopted={} dialled={}) bootstrap={} \
+             kad_dialled={} dialled_in_by_ordinary={dialled_in_by_ordinary} inbound_total={}",
+            r.topup.len(),
+            topup_by(TopUpWay::Adopted),
+            topup_by(TopUpWay::Dialled),
             by_kind(FirstConnection::Bootstrap),
             by_kind(FirstConnection::OtherDial),
             by_kind(FirstConnection::Inbound)
         );
-        if self_dialled < 8 {
-            short += 1;
-            exhausted |= dialled_in_by_ordinary > ordinary_n - 1 - 8;
-        }
+        short += usize::from(self_dialled < 8);
     }
-    println!("A6 ③ ordinary={ordinary_n} short_of_8={short} pairs_exhausted={exhausted}");
-    assert!(all_connected, "every outbound-only node must connect to someone within 30 s");
-    assert_eq!(heard_count, A6_OUTBOUND_ONLY, "every outbound-only node must hear an announcement");
-    (short == 0, exhausted)
+    println!("A6 ③ {label} ordinary_short_of_8_self_dialled={short} (printed only, §10 row 1)");
+    (all_connected, heard_count == A6_OUTBOUND_ONLY)
 }
 
 #[test]
 #[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
 fn a6_outbound_only_nodes_join() {
-    let (ok, exhausted) = run_outbound_only(A6_ORDINARY);
-    if ok {
-        return;
-    }
-    // The fallback fixed in advance (design v3 §5.4): only when the pairs
-    // ran out, never for any other shortfall.
-    assert!(exhausted, "an ordinary node is short of 8 self-dialled peers with pairs to spare");
-    println!("A6 ③ pairs ran out with {A6_ORDINARY} ordinary nodes: rerunning with {A6_ORDINARY_FALLBACK}");
-    let (ok, _) = run_outbound_only(A6_ORDINARY_FALLBACK);
-    assert!(ok, "every ordinary node needs 8 self-dialled peers");
+    let (connected, heard_all) = run_outbound_only("route1", None);
+    assert!(connected, "every outbound-only node must connect to someone within 30 s");
+    assert!(heard_all, "every outbound-only node must hear an announcement");
+}
+
+/// §10 row 1's control: ordinary nodes take at most 8 connections in (A6
+/// design v1). Kademlia among the ordinary nodes should fill those slots
+/// first, leaving the outbound-only nodes nowhere to connect: red.
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_outbound_only_nodes_join_control_inbound_8() {
+    let (connected, heard_all) = run_outbound_only("control-inbound-8", Some(A6_ORDINARY_INBOUND_CONTROL));
+    assert!(
+        !(connected && heard_all),
+        "③ control: with ordinary nodes capped at {A6_ORDINARY_INBOUND_CONTROL} inbound, every outbound-only node \
+         still connected and heard; ③ cannot tell this cap apart (report to the CEO, §10 row 1)"
+    );
 }
 
 // ---------------------------------------------------------------------

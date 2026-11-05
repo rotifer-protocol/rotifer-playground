@@ -1,13 +1,23 @@
-//! Connection policy, part 1 (A6, ADR-304 D2 revision): the bootstrap
-//! keeper and the same-IP counters.
+//! Connection policy (A6, ADR-304 D2 revision): peers this node chooses to
+//! dial itself, and the bootstrap keeper.
 //!
+//! Without this a node only ever dials its bootstrap peers and whoever its
+//! Kademlia queries happen to reach; everything else is whoever dialled in
+//! first. An attacker that dials in first, or runs most of the bootstrap
+//! nodes, then chooses the victim's neighbours (A1-2 Eclipse). So:
+//!
+//! - **Top-up** keeps [`OUT_MIN`] *top-up peers*: peers whose first
+//!   connection this policy dialled and that are still connected. Bootstrap
+//!   connections, Kademlia's incidental dials and mDNS dials are not counted:
+//!   bootstrap nodes are fixed by configuration (and may be the attacker's),
+//!   and whom Kademlia dials is decided by answers an attacker can give.
+//!   Candidates come only from addresses this node has itself dialled
+//!   successfully ("dialled-OK", [`DialedBook`]), from the routing table
+//!   sampled bucket-uniformly, and from a periodic random walk.
 //! - The **keeper** redials a bootstrap node as soon as none is connected
 //!   (P2P RFC §8.5 item 1), one at a time, backing off to [`KEEPER_BACKOFF_MAX`].
 //! - [`Colocation`] keeps the cumulative same-IP counters that tell when the
 //!   P6 trade-off needs reopening.
-//!
-//! Top-up of self-chosen outbound peers and the dialled-OK level of the peer
-//! store are A6 part 2.
 //!
 //! Everything here is plain state driven by the event loop in `node.rs`, with
 //! time passed in, so it is unit-tested without a network.
@@ -19,9 +29,21 @@ use std::time::{Duration, Instant};
 use libp2p::multiaddr::Protocol;
 use libp2p::swarm::ConnectionId;
 use libp2p::{Multiaddr, PeerId};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-/// Jitter on backoffs: ±20 %.
+/// Top-up peers each node keeps.
+pub(crate) const OUT_MIN: usize = 8;
+/// How often top-up checks whether it is short.
+pub(crate) const TOPUP_INTERVAL: Duration = Duration::from_secs(10);
+/// Top-up dials per round, and of those at most this many from the peer store.
+pub(crate) const DIALS_PER_ROUND: usize = 8;
+pub(crate) const PEERSTORE_DIALS_PER_ROUND: usize = 2;
+/// A random walk (`get_closest_peers` of a random key) on its own timer.
+pub(crate) const RANDOM_WALK_INTERVAL: Duration = Duration::from_secs(60);
+/// Per-peer cooldown after a failed top-up dial: doubles from the first value
+/// up to the cap, ±[`JITTER`]; a success clears it.
+pub(crate) const COOLDOWN_FIRST: Duration = Duration::from_secs(30);
+pub(crate) const COOLDOWN_MAX: Duration = Duration::from_secs(30 * 60);
 pub(crate) const JITTER: f64 = 0.2;
 /// Keeper backoff between failed bootstrap dials: 1, 2, 4, 8, 16 s ±[`JITTER`].
 pub(crate) const KEEPER_BACKOFF_FIRST: Duration = Duration::from_secs(1);
@@ -36,13 +58,30 @@ pub(crate) const KEEPER_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 /// off; a longer one resets the backoff and is redialled at once. So a node
 /// that accepts and then drops us gets at most one dial per 10 s.
 pub(crate) const KEEPER_STABLE: Duration = Duration::from_secs(10);
-/// Small PRNG (splitmix64). Jitter needs randomness, not cryptographic
-/// strength, and a seed makes the unit tests repeatable.
+/// A dialled-OK entry not dialled successfully for this long is no longer
+/// used to dial (it stays in the peer store as heard-of).
+pub(crate) const DIALED_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 3600);
+/// Upper bound on dialled-OK entries; when full, the one dialled longest ago
+/// makes room.
+pub(crate) const DIALED_MAX: usize = super::peerstore::MAX_PERSISTED_PEERS;
+/// Upper bound on random-walk results kept as candidates.
+const WALK_POOL_MAX: usize = 64;
+/// Cooldown entries kept; expired ones are dropped beyond this.
+const COOLDOWN_ENTRIES_MAX: usize = 4096;
+
+/// The time an event happened, both as a monotonic instant (backoffs,
+/// connection lifetimes) and as wall-clock milliseconds (the peer store).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Now {
+    pub(crate) at: Instant,
+    pub(crate) wall_ms: u64,
+}
+
+/// Small PRNG (splitmix64). Candidate sampling and jitter need randomness,
+/// not cryptographic strength, and a seed makes the unit tests repeatable.
 pub(crate) struct Rng(u64);
 
 impl Rng {
-    /// A fixed seed, for repeatable unit tests.
-    #[cfg(test)]
     pub(crate) fn new(seed: u64) -> Self {
         Self(seed)
     }
@@ -66,6 +105,11 @@ impl Rng {
         z ^ (z >> 31)
     }
 
+    /// Uniform in `0..n` (`n > 0`).
+    pub(crate) fn below(&mut self, n: usize) -> usize {
+        (self.next_u64() % n as u64) as usize
+    }
+
     /// Uniform in `[0, 1)`.
     fn unit(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
@@ -75,11 +119,270 @@ impl Rng {
     pub(crate) fn jitter(&mut self, d: Duration) -> Duration {
         d.mul_f64(1.0 - JITTER + 2.0 * JITTER * self.unit())
     }
+
+    pub(crate) fn shuffle<T>(&mut self, items: &mut [T]) {
+        for i in (1..items.len()).rev() {
+            let j = self.below(i + 1);
+            items.swap(i, j);
+        }
+    }
 }
 
 /// `first`, doubled per earlier failure, capped at `max`.
 fn doubled(first: Duration, failures: u32, max: Duration) -> Duration {
     first.saturating_mul(1u32 << failures.min(16)).min(max)
+}
+
+/// Why this node dialled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DialPurpose {
+    /// Top-up of self-chosen outbound peers.
+    TopUp,
+    /// A configured bootstrap address, by index (the startup dial or the
+    /// keeper).
+    Bootstrap(usize),
+    /// A dialled-OK entry from the peer store, dialled at startup.
+    Restart,
+}
+
+/// How a connected peer's first connection came about. GossipSub counts a
+/// peer as outbound when its first connection was dialled by this node,
+/// whoever dialled it; this keeps the same distinction and who dialled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum FirstConnection {
+    /// Dialled by top-up: counts towards [`OUT_MIN`].
+    TopUp,
+    /// Dialled to a configured bootstrap address.
+    Bootstrap,
+    /// Dialled at startup from the peer store.
+    Restart,
+    /// Dialled by something else: Kademlia queries, mDNS, an explicit dial.
+    OtherDial,
+    /// The peer dialled in.
+    Inbound,
+}
+
+impl FirstConnection {
+    /// Whether GossipSub counts this peer as outbound.
+    pub fn is_outbound(self) -> bool {
+        self != FirstConnection::Inbound
+    }
+}
+
+// ---------------------------------------------------------------------
+// Cooldowns
+// ---------------------------------------------------------------------
+
+/// Per-PeerId cooldown after failed top-up dials. Keyed by PeerId, so it
+/// does not bind an attacker that keeps minting new identities.
+#[derive(Default)]
+pub(crate) struct Cooldowns {
+    by_peer: HashMap<PeerId, (u32, Instant)>,
+}
+
+impl Cooldowns {
+    pub(crate) fn failed(&mut self, peer: PeerId, now: Instant, rng: &mut Rng) {
+        if self.by_peer.len() >= COOLDOWN_ENTRIES_MAX {
+            self.by_peer.retain(|_, (_, until)| *until > now);
+        }
+        let entry = self.by_peer.entry(peer).or_insert((0, now));
+        let wait = rng.jitter(doubled(COOLDOWN_FIRST, entry.0, COOLDOWN_MAX));
+        entry.0 = entry.0.saturating_add(1);
+        entry.1 = now + wait;
+    }
+
+    pub(crate) fn succeeded(&mut self, peer: &PeerId) {
+        self.by_peer.remove(peer);
+    }
+
+    pub(crate) fn cooling(&self, peer: &PeerId, now: Instant) -> bool {
+        self.by_peer.get(peer).is_some_and(|(_, until)| *until > now)
+    }
+}
+
+// ---------------------------------------------------------------------
+// Dialled-OK peer store level
+// ---------------------------------------------------------------------
+
+/// One dialled-OK entry: a dialable address ending in `/p2p/<PeerId>` and
+/// when this node last dialled it successfully (wall clock, ms).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DialedEntry {
+    pub addr: String,
+    pub last_ok_ms: u64,
+}
+
+/// The dialled-OK level of the peer store. Only top-up, the bootstrap
+/// dials and the restart dials record here; a Kademlia query's incidental
+/// dial does not (it dials addresses from answers an attacker can give), and
+/// addresses peers report about themselves through Identify stay heard-of
+/// (the plain peer store). Top-up and restart dial only this level.
+#[derive(Default)]
+pub(crate) struct DialedBook {
+    entries: Vec<DialedEntry>,
+}
+
+impl DialedBook {
+    /// From persisted entries: duplicates keep the newest, entries older than
+    /// [`DIALED_MAX_AGE`] drop (to heard-of), and the newest [`DIALED_MAX`]
+    /// stay.
+    pub(crate) fn from_entries(entries: Vec<DialedEntry>, now_ms: u64) -> Self {
+        let mut book = Self::default();
+        for e in entries {
+            book.record_at(e.addr, e.last_ok_ms, now_ms);
+        }
+        book
+    }
+
+    pub(crate) fn record(&mut self, addr: String, now_ms: u64) {
+        self.record_at(addr, now_ms, now_ms);
+    }
+
+    fn record_at(&mut self, addr: String, at_ms: u64, now_ms: u64) {
+        if addr.is_empty() || now_ms.saturating_sub(at_ms) > DIALED_MAX_AGE.as_millis() as u64 {
+            return;
+        }
+        if let Some(e) = self.entries.iter_mut().find(|e| e.addr == addr) {
+            e.last_ok_ms = e.last_ok_ms.max(at_ms);
+            return;
+        }
+        if self.entries.len() >= DIALED_MAX {
+            let Some((oldest, _)) = self.entries.iter().enumerate().min_by_key(|(_, e)| e.last_ok_ms) else {
+                return;
+            };
+            if self.entries[oldest].last_ok_ms > at_ms {
+                return;
+            }
+            self.entries.remove(oldest);
+        }
+        self.entries.push(DialedEntry { addr, last_ok_ms: at_ms });
+    }
+
+    /// Entries still young enough to dial.
+    pub(crate) fn usable(&self, now_ms: u64) -> impl Iterator<Item = &DialedEntry> {
+        let max = DIALED_MAX_AGE.as_millis() as u64;
+        self.entries.iter().filter(move |e| now_ms.saturating_sub(e.last_ok_ms) <= max)
+    }
+
+    pub(crate) fn entries(&self) -> &[DialedEntry] {
+        &self.entries
+    }
+
+    /// Drop every entry of `peer` (a non-Rotifer node).
+    pub(crate) fn forget(&mut self, peer: &PeerId) {
+        let suffix = format!("/p2p/{peer}");
+        self.entries.retain(|e| !e.addr.ends_with(&suffix));
+    }
+}
+
+/// `addr` in dialable form, ending in `/p2p/<peer>`.
+pub(crate) fn dialable(addr: &Multiaddr, peer: &PeerId) -> String {
+    if matches!(addr.iter().last(), Some(Protocol::P2p(_))) {
+        addr.to_string()
+    } else {
+        format!("{addr}/p2p/{peer}")
+    }
+}
+
+/// Split a dialable address into its PeerId and the address without it.
+pub(crate) fn split_dialable(text: &str) -> Option<(PeerId, Multiaddr)> {
+    let mut addr: Multiaddr = text.parse().ok()?;
+    match addr.pop() {
+        Some(Protocol::P2p(peer)) => Some((peer, addr)),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------
+// Candidate selection
+// ---------------------------------------------------------------------
+
+/// Where top-up may look for peers, in priority order.
+#[derive(Default)]
+pub(crate) struct Sources {
+    /// Test-only control: put these first (models Identify-reported
+    /// addresses reaching top-up, which the dialled-OK rule forbids).
+    pub preferred: Vec<(PeerId, Vec<Multiaddr>)>,
+    /// Dialled-OK peer store entries.
+    pub peerstore: Vec<(PeerId, Vec<Multiaddr>)>,
+    /// The routing table, one list per non-empty k-bucket.
+    pub buckets: Vec<Vec<(PeerId, Vec<Multiaddr>)>>,
+    /// Random-walk results.
+    pub walk: Vec<(PeerId, Vec<Multiaddr>)>,
+}
+
+/// Pick up to `budget` distinct peers to dial: the preferred ones in order;
+/// then at most [`PEERSTORE_DIALS_PER_ROUND`] dialled-OK entries at random;
+/// then from the routing table, a uniformly drawn non-empty bucket and a
+/// uniformly drawn peer in it, repeatedly; then random-walk results. Peers
+/// failing `eligible` (connected, being dialled, cooling down, a bootstrap
+/// node, ourselves) are skipped and do not use up the budget.
+pub(crate) fn choose(
+    budget: usize,
+    sources: Sources,
+    eligible: impl Fn(&PeerId) -> bool,
+    rng: &mut Rng,
+) -> Vec<(PeerId, Vec<Multiaddr>)> {
+    let mut chosen: Vec<(PeerId, Vec<Multiaddr>)> = Vec::new();
+    let mut taken: HashSet<PeerId> = HashSet::new();
+    let ok = |p: &PeerId, taken: &HashSet<PeerId>| !taken.contains(p) && eligible(p);
+
+    for (peer, addrs) in sources.preferred {
+        if chosen.len() >= budget {
+            return chosen;
+        }
+        if !addrs.is_empty() && ok(&peer, &taken) {
+            taken.insert(peer);
+            chosen.push((peer, addrs));
+        }
+    }
+
+    let mut store = sources.peerstore;
+    rng.shuffle(&mut store);
+    let mut from_store = 0;
+    for (peer, addrs) in store {
+        if chosen.len() >= budget || from_store >= PEERSTORE_DIALS_PER_ROUND {
+            break;
+        }
+        if !addrs.is_empty() && ok(&peer, &taken) {
+            taken.insert(peer);
+            chosen.push((peer, addrs));
+            from_store += 1;
+        }
+    }
+
+    let mut buckets: Vec<Vec<(PeerId, Vec<Multiaddr>)>> = sources
+        .buckets
+        .into_iter()
+        .map(|b| b.into_iter().filter(|(p, a)| !a.is_empty() && ok(p, &taken)).collect::<Vec<_>>())
+        .filter(|b| !b.is_empty())
+        .collect();
+    while chosen.len() < budget && !buckets.is_empty() {
+        let b = rng.below(buckets.len());
+        let i = rng.below(buckets[b].len());
+        let (peer, addrs) = buckets[b].swap_remove(i);
+        taken.insert(peer);
+        chosen.push((peer, addrs));
+        // Drop the drawn peer from any other bucket list (none in practice)
+        // and buckets left empty.
+        for bucket in &mut buckets {
+            bucket.retain(|(p, _)| *p != peer);
+        }
+        buckets.retain(|b| !b.is_empty());
+    }
+
+    let mut walk = sources.walk;
+    rng.shuffle(&mut walk);
+    for (peer, addrs) in walk {
+        if chosen.len() >= budget {
+            break;
+        }
+        if !addrs.is_empty() && ok(&peer, &taken) {
+            taken.insert(peer);
+            chosen.push((peer, addrs));
+        }
+    }
+    chosen
 }
 
 // ---------------------------------------------------------------------
@@ -338,38 +641,152 @@ impl Colocation {
 
 /// The policy's state in the event loop.
 pub(crate) struct Outbound {
-    /// Bootstrap dials in flight, by configured index.
-    pending: HashMap<ConnectionId, usize>,
+    /// How each connected peer's first connection came about.
+    first: HashMap<PeerId, FirstConnection>,
+    /// Our dials in flight and why.
+    pending: HashMap<ConnectionId, (Option<PeerId>, DialPurpose)>,
+    pub(crate) cooldowns: Cooldowns,
+    walk_pool: Vec<(PeerId, Vec<Multiaddr>)>,
     /// When each connection from a bootstrap dial was established.
     up_since: HashMap<ConnectionId, Instant>,
     pub(crate) keeper: Keeper,
+    pub(crate) book: DialedBook,
     pub(crate) rng: Rng,
+    /// Test switches: hold top-up / the keeper; dial these first.
+    pub(crate) topup_paused: bool,
+    pub(crate) keeper_paused: bool,
+    pub(crate) preferred: Vec<(PeerId, Vec<Multiaddr>)>,
 }
 
 impl Outbound {
-    pub(crate) fn new(keeper: Keeper, rng: Rng) -> Self {
-        Self { pending: HashMap::new(), up_since: HashMap::new(), keeper, rng }
-    }
-
-    /// A dial to bootstrap address `index` went out as `id`.
-    pub(crate) fn dialing(&mut self, id: ConnectionId, index: usize) {
-        self.pending.insert(id, index);
-    }
-
-    /// A connection was established.
-    pub(crate) fn established(&mut self, id: ConnectionId, peer: PeerId, now: Instant) {
-        let Some(index) = self.pending.remove(&id) else { return };
-        self.keeper.learn(index, peer);
-        self.up_since.insert(id, now);
-        if self.keeper.is_in_flight(id) {
-            self.keeper.up();
+    pub(crate) fn new(keeper: Keeper, book: DialedBook, rng: Rng) -> Self {
+        Self {
+            first: HashMap::new(),
+            pending: HashMap::new(),
+            up_since: HashMap::new(),
+            cooldowns: Cooldowns::default(),
+            walk_pool: Vec::new(),
+            keeper,
+            book,
+            rng,
+            topup_paused: false,
+            keeper_paused: false,
+            preferred: Vec::new(),
         }
     }
 
-    /// A dial failed.
-    pub(crate) fn dial_failed(&mut self, id: ConnectionId, now: Instant) {
-        if self.pending.remove(&id).is_some() && self.keeper.is_in_flight(id) {
-            self.keeper.failed(now, &mut self.rng);
+    pub(crate) fn dialing(&mut self, id: ConnectionId, peer: Option<PeerId>, purpose: DialPurpose) {
+        self.pending.insert(id, (peer, purpose));
+    }
+
+    /// Top-up peers: connected, first connection dialled by top-up.
+    pub(crate) fn topup_peers(&self) -> usize {
+        self.first.values().filter(|f| **f == FirstConnection::TopUp).count()
+    }
+
+    fn topup_in_flight(&self) -> usize {
+        self.pending.values().filter(|(_, p)| *p == DialPurpose::TopUp).count()
+    }
+
+    fn is_pending(&self, peer: &PeerId) -> bool {
+        self.pending.values().any(|(p, _)| p.as_ref() == Some(peer))
+    }
+
+    /// How many top-up dials this round may make.
+    pub(crate) fn topup_budget(&self) -> usize {
+        OUT_MIN.saturating_sub(self.topup_peers() + self.topup_in_flight()).min(DIALS_PER_ROUND)
+    }
+
+    /// Whether top-up may dial `peer` now.
+    pub(crate) fn eligible(&self, peer: &PeerId, me: &PeerId, connected: bool, now: Instant) -> bool {
+        peer != me
+            && !connected
+            && !self.is_pending(peer)
+            && !self.cooldowns.cooling(peer, now)
+            && !self.keeper.is_bootstrap(peer)
+    }
+
+    /// Dialled-OK entries as top-up candidates.
+    pub(crate) fn peerstore_candidates(&self, now_ms: u64) -> Vec<(PeerId, Vec<Multiaddr>)> {
+        let mut by_peer: HashMap<PeerId, Vec<Multiaddr>> = HashMap::new();
+        for e in self.book.usable(now_ms) {
+            if let Some((peer, addr)) = split_dialable(&e.addr) {
+                by_peer.entry(peer).or_default().push(addr);
+            }
+        }
+        by_peer.into_iter().collect()
+    }
+
+    pub(crate) fn walk_candidates(&self) -> Vec<(PeerId, Vec<Multiaddr>)> {
+        self.walk_pool.clone()
+    }
+
+    /// Random-walk results join the candidate pool (newest kept).
+    pub(crate) fn walked(&mut self, found: Vec<(PeerId, Vec<Multiaddr>)>) {
+        for (peer, addrs) in found {
+            if addrs.is_empty() {
+                continue;
+            }
+            self.walk_pool.retain(|(p, _)| *p != peer);
+            self.walk_pool.push((peer, addrs));
+        }
+        let excess = self.walk_pool.len().saturating_sub(WALK_POOL_MAX);
+        self.walk_pool.drain(..excess);
+    }
+
+    /// A connection was established. `first` says it is the peer's only one.
+    pub(crate) fn established(
+        &mut self,
+        id: ConnectionId,
+        peer: PeerId,
+        dialer: bool,
+        first: bool,
+        remote: &Multiaddr,
+        now: Now,
+    ) {
+        let Now { at: now, wall_ms: now_ms } = now;
+        let purpose = self.pending.remove(&id).map(|(_, p)| p);
+        if let Some(purpose) = purpose {
+            self.book.record(dialable(remote, &peer), now_ms);
+            match purpose {
+                DialPurpose::TopUp => self.cooldowns.succeeded(&peer),
+                DialPurpose::Bootstrap(i) => {
+                    self.keeper.learn(i, peer);
+                    self.up_since.insert(id, now);
+                    if self.keeper.is_in_flight(id) {
+                        self.keeper.up();
+                    }
+                }
+                DialPurpose::Restart => {}
+            }
+        }
+        if first {
+            let how = match (dialer, purpose) {
+                (false, _) => FirstConnection::Inbound,
+                (true, Some(DialPurpose::TopUp)) => FirstConnection::TopUp,
+                (true, Some(DialPurpose::Bootstrap(_))) => FirstConnection::Bootstrap,
+                (true, Some(DialPurpose::Restart)) => FirstConnection::Restart,
+                (true, None) => FirstConnection::OtherDial,
+            };
+            self.first.insert(peer, how);
+        }
+    }
+
+    /// One of our dials failed.
+    pub(crate) fn dial_failed(&mut self, id: ConnectionId, peer: Option<PeerId>, now: Instant) {
+        let Some((known, purpose)) = self.pending.remove(&id) else { return };
+        match purpose {
+            DialPurpose::TopUp => {
+                if let Some(p) = peer.or(known) {
+                    self.cooldowns.failed(p, now, &mut self.rng);
+                }
+            }
+            DialPurpose::Bootstrap(_) => {
+                if self.keeper.is_in_flight(id) {
+                    self.keeper.failed(now, &mut self.rng);
+                }
+            }
+            DialPurpose::Restart => {}
         }
     }
 
@@ -379,11 +796,26 @@ impl Outbound {
     /// lasted.
     pub(crate) fn closed(&mut self, id: ConnectionId, peer: &PeerId, remaining: u32, now: Instant) -> bool {
         let since = self.up_since.remove(&id);
-        if remaining != 0 || !self.keeper.is_bootstrap(peer) {
+        if remaining > 0 {
             return false;
         }
-        self.keeper.lost(now, since.map(|t| now.saturating_duration_since(t)), &mut self.rng);
+        self.first.remove(peer);
+        if !self.keeper.is_bootstrap(peer) {
+            return false;
+        }
+        self.keeper.lost(now, since.map(|d| now.saturating_duration_since(d)), &mut self.rng);
         true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn first_connections(&self) -> &HashMap<PeerId, FirstConnection> {
+        &self.first
+    }
+
+    /// Non-Rotifer peer: forget its dialled-OK entries.
+    pub(crate) fn forget(&mut self, peer: &PeerId) {
+        self.book.forget(peer);
+        self.walk_pool.retain(|(p, _)| p != peer);
     }
 }
 
@@ -410,15 +842,26 @@ mod tests {
     }
 
     fn outbound(boot: Vec<Multiaddr>, start: Instant) -> Outbound {
-        Outbound::new(Keeper::new(boot, start), Rng::new(7))
+        Outbound::new(Keeper::new(boot, start), DialedBook::default(), Rng::new(7))
     }
 
     #[test]
     fn constants_are_the_designed_ones() {
+        assert_eq!(OUT_MIN, 8);
+        assert_eq!((DIALS_PER_ROUND, PEERSTORE_DIALS_PER_ROUND), (8, 2));
+        assert_eq!(TOPUP_INTERVAL, Duration::from_secs(10));
+        assert_eq!(RANDOM_WALK_INTERVAL, Duration::from_secs(60));
+        assert_eq!((COOLDOWN_FIRST, COOLDOWN_MAX), (Duration::from_secs(30), Duration::from_secs(1800)));
         assert_eq!((KEEPER_BACKOFF_FIRST, KEEPER_BACKOFF_MAX), (Duration::from_secs(1), Duration::from_secs(16)));
         assert_eq!(KEEPER_CHECK_INTERVAL, Duration::from_secs(5));
         assert_eq!(KEEPER_STABLE, Duration::from_secs(10));
         assert_eq!(JITTER, 0.2);
+        assert_eq!(DIALED_MAX_AGE, Duration::from_secs(7 * 24 * 3600));
+        assert_eq!(DIALED_MAX, 64);
+    }
+
+    fn at(now: Instant) -> Now {
+        Now { at: now, wall_ms: 0 }
     }
 
     #[test]
@@ -427,10 +870,10 @@ mod tests {
         let mut o = outbound(vec![addr(1)], now);
         let (boot, other) = (peer(), peer());
         let c = cid();
-        o.dialing(c, 0);
-        o.established(c, boot, now);
+        o.dialing(c, None, DialPurpose::Bootstrap(0));
+        o.established(c, boot, true, true, &addr(1), at(now));
         // A connection that is not a bootstrap dial teaches nothing.
-        o.established(cid(), other, now);
+        o.established(cid(), other, true, true, &addr(2), at(now));
         assert!(o.keeper.is_bootstrap(&boot), "the bootstrap PeerId is learned on the first dial");
         assert!(!o.keeper.is_bootstrap(&other));
         assert!(!o.closed(cid(), &boot, 1, now), "one connection left");
@@ -445,21 +888,242 @@ mod tests {
         let now = start + KEEPER_CHECK_INTERVAL;
         let (i, _, _) = o.keeper.due(now, 0).expect("due");
         let c = cid();
-        o.dialing(c, i);
+        o.dialing(c, None, DialPurpose::Bootstrap(i));
         o.keeper.started(c);
         // A failure of some other dial leaves the keeper alone.
-        o.dial_failed(cid(), now);
+        o.dial_failed(cid(), None, now);
         assert!(o.keeper.is_in_flight(c));
-        o.dial_failed(c, now);
+        o.dial_failed(c, None, now);
         assert!(!o.keeper.is_in_flight(c));
         assert!(o.keeper.retry_at().is_some_and(|at| at > now), "backing off");
         let later = o.keeper.retry_at().unwrap();
         let (i, _, _) = o.keeper.due(later, 0).expect("due again after the backoff");
         let c = cid();
-        o.dialing(c, i);
+        o.dialing(c, None, DialPurpose::Bootstrap(i));
         o.keeper.started(c);
-        o.established(c, peer(), later);
+        o.established(c, peer(), true, true, &addr(1), at(later));
         assert!(o.keeper.retry_at().is_none(), "connected: nothing to wait for");
+    }
+
+    #[test]
+    fn out_min_counts_only_topup_peers() {
+        let now = Instant::now();
+        let mut o = outbound(vec![addr(1)], now);
+        let (topup, boot, kad, inbound, restart) = (peer(), peer(), peer(), peer(), peer());
+        let (c1, c2, c3) = (cid(), cid(), cid());
+        o.dialing(c1, Some(topup), DialPurpose::TopUp);
+        o.dialing(c2, None, DialPurpose::Bootstrap(0));
+        o.dialing(c3, Some(restart), DialPurpose::Restart);
+        o.established(c1, topup, true, true, &addr(2), Now { at: Instant::now(), wall_ms: 0 });
+        o.established(c2, boot, true, true, &addr(1), Now { at: Instant::now(), wall_ms: 0 });
+        o.established(c3, restart, true, true, &addr(5), Now { at: Instant::now(), wall_ms: 0 });
+        // A Kademlia query's dial: not one of ours.
+        o.established(cid(), kad, true, true, &addr(3), Now { at: Instant::now(), wall_ms: 0 });
+        o.established(cid(), inbound, false, true, &addr(4), Now { at: Instant::now(), wall_ms: 0 });
+        assert_eq!(o.topup_peers(), 1);
+        let first = o.first_connections();
+        assert_eq!(first[&topup], FirstConnection::TopUp);
+        assert_eq!(first[&boot], FirstConnection::Bootstrap);
+        assert_eq!(first[&kad], FirstConnection::OtherDial);
+        assert_eq!(first[&inbound], FirstConnection::Inbound);
+        assert_eq!(first[&restart], FirstConnection::Restart);
+        assert_eq!(first.values().filter(|f| f.is_outbound()).count(), 4);
+        assert!(o.keeper.is_bootstrap(&boot), "the bootstrap PeerId is learned on the first dial");
+        // A second connection to a peer that dialled in does not make it a top-up peer.
+        let c4 = cid();
+        o.dialing(c4, Some(inbound), DialPurpose::TopUp);
+        o.established(c4, inbound, true, false, &addr(4), Now { at: Instant::now(), wall_ms: 0 });
+        assert_eq!(o.topup_peers(), 1);
+        // The last connection closing forgets it.
+        assert!(!o.closed(cid(), &topup, 1, Instant::now()));
+        assert_eq!(o.topup_peers(), 1);
+        assert!(!o.closed(cid(), &topup, 0, Instant::now()));
+        assert_eq!(o.topup_peers(), 0);
+        assert!(o.closed(cid(), &boot, 0, Instant::now()), "a bootstrap node's last connection");
+    }
+
+    #[test]
+    fn dialled_ok_is_recorded_by_our_dials_only() {
+        let now = Instant::now();
+        let mut o = outbound(vec![], now);
+        let (topup, kad, restart, inbound) = (peer(), peer(), peer(), peer());
+        let (c1, c2) = (cid(), cid());
+        o.dialing(c1, Some(topup), DialPurpose::TopUp);
+        o.dialing(c2, Some(restart), DialPurpose::Restart);
+        o.established(c1, topup, true, true, &addr(2), Now { at: Instant::now(), wall_ms: 5 });
+        o.established(c2, restart, true, true, &addr(6), Now { at: Instant::now(), wall_ms: 5 });
+        o.established(cid(), kad, true, true, &addr(3), Now { at: Instant::now(), wall_ms: 5 });
+        o.established(cid(), inbound, false, true, &addr(4), Now { at: Instant::now(), wall_ms: 5 });
+        let recorded: Vec<&str> = o.book.entries().iter().map(|e| e.addr.as_str()).collect();
+        assert_eq!(
+            recorded,
+            vec![format!("{}/p2p/{topup}", addr(2)).as_str(), format!("{}/p2p/{restart}", addr(6)).as_str()]
+        );
+    }
+
+    #[test]
+    fn identify_reported_addresses_do_not_reach_topup() {
+        // Top-up's peer-store source is the dialled-OK book; the heard-of
+        // addresses (Identify) live in the plain peer store, which top-up
+        // never reads. Only a recorded dial makes a candidate.
+        let o = outbound(vec![], Instant::now());
+        assert!(o.peerstore_candidates(0).is_empty());
+    }
+
+    #[test]
+    fn dialled_book_evicts_the_longest_ago_and_ages_out() {
+        let day = 24 * 3600 * 1000u64;
+        let mut book = DialedBook::default();
+        for i in 0..DIALED_MAX as u64 {
+            book.record(format!("/ip4/10.0.0.1/tcp/{}/p2p/P{i}", 1000 + i), 10 * day + i);
+        }
+        book.record("/ip4/10.0.0.2/tcp/1/p2p/NEW".into(), 10 * day + 1000);
+        assert_eq!(book.entries().len(), DIALED_MAX);
+        assert!(!book.entries().iter().any(|e| e.addr.ends_with("/P0")), "the one dialled longest ago goes");
+        assert!(book.entries().iter().any(|e| e.addr.ends_with("/NEW")));
+        // Re-dialled: refreshed, not duplicated.
+        book.record("/ip4/10.0.0.1/tcp/1001/p2p/P1".into(), 12 * day);
+        assert_eq!(book.entries().iter().filter(|e| e.addr.ends_with("/P1")).count(), 1);
+        // Eight days on, only the refreshed entry is still usable.
+        let later = 10 * day + 1000 + 8 * day;
+        let usable: Vec<&str> = book.usable(later).map(|e| e.addr.as_str()).collect();
+        assert_eq!(usable, vec!["/ip4/10.0.0.1/tcp/1001/p2p/P1"]);
+        // Loading drops the stale ones outright.
+        let reloaded = DialedBook::from_entries(book.entries().to_vec(), later);
+        assert_eq!(reloaded.entries().len(), 1);
+    }
+
+    #[test]
+    fn choose_caps_the_peerstore_and_skips_ineligible() {
+        let mut rng = Rng::new(1);
+        let store: Vec<_> = (0..5).map(|i| (peer(), vec![addr(i)])).collect();
+        let banned = store[0].0;
+        let table: Vec<_> = (0..20).map(|i| (peer(), vec![addr(100 + i)])).collect();
+        let chosen = choose(
+            8,
+            Sources { peerstore: store.clone(), buckets: vec![table.clone()], ..Default::default() },
+            |p| *p != banned,
+            &mut rng,
+        );
+        assert_eq!(chosen.len(), 8);
+        let from_store = chosen.iter().filter(|(p, _)| store.iter().any(|(s, _)| s == p)).count();
+        assert_eq!(from_store, PEERSTORE_DIALS_PER_ROUND);
+        assert!(!chosen.iter().any(|(p, _)| *p == banned));
+        let distinct: HashSet<_> = chosen.iter().map(|(p, _)| *p).collect();
+        assert_eq!(distinct.len(), 8);
+    }
+
+    #[test]
+    fn choose_puts_preferred_first() {
+        let mut rng = Rng::new(2);
+        let preferred: Vec<_> = (0..3).map(|i| (peer(), vec![addr(i)])).collect();
+        let table: Vec<_> = (0..20).map(|i| (peer(), vec![addr(100 + i)])).collect();
+        let chosen = choose(
+            4,
+            Sources { preferred: preferred.clone(), buckets: vec![table], ..Default::default() },
+            |_| true,
+            &mut rng,
+        );
+        let ids: Vec<_> = chosen.iter().map(|(p, _)| *p).collect();
+        assert_eq!(&ids[..3], &preferred.iter().map(|(p, _)| *p).collect::<Vec<_>>()[..]);
+        assert_eq!(ids.len(), 4);
+    }
+
+    #[test]
+    fn buckets_are_drawn_uniformly_not_by_size() {
+        // One far bucket with 1 peer, three buckets with 20 each: drawing one
+        // peer per round, the far bucket comes up about 1/4 of the time
+        // (a draw over all peers would give 1/61).
+        let mut rng = Rng::new(3);
+        let far = peer();
+        let mut buckets = vec![vec![(far, vec![addr(1)])]];
+        for b in 0..3u16 {
+            buckets.push((0..20).map(|i| (peer(), vec![addr(1000 * (b + 1) + i)])).collect());
+        }
+        let rounds = 4000;
+        let mut hits = 0;
+        for _ in 0..rounds {
+            let chosen = choose(1, Sources { buckets: buckets.clone(), ..Default::default() }, |_| true, &mut rng);
+            if chosen[0].0 == far {
+                hits += 1;
+            }
+        }
+        let share = hits as f64 / rounds as f64;
+        assert!((0.22..0.28).contains(&share), "far bucket drawn {share:.3} of the time, expected ≈ 0.25");
+    }
+
+    #[test]
+    fn failed_candidates_cool_down_and_free_the_budget() {
+        let start = Instant::now();
+        let mut o = outbound(vec![], start);
+        let me = peer();
+        let unreachable: Vec<_> = (0..8).map(|i| (peer(), vec![addr(i)])).collect();
+        let others: Vec<_> = (0..8).map(|i| (peer(), vec![addr(100 + i)])).collect();
+        o.preferred = unreachable.clone();
+        let round = |o: &mut Outbound, now: Instant| {
+            let budget = o.topup_budget();
+            let sources =
+                Sources { preferred: o.preferred.clone(), walk: others.clone(), ..Default::default() };
+            let chosen = {
+                let mut rng = Rng::new(9);
+                choose(budget, sources, |p| o.eligible(p, &me, false, now), &mut rng)
+            };
+            let ids: Vec<_> = chosen
+                .iter()
+                .map(|(p, _)| {
+                    let c = cid();
+                    o.dialing(c, Some(*p), DialPurpose::TopUp);
+                    (c, *p)
+                })
+                .collect();
+            ids
+        };
+        // Round 1: the eight unreachable ones take the whole budget and fail.
+        let first = round(&mut o, start);
+        assert_eq!(first.iter().map(|(_, p)| *p).collect::<Vec<_>>(), unreachable.iter().map(|(p, _)| *p).collect::<Vec<_>>());
+        for (c, p) in &first {
+            o.dial_failed(*c, Some(*p), start);
+        }
+        // Round 2 (10 s later): they are cooling down, the budget goes to the others.
+        let second = round(&mut o, start + TOPUP_INTERVAL);
+        assert_eq!(second.len(), 8);
+        assert!(second.iter().all(|(_, p)| others.iter().any(|(q, _)| q == p)));
+        // The cooldown is 30 s ± 20 %, then doubles.
+        for (c, p) in &second {
+            o.dial_failed(*c, Some(*p), start + TOPUP_INTERVAL);
+        }
+        let p = unreachable[0].0;
+        assert!(o.cooldowns.cooling(&p, start + Duration::from_secs(23)));
+        assert!(!o.cooldowns.cooling(&p, start + Duration::from_secs(37)));
+        o.cooldowns.failed(p, start + Duration::from_secs(40), &mut Rng::new(4));
+        assert!(o.cooldowns.cooling(&p, start + Duration::from_secs(40 + 47)));
+        assert!(!o.cooldowns.cooling(&p, start + Duration::from_secs(40 + 73)));
+    }
+
+    #[test]
+    fn cooldown_caps_at_thirty_minutes() {
+        let now = Instant::now();
+        let mut c = Cooldowns::default();
+        let p = peer();
+        let mut rng = Rng::new(5);
+        for _ in 0..20 {
+            c.failed(p, now, &mut rng);
+        }
+        assert!(c.cooling(&p, now + Duration::from_secs(1440 - 1)));
+        assert!(!c.cooling(&p, now + Duration::from_secs(2160 + 1)));
+        c.succeeded(&p);
+        assert!(!c.cooling(&p, now));
+    }
+
+    #[test]
+    fn walk_pool_is_bounded_and_keeps_the_newest() {
+        let mut o = outbound(vec![], Instant::now());
+        let first = peer();
+        o.walked(vec![(first, vec![addr(1)])]);
+        o.walked((0..WALK_POOL_MAX).map(|i| (peer(), vec![addr(i as u16 + 10)])).collect());
+        let pool = o.walk_candidates();
+        assert_eq!(pool.len(), WALK_POOL_MAX);
+        assert!(!pool.iter().any(|(p, _)| *p == first));
     }
 
     #[test]
@@ -520,9 +1184,9 @@ mod tests {
         for _ in 0..3 {
             let (i, _, _) = o.keeper.due(now, 0).expect("due");
             let c = cid();
-            o.dialing(c, i);
+            o.dialing(c, None, DialPurpose::Bootstrap(i));
             o.keeper.started(c);
-            o.established(c, boot, now);
+            o.established(c, boot, true, true, &addr(1), Now { at: now, wall_ms: 0 });
             let closed_at = now + Duration::from_millis(5);
             assert!(o.closed(c, &boot, 0, closed_at), "the bootstrap node's last connection");
             let at = o.keeper.retry_at().expect("a connection closed at once backs off");
@@ -536,9 +1200,9 @@ mod tests {
         // A connection that lasted KEEPER_STABLE resets: redial at once.
         let (i, _, _) = o.keeper.due(now, 0).expect("due");
         let c = cid();
-        o.dialing(c, i);
+        o.dialing(c, None, DialPurpose::Bootstrap(i));
         o.keeper.started(c);
-        o.established(c, boot, now);
+        o.established(c, boot, true, true, &addr(1), Now { at: now, wall_ms: 0 });
         let closed_at = now + KEEPER_STABLE;
         assert!(o.closed(c, &boot, 0, closed_at));
         assert!(o.keeper.retry_at().is_none(), "a lasting connection clears the backoff");
@@ -596,5 +1260,15 @@ mod tests {
 
     fn s_with(a: u64, b: u64, c: u64) -> ColocationStats {
         ColocationStats { ips_over_threshold: a, max_peers_on_one_ip: b, ips_over_threshold_with_registered_peer: c }
+    }
+
+    #[test]
+    fn dialable_round_trips() {
+        let p = peer();
+        let text = dialable(&addr(9), &p);
+        assert_eq!(text, format!("/ip4/127.0.0.1/tcp/9/p2p/{p}"));
+        assert_eq!(dialable(&text.parse().unwrap(), &p), text, "no doubled suffix");
+        assert_eq!(split_dialable(&text), Some((p, addr(9))));
+        assert_eq!(split_dialable("/ip4/127.0.0.1/tcp/9"), None);
     }
 }

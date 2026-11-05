@@ -52,6 +52,36 @@ pub fn encode(addrs: &[String]) -> String {
     serde_json::to_string_pretty(&kept).unwrap_or_else(|_| "[]".to_string())
 }
 
+/// Where the dialled-OK level lives: beside the plain store, which keeps its
+/// list-of-addresses format (the heard-of level, readable by older
+/// versions). `peers.json` → `peers-dialed.json`.
+///
+/// A store written before this file existed has no dialled-OK entries: all
+/// its addresses count as heard-of, so neither top-up nor a restart dials
+/// them (A6 design v3 §1.6).
+pub fn dialed_path(peers: &Path) -> PathBuf {
+    let stem = peers.file_stem().and_then(|s| s.to_str()).unwrap_or("peers");
+    peers.with_file_name(format!("{stem}-dialed.json"))
+}
+
+/// Load the dialled-OK entries. Total like [`load`]: a missing or damaged
+/// file yields none.
+pub fn load_dialed(path: &Path) -> Vec<super::outbound::DialedEntry> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    serde_json::from_str(&text).unwrap_or_else(|_| {
+        tracing::debug!("dialled-OK peer store at {} is unreadable; ignoring", path.display());
+        Vec::new()
+    })
+}
+
+/// Serialize dialled-OK entries, capped at [`MAX_PERSISTED_PEERS`].
+pub fn encode_dialed(entries: &[super::outbound::DialedEntry]) -> String {
+    let kept: Vec<_> = entries.iter().take(MAX_PERSISTED_PEERS).collect();
+    serde_json::to_string_pretty(&kept).unwrap_or_else(|_| "[]".to_string())
+}
+
 /// Deduplicate (first occurrence wins) and cap to [`MAX_PERSISTED_PEERS`].
 fn normalise(addrs: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
@@ -122,5 +152,23 @@ mod tests {
         std::fs::write(&path, encode(&addrs)).unwrap();
         assert_eq!(load(&path), addrs);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn dialed_level_sits_beside_the_plain_store_and_round_trips() {
+        use super::super::outbound::DialedEntry;
+        let dir = tempfile::tempdir().unwrap();
+        let peers = dir.path().join("peers.json");
+        assert_eq!(dialed_path(&peers), dir.path().join("peers-dialed.json"));
+        // An old store with no dialled-OK file: nothing is dialled-OK.
+        std::fs::write(&peers, encode(&["/ip4/10.0.0.1/tcp/1/p2p/A".to_string()])).unwrap();
+        assert!(load_dialed(&dialed_path(&peers)).is_empty());
+        let entries = vec![DialedEntry { addr: "/ip4/10.0.0.1/tcp/1/p2p/A".into(), last_ok_ms: 42 }];
+        std::fs::write(dialed_path(&peers), encode_dialed(&entries)).unwrap();
+        assert_eq!(load_dialed(&dialed_path(&peers)), entries);
+        // The plain store still reads as before.
+        assert_eq!(load(&peers), vec!["/ip4/10.0.0.1/tcp/1/p2p/A".to_string()]);
+        std::fs::write(dialed_path(&peers), b"not json").unwrap();
+        assert!(load_dialed(&dialed_path(&peers)).is_empty());
     }
 }

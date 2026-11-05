@@ -110,7 +110,12 @@ fn a6_bootstrap_keeper_rides_out_45_seconds_offline() {
     std::thread::sleep(Duration::from_secs(45));
     let during = report(&victim).keeper_dials - before;
     println!("A6 ② offline_45s keeper_dials={during}");
-    let mut boot = spawn_quiet_bootstrap(&dir, "boot", PORT);
+    // Same key and port, but its own peer store: nodes keep peers.json next
+    // to their key, so a restart from `dir` would dial the victim back from
+    // the shared file and pass without the keeper.
+    let dir2 = tempfile::tempdir().unwrap();
+    std::fs::copy(dir.path().join("boot.key"), dir2.path().join("boot.key")).expect("copy key");
+    let mut boot = spawn_quiet_bootstrap(&dir2, "boot", PORT);
     let up = Instant::now();
     let back = eventually(30, || bootstraps_connected(&victim) == 1);
     println!("A6 ② offline_45s reconnected={back} after_restart={:.1}s", up.elapsed().as_secs_f64());

@@ -610,6 +610,9 @@ pub struct Node {
     heartbeat_interval: Duration,
     /// How often peer scores are recomputed besides after each heartbeat.
     score_refresh_interval: Duration,
+    /// Test switch: score only the application score (P5) and P6, so a
+    /// read score is exactly their sum (see `with_p5_p6_only_scores`).
+    p5_p6_only_scores: bool,
     /// Let AutoNAT probe and be probed on loopback / private addresses. Off in
     /// production (AutoNAT only trusts peers seen at global IPs); tests turn it
     /// on to check reachability on one machine.
@@ -698,6 +701,7 @@ impl Node {
             colocation: Arc::new(Mutex::new(ColocationStats::default())),
             heartbeat_interval: Duration::from_secs(heartbeat::HEARTBEAT_INTERVAL_SECS),
             score_refresh_interval: por::SCORE_REFRESH_INTERVAL,
+            p5_p6_only_scores: false,
             autonat_on_loopback: false,
             runtime: None,
             cmd_tx: None,
@@ -866,6 +870,16 @@ impl Node {
     #[cfg(test)]
     pub(crate) fn with_heartbeat_interval(mut self, interval: Duration) -> Self {
         self.heartbeat_interval = interval;
+        self
+    }
+
+    /// Turn off the two score terms that are left on besides P5 and P6: the
+    /// behaviour penalty (P7) and the slow-peer penalty. Tests that compare
+    /// a score with P6's exact value need it: on a slow CI runner either can
+    /// add a few tenths (〔T-156〕, −5.12 read for −5).
+    #[cfg(test)]
+    pub(crate) fn with_p5_p6_only_scores(mut self) -> Self {
+        self.p5_p6_only_scores = true;
         self
     }
 
@@ -1462,6 +1476,7 @@ impl Node {
             autonat_on_loopback: self.autonat_on_loopback,
             heartbeat_interval: self.heartbeat_interval,
             score_refresh_interval: self.score_refresh_interval,
+            p5_p6_only_scores: self.p5_p6_only_scores,
         })
     }
 }
@@ -1482,6 +1497,8 @@ struct SwarmOptions {
     heartbeat_interval: Duration,
     /// See `Node::score_refresh_interval`.
     score_refresh_interval: Duration,
+    /// See `Node::p5_p6_only_scores`.
+    p5_p6_only_scores: bool,
 }
 
 /// Parse `NetworkConfig::relays`. A relay is configured on purpose, so a bad
@@ -1549,7 +1566,11 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
                 gossipsub_config(),
             )
             .expect("gossipsub config is valid");
-            let (params, thresholds) = peer_score_params();
+            let (mut params, thresholds) = peer_score_params();
+            if options.p5_p6_only_scores {
+                params.behaviour_penalty_weight = 0.0;
+                params.slow_peer_weight = 0.0;
+            }
             gossipsub.with_peer_score(params, thresholds).expect("peer score parameters are valid");
             let identify = identify::Behaviour::new(identify::Config::new(
                 IDENTIFY_PROTOCOL_VERSION.to_string(),

@@ -206,6 +206,10 @@ fn a6_bootstrap_keeper_reconnects_only_one() {
 /// one is anonymous. The registered one scores P6 + 20, the anonymous one
 /// P6; the anonymous one is still heard at 11 and no longer at 14. The
 /// same-IP counters move as they should.
+///
+/// The victim scores only P5 and P6, so the score it reports is exactly P6
+/// (+ 20): with the behaviour and slow-peer penalties on, a slow CI runner
+/// read −5.12 for −5 (〔T-156〕). Those two only push a score further down.
 #[test]
 #[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 P6 — enable the p2p-integration feature or run with --ignored")]
 fn a6_shared_ip_scores_registered_and_anonymous_alike() {
@@ -226,7 +230,8 @@ fn a6_shared_ip_scores_registered_and_anonymous_alike() {
     };
     let mut victim = Node::with_keypair_path(cfg(vec![]), dir.path().join("victim.pem"))
         .expect("build node")
-        .with_score_refresh_interval(Duration::from_secs(1));
+        .with_score_refresh_interval(Duration::from_secs(1))
+        .with_p5_p6_only_scores();
     victim.start().expect("start node");
     victim.subscribe(ANNOUNCEMENTS_TOPIC).expect("subscribe");
     let join = |name: &str, registered: bool| -> Node {

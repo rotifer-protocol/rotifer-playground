@@ -1539,9 +1539,13 @@ const GRIND_ROUNDS: usize = 3;
 const GRIND_SETTLE: Duration = Duration::from_secs(15);
 /// §5.9.3's line: above it, weight the draw by bucket capacity.
 const GRIND_LINE: f64 = 0.5;
-// The assertion (red team v5 N2: a margin over the line) is waiting on the
-// CEO: per round it went red once in six rounds (0.50, 0.38, 0.25; 0.38,
-// 0.38, 0.62), as a round's top-up is 8 peers drawn once.
+/// The assertion (CEO, T-156, option a; red team v5 N2: a margin over the
+/// line): the mean of the three rounds stays at or below this. There is no
+/// per-round assertion: a round's top-up is 8 peers drawn once and not
+/// redrawn while full, so one round's share moves in steps of 1/8 (six
+/// rounds read 0.50, 0.38, 0.25; 0.38, 0.38, 0.62). There is no control
+/// that can turn red; this only guards against a regression (§5.9.3).
+const GRIND_REGRESSION_MAX: f64 = 0.6;
 /// No more tries than this per ground key (bucket 245 takes about 2^11).
 const GRIND_MAX_TRIES: u32 = 1 << 20;
 
@@ -1653,6 +1657,11 @@ fn a6_topup_ground_keys_take_no_majority() {
         means.len(),
         means.iter().map(|m| format!("{m:.2}")).collect::<Vec<_>>(),
         all > GRIND_LINE
+    );
+    assert!(
+        all <= GRIND_REGRESSION_MAX,
+        "①-磨: ground keys took {all:.2} of the top-up peers over {} rounds, above {GRIND_REGRESSION_MAX} (design v5 §5.9.3)",
+        means.len()
     );
 }
 

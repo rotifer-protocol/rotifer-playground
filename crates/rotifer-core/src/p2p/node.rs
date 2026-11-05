@@ -1935,7 +1935,7 @@ async fn run_event_loop(
                     peer_id, connection_id, endpoint, ..
                 } => {
                     let remote = endpoint.get_remote_address();
-                    outbound.established(connection_id, peer_id);
+                    outbound.established(connection_id, peer_id, Instant::now());
                     keeper_wake.as_mut().reset(keeper_deadline(&outbound).into());
                     colocated.opened(connection_id, peer_id, remote, |p| registered(&heartbeats, p));
                     if let Ok(mut c) = colocation.lock() {
@@ -1979,8 +1979,9 @@ async fn run_event_loop(
                         }
                     }
                     // RFC §8.5 item 1: the last bootstrap connection gone,
-                    // redial at once.
-                    if outbound.closed(&peer_id, num_established) {
+                    // redial — at once if it had lasted, after the backoff
+                    // if it closed right after connecting (a full node).
+                    if outbound.closed(connection_id, &peer_id, num_established, Instant::now()) {
                         keep_bootstrap(&mut swarm, &mut outbound);
                         keeper_wake.as_mut().reset(keeper_deadline(&outbound).into());
                     }

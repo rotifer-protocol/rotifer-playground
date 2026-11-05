@@ -28,6 +28,14 @@ pub(crate) const KEEPER_BACKOFF_FIRST: Duration = Duration::from_secs(1);
 pub(crate) const KEEPER_BACKOFF_MAX: Duration = Duration::from_secs(16);
 /// Fallback check of the keeper, besides reacting to a closed connection.
 pub(crate) const KEEPER_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+/// A bootstrap connection counts as a success only if it stayed up this long.
+/// A full bootstrap node completes the handshake and then denies the
+/// connection within milliseconds; if that counted as a success, the keeper
+/// would clear its backoff and redial in a loop (about 250 dials a second,
+/// T-156 acceptance round 2). A shorter connection is a failure and backs
+/// off; a longer one resets the backoff and is redialled at once. So a node
+/// that accepts and then drops us gets at most one dial per 10 s.
+pub(crate) const KEEPER_STABLE: Duration = Duration::from_secs(10);
 /// Small PRNG (splitmix64). Jitter needs randomness, not cryptographic
 /// strength, and a seed makes the unit tests repeatable.
 pub(crate) struct Rng(u64);
@@ -177,10 +185,24 @@ impl Keeper {
         self.retry_at = Some(now + wait);
     }
 
-    pub(crate) fn succeeded(&mut self) {
+    /// The keeper's dial connected. Not yet a success: that waits for how
+    /// long the connection lasts (see [`Keeper::lost`]).
+    pub(crate) fn up(&mut self) {
         self.in_flight = None;
-        self.failures = 0;
         self.retry_at = None;
+    }
+
+    /// The last bootstrap connection closed after `lived` (`None` if this
+    /// node did not dial it). Shorter than [`KEEPER_STABLE`] counts as a
+    /// failure and backs off; otherwise the backoff resets and the keeper
+    /// may redial at once (RFC §8.5 item 1).
+    pub(crate) fn lost(&mut self, now: Instant, lived: Option<Duration>, rng: &mut Rng) {
+        if lived.is_some_and(|d| d < KEEPER_STABLE) {
+            self.back_off(now, rng);
+        } else {
+            self.failures = 0;
+            self.retry_at = None;
+        }
     }
 
     /// When the backoff next allows a dial, if it is holding one back.
@@ -318,13 +340,15 @@ impl Colocation {
 pub(crate) struct Outbound {
     /// Bootstrap dials in flight, by configured index.
     pending: HashMap<ConnectionId, usize>,
+    /// When each connection from a bootstrap dial was established.
+    up_since: HashMap<ConnectionId, Instant>,
     pub(crate) keeper: Keeper,
     pub(crate) rng: Rng,
 }
 
 impl Outbound {
     pub(crate) fn new(keeper: Keeper, rng: Rng) -> Self {
-        Self { pending: HashMap::new(), keeper, rng }
+        Self { pending: HashMap::new(), up_since: HashMap::new(), keeper, rng }
     }
 
     /// A dial to bootstrap address `index` went out as `id`.
@@ -333,11 +357,12 @@ impl Outbound {
     }
 
     /// A connection was established.
-    pub(crate) fn established(&mut self, id: ConnectionId, peer: PeerId) {
+    pub(crate) fn established(&mut self, id: ConnectionId, peer: PeerId, now: Instant) {
         let Some(index) = self.pending.remove(&id) else { return };
         self.keeper.learn(index, peer);
+        self.up_since.insert(id, now);
         if self.keeper.is_in_flight(id) {
-            self.keeper.succeeded();
+            self.keeper.up();
         }
     }
 
@@ -348,10 +373,17 @@ impl Outbound {
         }
     }
 
-    /// A connection closed; `remaining` connections to `peer` are left.
-    /// Returns whether it was a bootstrap node's last connection.
-    pub(crate) fn closed(&self, peer: &PeerId, remaining: u32) -> bool {
-        remaining == 0 && self.keeper.is_bootstrap(peer)
+    /// Connection `id` to `peer` closed; `remaining` connections to `peer`
+    /// are left. Returns whether it was a bootstrap node's last connection;
+    /// if so, the keeper counts it as a failure or a success by how long it
+    /// lasted.
+    pub(crate) fn closed(&mut self, id: ConnectionId, peer: &PeerId, remaining: u32, now: Instant) -> bool {
+        let since = self.up_since.remove(&id);
+        if remaining != 0 || !self.keeper.is_bootstrap(peer) {
+            return false;
+        }
+        self.keeper.lost(now, since.map(|t| now.saturating_duration_since(t)), &mut self.rng);
+        true
     }
 }
 
@@ -385,6 +417,7 @@ mod tests {
     fn constants_are_the_designed_ones() {
         assert_eq!((KEEPER_BACKOFF_FIRST, KEEPER_BACKOFF_MAX), (Duration::from_secs(1), Duration::from_secs(16)));
         assert_eq!(KEEPER_CHECK_INTERVAL, Duration::from_secs(5));
+        assert_eq!(KEEPER_STABLE, Duration::from_secs(10));
         assert_eq!(JITTER, 0.2);
     }
 
@@ -395,14 +428,14 @@ mod tests {
         let (boot, other) = (peer(), peer());
         let c = cid();
         o.dialing(c, 0);
-        o.established(c, boot);
+        o.established(c, boot, now);
         // A connection that is not a bootstrap dial teaches nothing.
-        o.established(cid(), other);
+        o.established(cid(), other, now);
         assert!(o.keeper.is_bootstrap(&boot), "the bootstrap PeerId is learned on the first dial");
         assert!(!o.keeper.is_bootstrap(&other));
-        assert!(!o.closed(&boot, 1), "one connection left");
-        assert!(o.closed(&boot, 0), "a bootstrap node's last connection");
-        assert!(!o.closed(&other, 0), "not a bootstrap node");
+        assert!(!o.closed(cid(), &boot, 1, now), "one connection left");
+        assert!(o.closed(c, &boot, 0, now), "a bootstrap node's last connection");
+        assert!(!o.closed(cid(), &other, 0, now), "not a bootstrap node");
     }
 
     #[test]
@@ -425,8 +458,8 @@ mod tests {
         let c = cid();
         o.dialing(c, i);
         o.keeper.started(c);
-        o.established(c, peer());
-        assert!(o.keeper.retry_at().is_none(), "a success clears the backoff");
+        o.established(c, peer(), later);
+        assert!(o.keeper.retry_at().is_none(), "connected: nothing to wait for");
     }
 
     #[test]
@@ -467,10 +500,49 @@ mod tests {
         let c = cid();
         let (_, _, _) = k.due(now, 0).unwrap();
         k.started(c);
-        k.succeeded();
+        k.up();
+        k.lost(now, Some(KEEPER_STABLE), &mut rng);
         assert!(k.due(now, 1).is_none(), "one connected bootstrap is enough");
         assert!(k.due(now, 0).is_some(), "dropping to zero dials at once");
         assert_eq!(k.dials(), 8);
+    }
+
+    /// T-156 acceptance round 2: a full bootstrap node accepts the handshake
+    /// and closes at once. That must back off like a failed dial, growing
+    /// 1, 2, 4 s; only a connection that lasted [`KEEPER_STABLE`] resets.
+    #[test]
+    fn a_connection_closed_at_once_backs_off_and_a_lasting_one_resets() {
+        let start = Instant::now();
+        let mut o = outbound(vec![addr(1)], start);
+        let boot = peer();
+        let mut now = start + KEEPER_CHECK_INTERVAL;
+        let mut waits = Vec::new();
+        for _ in 0..3 {
+            let (i, _, _) = o.keeper.due(now, 0).expect("due");
+            let c = cid();
+            o.dialing(c, i);
+            o.keeper.started(c);
+            o.established(c, boot, now);
+            let closed_at = now + Duration::from_millis(5);
+            assert!(o.closed(c, &boot, 0, closed_at), "the bootstrap node's last connection");
+            let at = o.keeper.retry_at().expect("a connection closed at once backs off");
+            waits.push((at - closed_at).as_secs_f64());
+            assert!(o.keeper.due(closed_at, 0).is_none(), "no redial before the backoff");
+            now = at;
+        }
+        for (w, n) in waits.iter().zip([1.0, 2.0, 4.0]) {
+            assert!(*w >= n * 0.8 && *w <= n * 1.2, "waited {w:.2}s, expected {n}s ± 20 %: {waits:?}");
+        }
+        // A connection that lasted KEEPER_STABLE resets: redial at once.
+        let (i, _, _) = o.keeper.due(now, 0).expect("due");
+        let c = cid();
+        o.dialing(c, i);
+        o.keeper.started(c);
+        o.established(c, boot, now);
+        let closed_at = now + KEEPER_STABLE;
+        assert!(o.closed(c, &boot, 0, closed_at));
+        assert!(o.keeper.retry_at().is_none(), "a lasting connection clears the backoff");
+        assert!(o.keeper.due(closed_at, 0).is_some(), "and the keeper redials at once");
     }
 
     #[test]

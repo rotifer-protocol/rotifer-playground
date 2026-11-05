@@ -45,7 +45,7 @@ use super::gene_record;
 use super::gene_store::{self, Admission, GeneStore, Holder, ProviderAdmission, WriteLimiter};
 use super::heartbeat::{self, HEARTBEATS_TOPIC, WireNodeHeartbeat};
 use super::outbound::{
-    self, ColocationStats, Colocation, DialPurpose, DialedBook, DialedEntry, Keeper, Outbound, Rng, Sources,
+    self, ColocationStats, Colocation, DialPurpose, DialedBook, DialedEntry, Keeper, Outbound, Rng,
 };
 #[cfg(test)]
 use super::outbound::FirstConnection;
@@ -545,6 +545,12 @@ pub(crate) struct OutboundReport {
     /// Bootstrap nodes connected, and the keeper's dials so far.
     pub bootstraps_connected: usize,
     pub keeper_dials: u64,
+    /// How each top-up peer became one (design v5 §1.7).
+    pub topup: HashMap<String, outbound::TopUpWay>,
+    /// The last top-up round's readings (design v5 §5.1, F3).
+    pub last_round: outbound::TopUpRound,
+    /// The last round's eligible candidates per k-bucket index.
+    pub eligible_by_bucket: Vec<(u32, Vec<String>)>,
 }
 
 /// Connection-policy settings. Production always uses the defaults; the
@@ -557,6 +563,7 @@ struct PolicyOptions {
     p6_loopback_whitelist: bool,
     topup_paused: bool,
     keeper_paused: bool,
+    adopt_only: bool,
 }
 
 impl Default for PolicyOptions {
@@ -567,6 +574,7 @@ impl Default for PolicyOptions {
             p6_loopback_whitelist: false,
             topup_paused: false,
             keeper_paused: false,
+            adopt_only: false,
         }
     }
 }
@@ -987,6 +995,13 @@ impl Node {
     pub(crate) fn with_outbound_paused(mut self, topup: bool, keeper: bool) -> Self {
         self.policy.topup_paused = topup;
         self.policy.keeper_paused = keeper;
+        self
+    }
+
+    /// Control for design v5 §5.9.1 (①-拨): top-up adopts but never dials.
+    #[cfg(test)]
+    pub(crate) fn with_adopt_only(mut self) -> Self {
+        self.policy.adopt_only = true;
         self
     }
 
@@ -1896,6 +1911,7 @@ async fn run_event_loop(
     let mut outbound = Outbound::new(Keeper::new(bootstrap_addrs.clone(), startup), book, Rng::for_node(&local));
     outbound.topup_paused = options.policy.topup_paused;
     outbound.keeper_paused = options.policy.keeper_paused;
+    outbound.adopt_only = options.policy.adopt_only;
     if outbound.keeper.is_empty() {
         tracing::debug!("no bootstrap peers configured: the bootstrap keeper has nothing to keep");
     }
@@ -2817,6 +2833,14 @@ async fn run_event_loop(
                         connections,
                         bootstraps_connected,
                         keeper_dials: outbound.keeper.dials(),
+                        topup: outbound.topup_ways().into_iter().map(|(p, w)| (p.to_string(), w)).collect(),
+                        last_round: outbound.last_round.clone(),
+                        eligible_by_bucket: outbound
+                            .last_round
+                            .eligible_by_bucket
+                            .iter()
+                            .map(|(b, ps)| (*b, ps.iter().map(|p| p.to_string()).collect()))
+                            .collect(),
                     });
                 }
                 #[cfg(test)]
@@ -2922,51 +2946,41 @@ fn dial_tagged(
     }
 }
 
-/// One top-up round (A6 design v3 §1.6): while fewer than `OUT_MIN` peers
-/// were first dialled by top-up, dial up to `DIALS_PER_ROUND` candidates that
-/// have no connection at all.
+/// One top-up round (A6 design v5 §1.6–§1.7, [`Outbound::round`]): adopt
+/// the drawn candidates that are connected, dial the others.
 fn top_up(swarm: &mut Swarm<NodeBehaviour>, outbound: &mut Outbound) {
     if outbound.topup_paused {
         return;
     }
-    let budget = outbound.topup_budget();
-    if budget == 0 {
-        return;
-    }
     let now = Instant::now();
     let me = *swarm.local_peer_id();
-    let buckets: Vec<Vec<(Libp2pPeerId, Vec<Multiaddr>)>> = swarm
+    let me_key = kad::KBucketKey::from(me);
+    let buckets: Vec<outbound::Bucket> = swarm
         .behaviour_mut()
         .kademlia
         .kbuckets()
-        .map(|b| b.iter().map(|e| (*e.node.key.preimage(), e.node.value.iter().cloned().collect())).collect::<Vec<_>>())
-        .filter(|b| !b.is_empty())
+        .filter_map(|b| {
+            let entries: Vec<_> = b.iter().map(|e| (*e.node.key.preimage(), e.node.value.iter().cloned().collect())).collect();
+            let (first, _) = entries.first()?;
+            let index = me_key.distance(&kad::KBucketKey::from(*first)).ilog2().unwrap_or(0);
+            Some((index, entries))
+        })
         .collect();
-    let sources = Sources {
-        preferred: outbound.preferred.clone(),
-        peerstore: outbound.peerstore_candidates(wall_clock_ms()),
-        buckets,
-        walk: outbound.walk_candidates(),
+    let dial = {
+        let swarm_ref = &*swarm;
+        outbound.round(&me, buckets, |p| swarm_ref.is_connected(p), now, wall_clock_ms())
     };
-    let mut rng = std::mem::replace(&mut outbound.rng, Rng::new(0));
-    let chosen = {
-        let policy = &*outbound;
-        let swarm = &*swarm;
-        outbound::choose(budget, sources, |p| policy.eligible(p, &me, swarm.is_connected(p), now), &mut rng)
-    };
-    outbound.rng = rng;
-    for (peer, addrs) in chosen {
-        // Top-up may only add a peer with no connection at all, so a peer
-        // that dialled in cannot be dialled back to make up the count. A
-        // fresh source port keeps two nodes topping each other up at the same
-        // instant from merging into one failed simultaneous-open connection.
+    for (peer, addrs) in dial {
+        // A fresh source port keeps two nodes topping each other up at the
+        // same instant from merging into one failed simultaneous-open
+        // connection.
         let opts = DialOpts::peer_id(peer)
             .addresses(addrs)
             .condition(PeerCondition::DisconnectedAndNotDialing)
             .allocate_new_port()
             .build();
         if !dial_tagged(swarm, outbound, opts, Some(peer), DialPurpose::TopUp) {
-            outbound.cooldowns.failed(peer, now, &mut outbound.rng);
+            outbound.topup_not_started(peer, now);
         }
     }
 }

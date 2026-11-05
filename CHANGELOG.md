@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.35.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.34.0...v0.35.0) (2026-11-05)
+
+
+### Features
+
+* **p2p:** A6 part 1 — bootstrap keeper, explicit P6, same-IP counters in /status ([#552](https://github.com/rotifer-protocol/rotifer-playground/issues/552)) ([feb1ed9](https://github.com/rotifer-protocol/rotifer-playground/commit/feb1ed962a66df22d86e3469a735c2e758374263))
+
 ## [0.34.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.33.1...v0.34.0) (2026-11-04)
 
 

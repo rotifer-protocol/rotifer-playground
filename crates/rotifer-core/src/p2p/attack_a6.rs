@@ -403,6 +403,142 @@ fn a6_self_chosen_outbound_control_e_before_a6() {
 }
 
 // ---------------------------------------------------------------------
+// ① b, the small setup (design v5 §10 row 3, Codex 7; red team v5 N1).
+//
+// The victim has exactly 6 peers, all in its mesh (`mesh_n` 6): 4 that
+// dialled it, 2 it dialled. It then dials W. With `mesh_outbound_min` 3 its
+// heartbeat must graft W, the only outbound candidate, within 3 s; with 2 it
+// must not (the control).
+//
+// N1: W must not graft the victim on its own. W's mesh is filled first by 6
+// helpers that dial W; an empty mesh would make W GRAFT the victim whatever
+// the victim's setting. The helpers take no inbound connections, so the
+// victim's Kademlia, which learns them from W, cannot dial them and add
+// other outbound candidates.
+// ---------------------------------------------------------------------
+
+const B_SMALL_HELPERS: usize = 6;
+const B_SMALL_WITHIN: Duration = Duration::from_secs(3);
+/// GossipSub's first heartbeat runs `heartbeat_initial_delay` (5 s) plus one
+/// interval (1 s) after start. The victim's mesh fills from its peers' GRAFTs
+/// well before that, so W is only dialled once the heartbeat is running.
+const B_SMALL_HEARTBEAT_RUNNING: Duration = Duration::from_secs(7);
+
+/// The victim's mesh on the announcements topic, and the peers in it whose
+/// first connection the victim dialled (gossipsub's outbound).
+fn mesh_outbound(node: &Node) -> (Vec<String>, Vec<String>) {
+    let mesh = node.mesh_peers(ANNOUNCEMENTS_TOPIC).expect("mesh peers");
+    let first = report(node).first;
+    let outbound = mesh
+        .iter()
+        .filter(|p| first.get(*p).is_some_and(|f| *f != FirstConnection::Inbound))
+        .cloned()
+        .collect();
+    (mesh, outbound)
+}
+
+fn setup_invalid(msg: String) -> ! {
+    panic!("A6 SETUP INVALID: {msg}")
+}
+
+/// Run the small setup; returns (outbound peers in the victim's mesh at
+/// most, whether W was ever in it) over the 3 s after the victim and W
+/// connected.
+fn run_b_small(label: &str, mesh_outbound_min: usize) -> (usize, bool) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let w = spawn_listed(&dir, "w", vec![]);
+    let w_peer = w.local_peer_id().0;
+    let helpers: Vec<Node> = (0..B_SMALL_HELPERS)
+        .map(|i| {
+            spawn_with(&dir, &format!("helper{i}"), vec![addr(&w)], |n| {
+                n.with_p6_loopback_whitelist().with_max_established_incoming(0)
+            })
+        })
+        .collect();
+    if !eventually(30, || w.mesh_peers(ANNOUNCEMENTS_TOPIC).map(|m| m.len()).unwrap_or(0) >= 5) {
+        setup_invalid(format!("{label}: W's mesh never reached mesh_n_low 5 (N1 needs it full elsewhere)"));
+    }
+
+    let victim_started = Instant::now();
+    let victim = spawn_with(&dir, "victim", vec![], |n| {
+        // Exactly the 4 designed inbound peers fit: the helpers, which learn
+        // the victim from W, cannot dial in and swell its mesh.
+        n.with_p6_loopback_whitelist()
+            .with_mesh_outbound_min(mesh_outbound_min)
+            .with_outbound_paused(true, true)
+            .with_max_established_incoming(4)
+    });
+    let outs: Vec<Node> = (0..2).map(|i| spawn_listed(&dir, &format!("out{i}"), vec![])).collect();
+    for o in &outs {
+        victim.dial_always(addr(o).parse().expect("addr")).expect("dial");
+    }
+    let ins: Vec<Node> = (0..4).map(|i| spawn_listed(&dir, &format!("in{i}"), vec![addr(&victim)])).collect();
+    if let Some(rest) = B_SMALL_HEARTBEAT_RUNNING.checked_sub(victim_started.elapsed()) {
+        std::thread::sleep(rest);
+    }
+    let ready = eventually(30, || {
+        let (mesh, outbound) = mesh_outbound(&victim);
+        victim.connected_peers().len() == 6 && mesh.len() == 6 && outbound.len() == 2
+    });
+    let (mesh, outbound) = mesh_outbound(&victim);
+    if !ready {
+        setup_invalid(format!(
+            "{label}: before W, want 6 connected / mesh 6 / 2 outbound in mesh; got {} / {} / {}",
+            victim.connected_peers().len(),
+            mesh.len(),
+            outbound.len()
+        ));
+    }
+    let w_mesh = w.mesh_peers(ANNOUNCEMENTS_TOPIC).expect("W mesh").len();
+
+    victim.dial_always(addr(&w).parse().expect("addr")).expect("dial W");
+    if !eventually(10, || victim.connected_peers().contains(&w_peer)) {
+        setup_invalid(format!("{label}: the victim never connected to W"));
+    }
+    let start = Instant::now();
+    let (mut most, mut w_in) = (outbound.len(), false);
+    while start.elapsed() < B_SMALL_WITHIN {
+        let (mesh, outbound) = mesh_outbound(&victim);
+        most = most.max(outbound.len());
+        w_in |= mesh.contains(&w_peer);
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let (mesh, outbound) = mesh_outbound(&victim);
+    let connected = victim.connected_peers().len();
+    let w_grafts_victim = w.mesh_peers(ANNOUNCEMENTS_TOPIC).expect("W mesh").contains(&victim.local_peer_id().0);
+    println!(
+        "A6 ①b-small {label} mesh_outbound_min={mesh_outbound_min} w_mesh_before={w_mesh} \
+         outbound_in_mesh_most={most} w_in_mesh={w_in} end: connected={connected} mesh={} outbound={} \
+         victim_in_w_mesh={w_grafts_victim}",
+        mesh.len(),
+        outbound.len()
+    );
+    drop((helpers, outs, ins));
+    (most, w_in)
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_mesh_outbound_min_grafts_a_new_outbound_peer() {
+    let (most, w_in) = run_b_small("route1", 3);
+    assert!(
+        most >= 3 && w_in,
+        "with mesh_outbound_min 3 the heartbeat must graft W within 3 s: outbound in mesh {most}, W in mesh {w_in}"
+    );
+}
+
+/// Control: libp2p's `mesh_outbound_min` of 2 is already met, so W stays out.
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_mesh_outbound_min_control_2_leaves_w_out() {
+    let (most, w_in) = run_b_small("control-b", 2);
+    assert!(
+        most < 3 && !w_in,
+        "control must be red: with mesh_outbound_min 2, outbound in mesh {most}, W in mesh {w_in}"
+    );
+}
+
+// ---------------------------------------------------------------------
 // ② Bootstrap keeper (design v3 §2, §5.3)
 // ---------------------------------------------------------------------
 

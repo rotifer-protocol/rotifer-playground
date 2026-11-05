@@ -267,7 +267,7 @@ fn a6_shared_ip_scores_registered_and_anonymous_alike() {
 /// peer is still connected. Eleven peers on one IP, one of them with two
 /// connections; closing one of those must leave all eleven at −5.
 #[test]
-#[ignore = "K10 reproduced (T-156); fix tracked separately, see ADR-304 revision draft"]
+#[cfg_attr(not(feature = "k10-repro"), ignore = "K10 reproduced (T-156); fix tracked separately, see ADR-304 revision draft")]
 fn a6_p6_still_counts_a_peer_after_one_of_two_connections_closes() {
     const NODES: usize = 11;
     let dir = tempfile::tempdir().unwrap();

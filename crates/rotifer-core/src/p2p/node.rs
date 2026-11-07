@@ -44,7 +44,11 @@ use super::discover::{self, Discovery, HitSource, SearchHit, SearchOutcome, Sear
 use super::gene_record;
 use super::gene_store::{self, Admission, GeneStore, Holder, ProviderAdmission, WriteLimiter};
 use super::heartbeat::{self, HEARTBEATS_TOPIC, WireNodeHeartbeat};
-use super::outbound::{self, ColocationStats, Colocation, Keeper, Outbound, Rng};
+use super::outbound::{
+    self, ColocationStats, Colocation, DialPurpose, DialedBook, DialedEntry, Keeper, Outbound, Rng,
+};
+#[cfg(test)]
+use super::outbound::FirstConnection;
 use super::peerstore;
 use super::por::{self, Decision, FetchJob, Fetched, HeartbeatDesk, HeartbeatStats, KeyStore, PeerAttestation};
 use super::{NetworkConfig, NetworkError, PeerId};
@@ -162,6 +166,17 @@ enum Command {
     /// The connection policy's view of this node's peers.
     #[cfg(test)]
     OutboundReport(oneshot::Sender<OutboundReport>),
+    /// Hold or release top-up and the bootstrap keeper.
+    #[cfg(test)]
+    SetOutboundPaused { topup: bool, keeper: bool, resp: oneshot::Sender<()> },
+    #[cfg(test)]
+    SetWalkPaused { paused: bool, resp: oneshot::Sender<()> },
+    /// Messages withheld so far.
+    #[cfg(test)]
+    Withheld(oneshot::Sender<u64>),
+    /// Put these peers first among top-up's candidates (the K2 control).
+    #[cfg(test)]
+    PreferCandidates(Vec<(Libp2pPeerId, Vec<Multiaddr>)>),
     /// Close every connection to a peer.
     #[cfg(test)]
     Disconnect(Libp2pPeerId),
@@ -171,6 +186,9 @@ enum Command {
     /// Dial `addr` even if already connected to that peer.
     #[cfg(test)]
     DialAlways(Multiaddr),
+    /// Leave a GossipSub topic.
+    #[cfg(test)]
+    Unsubscribe(String),
     /// What this node's own store holds under `key`: the record value and
     /// the providers.
     #[cfg(test)]
@@ -228,15 +246,42 @@ const MAX_RECEIVED_MESSAGES: usize = 1024;
 const GOSSIP_DUPLICATE_CACHE: Duration =
     Duration::from_secs(2 * super::messages::MAX_TIMESTAMP_SKEW_SECS);
 
+/// Mesh peers this node must have dialled itself (A6, ADR-304 D2 revision):
+/// up from libp2p's 2. With `mesh_n` 6 (`mesh_n_low` 5, `mesh_n_high` 12) this
+/// keeps at least 3 of a mesh's peers self-dialled, not half. GossipSub counts
+/// a peer as self-dialled when its first connection was dialled by this node,
+/// whatever dialled it.
+const MESH_OUTBOUND_MIN: usize = 3;
+
+/// The production GossipSub config (the swarm builds it through
+/// [`gossipsub_config_with`] with the default policy).
+#[cfg(test)]
 fn gossipsub_config() -> gossipsub::Config {
-    gossipsub::ConfigBuilder::default()
+    gossipsub_config_with(MESH_OUTBOUND_MIN, None, None)
+}
+
+/// [`gossipsub_config`] with the mesh's self-dialled minimum and, for tests,
+/// the unsubscribe and prune backoffs overridden.
+fn gossipsub_config_with(
+    mesh_outbound_min: usize,
+    unsubscribe_backoff: Option<Duration>,
+    prune_backoff: Option<Duration>,
+) -> gossipsub::Config {
+    let mut builder = gossipsub::ConfigBuilder::default();
+    builder
         .duplicate_cache_time(GOSSIP_DUPLICATE_CACHE)
+        .mesh_outbound_min(mesh_outbound_min)
         // Application validation before forwarding: every message is held
         // until the event loop reports Accept / Reject / Ignore, so an
         // invalid announcement is never relayed to other peers.
-        .validate_messages()
-        .build()
-        .expect("gossipsub config is valid")
+        .validate_messages();
+    if let Some(backoff) = unsubscribe_backoff {
+        builder.unsubscribe_backoff(backoff);
+    }
+    if let Some(backoff) = prune_backoff {
+        builder.prune_backoff(backoff);
+    }
+    builder.build().expect("gossipsub config is valid")
 }
 
 /// Peer scoring (ADR-300 contract v2, CEO 〔T-140〕 E7): no topic scores
@@ -337,6 +382,87 @@ fn feed_kad(kademlia: &mut kad::Behaviour<GeneStore>, peer: &Libp2pPeerId, addr:
     kademlia.add_address(peer, addr);
 }
 
+/// Refuses this node's own dials to `peers`; connections they open are
+/// accepted as usual. Built only by tests (design v5 §5.9.2, ①-向:
+/// attackers that never dial the victim and only wait to be dialled).
+struct DenyDial {
+    peers: HashSet<Libp2pPeerId>,
+}
+
+/// Why [`DenyDial`] refused a dial.
+#[derive(Debug)]
+struct DialDenied(Libp2pPeerId);
+
+impl std::fmt::Display for DialDenied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "test switch: this node does not dial {}", self.0)
+    }
+}
+
+impl std::error::Error for DialDenied {}
+
+impl NetworkBehaviour for DenyDial {
+    type ConnectionHandler = libp2p::swarm::dummy::ConnectionHandler;
+    type ToSwarm = std::convert::Infallible;
+
+    fn handle_established_inbound_connection(
+        &mut self,
+        _connection_id: libp2p::swarm::ConnectionId,
+        _peer: Libp2pPeerId,
+        _local_addr: &Multiaddr,
+        _remote_addr: &Multiaddr,
+    ) -> Result<libp2p::swarm::THandler<Self>, ConnectionDenied> {
+        Ok(libp2p::swarm::dummy::ConnectionHandler)
+    }
+
+    fn handle_pending_outbound_connection(
+        &mut self,
+        _connection_id: libp2p::swarm::ConnectionId,
+        maybe_peer: Option<Libp2pPeerId>,
+        _addresses: &[Multiaddr],
+        _effective_role: libp2p::core::Endpoint,
+    ) -> Result<Vec<Multiaddr>, ConnectionDenied> {
+        match maybe_peer {
+            Some(peer) if self.peers.contains(&peer) => Err(ConnectionDenied::new(DialDenied(peer))),
+            _ => Ok(vec![]),
+        }
+    }
+
+    // A dial with no PeerId that turns out to reach a listed peer: closed
+    // before any behaviour sees it (the other side still saw it arrive).
+    fn handle_established_outbound_connection(
+        &mut self,
+        _connection_id: libp2p::swarm::ConnectionId,
+        peer: Libp2pPeerId,
+        _addr: &Multiaddr,
+        _role_override: libp2p::core::Endpoint,
+        _port_use: libp2p::core::transport::PortUse,
+    ) -> Result<libp2p::swarm::THandler<Self>, ConnectionDenied> {
+        if self.peers.contains(&peer) {
+            return Err(ConnectionDenied::new(DialDenied(peer)));
+        }
+        Ok(libp2p::swarm::dummy::ConnectionHandler)
+    }
+
+    fn on_swarm_event(&mut self, _event: libp2p::swarm::FromSwarm) {}
+
+    fn on_connection_handler_event(
+        &mut self,
+        _peer: Libp2pPeerId,
+        _connection_id: libp2p::swarm::ConnectionId,
+        event: libp2p::swarm::THandlerOutEvent<Self>,
+    ) {
+        match event {}
+    }
+
+    fn poll(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<libp2p::swarm::ToSwarm<Self::ToSwarm, libp2p::swarm::THandlerInEvent<Self>>> {
+        std::task::Poll::Pending
+    }
+}
+
 #[derive(NetworkBehaviour)]
 struct NodeBehaviour {
     // The limits come first. libp2p offers a new connection to each behaviour
@@ -352,6 +478,9 @@ struct NodeBehaviour {
     /// Peers whose score is at or below the graylist threshold, whatever the
     /// cause: refused and disconnected until the score rises again (A2 §8.2).
     blocked: allow_block_list::Behaviour<allow_block_list::BlockedPeers>,
+    /// Test switch (design v5 §5.9.2, ①-向): refuse this node's own dials
+    /// to the listed peers. Empty, and so never built, outside tests.
+    deny_dial: Toggle<DenyDial>,
     kademlia: kad::Behaviour<GeneStore>,
     gossipsub: gossipsub::Behaviour,
     identify: identify::Behaviour,
@@ -412,6 +541,12 @@ pub struct ReceivedMessage {
     pub source: Option<String>,
     /// Wall-clock arrival time (Unix ms), the time validation ran against.
     pub received_at_ms: u64,
+    /// The peer that forwarded it, and whether it was in our mesh for the
+    /// topic then (design v5 §5.9.4, ①-稳: mesh push or IHAVE/IWANT).
+    #[cfg(test)]
+    pub via: String,
+    #[cfg(test)]
+    pub via_mesh: bool,
 }
 
 /// GossipSub messages received by the node, shared between the synchronous API
@@ -503,11 +638,55 @@ pub struct DhtStats {
 #[cfg(test)]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct OutboundReport {
+    /// How each connected peer's first connection came about.
+    pub first: HashMap<String, FirstConnection>,
+    /// Peers whose first connection top-up dialled.
+    pub topup_peers: usize,
     /// Established connections per connected peer.
     pub connections: HashMap<String, usize>,
     /// Bootstrap nodes connected, and the keeper's dials so far.
     pub bootstraps_connected: usize,
     pub keeper_dials: u64,
+    /// How each top-up peer became one (design v5 §1.7).
+    pub topup: HashMap<String, outbound::TopUpWay>,
+    /// The last top-up round's readings (design v5 §5.1, F3).
+    pub last_round: outbound::TopUpRound,
+    /// The last round's eligible candidates per k-bucket index.
+    pub eligible_by_bucket: Vec<(u32, Vec<String>)>,
+    /// Peers whose top-up dial failed and that are cooling down.
+    pub cooling: Vec<String>,
+}
+
+/// Connection-policy settings. Production always uses the defaults; the
+/// builders that change them exist only under `#[cfg(test)]`.
+#[derive(Debug, Clone, Copy)]
+struct PolicyOptions {
+    mesh_outbound_min: usize,
+    unsubscribe_backoff: Option<Duration>,
+    prune_backoff: Option<Duration>,
+    /// Exempt 127.0.0.1 from P6 (all loopback test nodes share it).
+    p6_loopback_whitelist: bool,
+    topup_paused: bool,
+    keeper_paused: bool,
+    adopt_only: bool,
+    /// Kademlia's periodic bootstrap (5 min) off (tests: red team v5 N3,
+    /// and telling top-up's dial from Kademlia's in the restart test).
+    kad_periodic_bootstrap_off: bool,
+}
+
+impl Default for PolicyOptions {
+    fn default() -> Self {
+        Self {
+            mesh_outbound_min: MESH_OUTBOUND_MIN,
+            unsubscribe_backoff: None,
+            prune_backoff: None,
+            p6_loopback_whitelist: false,
+            topup_paused: false,
+            keeper_paused: false,
+            adopt_only: false,
+            kad_periodic_bootstrap_off: false,
+        }
+    }
 }
 
 /// Shared state handles the event loop updates and the synchronous API reads.
@@ -544,6 +723,8 @@ struct NodeShared {
     /// Connected peers' GossipSub scores, as of the last recompute.
     scores: Arc<Mutex<HashMap<String, f64>>>,
     dht: Arc<Mutex<DhtStats>>,
+    /// Dialled-OK peer store entries, persisted on shutdown.
+    dialed: Arc<Mutex<Vec<DialedEntry>>>,
     /// Same-IP counters (A6 design v3 §3.4).
     colocation: Arc<Mutex<ColocationStats>>,
 }
@@ -604,8 +785,18 @@ pub struct Node {
     scores: Arc<Mutex<HashMap<String, f64>>>,
     /// What became of peers' DHT writes.
     dht: Arc<Mutex<DhtStats>>,
+    /// Dialled-OK peer store entries (see `outbound`), written beside
+    /// `peerstore_path` on shutdown.
+    dialed: Arc<Mutex<Vec<DialedEntry>>>,
     /// Same-IP counters (A6 design v3 §3.4).
     colocation: Arc<Mutex<ColocationStats>>,
+    /// Connection-policy settings (defaults outside tests).
+    policy: PolicyOptions,
+    /// Peers this node never dials (test switch; empty outside tests).
+    deny_dial: Vec<Libp2pPeerId>,
+    /// Authors whose messages this node ignores instead of forwarding (test
+    /// switch; empty outside tests).
+    withhold_from: HashSet<String>,
     /// How often this node publishes its heartbeat.
     heartbeat_interval: Duration,
     /// How often peer scores are recomputed besides after each heartbeat.
@@ -698,7 +889,11 @@ impl Node {
             heartbeats: Arc::new(Mutex::new(HeartbeatDesk::new(Vec::new(), KeyStore::default()))),
             scores: Arc::new(Mutex::new(HashMap::new())),
             dht: Arc::new(Mutex::new(DhtStats::default())),
+            dialed: Arc::new(Mutex::new(Vec::new())),
             colocation: Arc::new(Mutex::new(ColocationStats::default())),
+            policy: PolicyOptions::default(),
+            deny_dial: Vec::new(),
+            withhold_from: HashSet::new(),
             heartbeat_interval: Duration::from_secs(heartbeat::HEARTBEAT_INTERVAL_SECS),
             score_refresh_interval: por::SCORE_REFRESH_INTERVAL,
             p5_p6_only_scores: false,
@@ -890,6 +1085,79 @@ impl Node {
         self
     }
 
+    /// Exempt 127.0.0.1 from P6: every loopback test node shares that IP, so
+    /// beyond ten nodes all of them would score below zero (design v3 §3.5).
+    #[cfg(test)]
+    pub(crate) fn with_p6_loopback_whitelist(mut self) -> Self {
+        self.policy.p6_loopback_whitelist = true;
+        self
+    }
+
+    /// Mesh peers this node must have dialled itself (production: 3).
+    #[cfg(test)]
+    pub(crate) fn with_mesh_outbound_min(mut self, n: usize) -> Self {
+        self.policy.mesh_outbound_min = n;
+        self
+    }
+
+    /// GossipSub's unsubscribe backoff (production: libp2p's 10 s).
+    #[cfg(test)]
+    pub(crate) fn with_unsubscribe_backoff(mut self, backoff: Duration) -> Self {
+        self.policy.unsubscribe_backoff = Some(backoff);
+        self
+    }
+
+    /// GossipSub's prune backoff (production: libp2p's 60 s). Design v5
+    /// §5.1: ①'s re-formations use a short one on every node so that one
+    /// draw does not hold the next back; ①-稳 keeps the default.
+    #[cfg(test)]
+    pub(crate) fn with_prune_backoff(mut self, backoff: Duration) -> Self {
+        self.policy.prune_backoff = Some(backoff);
+        self
+    }
+
+    /// Start with top-up and/or the bootstrap keeper held.
+    #[cfg(test)]
+    pub(crate) fn with_outbound_paused(mut self, topup: bool, keeper: bool) -> Self {
+        self.policy.topup_paused = topup;
+        self.policy.keeper_paused = keeper;
+        self
+    }
+
+    /// Never dial `peers` (design v5 §5.9.2, ①-向: an attacker that only
+    /// waits to be dialled). Their connections in are accepted as usual.
+    #[cfg(test)]
+    pub(crate) fn with_deny_dial(mut self, peers: Vec<Libp2pPeerId>) -> Self {
+        self.deny_dial = peers;
+        self
+    }
+
+    /// Ignore every message written by one of `authors` (design v5 §5.9.4,
+    /// ①-稳: an attacker that withholds honest messages). An ignored message
+    /// leaves the message cache, so it is neither forwarded nor offered by
+    /// IHAVE (libp2p-gossipsub 0.50 `report_message_validation_result`).
+    #[cfg(test)]
+    pub(crate) fn with_withhold_from(mut self, authors: Vec<Libp2pPeerId>) -> Self {
+        self.withhold_from = authors.iter().map(|p| p.to_string()).collect();
+        self
+    }
+
+    /// Turn Kademlia's periodic bootstrap off. Its automatic bootstrap (a
+    /// query 500 ms after a peer enters a routing table of fewer than 20)
+    /// stays: libp2p-kad 0.49 offers no public switch for it.
+    #[cfg(test)]
+    pub(crate) fn with_kad_periodic_bootstrap_off(mut self) -> Self {
+        self.policy.kad_periodic_bootstrap_off = true;
+        self
+    }
+
+    /// Control for design v5 §5.9.1 (①-拨): top-up adopts but never dials.
+    #[cfg(test)]
+    pub(crate) fn with_adopt_only(mut self) -> Self {
+        self.policy.adopt_only = true;
+        self
+    }
+
     /// Subscribe to a GossipSub topic. Requires the node to be started.
     pub fn subscribe(&self, topic: &str) -> Result<(), NetworkError> {
         self.send_command(Command::Subscribe(topic.to_string()))
@@ -1029,6 +1297,36 @@ impl Node {
         self.block_on_query(rx)
     }
 
+    /// Hold (`true`) or release top-up and the bootstrap keeper.
+    #[cfg(test)]
+    pub(crate) fn set_outbound_paused(&self, topup: bool, keeper: bool) -> Result<(), NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::SetOutboundPaused { topup, keeper, resp: tx })?;
+        self.block_on_query(rx)
+    }
+
+    /// Hold (`true`) or release the random walk.
+    #[cfg(test)]
+    pub(crate) fn set_walk_paused(&self, paused: bool) -> Result<(), NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::SetWalkPaused { paused, resp: tx })?;
+        self.block_on_query(rx)
+    }
+
+    /// Messages this node has withheld (see [`Self::with_withhold_from`]).
+    #[cfg(test)]
+    pub(crate) fn withheld(&self) -> Result<u64, NetworkError> {
+        let (tx, rx) = oneshot::channel();
+        self.send_command(Command::Withheld(tx))?;
+        self.block_on_query(rx)
+    }
+
+    /// Put these peers first among top-up's candidates.
+    #[cfg(test)]
+    pub(crate) fn prefer_candidates(&self, peers: Vec<(Libp2pPeerId, Vec<Multiaddr>)>) -> Result<(), NetworkError> {
+        self.send_command(Command::PreferCandidates(peers))
+    }
+
     /// Close every connection to `peer`.
     #[cfg(test)]
     pub(crate) fn disconnect(&self, peer: Libp2pPeerId) -> Result<(), NetworkError> {
@@ -1047,6 +1345,12 @@ impl Node {
     #[cfg(test)]
     pub(crate) fn dial_always(&self, addr: Multiaddr) -> Result<(), NetworkError> {
         self.send_command(Command::DialAlways(addr))
+    }
+
+    /// Leave a GossipSub topic.
+    #[cfg(test)]
+    pub(crate) fn unsubscribe(&self, topic: &str) -> Result<(), NetworkError> {
+        self.send_command(Command::Unsubscribe(topic.to_string()))
     }
 
     /// Number of inbound messages rejected by wire-format validation.
@@ -1247,6 +1551,7 @@ impl Node {
             heartbeats: Arc::clone(&self.heartbeats),
             scores: Arc::clone(&self.scores),
             dht: Arc::clone(&self.dht),
+            dialed: Arc::clone(&self.dialed),
             colocation: Arc::clone(&self.colocation),
         };
         let (ready_tx, ready_rx) = oneshot::channel();
@@ -1298,6 +1603,11 @@ impl Node {
             && let Err(e) = persist_peers(&self.peerstore_path, &met)
         {
             tracing::debug!("could not persist peer store: {e}");
+        }
+        if let Ok(dialed) = self.dialed.lock()
+            && let Err(e) = persist_dialed(&self.peerstore_path, &dialed)
+        {
+            tracing::debug!("could not persist the dialled-OK peer store: {e}");
         }
         if let Some(tx) = self.cmd_tx.take() {
             let _ = tx.send(Command::Shutdown);
@@ -1379,6 +1689,14 @@ fn try_read_keypair(path: &Path) -> Result<Option<Keypair>, NetworkError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(NetworkError::Transport(format!("read identity: {e}"))),
     }
+}
+
+/// Write `keypair` where [`Node::with_keypair_path`] will load it, so a
+/// test can pick a node's PeerId before building it (design v5 §5.9.2,
+/// §5.9.3).
+#[cfg(test)]
+pub(crate) fn write_identity(path: &Path, keypair: &Keypair) -> std::io::Result<()> {
+    persist_keypair(path, keypair)
 }
 
 /// Serialize a keypair to PEM and write it atomically (mode 0600): a temp
@@ -1477,6 +1795,9 @@ impl Node {
             heartbeat_interval: self.heartbeat_interval,
             score_refresh_interval: self.score_refresh_interval,
             p5_p6_only_scores: self.p5_p6_only_scores,
+            policy: self.policy,
+            deny_dial: self.deny_dial.clone(),
+            withhold_from: self.withhold_from.clone(),
         })
     }
 }
@@ -1499,6 +1820,12 @@ struct SwarmOptions {
     score_refresh_interval: Duration,
     /// See `Node::p5_p6_only_scores`.
     p5_p6_only_scores: bool,
+    /// See `Node::policy`.
+    policy: PolicyOptions,
+    /// See `Node::deny_dial`.
+    deny_dial: Vec<Libp2pPeerId>,
+    /// See `Node::withhold_from`.
+    withhold_from: HashSet<String>,
 }
 
 /// Parse `NetworkConfig::relays`. A relay is configured on purpose, so a bad
@@ -1559,17 +1886,28 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
         .map_err(|e| NetworkError::Transport(format!("relay client transport: {e}")))?
         .with_behaviour(|key, relay_client| {
             let peer_id = key.public().to_peer_id();
-            let mut kademlia = kad::Behaviour::with_config(peer_id, GeneStore::new(peer_id), kad_config());
+            let mut kad_cfg = kad_config();
+            if options.policy.kad_periodic_bootstrap_off {
+                kad_cfg.set_periodic_bootstrap_interval(None);
+            }
+            let mut kademlia = kad::Behaviour::with_config(peer_id, GeneStore::new(peer_id), kad_cfg);
             kademlia.set_mode(Some(kad::Mode::Server));
             let mut gossipsub = gossipsub::Behaviour::new(
                 gossipsub::MessageAuthenticity::Signed(key.clone()),
-                gossipsub_config(),
+                gossipsub_config_with(
+                    options.policy.mesh_outbound_min,
+                    options.policy.unsubscribe_backoff,
+                    options.policy.prune_backoff,
+                ),
             )
             .expect("gossipsub config is valid");
             let (mut params, thresholds) = peer_score_params();
             if options.p5_p6_only_scores {
                 params.behaviour_penalty_weight = 0.0;
                 params.slow_peer_weight = 0.0;
+            }
+            if options.policy.p6_loopback_whitelist {
+                params.ip_colocation_factor_whitelist.insert(std::net::IpAddr::from([127, 0, 0, 1]));
             }
             gossipsub.with_peer_score(params, thresholds).expect("peer score parameters are valid");
             let identify = identify::Behaviour::new(identify::Config::new(
@@ -1604,6 +1942,9 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
                 connection_limits,
                 memory_connection_limits,
                 blocked: Default::default(),
+                deny_dial: Toggle::from(
+                    (!options.deny_dial.is_empty()).then(|| DenyDial { peers: options.deny_dial.iter().copied().collect() }),
+                ),
                 kademlia,
                 gossipsub,
                 identify,
@@ -1706,6 +2047,7 @@ async fn run_event_loop(
         heartbeats,
         scores,
         dht,
+        dialed,
         colocation,
     } = shared;
     // Per-peer flood defence (§8.6); lives in the single-threaded event loop.
@@ -1748,26 +2090,64 @@ async fn run_event_loop(
     // Best-effort throughout: malformed or unreachable entries are skipped
     // without failing startup.
     //
-    // Bootstrap dials are tagged so the keeper learns each bootstrap node's
-    // PeerId (A6).
+    // Only the dialled-OK level of the store is dialled (A6 design v3 §1.6):
+    // addresses peers reported about themselves stay heard-of. A store from
+    // before that level existed has none, so such a node needs bootstrap or
+    // mDNS once after upgrading.
     let remembered = peerstore::load(&peerstore_path);
-    if !remembered.is_empty() {
-        tracing::debug!("dialling {} remembered peer(s)", remembered.len());
-    }
     let startup = Instant::now();
+    let book = DialedBook::from_entries(
+        peerstore::load_dialed(&peerstore::dialed_path(&peerstore_path)),
+        wall_clock_ms(),
+    );
     let bootstrap_addrs: Vec<Multiaddr> = bootstrap.iter().filter_map(|a| a.parse().ok()).collect();
     let local = *swarm.local_peer_id();
-    let mut outbound = Outbound::new(Keeper::new(bootstrap_addrs.clone(), startup), Rng::for_node(&local));
+    let mut outbound = Outbound::new(Keeper::new(bootstrap_addrs.clone(), startup), book, Rng::for_node(&local));
+    outbound.topup_paused = options.policy.topup_paused;
+    outbound.keeper_paused = options.policy.keeper_paused;
+    outbound.adopt_only = options.policy.adopt_only;
+    // Addresses we dialled, held until Identify shows the peer speaks
+    // Rotifer's DHT (see `record_heard_of`).
+    let mut unconfirmed_dials: HashMap<Libp2pPeerId, Vec<Multiaddr>> = HashMap::new();
+    // Messages ①-稳's withhold switch has ignored.
+    #[cfg(test)]
+    let mut withheld: u64 = 0;
     if outbound.keeper.is_empty() {
         tracing::debug!("no bootstrap peers configured: the bootstrap keeper has nothing to keep");
     }
-    for (i, ma) in bootstrap_addrs.into_iter().enumerate() {
-        dial_tagged(&mut swarm, &mut outbound, ma.into(), i);
-    }
+    // The heard-of level goes into the routing table, as Identify's reports
+    // do while running (CEO 〔T-156〕 C1): restart still dials only the
+    // dialled-OK level, but top-up draws from the routing table, so a peer
+    // met through a Kademlia query is a top-up candidate again after a
+    // restart. Bounded like Identify's path: at most
+    // `peerstore::MAX_PERSISTED_PEERS` (64) stored addresses, each through
+    // `feed_kad` (≤ `KAD_ADDRS_PER_PEER` per peer, ≤ `KAD_ADDR_MAX_BYTES`
+    // each); a full k-bucket keeps its entries.
     for addr in &remembered {
-        if let Ok(ma) = addr.parse::<Multiaddr>() {
-            let _ = swarm.dial(ma);
+        if let Some((peer, ma)) = outbound::split_dialable(addr)
+            && peer != local
+        {
+            feed_kad(&mut swarm.behaviour_mut().kademlia, &peer, ma);
         }
+    }
+    for (i, ma) in bootstrap_addrs.into_iter().enumerate() {
+        dial_tagged(&mut swarm, &mut outbound, ma.into(), None, DialPurpose::Bootstrap(i));
+    }
+    let restart: Vec<String> = outbound.book.usable(wall_clock_ms()).map(|e| e.addr.clone()).collect();
+    if !restart.is_empty() {
+        tracing::debug!("dialling {} remembered peer(s)", restart.len());
+    }
+    for addr in restart {
+        if let Some((peer, ma)) = outbound::split_dialable(&addr) {
+            let opts = DialOpts::peer_id(peer)
+                .addresses(vec![ma])
+                .condition(PeerCondition::DisconnectedAndNotDialing)
+                .build();
+            dial_tagged(&mut swarm, &mut outbound, opts, Some(peer), DialPurpose::Restart);
+        }
+    }
+    if let Ok(mut d) = dialed.lock() {
+        *d = outbound.book.entries().to_vec();
     }
     let mut colocated = Colocation::default();
     // Connections per peer, for closing one at a time (tests) and reports.
@@ -1850,7 +2230,16 @@ async fn run_event_loop(
     let mut finished_queries: HashSet<kad::QueryId> = HashSet::new();
     #[cfg(test)]
     let mut search_runs: u64 = 0;
-    // The bootstrap keeper's fallback check and its backoff wake-up (A6).
+    // Connection policy timers (A6): top-up, its random walk, and the
+    // bootstrap keeper's fallback check plus its backoff wake-up.
+    let mut topup_timer = tokio::time::interval(outbound::TOPUP_INTERVAL);
+    topup_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut walk_timer = tokio::time::interval_at(
+        tokio::time::Instant::now() + outbound::RANDOM_WALK_INTERVAL,
+        outbound::RANDOM_WALK_INTERVAL,
+    );
+    walk_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut walks: HashSet<kad::QueryId> = HashSet::new();
     let mut keeper_timer = tokio::time::interval(outbound::KEEPER_CHECK_INTERVAL);
     keeper_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let keeper_wake = tokio::time::sleep_until(keeper_deadline(&outbound).into());
@@ -1878,6 +2267,18 @@ async fn run_event_loop(
             _ = sweep_timer.tick() => {
                 swarm.behaviour_mut().kademlia.store_mut().sweep(std::time::Instant::now());
             }
+            _ = topup_timer.tick() => {
+                if top_up(&mut swarm, &mut outbound) {
+                    walks.insert(swarm.behaviour_mut().kademlia.get_closest_peers(Libp2pPeerId::random()));
+                }
+            }
+            _ = walk_timer.tick() => {
+                // Its own timer: candidates keep arriving whether or not the
+                // other sources run dry (design v3 §1.6).
+                if !outbound.walk_paused {
+                    walks.insert(swarm.behaviour_mut().kademlia.get_closest_peers(Libp2pPeerId::random()));
+                }
+            }
             _ = keeper_timer.tick() => {
                 keep_bootstrap(&mut swarm, &mut outbound);
                 keeper_wake.as_mut().reset(keeper_deadline(&outbound).into());
@@ -1894,6 +2295,9 @@ async fn run_event_loop(
                     && let Err(e) = persist_peers(&peerstore_path, &met)
                 {
                     tracing::debug!("periodic peer-store flush failed: {e}");
+                }
+                if let Err(e) = persist_dialed(&peerstore_path, outbound.book.entries()) {
+                    tracing::debug!("periodic dialled-OK flush failed: {e}");
                 }
             }
             _ = heartbeat_timer.tick() => {
@@ -1953,10 +2357,20 @@ async fn run_event_loop(
                     }
                 }
                 SwarmEvent::ConnectionEstablished {
-                    peer_id, connection_id, endpoint, ..
+                    peer_id, connection_id, endpoint, num_established, ..
                 } => {
                     let remote = endpoint.get_remote_address();
-                    outbound.established(connection_id, peer_id, Instant::now());
+                    outbound.established(
+                        connection_id,
+                        peer_id,
+                        endpoint.is_dialer(),
+                        num_established.get() == 1,
+                        remote,
+                        outbound::Now { at: Instant::now(), wall_ms: wall_clock_ms() },
+                    );
+                    if let Ok(mut d) = dialed.lock() {
+                        *d = outbound.book.entries().to_vec();
+                    }
                     keeper_wake.as_mut().reset(keeper_deadline(&outbound).into());
                     colocated.opened(connection_id, peer_id, remote, |p| registered(&heartbeats, p));
                     if let Ok(mut c) = colocation.lock() {
@@ -1972,10 +2386,15 @@ async fn run_event_loop(
                     // reachable again by definition. An inbound connection's
                     // remote address is the peer's ephemeral source port, which
                     // is useless to dial back.
-                    if endpoint.is_dialer()
-                        && let Ok(mut met) = met_peers.lock()
-                    {
-                        remember(&mut met, &addr, &peer_id);
+                    if endpoint.is_dialer() {
+                        let known_dht = discovered.lock().is_ok_and(|d| d.contains(&peer_id.to_string()));
+                        if known_dht {
+                            if let Ok(mut met) = met_peers.lock() {
+                                remember(&mut met, &addr, &peer_id);
+                            }
+                        } else {
+                            note_unconfirmed_dial(&mut unconfirmed_dials, peer_id, addr);
+                        }
                     }
                 }
                 // Refusals by our own limits are counted by cause so load
@@ -1984,14 +2403,17 @@ async fn run_event_loop(
                 SwarmEvent::IncomingConnectionError {
                     error: ListenError::Denied { cause }, ..
                 } => record_denial(&denials, true, &cause),
-                SwarmEvent::OutgoingConnectionError { connection_id, error, .. } => {
-                    outbound.dial_failed(connection_id, Instant::now());
+                SwarmEvent::OutgoingConnectionError { connection_id, peer_id, error } => {
+                    outbound.dial_failed(connection_id, peer_id, Instant::now());
                     keeper_wake.as_mut().reset(keeper_deadline(&outbound).into());
                     if let DialError::Denied { cause } = &error {
                         record_denial(&denials, false, cause);
                     }
                 }
                 SwarmEvent::ConnectionClosed { peer_id, connection_id, num_established, .. } => {
+                    if num_established == 0 {
+                        unconfirmed_dials.remove(&peer_id);
+                    }
                     colocated.closed(connection_id);
                     if let Some(conns) = peer_conns.get_mut(&peer_id) {
                         conns.retain(|c| *c != connection_id);
@@ -2090,9 +2512,17 @@ async fn run_event_loop(
                     // Only gene announcements are kept for the API; heartbeats
                     // update the heartbeat desk instead.
                     let mut surface = false;
+                    // ①-稳's test switch; the set is empty outside tests.
+                    let withhold = source.as_ref().is_some_and(|s| options.withhold_from.contains(s));
                     let acceptance = if security.record_message(&sender).is_err() {
                         if let Ok(mut n) = rate_limited.lock() {
                             *n += 1;
+                        }
+                        MessageAcceptance::Ignore
+                    } else if withhold {
+                        #[cfg(test)]
+                        {
+                            withheld += 1;
                         }
                         MessageAcceptance::Ignore
                     } else if let Some(validate) = topic_validator(&topic) {
@@ -2147,13 +2577,28 @@ async fn run_event_loop(
                         }
                         MessageAcceptance::Ignore
                     };
+                    #[cfg(test)]
+                    let via_mesh = swarm
+                        .behaviour()
+                        .gossipsub
+                        .mesh_peers(&message.topic)
+                        .any(|p| *p == propagation_source);
                     if surface
                         && matches!(acceptance, MessageAcceptance::Accept)
                         && let Ok(mut msgs) = received.lock()
                     {
                         push_bounded(
                             &mut msgs,
-                            ReceivedMessage { topic, data: message.data, source, received_at_ms: now_ms },
+                            ReceivedMessage {
+                                topic,
+                                data: message.data,
+                                source,
+                                received_at_ms: now_ms,
+                                #[cfg(test)]
+                                via: propagation_source.to_string(),
+                                #[cfg(test)]
+                                via_mesh,
+                            },
                             MAX_RECEIVED_MESSAGES,
                         );
                     }
@@ -2190,6 +2635,10 @@ async fn run_event_loop(
                     if let Ok(mut met) = met_peers.lock() {
                         met.retain(|addr| !addr.ends_with(&suffix));
                     }
+                    outbound.forget(&peer_id);
+                    if let Ok(mut d) = dialed.lock() {
+                        *d = outbound.book.entries().to_vec();
+                    }
                     if let Ok(mut n) = foreign.lock() {
                         *n += 1;
                     }
@@ -2222,11 +2671,11 @@ async fn run_event_loop(
                             peers.remove(&peer_id.to_string());
                         }
                     }
-                    for addr in info.listen_addrs {
-                        if let Ok(mut met) = met_peers.lock() {
-                            remember(&mut met, &addr, &peer_id);
-                        }
-                        if speaks_dht {
+                    if let Ok(mut met) = met_peers.lock() {
+                        record_heard_of(&mut met, &mut unconfirmed_dials, &peer_id, speaks_dht, &info.listen_addrs);
+                    }
+                    if speaks_dht {
+                        for addr in info.listen_addrs {
                             feed_kad(&mut swarm.behaviour_mut().kademlia, &peer_id, addr);
                         }
                     }
@@ -2378,11 +2827,17 @@ async fn run_event_loop(
                         }
                     }
                     kad::QueryResult::GetClosestPeers(outcome) => {
+                        let peers = match outcome {
+                            Ok(ok) => ok.peers,
+                            Err(kad::GetClosestPeersError::Timeout { peers, .. }) => peers,
+                        };
+                        if walks.contains(&id) {
+                            outbound.walked(peers.iter().map(|p| (p.peer_id, p.addrs.clone())).collect());
+                            if step.last {
+                                walks.remove(&id);
+                            }
+                        }
                         if let Some((_, found)) = closest.get_mut(&id) {
-                            let peers = match outcome {
-                                Ok(ok) => ok.peers,
-                                Err(kad::GetClosestPeersError::Timeout { peers, .. }) => peers,
-                            };
                             found.extend(peers.into_iter().map(|p| p.peer_id));
                         }
                         if step.last
@@ -2619,13 +3074,52 @@ async fn run_event_loop(
                 }
                 #[cfg(test)]
                 Some(Command::OutboundReport(resp)) => {
+                    let first = outbound.first_connections().iter().map(|(p, f)| (p.to_string(), *f)).collect();
                     let connections = peer_conns.iter().map(|(p, c)| (p.to_string(), c.len())).collect();
                     let bootstraps_connected = outbound.keeper.connected(|p| swarm.is_connected(p));
                     let _ = resp.send(OutboundReport {
+                        first,
+                        topup_peers: outbound.topup_peers(),
                         connections,
                         bootstraps_connected,
                         keeper_dials: outbound.keeper.dials(),
+                        topup: outbound.topup_ways().into_iter().map(|(p, w)| (p.to_string(), w)).collect(),
+                        last_round: outbound.last_round.clone(),
+                        cooling: outbound.cooldowns.cooling_peers(Instant::now()).iter().map(|p| p.to_string()).collect(),
+                        eligible_by_bucket: outbound
+                            .last_round
+                            .eligible_by_bucket
+                            .iter()
+                            .map(|(b, ps)| (*b, ps.iter().map(|p| p.to_string()).collect()))
+                            .collect(),
                     });
+                }
+                #[cfg(test)]
+                Some(Command::SetOutboundPaused { topup, keeper, resp }) => {
+                    outbound.topup_paused = topup;
+                    outbound.keeper_paused = keeper;
+                    if !topup && top_up(&mut swarm, &mut outbound) {
+                        walks.insert(swarm.behaviour_mut().kademlia.get_closest_peers(Libp2pPeerId::random()));
+                    }
+                    if !keeper {
+                        keep_bootstrap(&mut swarm, &mut outbound);
+                        keeper_wake.as_mut().reset(keeper_deadline(&outbound).into());
+                    }
+                    let _ = resp.send(());
+                }
+                #[cfg(test)]
+                #[cfg(test)]
+                Some(Command::SetWalkPaused { paused, resp }) => {
+                    outbound.walk_paused = paused;
+                    let _ = resp.send(());
+                }
+                #[cfg(test)]
+                Some(Command::Withheld(resp)) => {
+                    let _ = resp.send(withheld);
+                }
+                #[cfg(test)]
+                Some(Command::PreferCandidates(peers)) => {
+                    outbound.preferred = peers;
                 }
                 #[cfg(test)]
                 Some(Command::Disconnect(peer)) => {
@@ -2659,6 +3153,10 @@ async fn run_event_loop(
                     }
                 }
                 #[cfg(test)]
+                Some(Command::Unsubscribe(topic)) => {
+                    let _ = swarm.behaviour_mut().gossipsub.unsubscribe(&gossipsub::IdentTopic::new(topic));
+                }
+                #[cfg(test)]
                 Some(Command::SkipClock { by, resp }) => {
                     started.skipped += by;
                     refresh_scores(&mut swarm, &heartbeats, &scores, started);
@@ -2686,26 +3184,76 @@ async fn run_event_loop(
 
 }
 
-/// Dial bootstrap address `index` with `opts`, tagged so the keeper learns
-/// its PeerId and follows its own dials (A6).
-fn dial_tagged(swarm: &mut Swarm<NodeBehaviour>, outbound: &mut Outbound, opts: DialOpts, index: usize) -> bool {
+/// Dial with `opts`, remembering why (A6): the connection's origin decides
+/// whether the peer counts towards `OUT_MIN` and what reaches the dialled-OK
+/// peer store.
+fn dial_tagged(
+    swarm: &mut Swarm<NodeBehaviour>,
+    outbound: &mut Outbound,
+    opts: DialOpts,
+    peer: Option<Libp2pPeerId>,
+    purpose: DialPurpose,
+) -> bool {
     let id = opts.connection_id();
     match swarm.dial(opts) {
         Ok(()) => {
-            outbound.dialing(id, index);
+            outbound.dialing(id, peer, purpose);
             true
         }
         Err(e) => {
-            tracing::debug!(index, "bootstrap dial not started: {e}");
+            tracing::debug!(?purpose, "dial not started: {e}");
             false
         }
     }
 }
 
+/// One top-up round (A6 design v5 §1.6–§1.7, [`Outbound::round`]): adopt
+/// the drawn candidates that are connected, dial the others.
+/// One top-up round. Returns whether the round was short of candidates and
+/// a random walk should go out now (at most every
+/// [`outbound::SHORTFALL_WALK_EVERY`]; the caller owns the walk queries).
+fn top_up(swarm: &mut Swarm<NodeBehaviour>, outbound: &mut Outbound) -> bool {
+    if outbound.topup_paused {
+        return false;
+    }
+    let now = Instant::now();
+    let me = *swarm.local_peer_id();
+    let me_key = kad::KBucketKey::from(me);
+    let buckets: Vec<outbound::Bucket> = swarm
+        .behaviour_mut()
+        .kademlia
+        .kbuckets()
+        .filter_map(|b| {
+            let entries: Vec<_> = b.iter().map(|e| (*e.node.key.preimage(), e.node.value.iter().cloned().collect())).collect();
+            let (first, _) = entries.first()?;
+            let index = me_key.distance(&kad::KBucketKey::from(*first)).ilog2().unwrap_or(0);
+            Some((index, entries))
+        })
+        .collect();
+    let dial = {
+        let swarm_ref = &*swarm;
+        outbound.round(&me, buckets, |p| swarm_ref.is_connected(p), now, wall_clock_ms())
+    };
+    for (peer, addrs) in dial {
+        // A fresh source port keeps two nodes topping each other up at the
+        // same instant from merging into one failed simultaneous-open
+        // connection.
+        let opts = DialOpts::peer_id(peer)
+            .addresses(addrs)
+            .condition(PeerCondition::DisconnectedAndNotDialing)
+            .allocate_new_port()
+            .build();
+        if !dial_tagged(swarm, outbound, opts, Some(peer), DialPurpose::TopUp) {
+            outbound.topup_not_started(peer, now);
+        }
+    }
+    outbound.shortfall_walk(now)
+}
+
 /// Redial a bootstrap node if none is connected and the backoff allows
 /// (RFC §8.5 item 1, A6 design v3 §2).
 fn keep_bootstrap(swarm: &mut Swarm<NodeBehaviour>, outbound: &mut Outbound) {
-    if outbound.keeper.is_empty() {
+    if outbound.keeper_paused || outbound.keeper.is_empty() {
         return;
     }
     let now = Instant::now();
@@ -2726,7 +3274,7 @@ fn keep_bootstrap(swarm: &mut Swarm<NodeBehaviour>, outbound: &mut Outbound) {
         None => DialOpts::unknown_peer_id().address(addr).allocate_new_port().build(),
     };
     let id = opts.connection_id();
-    if dial_tagged(swarm, outbound, opts, index) {
+    if dial_tagged(swarm, outbound, opts, peer, DialPurpose::Bootstrap(index)) {
         outbound.keeper.started(id);
     } else {
         outbound.keeper.not_started(now, &mut outbound.rng);
@@ -3092,6 +3640,40 @@ fn spawn_jwks_fetch(job: FetchJob, tx: &mpsc::UnboundedSender<(FetchJob, Result<
     });
 }
 
+/// Hold an address we dialled until Identify says whether the peer speaks
+/// Rotifer's DHT (at most `KAD_ADDRS_PER_PEER` per peer).
+fn note_unconfirmed_dial(unconfirmed: &mut HashMap<Libp2pPeerId, Vec<Multiaddr>>, peer: Libp2pPeerId, addr: Multiaddr) {
+    let held = unconfirmed.entry(peer).or_default();
+    if held.len() < KAD_ADDRS_PER_PEER && !held.contains(&addr) {
+        held.push(addr);
+    }
+}
+
+/// The heard-of level of the peer store records only peers that speak
+/// Rotifer's DHT (CEO 〔T-156〕). At startup that level feeds the routing
+/// table (design v5 §1.6), and top-up draws from the routing table, so a
+/// peer that does not answer Kademlia would only be a candidate that never
+/// helps a lookup. When Identify reports a peer, its held dialled addresses
+/// and its listen addresses are recorded if it speaks the DHT; otherwise
+/// they are dropped, along with anything recorded for it before.
+fn record_heard_of(
+    met: &mut Vec<String>,
+    unconfirmed: &mut HashMap<Libp2pPeerId, Vec<Multiaddr>>,
+    peer: &Libp2pPeerId,
+    speaks_dht: bool,
+    listen_addrs: &[Multiaddr],
+) {
+    let dialled = unconfirmed.remove(peer).unwrap_or_default();
+    if !speaks_dht {
+        let suffix = format!("/p2p/{peer}");
+        met.retain(|a| !a.ends_with(&suffix));
+        return;
+    }
+    for addr in dialled.iter().chain(listen_addrs) {
+        remember(met, addr, peer);
+    }
+}
+
 /// Record a peer address in dialable form (`<transport>/p2p/<peer-id>`, the same
 /// syntax as `--bootstrap`), skipping duplicates. Addresses that already carry a
 /// `/p2p/` component are kept as-is so the suffix is never doubled.
@@ -3105,6 +3687,20 @@ fn remember(met: &mut Vec<String>, addr: &Multiaddr, peer_id: &Libp2pPeerId) {
     if !met.contains(&dialable) {
         met.push(dialable);
     }
+}
+
+/// Write the dialled-OK entries beside the peer store (atomic, private).
+fn persist_dialed(peers_path: &Path, entries: &[DialedEntry]) -> std::io::Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let path = peerstore::dialed_path(peers_path);
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    write_atomic_private(&path, peerstore::encode_dialed(entries).as_bytes())
 }
 
 /// Write remembered peers to disk (atomic, same durability as the identity file).
@@ -3150,7 +3746,8 @@ mod tests {
     // -----------------------------------------------------------------
     #[test]
     fn A_1_1_swarm_builder_default_config_starts() {
-        let mut node = Node::new(cfg(0)).expect("A.1.1 — default config must build a swarm");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let mut node = isolated(&node_dir, cfg(0)).expect("A.1.1 — default config must build a swarm");
         node.start().expect("A.1.1 — swarm must start");
         assert!(
             !node.listen_addrs().is_empty(),
@@ -3163,7 +3760,8 @@ mod tests {
     // -----------------------------------------------------------------
     #[test]
     fn A_1_2_custom_port_listen() {
-        let mut node = Node::new(cfg(9878)).expect("A.1.2 — custom port must build");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let mut node = isolated(&node_dir, cfg(9878)).expect("A.1.2 — custom port must build");
         node.start().expect("A.1.2 — port 9878 must bind");
         assert!(
             node.listen_addrs().iter().any(|a| a.contains("9878")),
@@ -3173,10 +3771,12 @@ mod tests {
 
     #[test]
     fn A_1_2_port_already_in_use_returns_transport_error() {
-        let mut first = Node::new(cfg(9879)).expect("A.1.2 — first node builds");
+        let first_dir = tempfile::tempdir().expect("temp dir");
+        let mut first = isolated(&first_dir, cfg(9879)).expect("A.1.2 — first node builds");
         first.start().expect("A.1.2 — first node starts");
 
-        let mut second = Node::new(cfg(9879)).expect("A.1.2 — second build is ok");
+        let second_dir = tempfile::tempdir().expect("temp dir");
+        let mut second = isolated(&second_dir, cfg(9879)).expect("A.1.2 — second build is ok");
         let err = second.start().expect_err("A.1.2 — second start must fail");
         assert!(matches!(err, NetworkError::Transport(_)));
     }
@@ -3188,11 +3788,13 @@ mod tests {
     fn A_1_3_drop_releases_port() {
         let port = 9880;
         {
-            let mut a = Node::new(cfg(port)).expect("A.1.3 — first build");
+            let a_dir = tempfile::tempdir().expect("temp dir");
+            let mut a = isolated(&a_dir, cfg(port)).expect("A.1.3 — first build");
             a.start().expect("A.1.3 — first start");
         }
         // Port should now be free again.
-        let mut b = Node::new(cfg(port)).expect("A.1.3 — second build");
+        let b_dir = tempfile::tempdir().expect("temp dir");
+        let mut b = isolated(&b_dir, cfg(port)).expect("A.1.3 — second build");
         b.start()
             .expect("A.1.3 — second start must succeed after drop");
     }
@@ -3498,7 +4100,8 @@ mod tests {
     fn A_1_7_bind_loopback_rejects_external() {
         let mut c = cfg(0);
         c.bootstrap_peers = vec!["/ip4/127.0.0.1/tcp/0".into()];
-        let mut node = Node::new(c).expect("A.1.7 — loopback build");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let mut node = isolated(&node_dir, c).expect("A.1.7 — loopback build");
         node.start().expect("A.1.7 — loopback bind");
         assert!(node.listen_addrs().iter().all(|a| !a.contains("0.0.0.0")));
     }
@@ -3513,7 +4116,8 @@ mod tests {
             "/dns4/no-such-host.invalid/tcp/9878".into(),
             "not-a-valid-multiaddr".into(),
         ];
-        let mut node = Node::new(c).expect("A.1.8 — build with unreachable bootstrap");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let mut node = isolated(&node_dir, c).expect("A.1.8 — build with unreachable bootstrap");
         // Should not panic — should return Ok with empty peer set.
         node.start()
             .expect("A.1.8 — start must succeed with unreachable bootstrap");
@@ -3525,10 +4129,12 @@ mod tests {
     #[test]
     fn A_1_9_port_conflict_isolation() {
         let port = 9881;
-        let mut first = Node::new(cfg(port)).expect("A.1.9 — first build");
+        let first_dir = tempfile::tempdir().expect("temp dir");
+        let mut first = isolated(&first_dir, cfg(port)).expect("A.1.9 — first build");
         first.start().expect("A.1.9 — first start");
 
-        let mut second = Node::new(cfg(port)).expect("A.1.9 — second build");
+        let second_dir = tempfile::tempdir().expect("temp dir");
+        let mut second = isolated(&second_dir, cfg(port)).expect("A.1.9 — second build");
         let err = second.start().expect_err("A.1.9 — second start must fail");
         assert!(matches!(err, NetworkError::Transport(_)));
 
@@ -3575,7 +4181,7 @@ mod tests {
         for i in 0..10u8 {
             push_bounded(
                 &mut buf,
-                ReceivedMessage { topic: "t".into(), data: vec![i], source: None, received_at_ms: 0 },
+                ReceivedMessage { topic: "t".into(), data: vec![i], source: None, received_at_ms: 0, via: String::new(), via_mesh: false },
                 4,
             );
         }
@@ -3739,13 +4345,35 @@ mod tests {
         ignore = "three-node integration: peer-store reconnect over loopback — enable the p2p-integration feature or run with --ignored"
     )]
     fn a_peer_met_through_a_dht_query_is_redialled_on_restart_without_bootstrap() {
+        let first = met_through_a_dht_query_then_restart("default", false);
+        println!("A6 C1 restart variant=default c_first={first:?}");
+    }
+
+    /// The same with Kademlia's periodic bootstrap off (CEO 〔T-156〕 C1
+    /// ruling): C must come back through top-up's own dial, not Kademlia's.
+    /// Kademlia's automatic bootstrap cannot be turned off, so the test
+    /// reads how C's first connection came about instead.
+    #[test]
+    #[cfg_attr(
+        not(feature = "p2p-integration"),
+        ignore = "three-node integration: peer-store reconnect over loopback — enable the p2p-integration feature or run with --ignored"
+    )]
+    fn a_peer_met_through_a_dht_query_comes_back_through_top_up() {
+        let first = met_through_a_dht_query_then_restart("kad-periodic-off", true);
+        assert_eq!(first, Some(outbound::FirstConnection::TopUp), "top-up itself must redial C");
+    }
+
+    /// B meets C through a Kademlia query, restarts with no bootstrap and A
+    /// gone, and must reconnect to C from its store. Returns how B's first
+    /// connection to C after the restart came about.
+    fn met_through_a_dht_query_then_restart(variant: &str, kad_periodic_off: bool) -> Option<outbound::FirstConnection> {
         // A6 part 1 keeps the restart behaviour above for every peer this node
         // dialled, not only bootstrap nodes: B meets C because a Kademlia
         // query of B's dialled it (C is not B's bootstrap node), then B
         // restarts with no bootstrap and A gone, and must find C from the
         // store alone. Restricting restart to a "dialled on purpose" level
         // (bootstrap, top-up) would turn this red until top-up exists.
-        let dir = std::env::temp_dir().join(format!("rotifer-peerstore-dht-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("rotifer-peerstore-dht-{variant}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("temp dir");
         let b_store = dir.join("b-peers.json");
@@ -3757,7 +4385,7 @@ mod tests {
         let a_addr = a.listen_addrs().into_iter().next().expect("A listen address");
 
         // C on a fixed port, so it is at the same address when B restarts.
-        let mut cfg_c = cfg(39872);
+        let mut cfg_c = cfg(if kad_periodic_off { 39873 } else { 39872 });
         cfg_c.bootstrap_peers = vec![a_addr.clone()];
         let mut c = Node::with_paths(cfg_c, dir.join("c.key"), dir.join("c-peers.json")).expect("C build");
         c.start().expect("C start");
@@ -3785,12 +4413,23 @@ mod tests {
         let mut cfg_b2 = cfg(0);
         cfg_b2.bootstrap_peers = vec![];
         let mut b2 = Node::with_paths(cfg_b2, dir.join("b.key"), b_store).expect("B restart");
+        if kad_periodic_off {
+            b2 = b2.with_kad_periodic_bootstrap_off();
+        }
         b2.start().expect("B restart start");
         await_peer(&b2, &c_peer, "B failed to reconnect to C (met through a DHT query) from the peer store");
+        let r = b2.outbound_report().expect("outbound report");
+        let first = r.first.get(&c_peer).copied();
+        let kad_dialled = r.first.values().filter(|f| **f == outbound::FirstConnection::OtherDial).count();
+        println!(
+            "A6 C1 restart variant={variant} c_first={first:?} topup_peers={} topup_dials_total={} kad_dialled={kad_dialled}",
+            r.topup_peers, r.last_round.dials_total
+        );
 
         let _ = b2.stop();
         let _ = c.stop();
         let _ = std::fs::remove_dir_all(&dir);
+        first
     }
 
     /// Poll until `node` has completed an Identify exchange with `peer`, or fail
@@ -4532,6 +5171,17 @@ mod tests {
             (outbound::P6_WEIGHT, outbound::P6_THRESHOLD),
             "the values are libp2p's defaults, kept on the evidence (§3.2)"
         );
+        // And the swarm's GossipSub keeps three self-dialled mesh peers.
+        assert_eq!(gossipsub_config().mesh_outbound_min(), 3);
+        assert_eq!(PolicyOptions::default().mesh_outbound_min, 3);
+        assert!(!PolicyOptions::default().p6_loopback_whitelist);
+        // The test-only backoffs leave production at libp2p's defaults.
+        assert_eq!(gossipsub_config().prune_backoff(), Duration::from_secs(60));
+        assert_eq!(gossipsub_config().unsubscribe_backoff(), Duration::from_secs(10));
+        assert_eq!(
+            (PolicyOptions::default().prune_backoff, PolicyOptions::default().unsubscribe_backoff),
+            (None, None)
+        );
     }
 
     #[test]
@@ -4583,16 +5233,55 @@ mod tests {
     fn generic_put_refuses_gene_record_keys() {
         // Refused before reaching the event loop, so an unstarted node shows
         // it; any other key gets as far as "not connected".
-        let node = Node::new(cfg(0)).expect("build");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let node = isolated(&node_dir, cfg(0)).expect("build");
         let gene_key = super::super::gene_record::record_key(&format!("v2:{}", "ab".repeat(32)), &Libp2pPeerId::random());
         assert!(matches!(node.put_record(&gene_key, b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"/rotifer/gene/", b"x"), Err(NetworkError::ReservedKey(_))));
         assert!(matches!(node.put_record(b"other/key", b"x"), Err(NetworkError::NotConnected)));
     }
 
+    /// CEO 〔T-156〕: a peer that does not speak Rotifer's DHT never enters
+    /// the heard-of level, whether we dialled it or it listed addresses.
+    #[test]
+    fn a_peer_without_the_dht_is_not_heard_of() {
+        let (dht, plain) = (Libp2pPeerId::random(), Libp2pPeerId::random());
+        let dialled: Multiaddr = "/ip4/192.0.2.1/tcp/4001".parse().unwrap();
+        let listen: Vec<Multiaddr> = vec!["/ip4/192.0.2.2/tcp/4001".parse().unwrap()];
+        let (mut met, mut unconfirmed) = (Vec::new(), HashMap::new());
+        note_unconfirmed_dial(&mut unconfirmed, plain, dialled.clone());
+        note_unconfirmed_dial(&mut unconfirmed, dht, dialled.clone());
+        assert!(met.is_empty(), "nothing is heard of before Identify");
+        record_heard_of(&mut met, &mut unconfirmed, &plain, false, &listen);
+        assert!(met.is_empty(), "no DHT: neither the dialled nor the listen address is recorded");
+        record_heard_of(&mut met, &mut unconfirmed, &dht, true, &listen);
+        assert_eq!(met, vec![format!("{dialled}/p2p/{dht}"), format!("{}/p2p/{dht}", listen[0])]);
+        assert!(unconfirmed.is_empty(), "Identify settles every held address");
+    }
+
+    #[test]
+    fn a_peer_that_stops_offering_the_dht_leaves_the_heard_of_level() {
+        let (keep, gone) = (Libp2pPeerId::random(), Libp2pPeerId::random());
+        let listen: Vec<Multiaddr> = vec!["/ip4/192.0.2.3/tcp/4001".parse().unwrap()];
+        let (mut met, mut unconfirmed) = (Vec::new(), HashMap::new());
+        record_heard_of(&mut met, &mut unconfirmed, &keep, true, &listen);
+        record_heard_of(&mut met, &mut unconfirmed, &gone, true, &listen);
+        assert_eq!(met.len(), 2);
+        record_heard_of(&mut met, &mut unconfirmed, &gone, false, &listen);
+        assert_eq!(met, vec![format!("{}/p2p/{keep}", listen[0])]);
+    }
+
+    /// A node whose identity and peer store live in `dir`, never in
+    /// `~/.rotifer`: a test must not read or write the user's own node state
+    /// (the restart-time peer-store feed made one test depend on it).
+    fn isolated(dir: &tempfile::TempDir, config: NetworkConfig) -> Result<Node, NetworkError> {
+        Node::with_paths(config, dir.path().join("identity.pem"), dir.path().join("peers.json"))
+    }
+
     #[test]
     fn peer_lists_are_empty_before_start_and_after_stop() {
-        let mut node = Node::new(cfg(0)).expect("build");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let mut node = isolated(&node_dir, cfg(0)).expect("build");
         assert!(node.dht_peers().is_empty());
         assert!(node.connected_peers().is_empty());
         node.start().expect("start");
@@ -4607,7 +5296,8 @@ mod tests {
     fn provider_api_refuses_gene_ids_that_are_not_v2() {
         // Refused before reaching the event loop, so an unstarted node shows
         // it; a v2 ID gets as far as "not connected".
-        let node = Node::new(cfg(0)).expect("build");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let node = isolated(&node_dir, cfg(0)).expect("build");
         for bad in ["v1:abc", "gene-name", "v2:XYZ", "", &format!("v2:{}", "ab".repeat(31))] {
             assert!(matches!(node.start_providing_gene(bad), Err(NetworkError::NotV2GeneId(ref g)) if g == bad), "{bad:?}");
             assert!(matches!(node.find_gene_providers(bad), Err(NetworkError::NotV2GeneId(ref g)) if g == bad), "{bad:?}");
@@ -4621,7 +5311,8 @@ mod tests {
     fn generic_put_refuses_provider_keys() {
         // A provider key holds provider records only (v1 §2.2), so the
         // generic put refuses it before reaching the event loop.
-        let node = Node::new(cfg(0)).expect("build");
+        let node_dir = tempfile::tempdir().expect("temp dir");
+        let node = isolated(&node_dir, cfg(0)).expect("build");
         let provider_key = super::super::gene_record::provider_key(&format!("v2:{}", "ab".repeat(32))).unwrap();
         assert!(matches!(node.put_record(&provider_key, b"x"), Err(NetworkError::ReservedKey(_))));
         // Same length, different multihash prefix: not a provider key.

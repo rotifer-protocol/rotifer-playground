@@ -698,9 +698,9 @@ fn a1_2_sybil_one_account_gets_two_bonus_nodes_at_a_receiver() {
     use super::por::{AttestationStatus, TrustAnchor, BONUS_PEERS_PER_PSEUDONYM, DEFAULT_ISSUER, REGISTERED_BONUS};
     use std::collections::HashMap;
 
-    // Ten peers in all: libp2p's IP colocation penalty (P6, on by default)
-    // starts above ten peers from one IP, and every node here is on
-    // 127.0.0.1. Kept at ten so the scores are the PoR score alone; P6 is
+    // Ten peers in all: the IP colocation penalty (P6; the node applies it
+    // through P5 since T-158) starts above ten peers from one IP, and every
+    // node here is on 127.0.0.1. Kept at ten so the scores are the PoR score alone; P6 is
     // measured on its own below.
     const SYBILS: usize = 6;
     const OTHER_ACCOUNT: usize = 2;
@@ -802,10 +802,11 @@ fn a1_2_sybil_one_account_gets_two_bonus_nodes_at_a_receiver() {
 }
 
 // ---------------------------------------------------------------------
-// Attack 3b — many nodes from one IP. The node sets only the application
-// score (P5); libp2p's IP colocation factor (P6) is left at its default
-// (weight −5, threshold 10), so above ten peers from one IP every peer from
-// that IP is scored −5 × (count − 10)², registered or not. Measured as
+// Attack 3b — many nodes from one IP. The IP colocation factor (P6) keeps
+// libp2p's default curve (weight −5, threshold 10), applied by the node
+// itself through the application score (P5) since T-158, so above ten peers
+// from one IP every peer from that IP is scored −5 × (count − 10)²,
+// registered or not. Measured as
 // anonymous nodes join one by one from 127.0.0.1: the score of the first
 // one after each join.
 // ---------------------------------------------------------------------

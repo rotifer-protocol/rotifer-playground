@@ -1100,9 +1100,11 @@ fn a6_shared_ip_scores_registered_and_anonymous_alike() {
 /// K10: GossipSub drops a peer's IP from the P6 count when *any* of its
 /// connections closes (`on_connection_closed` → `remove_ip`), even if the
 /// peer is still connected. Eleven peers on one IP, one of them with two
-/// connections; closing one of those must leave all eleven at −5.
+/// connections; closing one of those must leave all eleven at −5. Red before
+/// T-158 (reproduced in T-156); the node now counts same-IP peers itself and
+/// applies P6 through P5.
 #[test]
-#[cfg_attr(not(feature = "k10-repro"), ignore = "K10 reproduced (T-156); fix tracked separately, see ADR-304 revision draft")]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
 fn a6_p6_still_counts_a_peer_after_one_of_two_connections_closes() {
     const NODES: usize = 11;
     let dir = tempfile::tempdir().unwrap();

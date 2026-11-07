@@ -423,7 +423,7 @@ jobs:
         # files, so parallel execution would contend. The deferred spec-ID
         # scaffolds (A_1_6 mDNS / A_4_3 / A_4_4 / A_6_6) stay unconditionally
         # #[ignore]d and never run here.
-        run: cargo test -p rotifer-core --features p2p-integration --lib -- --test-threads=1
+        run: cargo test --config 'profile.dev.package."*".opt-level=2' -p rotifer-core --features p2p-integration --lib -- --test-threads=1
 
   security-check:
     name: Security Check

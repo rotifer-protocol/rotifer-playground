@@ -1,18 +1,22 @@
-//! A6 part 1 against real nodes over loopback (A6 design v3 §5.3 ②, §5.5
-//! ④): the bootstrap keeper and P6. Top-up and its Eclipse criteria (①, ③)
-//! are A6 part 2. Each test prints what it judges on lines starting `A6 `.
+//! A6 connection policy against real nodes over loopback (A6 design v5 §5).
+//! Each test prints the numbers it judges on lines starting `A6 `.
 //!
 //! Run with `cargo test -p rotifer-core --features p2p-integration --lib
 //! attack_a6 -- --test-threads=1 --nocapture`.
 
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
+
+use libp2p::Multiaddr;
 
 // A1-2's setup helpers (CEO, T-156: reuse them, `run_eclipse` untouched).
 use super::attack_a1_2::{addr, announcement, config, eventually, heard, id, now_ms, peer_of};
 use super::messages::{encode_announcement, ANNOUNCEMENTS_TOPIC};
-use super::node::{Node, OutboundReport};
-use super::outbound::{P6_THRESHOLD, P6_WEIGHT};
-use super::NetworkConfig;
+use libp2p::identity::Keypair;
+
+use super::node::{write_identity, Node, OutboundReport};
+use super::outbound::{FirstConnection, TopUpWay, P6_THRESHOLD, P6_WEIGHT};
+use super::{NetworkConfig, NetworkError};
 
 /// A started node with its own throwaway identity, dialing `bootstrap`,
 /// built through `build` (test switches) before it starts.
@@ -29,8 +33,680 @@ fn spawn_with(
     node
 }
 
+/// [`spawn_with`] with the 127.0.0.1 P6 whitelist on (design v3 §3.5).
+fn spawn_listed(dir: &tempfile::TempDir, name: &str, bootstrap: Vec<String>) -> Node {
+    spawn_with(dir, name, bootstrap, |n| n.with_p6_loopback_whitelist())
+}
+
+/// The victim's outbound report. A query that times out (10 s without an
+/// answer from the node's event loop) is asked once more; a second timeout
+/// fails as before. On CI the A6 setups timed out here while 53 nodes were
+/// handshaking (run 42110820291; CEO, T-156).
 fn report(node: &Node) -> OutboundReport {
-    node.outbound_report().expect("outbound report")
+    match node.outbound_report() {
+        Ok(r) => r,
+        Err(NetworkError::Timeout) => {
+            println!("A6 outbound report: Timeout, asking once more");
+            node.outbound_report().expect("outbound report")
+        }
+        Err(e) => panic!("outbound report: {e:?}"),
+    }
+}
+
+/// Like `eventually`, polling every `every` instead of every 100 ms.
+fn eventually_every(secs: u64, every: Duration, mut check: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < deadline {
+        if check() {
+            return true;
+        }
+        std::thread::sleep(every);
+    }
+    check()
+}
+
+/// At the release: inbound slots held by attackers and by honest nodes, from
+/// one report (CEO, T-156: to tell empty slots from honest ones on CI).
+fn inbound_at_release(victim: &Node, attackers: &HashSet<String>, honest: &HashSet<String>) -> (usize, usize) {
+    let r = report(victim);
+    let inbound = |side: &HashSet<String>| {
+        r.first.iter().filter(|(p, f)| **f == FirstConnection::Inbound && side.contains(*p)).count()
+    };
+    (inbound(attackers), inbound(honest))
+}
+
+// ---------------------------------------------------------------------
+// ① Dial-in-first Eclipse: are there top-up peers, and are they not biased
+// towards the attacker (design v5 §5.1)?
+//
+// A1-2's "3 of 4 bootstrap nodes + dial in first" population: 36 attacker
+// nodes and 3 bootstrap nodes, 12 honest nodes and 1 bootstrap node. The
+// victim takes at most 24 inbound connections and holds top-up and the
+// keeper until 24 attackers have dialled in; then it is sampled every 10 s
+// from 40 s to 90 s, and its mesh is re-formed 10 times.
+//
+// Top-up peers include adopted ones (§1.7). Every node runs a test-only
+// 2 s `prune_backoff`, and the victim a 1 s `unsubscribe_backoff`, so that
+// one re-formation does not hold the next back; production keeps libp2p's
+// defaults (①-稳 tests those).
+//
+// `A6 SETUP INVALID` failures mean the setup, not the policy, measured
+// nothing (§5.1, F5); they are red in CI and are not rerun.
+// ---------------------------------------------------------------------
+
+const A6_HONEST: usize = 12;
+const A6_ATTACKERS: usize = 36;
+const A6_ATTACKER_BOOTSTRAPS: usize = 3;
+const A6_VICTIM_INBOUND: u32 = 24;
+/// The attacker's share of the whole population (36 + 3 of 52): the most
+/// it may hold of the victim's top-up peers (criterion c).
+const A6_ATTACKER_SHARE: f64 = 39.0 / 52.0;
+/// From 40 s, not 30 s: approved by the user on 11-07 (T-156, design §10
+/// row 8). On CI (run 42088947923) route1 had 0–1 top-up peers at 30 s and
+/// 8 in all 6 rounds from 40 s on; top-up runs every 10 s, so a slow machine
+/// is one round late. The criteria and the later sample times are unchanged.
+const A6_SAMPLE_AT: [u64; 6] = [40, 50, 60, 70, 80, 90];
+const A6_REFORMS: usize = 10;
+/// Criterion e: share of re-formed meshes with an honest peer.
+const A6_E_MIN: f64 = 0.5;
+const A6_ROUNDS: usize = 3;
+/// Rounds in a row without 24 inbound attackers (S4) before the setup is
+/// declared invalid.
+const A6_INVALID_MAX: usize = 3;
+/// How long the attackers get to fill the victim's inbound slots before the
+/// release. 20 s was enough on 8 cores but not on CI's 2 (21–23 of 24 at
+/// release, three invalid rounds in a row; run 42088947923). The
+/// precondition itself (all 24 slots) is unchanged. ①-稳's rounds use the
+/// same wait.
+const A6_FILL_WITHIN_S: u64 = 60;
+/// That wait polls the victim once a second, not every 100 ms: each poll is
+/// a query to the victim's event loop, which is the one handling the
+/// handshakes (CEO, T-156).
+const A6_FILL_POLL: Duration = Duration::from_secs(1);
+/// Re-formations short of `mesh_n_low` that still have an honest peer: more
+/// than this many in a round make the round's setup invalid (F5).
+const A6_INVALID_WITH_HONEST_MAX: usize = 1;
+/// GossipSub's `mesh_n_low`: a re-formed mesh this large is a valid draw.
+const A6_MESH_N_LOW: usize = 5;
+/// GossipSub's unsubscribe backoff on the victim (S1): with libp2p's 10 s, a
+/// re-formed mesh would exclude the peers the previous one just pruned.
+const A6_UNSUBSCRIBE_BACKOFF: Duration = Duration::from_secs(1);
+/// GossipSub's prune backoff on every node (design v5 §5.1): with libp2p's
+/// 60 s, a peer the victim just pruned would refuse its next GRAFT.
+const A6_PRUNE_BACKOFF: Duration = Duration::from_secs(2);
+/// Wait after leaving the topic before joining again: the backoff plus one
+/// heartbeat of slack (`backoff_slack`), plus margin.
+const A6_REJOIN_AFTER: Duration = Duration::from_millis(2500);
+/// Wait after joining before reading the mesh: two heartbeats plus margin.
+const A6_READ_MESH_AFTER: Duration = Duration::from_millis(2500);
+
+#[derive(Clone, Copy)]
+struct Policy {
+    label: &'static str,
+    /// Top-up runs once released.
+    topup: bool,
+    mesh_outbound_min: usize,
+    /// Control for c+d: attackers first among top-up candidates, connected
+    /// (adoptable) ones included.
+    attackers_first: bool,
+}
+
+#[derive(Debug, Default)]
+struct Sample {
+    at: u64,
+    /// Top-up peers (adopted or dialled), by side and by way.
+    topup: usize,
+    topup_attackers: usize,
+    topup_honest: usize,
+    topup_adopted: usize,
+    topup_dialled: usize,
+    mesh: usize,
+    mesh_self_dialed: usize,
+    mesh_honest: usize,
+    /// First connection dialled by Kademlia (or anything other than top-up,
+    /// bootstrap and restart) and not adopted, by side (S5).
+    kad_honest: usize,
+    kad_attackers: usize,
+    bootstrap: usize,
+    inbound_attackers: usize,
+    inbound_honest: usize,
+    connections_in: u32,
+    connections_out: u32,
+    /// The last top-up round's four readings (F3).
+    routing_table: usize,
+    eligible: usize,
+    dials: usize,
+    failures: usize,
+    /// Random walks short top-up rounds have sent so far (C4 fix).
+    shortfall_walks: usize,
+    /// Per k-bucket: eligible honest / attackers, top-up peers honest /
+    /// attackers (F2, Codex 3).
+    buckets: String,
+}
+
+#[derive(Debug, Default)]
+struct Reform {
+    mesh: usize,
+    mesh_self_dialed: usize,
+    mesh_honest: usize,
+}
+
+impl Reform {
+    /// Enough peers for an independent draw (`mesh_n_low`).
+    fn valid(&self) -> bool {
+        self.mesh >= A6_MESH_N_LOW
+    }
+}
+
+struct Readings {
+    samples: Vec<Sample>,
+    reforms: Vec<Reform>,
+    finds_honest_gene: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Verdict {
+    a: bool,
+    b: bool,
+    cd: bool,
+    e: bool,
+    e_rate: f64,
+    /// Re-formations short of `mesh_n_low` that had an honest peer (F5).
+    invalid_with_honest: usize,
+}
+
+impl Verdict {
+    fn green(&self) -> bool {
+        self.a && self.b && self.cd && self.e
+    }
+}
+
+/// The criteria (S3: c and d are one criterion; F5 for e).
+fn judge(r: &Readings) -> Verdict {
+    let a = r.samples.iter().all(|s| s.topup >= 8);
+    // §10 row 2: b on the steady samples and on the valid re-formations
+    // (the heartbeat adds self-dialled peers only to a mesh of at least
+    // `mesh_n_low`).
+    let b = r.samples.iter().all(|s| s.mesh_self_dialed >= 3)
+        && r.reforms.iter().filter(|m| m.valid()).all(|m| m.mesh_self_dialed >= 3);
+    let cd = r.samples.iter().all(|s| {
+        let share = s.topup_attackers as f64 / s.topup.max(1) as f64;
+        share <= A6_ATTACKER_SHARE && s.topup_honest >= 2
+    });
+    // F5: a short mesh with no honest peer is a failure of e (it is the case
+    // e exists to catch); a short mesh with one is left out.
+    let with_honest = r.reforms.iter().filter(|m| m.valid() && m.mesh_honest > 0).count();
+    let counted = r.reforms.iter().filter(|m| m.valid() || m.mesh_honest == 0).count();
+    let e_rate = with_honest as f64 / counted.max(1) as f64;
+    let invalid_with_honest = r.reforms.iter().filter(|m| !m.valid() && m.mesh_honest > 0).count();
+    Verdict { a, b, cd, e: e_rate >= A6_E_MIN, e_rate, invalid_with_honest }
+}
+
+/// The k-bucket `peer` falls in as seen from `me`.
+fn bucket_of(me: &libp2p::PeerId, peer: &str) -> Option<u32> {
+    let peer: libp2p::PeerId = peer.parse().ok()?;
+    libp2p::kad::KBucketKey::from(*me).distance(&libp2p::kad::KBucketKey::from(peer)).ilog2()
+}
+
+/// Split the victim's peers by side and by how they first connected.
+fn sample(victim: &Node, at: u64, attackers: &HashSet<String>, honest: &HashSet<String>) -> Sample {
+    let r = report(victim);
+    let mesh = victim.mesh_peers(ANNOUNCEMENTS_TOPIC).expect("mesh");
+    let (connections_in, connections_out) = victim.connection_counts().expect("connection counts");
+    let round = &r.last_round;
+    let mut s = Sample {
+        at,
+        mesh: mesh.len(),
+        connections_in,
+        connections_out,
+        routing_table: round.routing_table,
+        eligible: round.eligible,
+        dials: round.dials,
+        failures: round.failures,
+        shortfall_walks: round.shortfall_walks_total,
+        ..Default::default()
+    };
+    for (peer, way) in &r.topup {
+        s.topup += 1;
+        s.topup_attackers += usize::from(attackers.contains(peer));
+        s.topup_honest += usize::from(honest.contains(peer));
+        match way {
+            TopUpWay::Adopted => s.topup_adopted += 1,
+            TopUpWay::Dialled => s.topup_dialled += 1,
+        }
+    }
+    for (peer, how) in &r.first {
+        let (is_attacker, is_honest) = (attackers.contains(peer), honest.contains(peer));
+        match how {
+            FirstConnection::OtherDial if !r.topup.contains_key(peer) => {
+                s.kad_attackers += usize::from(is_attacker);
+                s.kad_honest += usize::from(is_honest);
+            }
+            FirstConnection::Bootstrap => s.bootstrap += 1,
+            FirstConnection::Inbound => {
+                s.inbound_attackers += usize::from(is_attacker);
+                s.inbound_honest += usize::from(is_honest);
+            }
+            _ => {}
+        }
+    }
+    for p in &mesh {
+        s.mesh_self_dialed += usize::from(r.first.get(p).is_some_and(|f| f.is_outbound()));
+        s.mesh_honest += usize::from(honest.contains(p));
+    }
+    let me = peer_of(victim);
+    let mut per_bucket: std::collections::BTreeMap<u32, [usize; 4]> = std::collections::BTreeMap::new();
+    for (b, peers) in &r.eligible_by_bucket {
+        let e = per_bucket.entry(*b).or_default();
+        e[0] += peers.iter().filter(|p| honest.contains(*p)).count();
+        e[1] += peers.iter().filter(|p| attackers.contains(*p)).count();
+    }
+    for peer in r.topup.keys() {
+        if let Some(b) = bucket_of(&me, peer) {
+            let e = per_bucket.entry(b).or_default();
+            e[2] += usize::from(honest.contains(peer));
+            e[3] += usize::from(attackers.contains(peer));
+        }
+    }
+    s.buckets = per_bucket
+        .iter()
+        .map(|(b, [eh, ea, th, ta])| format!("b{b}:eligible={eh}h/{ea}a,topup={th}h/{ta}a"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    s
+}
+
+/// Leave the topic, wait out the backoff, join again, read the mesh (S1:
+/// each re-formation draws afresh from the same connections).
+fn reform(victim: &Node, honest: &HashSet<String>) -> Reform {
+    victim.unsubscribe(ANNOUNCEMENTS_TOPIC).expect("unsubscribe");
+    std::thread::sleep(A6_REJOIN_AFTER);
+    victim.subscribe(ANNOUNCEMENTS_TOPIC).expect("subscribe");
+    std::thread::sleep(A6_READ_MESH_AFTER);
+    let r = report(victim);
+    let mesh = victim.mesh_peers(ANNOUNCEMENTS_TOPIC).expect("mesh");
+    Reform {
+        mesh: mesh.len(),
+        mesh_self_dialed: mesh.iter().filter(|p| r.first.get(*p).is_some_and(|f| f.is_outbound())).count(),
+        mesh_honest: mesh.iter().filter(|p| honest.contains(*p)).count(),
+    }
+}
+
+/// A ① node: the 127.0.0.1 P6 whitelist and the short prune backoff.
+fn spawn_a6(dir: &tempfile::TempDir, name: &str, bootstrap: Vec<String>) -> Node {
+    spawn_with(dir, name, bootstrap, |n| n.with_p6_loopback_whitelist().with_prune_backoff(A6_PRUNE_BACKOFF))
+}
+
+/// One round with fresh PeerIds. `None` when the attackers did not fill the
+/// victim's 24 inbound slots before the release (S4): such a round measured
+/// nothing and is not counted.
+fn run_round(p: &Policy, label: &str) -> Option<Readings> {
+    let dir = tempfile::tempdir().unwrap();
+    let honest_boot = spawn_a6(&dir, "honest-boot", vec![]);
+    let honest: Vec<Node> =
+        (0..A6_HONEST).map(|i| spawn_a6(&dir, &format!("honest-{i}"), vec![addr(&honest_boot)])).collect();
+    let mut boots = vec![spawn_a6(&dir, "attacker-boot-0", vec![])];
+    for j in 1..A6_ATTACKER_BOOTSTRAPS {
+        let b = spawn_a6(&dir, &format!("attacker-boot-{j}"), vec![addr(&boots[0])]);
+        boots.push(b);
+    }
+    let attacker_addrs: Vec<String> = boots.iter().map(addr).collect();
+    assert!(
+        eventually(60, || honest_boot.dht_peers().len() >= A6_HONEST * 3 / 4),
+        "the honest side must be connected first ({} of {A6_HONEST})",
+        honest_boot.dht_peers().len()
+    );
+    let gene = id(&format!("a6-{label}"));
+    let publisher = honest[0].local_peer_id().0;
+    let ann = honest[0].announce(&announcement(&gene, "a6-target")).expect("announce");
+    assert!(ann.record_acked >= 1, "the honest gene is stored on the honest side: {ann:?}");
+
+    let mut victim_boot = attacker_addrs.clone();
+    victim_boot.push(addr(&honest_boot));
+    let mesh_outbound_min = p.mesh_outbound_min;
+    let victim = spawn_with(&dir, "victim", victim_boot, |n| {
+        n.with_max_established_incoming(A6_VICTIM_INBOUND)
+            .with_p6_loopback_whitelist()
+            .with_outbound_paused(true, true)
+            .with_unsubscribe_backoff(A6_UNSUBSCRIBE_BACKOFF)
+            .with_prune_backoff(A6_PRUNE_BACKOFF)
+            .with_mesh_outbound_min(mesh_outbound_min)
+    });
+    let attackers: Vec<Node> = (0..A6_ATTACKERS)
+        .map(|i| {
+            spawn_a6(&dir, &format!("attacker-{i}"), vec![addr(&victim), attacker_addrs[i % A6_ATTACKER_BOOTSTRAPS].clone()])
+        })
+        .collect();
+    let attacker_ids: HashSet<String> = boots.iter().chain(attackers.iter()).map(|n| n.local_peer_id().0).collect();
+    let honest_ids: HashSet<String> =
+        std::iter::once(&honest_boot).chain(honest.iter()).map(|n| n.local_peer_id().0).collect();
+
+    // S4: release only once the attackers hold all 24 inbound slots.
+    let inbound_attackers = || {
+        report(&victim).first.iter().filter(|(p, f)| **f == FirstConnection::Inbound && attacker_ids.contains(*p)).count()
+    };
+    let filled = eventually_every(A6_FILL_WITHIN_S, A6_FILL_POLL, || inbound_attackers() == A6_VICTIM_INBOUND as usize);
+    let (at_release, honest_in) = inbound_at_release(&victim, &attacker_ids, &honest_ids);
+    let denied = victim.connection_denials();
+    println!(
+        "A6 ① policy={} round={label} inbound_attackers_at_release={at_release} valid={} inbound_honest={honest_in} \
+         denied_inbound_limit={} denied_memory={} denied_blocked={}",
+        p.label, filled, denied.inbound_limit, denied.memory, denied.blocked
+    );
+    if !filled {
+        return None;
+    }
+    if p.attackers_first {
+        // Every attacker, connected or not: connected ones the victim dialled
+        // are adopted, unconnected ones dialled; ones that dialled in are
+        // skipped by the candidate rules as always.
+        let preferred: Vec<(libp2p::PeerId, Vec<Multiaddr>)> =
+            attackers.iter().map(|n| (peer_of(n), vec![addr(n).parse().expect("multiaddr")])).collect();
+        victim.prefer_candidates(preferred).expect("prefer");
+    }
+    let released = Instant::now();
+    victim.set_outbound_paused(!p.topup, false).expect("release");
+
+    let mut samples = Vec::new();
+    for at in A6_SAMPLE_AT {
+        std::thread::sleep(Duration::from_secs(at).saturating_sub(released.elapsed()));
+        let s = sample(&victim, at, &attacker_ids, &honest_ids);
+        println!(
+            "A6 ① policy={} round={label} t={}s topup={} (adopted={} dialled={}) topup_attackers={} topup_honest={} \
+             mesh={} mesh_self_dialed={} mesh_honest={} kad_dialled_attackers={} kad_dialled_honest={} bootstrap={} \
+             inbound_attackers={} inbound_honest={} connections in={} out={} \
+             routing_table={} eligible={} round_dials={} round_failures={} shortfall_walks={}",
+            p.label,
+            s.at,
+            s.topup,
+            s.topup_adopted,
+            s.topup_dialled,
+            s.topup_attackers,
+            s.topup_honest,
+            s.mesh,
+            s.mesh_self_dialed,
+            s.mesh_honest,
+            s.kad_attackers,
+            s.kad_honest,
+            s.bootstrap,
+            s.inbound_attackers,
+            s.inbound_honest,
+            s.connections_in,
+            s.connections_out,
+            s.routing_table,
+            s.eligible,
+            s.dials,
+            s.failures,
+            s.shortfall_walks
+        );
+        println!("A6 ① policy={} round={label} t={}s buckets {}", p.label, s.at, s.buckets);
+        samples.push(s);
+    }
+    let mut reforms = Vec::new();
+    for i in 0..A6_REFORMS {
+        let m = reform(&victim, &honest_ids);
+        println!(
+            "A6 ① policy={} round={label} reform={i} mesh={} mesh_self_dialed={} mesh_honest={} valid={}",
+            p.label,
+            m.mesh,
+            m.mesh_self_dialed,
+            m.mesh_honest,
+            m.valid()
+        );
+        reforms.push(m);
+    }
+    let finds_honest_gene = victim
+        .search(super::discover::SearchQuery::GeneId(gene.clone()))
+        .map(|o| o.hits.iter().any(|h| h.publisher == publisher))
+        .unwrap_or(false);
+    drop((attackers, boots, honest, honest_boot));
+    Some(Readings { samples, reforms, finds_honest_gene })
+}
+
+/// Three valid rounds of `p`, each judged and printed.
+fn run_rounds(p: &Policy, run: usize) -> Vec<Verdict> {
+    let mut verdicts = Vec::new();
+    let (mut invalid_in_a_row, mut tried) = (0, 0);
+    while verdicts.len() < A6_ROUNDS {
+        tried += 1;
+        let label = format!("{run}.{tried}");
+        match run_round(p, &label) {
+            Some(r) => {
+                invalid_in_a_row = 0;
+                let v = judge(&r);
+                println!(
+                    "A6 ① policy={} round={label} verdict a={} b={} c+d={} e={} e_rate={:.2} green={} \
+                     invalid_reforms_with_honest={} finds_honest_gene={}",
+                    p.label,
+                    ok(v.a),
+                    ok(v.b),
+                    ok(v.cd),
+                    ok(v.e),
+                    v.e_rate,
+                    ok(v.green()),
+                    v.invalid_with_honest,
+                    r.finds_honest_gene
+                );
+                if v.invalid_with_honest > A6_INVALID_WITH_HONEST_MAX {
+                    setup_invalid(format!(
+                        "policy={} round={label}: {} of {A6_REFORMS} re-formations short of mesh_n_low with an honest peer \
+                         (more than {A6_INVALID_WITH_HONEST_MAX}); fix the setup from the readings and rerun",
+                        p.label, v.invalid_with_honest
+                    ));
+                }
+                verdicts.push(v);
+            }
+            None => {
+                invalid_in_a_row += 1;
+                if invalid_in_a_row >= A6_INVALID_MAX {
+                    setup_invalid(format!(
+                        "policy={}: {invalid_in_a_row} rounds in a row without {A6_VICTIM_INBOUND} inbound attackers at release",
+                        p.label
+                    ));
+                }
+            }
+        }
+    }
+    verdicts
+}
+
+fn ok(pass: bool) -> &'static str {
+    if pass { "pass" } else { "RED" }
+}
+
+/// S2: a red round reruns the whole test once with new PeerIds; red in both
+/// runs fails, and both runs' readings are in the output.
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_self_chosen_outbound_route1() {
+    let policy = Policy { label: "route1", topup: true, mesh_outbound_min: 3, attackers_first: false };
+    let first = run_rounds(&policy, 1);
+    if first.iter().all(Verdict::green) {
+        return;
+    }
+    println!("A6 ① policy=route1 run 1 had a red round: rerunning once with new PeerIds (S2)");
+    let second = run_rounds(&policy, 2);
+    assert!(
+        second.iter().all(Verdict::green),
+        "red in two runs in a row: run 1 {first:?}, run 2 {second:?}"
+    );
+}
+
+/// Control for a: top-up never released (the code before A6).
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_self_chosen_outbound_control_a_no_topup() {
+    let policy = Policy { label: "control-a", topup: false, mesh_outbound_min: 3, attackers_first: false };
+    let verdicts = run_rounds(&policy, 1);
+    assert!(verdicts.iter().any(|v| !v.a), "without top-up, a must go red: {verdicts:?}");
+}
+
+/// Control for b: libp2p's `mesh_outbound_min` of 2. If it cannot go red,
+/// §10 row 3 applies (b printed only; the small setup above stays).
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_self_chosen_outbound_control_b_mesh_outbound_min_2() {
+    let policy = Policy { label: "control-b", topup: true, mesh_outbound_min: 2, attackers_first: false };
+    let verdicts = run_rounds(&policy, 1);
+    assert!(verdicts.iter().any(|v| !v.b), "with mesh_outbound_min 2, b must go red: {verdicts:?}");
+}
+
+/// Control for c+d: attackers first among top-up's candidates, connected
+/// adoptable ones included (as if the candidate rules were missing).
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_self_chosen_outbound_control_cd_attackers_first() {
+    let policy = Policy { label: "control-cd", topup: true, mesh_outbound_min: 3, attackers_first: true };
+    let verdicts = run_rounds(&policy, 1);
+    assert!(verdicts.iter().any(|v| !v.cd), "with attackers first among candidates, c+d must go red: {verdicts:?}");
+}
+
+/// Control for e: no top-up and `mesh_outbound_min` 2 (the code before A6),
+/// the same independent re-formations. Printed, not asserted: the design's
+/// simulation puts a single round's red rate at about 37 %.
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_self_chosen_outbound_control_e_before_a6() {
+    let policy = Policy { label: "control-e", topup: false, mesh_outbound_min: 2, attackers_first: false };
+    let verdicts = run_rounds(&policy, 1);
+    let red = verdicts.iter().filter(|v| !v.e).count();
+    println!("A6 ① policy=control-e rounds_with_e_red={red} of {}", verdicts.len());
+}
+
+// ---------------------------------------------------------------------
+// ① b, the small setup (design v5 §10 row 3, Codex 7; red team v5 N1).
+//
+// The victim has exactly 6 peers, all in its mesh (`mesh_n` 6): 4 that
+// dialled it, 2 it dialled. It then dials W. With `mesh_outbound_min` 3 its
+// heartbeat must graft W, the only outbound candidate, within 3 s; with 2 it
+// must not (the control).
+//
+// N1: W must not graft the victim on its own. W's mesh is filled first by 6
+// helpers that dial W; an empty mesh would make W GRAFT the victim whatever
+// the victim's setting. The helpers take no inbound connections, so the
+// victim's Kademlia, which learns them from W, cannot dial them and add
+// other outbound candidates.
+// ---------------------------------------------------------------------
+
+const B_SMALL_HELPERS: usize = 6;
+const B_SMALL_WITHIN: Duration = Duration::from_secs(3);
+/// GossipSub's first heartbeat runs `heartbeat_initial_delay` (5 s) plus one
+/// interval (1 s) after start. The victim's mesh fills from its peers' GRAFTs
+/// well before that, so W is only dialled once the heartbeat is running.
+const B_SMALL_HEARTBEAT_RUNNING: Duration = Duration::from_secs(7);
+
+/// The victim's mesh on the announcements topic, and the peers in it whose
+/// first connection the victim dialled (gossipsub's outbound).
+fn mesh_outbound(node: &Node) -> (Vec<String>, Vec<String>) {
+    let mesh = node.mesh_peers(ANNOUNCEMENTS_TOPIC).expect("mesh peers");
+    let first = report(node).first;
+    let outbound = mesh
+        .iter()
+        .filter(|p| first.get(*p).is_some_and(|f| *f != FirstConnection::Inbound))
+        .cloned()
+        .collect();
+    (mesh, outbound)
+}
+
+fn setup_invalid(msg: String) -> ! {
+    panic!("A6 SETUP INVALID: {msg}")
+}
+
+/// Run the small setup; returns (outbound peers in the victim's mesh at
+/// most, whether W was ever in it) over the 3 s after the victim and W
+/// connected.
+fn run_b_small(label: &str, mesh_outbound_min: usize) -> (usize, bool) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let w = spawn_listed(&dir, "w", vec![]);
+    let w_peer = w.local_peer_id().0;
+    let helpers: Vec<Node> = (0..B_SMALL_HELPERS)
+        .map(|i| {
+            spawn_with(&dir, &format!("helper{i}"), vec![addr(&w)], |n| {
+                n.with_p6_loopback_whitelist().with_max_established_incoming(0)
+            })
+        })
+        .collect();
+    if !eventually(30, || w.mesh_peers(ANNOUNCEMENTS_TOPIC).map(|m| m.len()).unwrap_or(0) >= 5) {
+        setup_invalid(format!("{label}: W's mesh never reached mesh_n_low 5 (N1 needs it full elsewhere)"));
+    }
+
+    let victim_started = Instant::now();
+    let victim = spawn_with(&dir, "victim", vec![], |n| {
+        // Exactly the 4 designed inbound peers fit: the helpers, which learn
+        // the victim from W, cannot dial in and swell its mesh.
+        n.with_p6_loopback_whitelist()
+            .with_mesh_outbound_min(mesh_outbound_min)
+            .with_outbound_paused(true, true)
+            .with_max_established_incoming(4)
+    });
+    let outs: Vec<Node> = (0..2).map(|i| spawn_listed(&dir, &format!("out{i}"), vec![])).collect();
+    for o in &outs {
+        victim.dial_always(addr(o).parse().expect("addr")).expect("dial");
+    }
+    let ins: Vec<Node> = (0..4).map(|i| spawn_listed(&dir, &format!("in{i}"), vec![addr(&victim)])).collect();
+    if let Some(rest) = B_SMALL_HEARTBEAT_RUNNING.checked_sub(victim_started.elapsed()) {
+        std::thread::sleep(rest);
+    }
+    let ready = eventually(30, || {
+        let (mesh, outbound) = mesh_outbound(&victim);
+        victim.connected_peers().len() == 6 && mesh.len() == 6 && outbound.len() == 2
+    });
+    let (mesh, outbound) = mesh_outbound(&victim);
+    if !ready {
+        setup_invalid(format!(
+            "{label}: before W, want 6 connected / mesh 6 / 2 outbound in mesh; got {} / {} / {}",
+            victim.connected_peers().len(),
+            mesh.len(),
+            outbound.len()
+        ));
+    }
+    let w_mesh = w.mesh_peers(ANNOUNCEMENTS_TOPIC).expect("W mesh").len();
+
+    victim.dial_always(addr(&w).parse().expect("addr")).expect("dial W");
+    if !eventually(10, || victim.connected_peers().contains(&w_peer)) {
+        setup_invalid(format!("{label}: the victim never connected to W"));
+    }
+    let start = Instant::now();
+    let (mut most, mut w_in) = (outbound.len(), false);
+    while start.elapsed() < B_SMALL_WITHIN {
+        let (mesh, outbound) = mesh_outbound(&victim);
+        most = most.max(outbound.len());
+        w_in |= mesh.contains(&w_peer);
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let (mesh, outbound) = mesh_outbound(&victim);
+    let connected = victim.connected_peers().len();
+    let w_grafts_victim = w.mesh_peers(ANNOUNCEMENTS_TOPIC).expect("W mesh").contains(&victim.local_peer_id().0);
+    println!(
+        "A6 ①b-small {label} mesh_outbound_min={mesh_outbound_min} w_mesh_before={w_mesh} \
+         outbound_in_mesh_most={most} w_in_mesh={w_in} end: connected={connected} mesh={} outbound={} \
+         victim_in_w_mesh={w_grafts_victim}",
+        mesh.len(),
+        outbound.len()
+    );
+    drop((helpers, outs, ins));
+    (most, w_in)
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_mesh_outbound_min_grafts_a_new_outbound_peer() {
+    let (most, w_in) = run_b_small("route1", 3);
+    assert!(
+        most >= 3 && w_in,
+        "with mesh_outbound_min 3 the heartbeat must graft W within 3 s: outbound in mesh {most}, W in mesh {w_in}"
+    );
+}
+
+/// Control: libp2p's `mesh_outbound_min` of 2 is already met, so W stays out.
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_mesh_outbound_min_control_2_leaves_w_out() {
+    let (most, w_in) = run_b_small("control-b", 2);
+    assert!(
+        most < 3 && !w_in,
+        "control must be red: with mesh_outbound_min 2, outbound in mesh {most}, W in mesh {w_in}"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -42,8 +718,10 @@ fn report(node: &Node) -> OutboundReport {
 fn spawn_quiet_bootstrap(dir: &tempfile::TempDir, name: &str, port: u16) -> Node {
     let mut cfg = config(vec![]);
     cfg.listen_port = port;
-    let path = dir.path().join(format!("{name}.key"));
-    let mut node = Node::with_keypair_path(cfg, path).expect("build node");
+    let node = Node::with_keypair_path(cfg, dir.path().join(format!("{name}.key")))
+        .expect("build node")
+        .with_outbound_paused(true, true);
+    let mut node = node;
     node.start().expect("start node");
     node
 }
@@ -180,7 +858,11 @@ fn a6_bootstrap_keeper_reaches_the_live_one_listed_last() {
 fn a6_bootstrap_keeper_reconnects_only_one() {
     let dir = tempfile::tempdir().unwrap();
     let boots: Vec<Node> = (0..3).map(|i| spawn_quiet_bootstrap(&dir, &format!("boot-{i}"), 0)).collect();
-    let victim = spawn_with(&dir, "victim", boots.iter().map(addr).collect(), |n| n);
+    // Only the keeper may dial: top-up and the random walk are held, the
+    // same isolation as the quiet bootstrap nodes (CI run 42088947923 had 3
+    // connected again with keeper_dials 1->1).
+    let victim = spawn_with(&dir, "victim", boots.iter().map(addr).collect(), |n| n.with_outbound_paused(true, false));
+    victim.set_walk_paused(true).expect("hold the walk");
     assert!(eventually(10, || bootstraps_connected(&victim) == 3), "startup dials all three");
     std::thread::sleep(Duration::from_secs(6));
     let before = report(&victim).keeper_dials;
@@ -194,8 +876,122 @@ fn a6_bootstrap_keeper_reconnects_only_one() {
     std::thread::sleep(Duration::from_secs(10));
     let (later, later_dials) = (bootstraps_connected(&victim), report(&victim).keeper_dials);
     println!("A6 ② only_one reconnected={one} connected_10s_later={later} keeper_dials={dials}->{later_dials}");
+    // Who dialled each connection still up, by first-connection tag.
+    let r = report(&victim);
+    let tags: Vec<String> = boots
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| r.first.get(&b.local_peer_id().0).map(|f| format!("boot-{i}={f:?}")))
+        .collect();
+    println!("A6 ② only_one first_connections {}", tags.join(" "));
     assert!(one, "one bootstrap node back within 30 s");
     assert_eq!((later, later_dials), (1, dials), "one is enough: no further bootstrap dials");
+}
+
+// ---------------------------------------------------------------------
+// ③ Nodes that cannot take inbound still get in, and ordinary nodes still
+// reach 8 self-dialled peers (K1, design v3 §5.4).
+// ---------------------------------------------------------------------
+
+const A6_ORDINARY: usize = 24;
+const A6_OUTBOUND_ONLY: usize = 30;
+/// The control's inbound cap on ordinary nodes (A6 design v1's limit).
+const A6_ORDINARY_INBOUND_CONTROL: u32 = 8;
+
+/// Whether every outbound-only node connected within 30 s, and whether
+/// every one heard an announcement (design v5 §5.4). Ordinary nodes take
+/// at most `ordinary_inbound` connections in (the default when `None`).
+/// Each ordinary node's self-dialled peers at 60 s are printed only (§10
+/// row 1).
+fn run_outbound_only(label: &str, ordinary_inbound: Option<u32>) -> (bool, bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let started = Instant::now();
+    let ordinary_build = move |n: Node| {
+        let n = n.with_p6_loopback_whitelist();
+        match ordinary_inbound {
+            Some(cap) => n.with_max_established_incoming(cap),
+            None => n,
+        }
+    };
+    let first = spawn_with(&dir, "ordinary-0", vec![], ordinary_build);
+    let mut ordinary = vec![first];
+    for i in 1..A6_ORDINARY {
+        let n = spawn_with(&dir, &format!("ordinary-{i}"), vec![addr(&ordinary[0])], ordinary_build);
+        ordinary.push(n);
+    }
+    let ordinary_addrs: Vec<String> = ordinary.iter().map(addr).collect();
+    let dial_only: Vec<Node> = (0..A6_OUTBOUND_ONLY)
+        .map(|i| {
+            spawn_with(&dir, &format!("outbound-only-{i}"), vec![ordinary_addrs[i % A6_ORDINARY].clone()], |n| {
+                n.with_max_established_incoming(0).with_p6_loopback_whitelist()
+            })
+        })
+        .collect();
+    let joined_at = Instant::now();
+    let all_connected = eventually(30, || dial_only.iter().all(|n| !n.connected_peers().is_empty()));
+    let connected_count = dial_only.iter().filter(|n| !n.connected_peers().is_empty()).count();
+    let gene = id(&format!("a6-outbound-only-{label}"));
+    let _ = eventually(30u64.saturating_sub(joined_at.elapsed().as_secs()).max(5), || {
+        let _ = ordinary[1].publish(ANNOUNCEMENTS_TOPIC, &encode_announcement(&announcement(&gene, "a6-outbound-only")));
+        std::thread::sleep(Duration::from_millis(500));
+        dial_only.iter().all(|n| heard(n, &gene))
+    });
+    let heard_count = dial_only.iter().filter(|n| heard(n, &gene)).count();
+    println!(
+        "A6 ③ {label} ordinary={A6_ORDINARY} ordinary_inbound={} outbound_only={A6_OUTBOUND_ONLY} \
+         connected={connected_count}/{A6_OUTBOUND_ONLY} heard={heard_count}/{A6_OUTBOUND_ONLY} after={:.1}s",
+        ordinary_inbound.map(|c| c.to_string()).unwrap_or_else(|| "default".into()),
+        joined_at.elapsed().as_secs_f64()
+    );
+    std::thread::sleep(Duration::from_secs(60).saturating_sub(started.elapsed()));
+    let ordinary_ids: HashSet<String> = ordinary.iter().map(|n| n.local_peer_id().0).collect();
+    let mut short = 0;
+    for (i, n) in ordinary.iter().enumerate() {
+        let r = report(n);
+        let self_dialled = r.first.values().filter(|f| f.is_outbound()).count();
+        let dialled_in_by_ordinary = r
+            .first
+            .iter()
+            .filter(|(p, f)| **f == FirstConnection::Inbound && ordinary_ids.contains(*p))
+            .count();
+        let by_kind = |k: FirstConnection| r.first.values().filter(|f| **f == k).count();
+        let topup_by = |w: TopUpWay| r.topup.values().filter(|x| **x == w).count();
+        println!(
+            "A6 ③ {label} node={i} self_dialled={self_dialled} topup={} (adopted={} dialled={}) bootstrap={} \
+             kad_dialled={} dialled_in_by_ordinary={dialled_in_by_ordinary} inbound_total={}",
+            r.topup.len(),
+            topup_by(TopUpWay::Adopted),
+            topup_by(TopUpWay::Dialled),
+            by_kind(FirstConnection::Bootstrap),
+            by_kind(FirstConnection::OtherDial),
+            by_kind(FirstConnection::Inbound)
+        );
+        short += usize::from(self_dialled < 8);
+    }
+    println!("A6 ③ {label} ordinary_short_of_8_self_dialled={short} (printed only, §10 row 1)");
+    (all_connected, heard_count == A6_OUTBOUND_ONLY)
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_outbound_only_nodes_join() {
+    let (connected, heard_all) = run_outbound_only("route1", None);
+    assert!(connected, "every outbound-only node must connect to someone within 30 s");
+    assert!(heard_all, "every outbound-only node must hear an announcement");
+}
+
+/// §10 row 1's control: ordinary nodes take at most 8 connections in (A6
+/// design v1). Kademlia among the ordinary nodes should fill those slots
+/// first, leaving the outbound-only nodes nowhere to connect: red.
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_outbound_only_nodes_join_control_inbound_8() {
+    let (connected, heard_all) = run_outbound_only("control-inbound-8", Some(A6_ORDINARY_INBOUND_CONTROL));
+    assert!(
+        !(connected && heard_all),
+        "③ control: with ordinary nodes capped at {A6_ORDINARY_INBOUND_CONTROL} inbound, every outbound-only node \
+         still connected and heard; ③ cannot tell this cap apart (report to the CEO, §10 row 1)"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -347,3 +1143,868 @@ fn a6_p6_still_counts_a_peer_after_one_of_two_connections_closes() {
     );
 }
 
+// ---------------------------------------------------------------------
+// ①-拨: disconnect a batch, so top-up has to dial (design v5 §5.9.1, F3;
+// red team v5 N3).
+//
+// 1 bootstrap node and 16 honest nodes, the victim last: its Kademlia
+// queries dial most of them, so they are adoptable and top-up adopts 8.
+// The honest nodes are quiet from the start (top-up and random walk held;
+// they still answer): otherwise their own top-up finds the victim and
+// dials it first, which makes them inbound-first and not adoptable (first
+// try: 10 of 16 inbound-first, 6 adoptable, SETUP INVALID). And the victim
+// joins only once the honest nodes are all connected to one another:
+// Kademlia's automatic bootstrap (500 ms after a new entry, in a table of
+// fewer than 20) has no switch: a query still running when the victim
+// joins learns it from the answers and dials it first. So the victim waits
+// for a fully connected honest side and then DIAL_HONEST_SETTLE more.
+// Then the victim drops every peer it could adopt (top-up peers fall to 0)
+// and one of them is stopped. The dropped nodes go quiet (no top-up, no
+// keeper, no random walk, Kademlia's periodic bootstrap off from the start)
+// and the victim's own random walk is held, so the only outbound dials the
+// victim makes are top-up's. Top-up must get back to 8 by dialling.
+//
+// The stopped node is put first among top-up's candidates, so the first
+// round always dials it: otherwise 8 live candidates could fill the budget
+// and "a dial failed" would be left to chance. Preferred candidates still
+// pass top-up's eligibility, so a broken cooldown would redial it.
+// ---------------------------------------------------------------------
+
+const DIAL_HONEST: usize = 16;
+/// N3: 8 must be dialled back and 1 is stopped.
+const DIAL_ADOPTABLE_MIN: usize = 9;
+const DIAL_SETTLE: Duration = Duration::from_secs(60);
+/// Quiet time between a fully connected honest side and the victim joining.
+const DIAL_HONEST_SETTLE: Duration = Duration::from_secs(15);
+const DIAL_BACK_WITHIN: u64 = 40;
+const DIAL_WATCH_UNTIL: u64 = 60;
+const DIAL_SAMPLE_EVERY: u64 = 5;
+
+#[derive(Debug, Default, Clone)]
+struct DialSample {
+    at: u64,
+    topup: usize,
+    adopted: usize,
+    dialled: usize,
+    routing_table: usize,
+    eligible: usize,
+    /// Top-up dials sent and failed since the drop.
+    dials: usize,
+    failures: usize,
+    stopped_cooling: bool,
+    stopped_is_topup: bool,
+    /// Dropped nodes connected again by anything other than top-up.
+    reconnected_otherwise: usize,
+}
+
+/// A ①-拨 node: whitelist, Kademlia's periodic bootstrap off.
+fn spawn_dial(dir: &tempfile::TempDir, name: &str, bootstrap: Vec<String>) -> Node {
+    spawn_with(dir, name, bootstrap, |n| n.with_p6_loopback_whitelist().with_kad_periodic_bootstrap_off())
+}
+
+fn run_dial_path(label: &str, adopt_only: bool) -> Vec<DialSample> {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let boot = spawn_dial(&dir, "boot", vec![]);
+    let mut honest: Vec<Node> = (0..DIAL_HONEST)
+        .map(|i| {
+            let n = spawn_with(&dir, &format!("honest-{i}"), vec![addr(&boot)], |n| {
+                n.with_p6_loopback_whitelist().with_kad_periodic_bootstrap_off().with_outbound_paused(true, false)
+            });
+            n.set_walk_paused(true).expect("quiet");
+            n
+        })
+        .collect();
+    let full = |n: &Node| n.connected_peers().len() >= DIAL_HONEST;
+    let meshed = eventually(60, || full(&boot) && honest.iter().all(full));
+    let fewest = honest.iter().map(|n| n.connected_peers().len()).min().unwrap_or(0);
+    println!("A6 ①-拨 {label} honest side: fewest connections {fewest} of {DIAL_HONEST}, boot {}", boot.connected_peers().len());
+    if !meshed {
+        setup_invalid(format!("①-拨 {label}: the honest side is not fully connected within 60 s (fewest {fewest} of {DIAL_HONEST})"));
+    }
+    // Let the honest side's own Kademlia bootstrap queries finish: one still
+    // running when the victim joins learns it from the answers and dials it
+    // first (with no wait: 9 of 16 did; with this one, none).
+    std::thread::sleep(DIAL_HONEST_SETTLE);
+    let victim = spawn_with(&dir, "victim", vec![addr(&boot)], |n| {
+        let n = n.with_p6_loopback_whitelist().with_kad_periodic_bootstrap_off().with_outbound_paused(true, false);
+        if adopt_only { n.with_adopt_only() } else { n }
+    });
+    victim.set_outbound_paused(false, false).expect("release top-up");
+
+    // Precondition: 8 top-up peers, and at least 9 peers it could adopt (N3).
+    let adoptable = |r: &OutboundReport| {
+        r.first.values().filter(|f| matches!(f, FirstConnection::OtherDial | FirstConnection::Restart | FirstConnection::TopUp)).count()
+    };
+    let settled = eventually(DIAL_SETTLE.as_secs(), || {
+        let r = report(&victim);
+        r.topup_peers >= 8 && adoptable(&r) >= DIAL_ADOPTABLE_MIN
+    });
+    let vid = victim.local_peer_id().0;
+    let dialled_victim = honest.iter().filter(|n| report(n).first.get(&vid).is_some_and(|f| *f != FirstConnection::Inbound)).count();
+    let r = report(&victim);
+    println!(
+        "A6 ①-拨 {label} before: topup={} adoptable={} first_inbound={} connected={} honest_that_dialled_the_victim={dialled_victim}",
+        r.topup_peers,
+        adoptable(&r),
+        r.first.values().filter(|f| **f == FirstConnection::Inbound).count(),
+        victim.connected_peers().len()
+    );
+    if !settled {
+        setup_invalid(format!(
+            "①-拨 {label}: within {}s want topup >= 8 and adoptable >= {DIAL_ADOPTABLE_MIN}; got {} and {}",
+            DIAL_SETTLE.as_secs(),
+            r.topup_peers,
+            adoptable(&r)
+        ));
+    }
+
+    // The drop: quiet first, then stop one, hold the victim's walk, drop all.
+    let dropped: HashSet<String> = r
+        .first
+        .iter()
+        .filter(|(_, f)| matches!(f, FirstConnection::OtherDial | FirstConnection::Restart | FirstConnection::TopUp))
+        .map(|(p, _)| p.clone())
+        .collect();
+    for n in honest.iter().filter(|n| dropped.contains(&n.local_peer_id().0)) {
+        n.set_outbound_paused(true, true).expect("quiet");
+        n.set_walk_paused(true).expect("quiet");
+    }
+    let stopped_at = honest.iter().position(|n| dropped.contains(&n.local_peer_id().0)).expect("a dropped honest node");
+    let mut stopped_node = honest.remove(stopped_at);
+    let stopped = stopped_node.local_peer_id().0;
+    let stopped_addr: Multiaddr = addr(&stopped_node).parse().expect("addr");
+    victim.prefer_candidates(vec![(stopped.parse().expect("PeerId"), vec![stopped_addr])]).expect("prefer");
+    victim.set_walk_paused(true).expect("hold the walk");
+    let _ = stopped_node.stop();
+    for p in &dropped {
+        victim.disconnect(p.parse().expect("PeerId")).expect("disconnect");
+    }
+    let t0 = Instant::now();
+    let base = report(&victim).last_round;
+    let (dials0, failures0) = (base.dials_total, base.failures_total);
+
+    let mut samples = Vec::new();
+    let mut at = DIAL_SAMPLE_EVERY;
+    while at <= DIAL_WATCH_UNTIL {
+        std::thread::sleep(Duration::from_secs(at).saturating_sub(t0.elapsed()));
+        let r = report(&victim);
+        let s = DialSample {
+            at,
+            topup: r.topup_peers,
+            adopted: r.topup.values().filter(|w| **w == TopUpWay::Adopted).count(),
+            dialled: r.topup.values().filter(|w| **w == TopUpWay::Dialled).count(),
+            routing_table: r.last_round.routing_table,
+            eligible: r.last_round.eligible,
+            dials: r.last_round.dials_total - dials0,
+            failures: r.last_round.failures_total - failures0,
+            stopped_cooling: r.cooling.contains(&stopped),
+            stopped_is_topup: r.topup.contains_key(&stopped),
+            reconnected_otherwise: dropped
+                .iter()
+                .filter(|p| r.first.get(*p).is_some_and(|f| *f != FirstConnection::TopUp))
+                .count(),
+        };
+        println!(
+            "A6 ①-拨 {label} t0+{}s topup={} (adopted={} dialled={}) routing_table={} eligible={} dials={} failures={} \
+             stopped_cooling={} stopped_is_topup={} dropped_reconnected_otherwise={}",
+            s.at,
+            s.topup,
+            s.adopted,
+            s.dialled,
+            s.routing_table,
+            s.eligible,
+            s.dials,
+            s.failures,
+            s.stopped_cooling,
+            s.stopped_is_topup,
+            s.reconnected_otherwise
+        );
+        samples.push(s);
+        at += DIAL_SAMPLE_EVERY;
+    }
+    drop((honest, boot));
+    samples
+}
+
+/// The first assertion of §5.9.1: by t0+40 s top-up is back to 8, all dialled.
+fn dialled_back(samples: &[DialSample]) -> bool {
+    samples.iter().any(|s| s.at <= DIAL_BACK_WITHIN && s.topup >= 8 && s.adopted == 0 && s.dialled >= 8)
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_topup_dials_back_after_a_drop() {
+    let samples = run_dial_path("route1", false);
+    assert!(dialled_back(&samples), "top-up must be back to 8 dialled peers by t0+{DIAL_BACK_WITHIN}s: {samples:?}");
+    let by = |t: u64| samples.iter().filter(move |s| s.at <= t);
+    assert!(
+        by(DIAL_BACK_WITHIN).any(|s| s.dials >= 8 && s.failures >= 1),
+        "by t0+{DIAL_BACK_WITHIN}s at least 8 dials and 1 failure: {samples:?}"
+    );
+    assert!(samples.iter().all(|s| !s.stopped_is_topup), "the stopped node can never be a top-up peer");
+    // The failed one cools down: seen cooling, and the next round (10 s on)
+    // adds no failure.
+    let first_fail = samples.iter().find(|s| s.failures >= 1).expect("a failure");
+    assert!(first_fail.stopped_cooling, "the stopped node must be cooling once its dial failed: {first_fail:?}");
+    let next_round = samples.iter().find(|s| s.at >= first_fail.at + 10).expect("a sample a round later");
+    assert_eq!(
+        next_round.failures, first_fail.failures,
+        "the next round must not dial the cooling node again: {samples:?}"
+    );
+    // a, as always: from t0+40 s to t0+60 s top-up stays at 8.
+    assert!(
+        samples.iter().filter(|s| s.at >= DIAL_BACK_WITHIN).all(|s| s.topup >= 8),
+        "a: top-up peers >= 8 from t0+{DIAL_BACK_WITHIN}s to t0+{DIAL_WATCH_UNTIL}s: {samples:?}"
+    );
+}
+
+/// Control: adopt only, never dial. Top-up cannot come back, so the first
+/// assertion must be red; if it is not, something else dials in this setup.
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 acceptance — enable the p2p-integration feature or run with --ignored")]
+fn a6_topup_dials_back_control_adopt_only() {
+    let samples = run_dial_path("control-adopt-only", true);
+    assert!(!dialled_back(&samples), "control must be red: adopt-only came back to 8 dialled peers: {samples:?}");
+    assert!(samples.iter().all(|s| s.dialled == 0), "adopt-only must dial nobody: {samples:?}");
+}
+
+// ---------------------------------------------------------------------
+// Shared by ①-向 and ①-磨: a node with an identity chosen in advance, and
+// one line per sample.
+// ---------------------------------------------------------------------
+
+/// Write `keypair` as `name`'s identity and spawn it like [`spawn_with`].
+fn spawn_as(
+    dir: &tempfile::TempDir,
+    name: &str,
+    keypair: &Keypair,
+    bootstrap: Vec<String>,
+    build: impl FnOnce(Node) -> Node,
+) -> Node {
+    write_identity(&dir.path().join(format!("{name}.pem")), keypair).expect("write identity");
+    spawn_with(dir, name, bootstrap, build)
+}
+
+fn id_of(keypair: &Keypair) -> libp2p::PeerId {
+    keypair.public().to_peer_id()
+}
+
+/// Attackers among top-up peers, and among the last round's eligible
+/// candidates (the pool before the draw).
+fn shares(r: &OutboundReport, attackers: &HashSet<String>) -> (f64, f64) {
+    let topup = r.topup.keys().filter(|p| attackers.contains(*p)).count() as f64 / r.topup.len().max(1) as f64;
+    let eligible: Vec<&String> = r.eligible_by_bucket.iter().flat_map(|(_, peers)| peers).collect();
+    let pool = eligible.iter().filter(|p| attackers.contains(**p)).count() as f64 / eligible.len().max(1) as f64;
+    (topup, pool)
+}
+
+/// One sample line shared by ①-向 and ①-磨.
+fn print_sample(tag: &str, label: &str, s: &Sample, topup_share: f64, pool_share: f64) {
+    println!(
+        "A6 {tag} round={label} t={}s topup={} (adopted={} dialled={}) topup_attackers={} topup_honest={} \
+         topup_attacker_share={topup_share:.2} eligible={} eligible_attacker_share={pool_share:.2} \
+         kad_dialled_attackers={} kad_dialled_honest={} inbound_attackers={} inbound_honest={} bootstrap={} \
+         connections in={} out={} routing_table={} round_dials={} round_failures={} shortfall_walks={}",
+        s.at,
+        s.topup,
+        s.topup_adopted,
+        s.topup_dialled,
+        s.topup_attackers,
+        s.topup_honest,
+        s.eligible,
+        s.kad_attackers,
+        s.kad_honest,
+        s.inbound_attackers,
+        s.inbound_honest,
+        s.bootstrap,
+        s.connections_in,
+        s.connections_out,
+        s.routing_table,
+        s.dials,
+        s.failures,
+        s.shortfall_walks
+    );
+    println!("A6 {tag} round={label} t={}s buckets {}", s.at, s.buckets);
+}
+
+fn mean(xs: &[f64]) -> f64 {
+    xs.iter().sum::<f64>() / xs.len().max(1) as f64
+}
+
+// ---------------------------------------------------------------------
+// ①-向: honest nodes dial first, attackers only wait to be dialled
+// (design v5 §5.9.2, F1).
+//
+// ①'s 3-of-4 attacker bootstrap nodes; 24 attackers that never dial the
+// victim (test switch) come up first, then the victim with the default 50
+// inbound slots and top-up running, then 12 honest nodes: 6 list the
+// victim as a bootstrap node and dial it at once (inbound at the victim,
+// not adoptable), 6 do not (the victim's queries reach them, adoptable).
+//
+// Prints only (§12 F1: a limit, not a fix). The first runs went over the
+// old 0.75 line (0.75 / 1.00 / 0.88), and a quota experiment showed that
+// letting top-up adopt peers that dialled in hands the slots to inbound
+// attackers in ① (CEO, T-156, red team v6). So there is no line here any
+// more; the condition for reopening that question is B2's connection-churn
+// test (design v5 §1.7, §5.9.2). The bias is printed in every CI run.
+// ---------------------------------------------------------------------
+const DIR_ATTACKERS: usize = 24;
+const DIR_ATTACKER_BOOTSTRAPS: usize = 3;
+/// Honest nodes that dial the victim first, and ones that wait.
+const DIR_HONEST_DIAL_FIRST: usize = 6;
+const DIR_HONEST_WAIT: usize = 6;
+const DIR_SAMPLE_AT: [u64; 7] = [30, 40, 50, 60, 70, 80, 90];
+const DIR_ROUNDS: usize = 3;
+
+/// One honest group's standing at the victim: connected, adoptable (the
+/// victim's own non-bootstrap dial came first), top-up peers.
+fn group(r: &OutboundReport, ids: &[String]) -> (usize, usize, usize) {
+    let connected = ids.iter().filter(|p| r.first.contains_key(*p)).count();
+    let adoptable = ids
+        .iter()
+        .filter(|p| matches!(r.first.get(*p), Some(FirstConnection::OtherDial | FirstConnection::Restart)))
+        .count();
+    let topup = ids.iter().filter(|p| r.topup.contains_key(*p)).count();
+    (connected, adoptable, topup)
+}
+
+/// One round with fresh PeerIds; returns the mean attacker share among
+/// top-up peers over its samples.
+fn run_direction_round(label: &str) -> f64 {
+    const TAG: &str = "①-向";
+    let dir = tempfile::tempdir().expect("temp dir");
+    let victim_key = Keypair::generate_ed25519();
+    let victim_id = id_of(&victim_key);
+    let deny = |n: Node| n.with_p6_loopback_whitelist().with_deny_dial(vec![victim_id]);
+
+    let honest_boot = spawn_a6(&dir, "honest-boot", vec![]);
+    let mut boots = vec![spawn_with(&dir, "attacker-boot-0", vec![], deny)];
+    for j in 1..DIR_ATTACKER_BOOTSTRAPS {
+        let b = spawn_with(&dir, &format!("attacker-boot-{j}"), vec![addr(&boots[0])], deny);
+        boots.push(b);
+    }
+    let boot_addrs: Vec<String> = boots.iter().map(addr).collect();
+    let attackers: Vec<Node> = (0..DIR_ATTACKERS)
+        .map(|i| spawn_with(&dir, &format!("attacker-{i}"), vec![boot_addrs[i % DIR_ATTACKER_BOOTSTRAPS].clone()], deny))
+        .collect();
+    if !eventually(60, || boots[0].dht_peers().len() >= DIR_ATTACKERS * 3 / 4) {
+        setup_invalid(format!(
+            "{TAG} round={label}: the attackers did not connect ({} of {DIR_ATTACKERS} at the first attacker bootstrap)",
+            boots[0].dht_peers().len()
+        ));
+    }
+
+    let mut victim_boot = boot_addrs.clone();
+    victim_boot.push(addr(&honest_boot));
+    let victim = spawn_as(&dir, "victim", &victim_key, victim_boot, |n| {
+        n.with_p6_loopback_whitelist().with_prune_backoff(A6_PRUNE_BACKOFF)
+    });
+    let dial_first: Vec<Node> = (0..DIR_HONEST_DIAL_FIRST)
+        .map(|i| spawn_a6(&dir, &format!("honest-dial-first-{i}"), vec![addr(&victim), addr(&honest_boot)]))
+        .collect();
+    let wait: Vec<Node> =
+        (0..DIR_HONEST_WAIT).map(|i| spawn_a6(&dir, &format!("honest-wait-{i}"), vec![addr(&honest_boot)])).collect();
+    let started = Instant::now();
+
+    let attacker_ids: HashSet<String> = boots.iter().chain(attackers.iter()).map(|n| n.local_peer_id().0).collect();
+    let dial_first_ids: Vec<String> = dial_first.iter().map(|n| n.local_peer_id().0).collect();
+    let wait_ids: Vec<String> = wait.iter().map(|n| n.local_peer_id().0).collect();
+    let honest_ids: HashSet<String> = std::iter::once(honest_boot.local_peer_id().0)
+        .chain(dial_first_ids.iter().cloned())
+        .chain(wait_ids.iter().cloned())
+        .collect();
+    let population = attacker_ids.len() as f64 / (attacker_ids.len() + honest_ids.len()) as f64;
+
+    let gene = id(&format!("a6-direction-{label}"));
+    let publisher = wait[0].local_peer_id().0;
+    let gene_stored = eventually(30, || {
+        wait[0].announce(&announcement(&gene, "a6-direction-target")).is_ok_and(|a| a.record_acked >= 1)
+    });
+
+    let mut topup_shares = Vec::new();
+    for at in DIR_SAMPLE_AT {
+        std::thread::sleep(Duration::from_secs(at).saturating_sub(started.elapsed()));
+        let r = report(&victim);
+        let s = sample(&victim, at, &attacker_ids, &honest_ids);
+        let (topup_share, pool_share) = shares(&r, &attacker_ids);
+        print_sample(TAG, label, &s, topup_share, pool_share);
+        let topup_by = |side: &HashSet<String>, way: TopUpWay| {
+            r.topup.iter().filter(|(p, w)| side.contains(*p) && **w == way).count()
+        };
+        let (df_conn, df_adopt, df_topup) = group(&r, &dial_first_ids);
+        let (w_conn, w_adopt, w_topup) = group(&r, &wait_ids);
+        let honest_connected = honest_ids.iter().filter(|p| r.first.contains_key(*p)).count();
+        println!(
+            "A6 {TAG} round={label} t={at}s topup_attackers adopted={} dialled={} topup_honest adopted={} dialled={} \
+             honest_dial_first connected={df_conn} adoptable={df_adopt} topup={df_topup} \
+             honest_wait connected={w_conn} adoptable={w_adopt} topup={w_topup} honest_connected={honest_connected}",
+            topup_by(&attacker_ids, TopUpWay::Adopted),
+            topup_by(&attacker_ids, TopUpWay::Dialled),
+            topup_by(&honest_ids, TopUpWay::Adopted),
+            topup_by(&honest_ids, TopUpWay::Dialled),
+        );
+        // The switch held: no attacker connection arrived at the victim.
+        if s.inbound_attackers > 0 {
+            setup_invalid(format!(
+                "{TAG} round={label} t={at}s: {} attackers dialled the victim; the deny-dial switch did not hold",
+                s.inbound_attackers
+            ));
+        }
+        topup_shares.push(topup_share);
+    }
+    let finds_honest_gene = victim
+        .search(super::discover::SearchQuery::GeneId(gene.clone()))
+        .map(|o| o.hits.iter().any(|h| h.publisher == publisher))
+        .unwrap_or(false);
+    let m = mean(&topup_shares);
+    println!(
+        "A6 {TAG} round={label} mean_topup_attacker_share={m:.2} population_attacker_share={population:.2} \
+         gene_stored={gene_stored} finds_honest_gene={finds_honest_gene}"
+    );
+    drop((dial_first, wait, attackers, boots, honest_boot));
+    m
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 ①-向 — enable the p2p-integration feature or run with --ignored")]
+fn a6_topup_direction_bias_is_measured() {
+    let means: Vec<f64> = (1..=DIR_ROUNDS).map(|i| run_direction_round(&format!("1.{i}"))).collect();
+    println!(
+        "A6 ①-向 summary rounds={} means={:?} (printed only: a known bias toward peers that wait to be dialled, \
+         design v5 §1.7; reopened by B2's connection-churn test, §5.9.2)",
+        means.len(),
+        means.iter().map(|m| format!("{m:.2}")).collect::<Vec<_>>()
+    );
+}
+
+// ---------------------------------------------------------------------
+// ①-磨: attackers ground into near k-buckets (design v5 §5.9.3, F2).
+//
+// Attackers in the minority: 36 honest nodes, 12 attackers, 4 honest
+// bootstrap nodes. The victim comes up last with the default 50 inbound
+// slots, so most of its connections are its own dials and both sides are
+// adoptable: this measures the per-bucket draw only. 5 of the attackers'
+// keys are ground so their k-bucket from the victim is one of the 5
+// nearest buckets no honest node is in; the other 7 are random.
+// ---------------------------------------------------------------------
+const GRIND_HONEST: usize = 36;
+const GRIND_ATTACKERS: usize = 12;
+const GRIND_GROUND: usize = 5;
+const GRIND_BOOTSTRAPS: usize = 4;
+const GRIND_SAMPLE_AT: [u64; 7] = [30, 40, 50, 60, 70, 80, 90];
+const GRIND_ROUNDS: usize = 3;
+/// Let the network's own Kademlia queries finish before the victim comes
+/// up, so they do not dial it first (C5's lesson).
+const GRIND_SETTLE: Duration = Duration::from_secs(15);
+/// §5.9.3's line: above it, weight the draw by bucket capacity.
+const GRIND_LINE: f64 = 0.5;
+/// The assertion (CEO, T-156, option a; red team v5 N2: a margin over the
+/// line): the mean of the three rounds stays at or below this. There is no
+/// per-round assertion: a round's top-up is 8 peers drawn once and not
+/// redrawn while full, so one round's share moves in steps of 1/8 (six
+/// rounds read 0.50, 0.38, 0.25; 0.38, 0.38, 0.62). There is no control
+/// that can turn red; this only guards against a regression (§5.9.3).
+const GRIND_REGRESSION_MAX: f64 = 0.6;
+/// No more tries than this per ground key (bucket 245 takes about 2^11).
+const GRIND_MAX_TRIES: u32 = 1 << 20;
+
+fn bucket_from(me: &libp2p::PeerId, peer: &libp2p::PeerId) -> Option<u32> {
+    libp2p::kad::KBucketKey::from(*me).distance(&libp2p::kad::KBucketKey::from(*peer)).ilog2()
+}
+
+/// A key whose k-bucket from `victim` is `bucket`.
+fn grind(victim: &libp2p::PeerId, bucket: u32) -> Keypair {
+    for _ in 0..GRIND_MAX_TRIES {
+        let k = Keypair::generate_ed25519();
+        if bucket_from(victim, &id_of(&k)) == Some(bucket) {
+            return k;
+        }
+    }
+    panic!("no key for bucket {bucket} in {GRIND_MAX_TRIES} tries");
+}
+
+/// One round with fresh PeerIds; returns the mean attacker share among
+/// top-up peers over its samples.
+fn run_grind_round(label: &str) -> f64 {
+    const TAG: &str = "①-磨";
+    let dir = tempfile::tempdir().expect("temp dir");
+    let victim_key = Keypair::generate_ed25519();
+    let victim_id = id_of(&victim_key);
+    let honest_keys: Vec<Keypair> = (0..GRIND_BOOTSTRAPS + GRIND_HONEST).map(|_| Keypair::generate_ed25519()).collect();
+    let honest_buckets: HashSet<u32> = honest_keys.iter().filter_map(|k| bucket_from(&victim_id, &id_of(k))).collect();
+    // The first 5 buckets no honest node is in, counting nearer from 254
+    // (bucket 255 holds half of everyone): each ground attacker has its
+    // bucket to itself.
+    let targets: Vec<u32> = (0..255u32).rev().filter(|b| !honest_buckets.contains(b)).take(GRIND_GROUND).collect();
+    let ground_started = Instant::now();
+    let mut attacker_keys: Vec<Keypair> = targets.iter().map(|b| grind(&victim_id, *b)).collect();
+    let ground_in = ground_started.elapsed();
+    attacker_keys.extend((GRIND_GROUND..GRIND_ATTACKERS).map(|_| Keypair::generate_ed25519()));
+    let ground_ids: HashSet<String> = attacker_keys[..GRIND_GROUND].iter().map(|k| id_of(k).to_string()).collect();
+    let mut occupied: Vec<u32> = honest_buckets.iter().copied().collect();
+    occupied.sort_unstable_by(|a, b| b.cmp(a));
+    println!(
+        "A6 {TAG} round={label} honest_buckets={occupied:?} ground_buckets={targets:?} ground_in_ms={}",
+        ground_in.as_millis()
+    );
+
+    let node = |n: Node| n.with_p6_loopback_whitelist().with_prune_backoff(A6_PRUNE_BACKOFF);
+    let mut boots = vec![spawn_as(&dir, "honest-boot-0", &honest_keys[0], vec![], node)];
+    for (j, key) in honest_keys.iter().enumerate().take(GRIND_BOOTSTRAPS).skip(1) {
+        let b = spawn_as(&dir, &format!("honest-boot-{j}"), key, vec![addr(&boots[0])], node);
+        boots.push(b);
+    }
+    let boot_addrs: Vec<String> = boots.iter().map(addr).collect();
+    let honest: Vec<Node> = (0..GRIND_HONEST)
+        .map(|i| {
+            spawn_as(
+                &dir,
+                &format!("honest-{i}"),
+                &honest_keys[GRIND_BOOTSTRAPS + i],
+                vec![boot_addrs[i % GRIND_BOOTSTRAPS].clone()],
+                node,
+            )
+        })
+        .collect();
+    let attackers: Vec<Node> = attacker_keys
+        .iter()
+        .enumerate()
+        .map(|(i, k)| spawn_as(&dir, &format!("attacker-{i}"), k, vec![boot_addrs[i % GRIND_BOOTSTRAPS].clone()], node))
+        .collect();
+    let everyone = GRIND_BOOTSTRAPS + GRIND_HONEST + GRIND_ATTACKERS;
+    if !eventually(90, || boots[0].dht_peers().len() >= (everyone - 1) * 3 / 4) {
+        setup_invalid(format!(
+            "{TAG} round={label}: the network did not connect ({} of {} at the first bootstrap)",
+            boots[0].dht_peers().len(),
+            everyone - 1
+        ));
+    }
+    std::thread::sleep(GRIND_SETTLE);
+
+    let attacker_ids: HashSet<String> = attackers.iter().map(|n| n.local_peer_id().0).collect();
+    let honest_ids: HashSet<String> = boots.iter().chain(honest.iter()).map(|n| n.local_peer_id().0).collect();
+    let victim = spawn_as(&dir, "victim", &victim_key, boot_addrs.clone(), node);
+    let started = Instant::now();
+
+    let mut topup_shares = Vec::new();
+    for at in GRIND_SAMPLE_AT {
+        std::thread::sleep(Duration::from_secs(at).saturating_sub(started.elapsed()));
+        let r = report(&victim);
+        let s = sample(&victim, at, &attacker_ids, &honest_ids);
+        let (topup_share, pool_share) = shares(&r, &attacker_ids);
+        print_sample(TAG, label, &s, topup_share, pool_share);
+        let ground_connected = ground_ids.iter().filter(|p| r.first.contains_key(*p)).count();
+        let ground_topup = ground_ids.iter().filter(|p| r.topup.contains_key(*p)).count();
+        println!(
+            "A6 {TAG} round={label} t={at}s ground connected={ground_connected} topup={ground_topup} of {GRIND_GROUND}"
+        );
+        topup_shares.push(topup_share);
+    }
+    let m = mean(&topup_shares);
+    println!("A6 {TAG} round={label} mean_topup_attacker_share={m:.2}");
+    drop((attackers, honest, boots));
+    m
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 ①-磨 — enable the p2p-integration feature or run with --ignored")]
+fn a6_topup_ground_keys_take_no_majority() {
+    let means: Vec<f64> = (1..=GRIND_ROUNDS).map(|i| run_grind_round(&format!("1.{i}"))).collect();
+    let all = mean(&means);
+    println!(
+        "A6 ①-磨 summary rounds={} means={:?} mean_of_21_samples={all:.2} line={GRIND_LINE} over_line={}",
+        means.len(),
+        means.iter().map(|m| format!("{m:.2}")).collect::<Vec<_>>(),
+        all > GRIND_LINE
+    );
+    assert!(
+        all <= GRIND_REGRESSION_MAX,
+        "①-磨: ground keys took {all:.2} of the top-up peers over {} rounds, above {GRIND_REGRESSION_MAX} (design v5 §5.9.3)",
+        means.len()
+    );
+}
+
+// ---------------------------------------------------------------------
+// ①-稳: production gossipsub settings, no re-formation, attackers that
+// withhold honest messages (design v5 §5.9.4, F6 + F7).
+//
+// ①'s population (36 attackers, 12 honest, 3 of 4 bootstrap nodes the
+// attacker's, 24 inbound slots, top-up held until they are full). Every
+// gossipsub setting is libp2p's default here: no short `prune_backoff`,
+// no re-formation. Attackers ignore every message an honest node wrote,
+// so it leaves their cache: they neither forward it nor offer it by
+// IHAVE. The publisher and the victim never dial each other, so
+// `flood_publish` cannot hand the victim a message directly.
+//
+// From 30 s to 180 s after the release the publisher sends one
+// announcement every 10 s (16). Each must reach the victim within 10 s
+// (F7). A red round reruns the test once with new PeerIds (S2); red in
+// both runs fails. The control cuts the victim off from every honest
+// node; delivery must then go red.
+//
+// Nightly only (CEO, T-156): about ten minutes each, so they are #[ignore]
+// and .github/workflows/p2p-nightly.yml runs them by name. A round whose
+// attackers do not fill the inbound slots is invalid and rerun; three in
+// a row fail the test with A6 SETUP INVALID. Readings so far had two
+// invalid rounds, one short of that, with a 20 s fill wait; the wait is
+// now A6_FILL_WITHIN_S (60 s). A red night is still first checked for
+// setup validity.
+// ---------------------------------------------------------------------
+const STEADY_FIRST: u64 = 30;
+const STEADY_LAST: u64 = 180;
+const STEADY_EVERY: u64 = 10;
+/// F7's bound, a starting point to calibrate from the readings (heartbeat
+/// 1 s; IHAVE within 1–3 heartbeats).
+const STEADY_WITHIN_MS: u64 = 10_000;
+const STEADY_ROUNDS: usize = 3;
+
+struct Steady {
+    published: usize,
+    on_time: usize,
+    /// Per announcement: delay in ms (None: never arrived), whether it came
+    /// from a mesh peer.
+    arrivals: Vec<(Option<u64>, bool)>,
+    snapshots_with_honest: usize,
+    snapshots: usize,
+    longest_all_attacker_s: u64,
+}
+
+impl Steady {
+    fn delivered(&self) -> bool {
+        self.on_time == self.published
+    }
+}
+
+/// One round with fresh PeerIds; `None` when the attackers did not fill
+/// the 24 inbound slots before the release (as in ①).
+fn run_steady_round(label: &str, control: bool) -> Option<Steady> {
+    let tag = if control { "①-稳 control" } else { "①-稳" };
+    let dir = tempfile::tempdir().expect("temp dir");
+    let victim_key = Keypair::generate_ed25519();
+    let victim_id = id_of(&victim_key);
+    let honest_keys: Vec<Keypair> = (0..=A6_HONEST).map(|_| Keypair::generate_ed25519()).collect();
+    let honest_peers: Vec<libp2p::PeerId> = honest_keys.iter().map(id_of).collect();
+    let publisher_id = honest_peers[1];
+
+    let honest_build = |i: usize| {
+        move |n: Node| {
+            let n = n.with_p6_loopback_whitelist();
+            // The publisher never dials the victim; in the control no honest
+            // node does.
+            if control || i == 1 { n.with_deny_dial(vec![victim_id]) } else { n }
+        }
+    };
+    let honest_boot = spawn_as(&dir, "honest-boot", &honest_keys[0], vec![], honest_build(0));
+    let honest: Vec<Node> = (1..=A6_HONEST)
+        .map(|i| spawn_as(&dir, &format!("honest-{i}"), &honest_keys[i], vec![addr(&honest_boot)], honest_build(i)))
+        .collect();
+    let publisher = &honest[0];
+    if !eventually(60, || honest_boot.dht_peers().len() >= A6_HONEST * 3 / 4) {
+        setup_invalid(format!("{tag} round={label}: the honest side did not connect"));
+    }
+
+    let withhold = |n: Node| n.with_p6_loopback_whitelist().with_withhold_from(honest_peers.clone());
+    // In the control the attackers meet the honest side through their
+    // first bootstrap node, so they hold the announcements and withhold
+    // them; otherwise the control would be red for want of a path, not
+    // because of the withholding.
+    let first_boot = if control { vec![addr(&honest_boot)] } else { vec![] };
+    let mut boots = vec![spawn_with(&dir, "attacker-boot-0", first_boot, withhold)];
+    for j in 1..A6_ATTACKER_BOOTSTRAPS {
+        let b = spawn_with(&dir, &format!("attacker-boot-{j}"), vec![addr(&boots[0])], withhold);
+        boots.push(b);
+    }
+    let attacker_addrs: Vec<String> = boots.iter().map(addr).collect();
+    let mut victim_boot = attacker_addrs.clone();
+    if !control {
+        victim_boot.push(addr(&honest_boot));
+    }
+    let denied: Vec<libp2p::PeerId> = if control { honest_peers.clone() } else { vec![publisher_id] };
+    let victim = spawn_as(&dir, "victim", &victim_key, victim_boot, |n| {
+        n.with_max_established_incoming(A6_VICTIM_INBOUND)
+            .with_p6_loopback_whitelist()
+            .with_outbound_paused(true, true)
+            .with_deny_dial(denied)
+    });
+    let attackers: Vec<Node> = (0..A6_ATTACKERS)
+        .map(|i| {
+            spawn_with(
+                &dir,
+                &format!("attacker-{i}"),
+                vec![addr(&victim), attacker_addrs[i % A6_ATTACKER_BOOTSTRAPS].clone()],
+                withhold,
+            )
+        })
+        .collect();
+    let attacker_ids: HashSet<String> = boots.iter().chain(attackers.iter()).map(|n| n.local_peer_id().0).collect();
+    let honest_ids: HashSet<String> = honest_peers.iter().map(|p| p.to_string()).collect();
+    let publisher_name = publisher_id.to_string();
+
+    let inbound_attackers = || {
+        report(&victim).first.iter().filter(|(p, f)| **f == FirstConnection::Inbound && attacker_ids.contains(*p)).count()
+    };
+    let filled = eventually_every(A6_FILL_WITHIN_S, A6_FILL_POLL, || inbound_attackers() == A6_VICTIM_INBOUND as usize);
+    let (at_release, honest_in) = inbound_at_release(&victim, &attacker_ids, &honest_ids);
+    let denied = victim.connection_denials();
+    println!(
+        "A6 {tag} round={label} inbound_attackers_at_release={at_release} valid={filled} inbound_honest={honest_in} \
+         denied_inbound_limit={} denied_memory={} denied_blocked={}",
+        denied.inbound_limit, denied.memory, denied.blocked
+    );
+    if !filled {
+        return None;
+    }
+    let released = Instant::now();
+    victim.set_outbound_paused(false, false).expect("release");
+
+    let mut published: Vec<(String, u64)> = Vec::new();
+    let (mut with_honest, mut snapshots, mut streak, mut longest) = (0, 0, 0u64, 0u64);
+    for (k, at) in (STEADY_FIRST..=STEADY_LAST).step_by(STEADY_EVERY as usize).enumerate() {
+        std::thread::sleep(Duration::from_secs(at).saturating_sub(released.elapsed()));
+        let r = report(&victim);
+        if r.first.contains_key(&publisher_name) {
+            setup_invalid(format!("{tag} round={label} t={at}s: the victim is connected to the publisher"));
+        }
+        let mesh = victim.mesh_peers(ANNOUNCEMENTS_TOPIC).expect("mesh");
+        let mesh_honest = mesh.iter().filter(|p| honest_ids.contains(*p)).count();
+        let mesh_self_dialed = mesh.iter().filter(|p| r.first.get(*p).is_some_and(|f| f.is_outbound())).count();
+        let honest_connected = honest_ids.iter().filter(|p| r.first.contains_key(*p)).count();
+        let topup_honest = r.topup.keys().filter(|p| honest_ids.contains(*p)).count();
+        snapshots += 1;
+        if mesh_honest > 0 {
+            with_honest += 1;
+            streak = 0;
+        } else {
+            streak += STEADY_EVERY;
+            longest = longest.max(streak);
+        }
+        println!(
+            "A6 {tag} round={label} t={at}s mesh={} mesh_honest={mesh_honest} mesh_self_dialed={mesh_self_dialed} \
+             honest_connected={honest_connected} topup={} topup_honest={topup_honest}",
+            mesh.len(),
+            r.topup.len()
+        );
+        let gene = id(&format!("a6-steady-{label}-{control}-{k}"));
+        let ann = announcement(&gene, "a6-steady");
+        publisher.publish(ANNOUNCEMENTS_TOPIC, &encode_announcement(&ann)).expect("publish");
+        published.push((gene, ann.timestamp_ms));
+    }
+    let last_due = Duration::from_secs(STEADY_LAST) + Duration::from_millis(STEADY_WITHIN_MS + 1000);
+    std::thread::sleep(last_due.saturating_sub(released.elapsed()));
+
+    // Arrivals at the victim, from the publisher, by gene.
+    let mut arrived: std::collections::HashMap<String, (u64, String, bool)> = std::collections::HashMap::new();
+    for m in victim.received_messages() {
+        if m.topic != ANNOUNCEMENTS_TOPIC || m.source.as_deref() != Some(publisher_name.as_str()) {
+            continue;
+        }
+        if let super::messages::Verdict::Accept(a) =
+            super::messages::validate_gossip(&m.data, m.source.as_deref(), m.received_at_ms)
+        {
+            arrived.entry(a.gene_id).or_insert((m.received_at_ms, m.via, m.via_mesh));
+        }
+    }
+    let via_attacker = arrived.values().filter(|(_, via, _)| attacker_ids.contains(via)).count();
+    let withheld: u64 = boots.iter().chain(attackers.iter()).map(|n| n.withheld().unwrap_or(0)).sum();
+    println!("A6 {tag} round={label} attackers_withheld={withheld} arrived_via_attacker={via_attacker}");
+    // The preconditions: no announcement reached the victim through an
+    // attacker; in the control the attackers did hold and withhold them.
+    if via_attacker > 0 {
+        setup_invalid(format!(
+            "{tag} round={label}: {via_attacker} announcements reached the victim through an attacker; withholding did not hold"
+        ));
+    }
+    if control && withheld == 0 {
+        setup_invalid(format!("{tag} round={label}: the attackers withheld nothing; they never met the honest side"));
+    }
+    let mut arrivals = Vec::new();
+    for (k, (gene, sent_ms)) in published.iter().enumerate() {
+        let a = arrived.get(gene).map(|(at, _, mesh)| (at.saturating_sub(*sent_ms), *mesh));
+        println!(
+            "A6 {tag} round={label} announcement={k} delay_ms={} from={}",
+            a.map(|(d, _)| d.to_string()).unwrap_or_else(|| "never".into()),
+            match a {
+                Some((_, true)) => "mesh",
+                Some((_, false)) => "gossip",
+                None => "-",
+            }
+        );
+        arrivals.push((a.map(|(d, _)| d), a.is_some_and(|(_, m)| m)));
+    }
+    let on_time = arrivals.iter().filter(|(d, _)| d.is_some_and(|d| d <= STEADY_WITHIN_MS)).count();
+    let s = Steady {
+        published: published.len(),
+        on_time,
+        arrivals,
+        snapshots_with_honest: with_honest,
+        snapshots,
+        longest_all_attacker_s: longest,
+    };
+    let delays: Vec<u64> = s.arrivals.iter().filter_map(|(d, _)| *d).collect();
+    println!(
+        "A6 {tag} round={label} on_time={}/{} max_delay_ms={} from_mesh={} snapshots_with_honest={}/{} \
+         longest_all_attacker_s={} delivered={}",
+        s.on_time,
+        s.published,
+        delays.iter().max().map(|d| d.to_string()).unwrap_or_else(|| "-".into()),
+        s.arrivals.iter().filter(|(_, m)| *m).count(),
+        s.snapshots_with_honest,
+        s.snapshots,
+        s.longest_all_attacker_s,
+        ok(s.delivered())
+    );
+    drop((attackers, boots, honest, honest_boot));
+    Some(s)
+}
+
+/// Three valid rounds; whether each delivered every announcement on time.
+fn run_steady_rounds(control: bool, run: usize) -> Vec<bool> {
+    let mut delivered = Vec::new();
+    let (mut invalid_in_a_row, mut tried) = (0, 0);
+    while delivered.len() < STEADY_ROUNDS {
+        tried += 1;
+        match run_steady_round(&format!("{run}.{tried}"), control) {
+            Some(s) => {
+                invalid_in_a_row = 0;
+                delivered.push(s.delivered());
+            }
+            None => {
+                invalid_in_a_row += 1;
+                if invalid_in_a_row >= A6_INVALID_MAX {
+                    setup_invalid(format!(
+                        "①-稳: {invalid_in_a_row} rounds in a row without {A6_VICTIM_INBOUND} inbound attackers at release"
+                    ));
+                }
+            }
+        }
+    }
+    delivered
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-nightly"), ignore = "A6 ①-稳 — nightly only (CEO, T-156; .github/workflows/p2p-nightly.yml): run with --features p2p-nightly, or --features p2p-integration -- --ignored")]
+fn a6_withheld_messages_still_reach_the_victim() {
+    let first = run_steady_rounds(false, 1);
+    println!("A6 ①-稳 run=1 delivered={first:?}");
+    if first.iter().all(|d| *d) {
+        return;
+    }
+    // S2: a red round reruns the test once with new PeerIds.
+    let second = run_steady_rounds(false, 2);
+    println!("A6 ①-稳 run=2 delivered={second:?}");
+    assert!(
+        second.iter().all(|d| *d),
+        "①-稳: an announcement missed the {STEADY_WITHIN_MS} ms bound in both runs ({first:?}, {second:?})"
+    );
+}
+
+#[test]
+#[cfg_attr(not(feature = "p2p-nightly"), ignore = "A6 ①-稳 — nightly only (CEO, T-156; .github/workflows/p2p-nightly.yml): run with --features p2p-nightly, or --features p2p-integration -- --ignored")]
+fn a6_withheld_messages_control_cut_off_from_honest() {
+    let delivered = run_steady_rounds(true, 1);
+    println!("A6 ①-稳 control delivered={delivered:?}");
+    assert!(
+        delivered.iter().all(|d| !*d),
+        "①-稳 control: with only attackers around, an announcement still arrived on time; the test is void, report to the CEO"
+    );
+}

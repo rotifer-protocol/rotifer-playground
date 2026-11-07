@@ -31,4 +31,4 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
 
       - name: ①-稳 and its control (serial, real loopback nodes)
-        run: cargo test -p rotifer-core --features p2p-integration --lib p2p::attack_a6::a6_withheld_messages -- --ignored --test-threads=1 --nocapture
+        run: cargo test --config 'profile.dev.package."*".opt-level=2' -p rotifer-core --features p2p-integration --lib p2p::attack_a6::a6_withheld_messages -- --ignored --test-threads=1 --nocapture

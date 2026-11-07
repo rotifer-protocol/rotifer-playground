@@ -16,7 +16,7 @@ use libp2p::identity::Keypair;
 
 use super::node::{write_identity, Node, OutboundReport};
 use super::outbound::{FirstConnection, TopUpWay, P6_THRESHOLD, P6_WEIGHT};
-use super::NetworkConfig;
+use super::{NetworkConfig, NetworkError};
 
 /// A started node with its own throwaway identity, dialing `bootstrap`,
 /// built through `build` (test switches) before it starts.
@@ -38,8 +38,41 @@ fn spawn_listed(dir: &tempfile::TempDir, name: &str, bootstrap: Vec<String>) -> 
     spawn_with(dir, name, bootstrap, |n| n.with_p6_loopback_whitelist())
 }
 
+/// The victim's outbound report. A query that times out (10 s without an
+/// answer from the node's event loop) is asked once more; a second timeout
+/// fails as before. On CI the A6 setups timed out here while 53 nodes were
+/// handshaking (run 42110820291; CEO, T-156).
 fn report(node: &Node) -> OutboundReport {
-    node.outbound_report().expect("outbound report")
+    match node.outbound_report() {
+        Ok(r) => r,
+        Err(NetworkError::Timeout) => {
+            println!("A6 outbound report: Timeout, asking once more");
+            node.outbound_report().expect("outbound report")
+        }
+        Err(e) => panic!("outbound report: {e:?}"),
+    }
+}
+
+/// Like `eventually`, polling every `every` instead of every 100 ms.
+fn eventually_every(secs: u64, every: Duration, mut check: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < deadline {
+        if check() {
+            return true;
+        }
+        std::thread::sleep(every);
+    }
+    check()
+}
+
+/// At the release: inbound slots held by attackers and by honest nodes, from
+/// one report (CEO, T-156: to tell empty slots from honest ones on CI).
+fn inbound_at_release(victim: &Node, attackers: &HashSet<String>, honest: &HashSet<String>) -> (usize, usize) {
+    let r = report(victim);
+    let inbound = |side: &HashSet<String>| {
+        r.first.iter().filter(|(p, f)| **f == FirstConnection::Inbound && side.contains(*p)).count()
+    };
+    (inbound(attackers), inbound(honest))
 }
 
 // ---------------------------------------------------------------------
@@ -50,7 +83,7 @@ fn report(node: &Node) -> OutboundReport {
 // nodes and 3 bootstrap nodes, 12 honest nodes and 1 bootstrap node. The
 // victim takes at most 24 inbound connections and holds top-up and the
 // keeper until 24 attackers have dialled in; then it is sampled every 10 s
-// from 30 s to 90 s, and its mesh is re-formed 10 times.
+// from 40 s to 90 s, and its mesh is re-formed 10 times.
 //
 // Top-up peers include adopted ones (§1.7). Every node runs a test-only
 // 2 s `prune_backoff`, and the victim a 1 s `unsubscribe_backoff`, so that
@@ -68,7 +101,11 @@ const A6_VICTIM_INBOUND: u32 = 24;
 /// The attacker's share of the whole population (36 + 3 of 52): the most
 /// it may hold of the victim's top-up peers (criterion c).
 const A6_ATTACKER_SHARE: f64 = 39.0 / 52.0;
-const A6_SAMPLE_AT: [u64; 7] = [30, 40, 50, 60, 70, 80, 90];
+/// From 40 s, not 30 s: approved by the user on 11-07 (T-156, design §10
+/// row 8). On CI (run 42088947923) route1 had 0–1 top-up peers at 30 s and
+/// 8 in all 6 rounds from 40 s on; top-up runs every 10 s, so a slow machine
+/// is one round late. The criteria and the later sample times are unchanged.
+const A6_SAMPLE_AT: [u64; 6] = [40, 50, 60, 70, 80, 90];
 const A6_REFORMS: usize = 10;
 /// Criterion e: share of re-formed meshes with an honest peer.
 const A6_E_MIN: f64 = 0.5;
@@ -82,6 +119,10 @@ const A6_INVALID_MAX: usize = 3;
 /// precondition itself (all 24 slots) is unchanged. ①-稳's rounds use the
 /// same wait.
 const A6_FILL_WITHIN_S: u64 = 60;
+/// That wait polls the victim once a second, not every 100 ms: each poll is
+/// a query to the victim's event loop, which is the one handling the
+/// handshakes (CEO, T-156).
+const A6_FILL_POLL: Duration = Duration::from_secs(1);
 /// Re-formations short of `mesh_n_low` that still have an honest peer: more
 /// than this many in a round make the round's setup invalid (F5).
 const A6_INVALID_WITH_HONEST_MAX: usize = 1;
@@ -344,11 +385,13 @@ fn run_round(p: &Policy, label: &str) -> Option<Readings> {
     let inbound_attackers = || {
         report(&victim).first.iter().filter(|(p, f)| **f == FirstConnection::Inbound && attacker_ids.contains(*p)).count()
     };
-    let filled = eventually(A6_FILL_WITHIN_S, || inbound_attackers() == A6_VICTIM_INBOUND as usize);
-    let at_release = inbound_attackers();
+    let filled = eventually_every(A6_FILL_WITHIN_S, A6_FILL_POLL, || inbound_attackers() == A6_VICTIM_INBOUND as usize);
+    let (at_release, honest_in) = inbound_at_release(&victim, &attacker_ids, &honest_ids);
+    let denied = victim.connection_denials();
     println!(
-        "A6 ① policy={} round={label} inbound_attackers_at_release={at_release} valid={}",
-        p.label, filled
+        "A6 ① policy={} round={label} inbound_attackers_at_release={at_release} valid={} inbound_honest={honest_in} \
+         denied_inbound_limit={} denied_memory={} denied_blocked={}",
+        p.label, filled, denied.inbound_limit, denied.memory, denied.blocked
     );
     if !filled {
         return None;
@@ -1800,8 +1843,14 @@ fn run_steady_round(label: &str, control: bool) -> Option<Steady> {
     let inbound_attackers = || {
         report(&victim).first.iter().filter(|(p, f)| **f == FirstConnection::Inbound && attacker_ids.contains(*p)).count()
     };
-    let filled = eventually(A6_FILL_WITHIN_S, || inbound_attackers() == A6_VICTIM_INBOUND as usize);
-    println!("A6 {tag} round={label} inbound_attackers_at_release={} valid={filled}", inbound_attackers());
+    let filled = eventually_every(A6_FILL_WITHIN_S, A6_FILL_POLL, || inbound_attackers() == A6_VICTIM_INBOUND as usize);
+    let (at_release, honest_in) = inbound_at_release(&victim, &attacker_ids, &honest_ids);
+    let denied = victim.connection_denials();
+    println!(
+        "A6 {tag} round={label} inbound_attackers_at_release={at_release} valid={filled} inbound_honest={honest_in} \
+         denied_inbound_limit={} denied_memory={} denied_blocked={}",
+        denied.inbound_limit, denied.memory, denied.blocked
+    );
     if !filled {
         return None;
     }

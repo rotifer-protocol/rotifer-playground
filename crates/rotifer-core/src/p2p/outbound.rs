@@ -577,10 +577,12 @@ impl Keeper {
 // Same-IP counters (the P6 trigger line)
 // ---------------------------------------------------------------------
 
-/// Same-IP peer count above which GossipSub's P6 starts to penalise
-/// (`ip_colocation_factor_threshold`).
+/// Same-IP peer count above which P6 starts to penalise. libp2p's default
+/// `ip_colocation_factor_threshold`; since K10 (T-158) the node applies P6
+/// itself, see [`Colocation::penalties`].
 pub(crate) const P6_THRESHOLD: f64 = 10.0;
 /// P6 weight: each peer on an IP over the threshold gets weight × surplus².
+/// libp2p's default `ip_colocation_factor_weight`.
 pub(crate) const P6_WEIGHT: f64 = -5.0;
 
 /// Cumulative, never-decreasing counters of peers sharing an IP. They tell
@@ -598,7 +600,8 @@ pub struct ColocationStats {
     pub ips_over_threshold_with_registered_peer: u64,
 }
 
-/// Connected peers by IP, feeding [`ColocationStats`].
+/// Connected peers by IP, feeding [`ColocationStats`] and P6
+/// ([`Colocation::penalties`]).
 #[derive(Default)]
 pub(crate) struct Colocation {
     conns: HashMap<ConnectionId, (PeerId, IpAddr)>,
@@ -685,6 +688,29 @@ impl Colocation {
 
     pub(crate) fn stats(&self) -> ColocationStats {
         self.stats
+    }
+
+    /// P6 by this node's own count (K10, T-158): every peer on an IP with more
+    /// than [`P6_THRESHOLD`] distinct connected peers gets
+    /// [`P6_WEIGHT`] × (peers − threshold)², summed over its IPs; IPs in
+    /// `whitelist` are skipped. This is libp2p-gossipsub 0.50.1's P6 formula
+    /// (`peer_score.rs`), but counted from live connections: a peer stays on
+    /// an IP while any of its connections from there is open. GossipSub's own
+    /// count drops the IP when any one of them closes
+    /// (`on_connection_closed` → `remove_ip`), which is K10.
+    pub(crate) fn penalties(&self, whitelist: &HashSet<IpAddr>) -> HashMap<PeerId, f64> {
+        let mut out: HashMap<PeerId, f64> = HashMap::new();
+        for (ip, peers) in &self.by_ip {
+            let n = peers.len() as f64;
+            if n <= P6_THRESHOLD || whitelist.contains(ip) {
+                continue;
+            }
+            let surplus = n - P6_THRESHOLD;
+            for peer in peers.keys() {
+                *out.entry(*peer).or_default() += surplus * surplus * P6_WEIGHT;
+            }
+        }
+        out
     }
 }
 
@@ -1740,6 +1766,107 @@ mod tests {
         c.opened(cid(), p, &other, |_| false);
         c.opened(cid(), p, &other, |_| false);
         assert_eq!(c.stats().max_peers_on_one_ip, 12);
+    }
+
+    /// `n` peers on `ip`, one connection each.
+    fn crowd(c: &mut Colocation, ip: &Multiaddr, n: usize) -> Vec<(PeerId, ConnectionId)> {
+        (0..n)
+            .map(|_| {
+                let (p, id) = (peer(), cid());
+                c.opened(id, p, ip, |_| false);
+                (p, id)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn p6_counts_peers_not_connections_and_starts_above_ten() {
+        let ip: Multiaddr = "/ip4/10.2.0.1/tcp/1".parse().unwrap();
+        let mut c = Colocation::default();
+        let ten = crowd(&mut c, &ip, 10);
+        // A second connection of the same peer is not an eleventh peer.
+        c.opened(cid(), ten[0].0, &ip, |_| false);
+        assert!(c.penalties(&HashSet::new()).is_empty(), "ten peers: no P6");
+        let eleventh = crowd(&mut c, &ip, 1);
+        let p = c.penalties(&HashSet::new());
+        assert_eq!(p.len(), 11);
+        assert!(p.values().all(|v| *v == -5.0), "eleven peers: −5 × 1² each: {p:?}");
+        assert_eq!(p[&eleventh[0].0], -5.0);
+        crowd(&mut c, &ip, 3);
+        let p = c.penalties(&HashSet::new());
+        assert!(p.values().all(|v| *v == -80.0), "fourteen peers: −5 × 4² each: {p:?}");
+    }
+
+    #[test]
+    fn p6_holds_while_one_of_two_connections_stays_open() {
+        // K10: one of a peer's two connections from the IP closes.
+        let ip: Multiaddr = "/ip4/10.2.0.2/tcp/1".parse().unwrap();
+        let mut c = Colocation::default();
+        let peers = crowd(&mut c, &ip, 11);
+        let (twice, first) = peers[0];
+        let second = cid();
+        c.opened(second, twice, &ip, |_| false);
+        c.closed(first);
+        let p = c.penalties(&HashSet::new());
+        assert_eq!(p.len(), 11, "all eleven still counted: {p:?}");
+        assert!(p.values().all(|v| *v == -5.0), "unchanged: {p:?}");
+        // Its last connection closes: ten left, no P6 for anyone.
+        c.closed(second);
+        assert!(c.penalties(&HashSet::new()).is_empty());
+    }
+
+    #[test]
+    fn p6_clears_when_every_connection_closes() {
+        let ip: Multiaddr = "/ip4/10.2.0.3/tcp/1".parse().unwrap();
+        let mut c = Colocation::default();
+        let peers = crowd(&mut c, &ip, 12);
+        assert_eq!(c.penalties(&HashSet::new()).len(), 12);
+        for (_, id) in peers {
+            c.closed(id);
+        }
+        assert!(c.penalties(&HashSet::new()).is_empty());
+    }
+
+    #[test]
+    fn p6_follows_a_peer_to_its_new_ip() {
+        // No transport we use reports an address change, so a peer moves by
+        // connecting from the new IP and closing the old connection.
+        let (old, new): (Multiaddr, Multiaddr) =
+            ("/ip4/10.2.0.4/tcp/1".parse().unwrap(), "/ip6/fd00::4/tcp/1".parse().unwrap());
+        let mut c = Colocation::default();
+        let at_old = crowd(&mut c, &old, 11);
+        let at_new = crowd(&mut c, &new, 11);
+        let (mover, old_conn) = at_old[0];
+        let new_conn = cid();
+        c.opened(new_conn, mover, &new, |_| false);
+        // On both IPs for now: 11 on the old one, 12 on the new one.
+        assert_eq!(c.penalties(&HashSet::new())[&mover], -5.0 + -20.0);
+        c.closed(old_conn);
+        let p = c.penalties(&HashSet::new());
+        assert_eq!(p[&mover], -20.0, "only the new IP's twelve now: {p:?}");
+        assert!(at_old[1..].iter().all(|(q, _)| !p.contains_key(q)), "ten left on the old IP: no P6");
+        assert!(at_new.iter().all(|(q, _)| p[q] == -20.0));
+        // And back again.
+        let back = cid();
+        c.opened(back, mover, &old, |_| false);
+        c.closed(new_conn);
+        let p = c.penalties(&HashSet::new());
+        assert_eq!(p[&mover], -5.0, "eleven on the old IP again, and not on the new one: {p:?}");
+        assert!(at_old[1..].iter().all(|(q, _)| p[q] == -5.0));
+        assert!(at_new.iter().all(|(q, _)| p[q] == -5.0), "eleven left on the new IP");
+    }
+
+    #[test]
+    fn p6_skips_whitelisted_ips() {
+        let (listed, other): (Multiaddr, Multiaddr) =
+            ("/ip4/127.0.0.1/tcp/1".parse().unwrap(), "/ip4/10.2.0.5/tcp/1".parse().unwrap());
+        let mut c = Colocation::default();
+        crowd(&mut c, &listed, 12);
+        let counted = crowd(&mut c, &other, 11);
+        let whitelist: HashSet<IpAddr> = [IpAddr::from([127, 0, 0, 1])].into();
+        let p = c.penalties(&whitelist);
+        assert_eq!(p.len(), 11);
+        assert!(counted.iter().all(|(q, _)| p[q] == -5.0));
     }
 
     fn s_with(a: u64, b: u64, c: u64) -> ColocationStats {

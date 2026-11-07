@@ -289,14 +289,20 @@ fn gossipsub_config_with(
 /// application score at weight [`por::APP_SPECIFIC_WEIGHT`], everything else
 /// and the thresholds (gossip −10, publish −50, graylist −80) at libp2p's
 /// defaults. One certain forgery (−100) is below the graylist threshold.
+///
+/// The application score (P5) carries the PoR score **plus** the same-IP
+/// penalty (P6), since K10 (T-158; ADR-304 revision, C6): GossipSub's own P6
+/// is off here, and the node counts peers per IP itself and adds
+/// −5 × (peers on the IP − 10)² to P5 ([`Colocation::penalties`],
+/// [`p5_and_block`]). Same curve, same exact-IP count; only the counting
+/// moved, because GossipSub drops a peer's IP when any one of its
+/// connections closes. Only the PoR part decides blocking.
 fn peer_score_params() -> (gossipsub::PeerScoreParams, gossipsub::PeerScoreThresholds) {
     let params = gossipsub::PeerScoreParams {
         app_specific_weight: por::APP_SPECIFIC_WEIGHT,
-        // P6, peers sharing an IP (A6 design v3 §3): stated here rather than
-        // inherited. The values are libp2p's defaults, kept on the evidence
-        // (§3.2): −5 × (peers on the IP − 10)², counted per exact IP.
-        ip_colocation_factor_weight: outbound::P6_WEIGHT,
-        ip_colocation_factor_threshold: outbound::P6_THRESHOLD,
+        // P6 is applied through P5 instead (above), so GossipSub's own is
+        // off: both on would count it twice.
+        ip_colocation_factor_weight: 0.0,
         ..Default::default()
     };
     (params, gossipsub::PeerScoreThresholds::default())
@@ -1906,9 +1912,6 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
                 params.behaviour_penalty_weight = 0.0;
                 params.slow_peer_weight = 0.0;
             }
-            if options.policy.p6_loopback_whitelist {
-                params.ip_colocation_factor_whitelist.insert(std::net::IpAddr::from([127, 0, 0, 1]));
-            }
             gossipsub.with_peer_score(params, thresholds).expect("peer score parameters are valid");
             let identify = identify::Behaviour::new(identify::Config::new(
                 IDENTIFY_PROTOCOL_VERSION.to_string(),
@@ -2150,6 +2153,16 @@ async fn run_event_loop(
         *d = outbound.book.entries().to_vec();
     }
     let mut colocated = Colocation::default();
+    // P6's exempt IPs: none outside tests (the loopback switch, A6 design v3
+    // §3.5).
+    let p6_whitelist: HashSet<std::net::IpAddr> = if options.policy.p6_loopback_whitelist {
+        [std::net::IpAddr::from([127, 0, 0, 1])].into()
+    } else {
+        HashSet::new()
+    };
+    let mut score_gate = ScoreRefreshGate::default();
+    let score_soon = tokio::time::sleep(Duration::ZERO);
+    tokio::pin!(score_soon);
     // Connections per peer, for closing one at a time (tests) and reports.
     let mut peer_conns: HashMap<Libp2pPeerId, Vec<libp2p::swarm::ConnectionId>> = HashMap::new();
 
@@ -2287,6 +2300,11 @@ async fn run_event_loop(
                 keep_bootstrap(&mut swarm, &mut outbound);
                 keeper_wake.as_mut().reset(keeper_deadline(&outbound).into());
             }
+            _ = &mut score_soon, if score_gate.due().is_some() => {
+                if score_gate.fire(Instant::now()) {
+                    refresh_scores(&mut swarm, &heartbeats, &scores, started, &colocated.penalties(&p6_whitelist));
+                }
+            }
             _ = peer_flush.tick() => {
                 // A clean shutdown persists peers too, but daemons are often
                 // killed rather than stopped; flushing periodically bounds how
@@ -2307,7 +2325,7 @@ async fn run_event_loop(
                 }
             }
             _ = score_timer.tick() => {
-                refresh_scores(&mut swarm, &heartbeats, &scores, started);
+                refresh_scores(&mut swarm, &heartbeats, &scores, started, &colocated.penalties(&p6_whitelist));
                 // Registration can arrive after the connection: re-check the
                 // same-IP counters' third column.
                 colocated.rescan(|p| registered(&heartbeats, p));
@@ -2376,6 +2394,11 @@ async fn run_event_loop(
                     if let Ok(mut c) = colocation.lock() {
                         *c = colocated.stats();
                     }
+                    if score_gate.poke(Instant::now()) {
+                        refresh_scores(&mut swarm, &heartbeats, &scores, started, &colocated.penalties(&p6_whitelist));
+                    } else if let Some(due) = score_gate.due() {
+                        score_soon.as_mut().reset(due.into());
+                    }
                     peer_conns.entry(peer_id).or_default().push(connection_id);
                     // Kademlia is not fed here: a peer enters the routing
                     // table only once Identify shows it speaks Rotifer's DHT
@@ -2415,6 +2438,11 @@ async fn run_event_loop(
                         unconfirmed_dials.remove(&peer_id);
                     }
                     colocated.closed(connection_id);
+                    if score_gate.poke(Instant::now()) {
+                        refresh_scores(&mut swarm, &heartbeats, &scores, started, &colocated.penalties(&p6_whitelist));
+                    } else if let Some(due) = score_gate.due() {
+                        score_soon.as_mut().reset(due.into());
+                    }
                     if let Some(conns) = peer_conns.get_mut(&peer_id) {
                         conns.retain(|c| *c != connection_id);
                         if conns.is_empty() {
@@ -2547,7 +2575,7 @@ async fn run_event_loop(
                                 if let Some(job) = fetch {
                                     spawn_jwks_fetch(job, &fetch_tx);
                                 }
-                                refresh_scores(&mut swarm, &heartbeats, &scores, started);
+                                refresh_scores(&mut swarm, &heartbeats, &scores, started, &colocated.penalties(&p6_whitelist));
                                 match decision {
                                     Decision::Accept => MessageAcceptance::Accept,
                                     Decision::Ignore => MessageAcceptance::Ignore,
@@ -2763,7 +2791,7 @@ async fn run_event_loop(
                                     if let Ok(mut desk) = heartbeats.lock() {
                                         desk.record_forgery(&source.to_string(), started.elapsed().as_millis() as u64);
                                     }
-                                    refresh_scores(&mut swarm, &heartbeats, &scores, started);
+                                    refresh_scores(&mut swarm, &heartbeats, &scores, started, &colocated.penalties(&p6_whitelist));
                                 }
                             }
                         }
@@ -3159,7 +3187,7 @@ async fn run_event_loop(
                 #[cfg(test)]
                 Some(Command::SkipClock { by, resp }) => {
                     started.skipped += by;
-                    refresh_scores(&mut swarm, &heartbeats, &scores, started);
+                    refresh_scores(&mut swarm, &heartbeats, &scores, started, &colocated.penalties(&p6_whitelist));
                     let _ = resp.send(());
                 }
                 #[cfg(test)]
@@ -3584,15 +3612,18 @@ fn own_heartbeat(started: MonoClock, attestation: &Arc<Mutex<Option<String>>>) -
 /// Set every connected peer's GossipSub application score from the heartbeat
 /// desk, and record the resulting scores for [`Node::peer_score`].
 ///
-/// A peer whose application score is at or below the graylist threshold is
-/// blocked and disconnected, whatever the cause (A2 §8.2); a blocked peer is
-/// let back in once its score rises, which for a forgery is when the 24-hour
-/// window closes, so no block outlasts it.
+/// A peer whose PoR score is at or below the graylist threshold is blocked
+/// and disconnected, whatever the cause (A2 §8.2); a blocked peer is let back
+/// in once its score rises, which for a forgery is when the 24-hour window
+/// closes, so no block outlasts it. `same_ip` is each peer's P6
+/// ([`Colocation::penalties`]): it goes into P5 with the PoR score but never
+/// into the block decision ([`p5_and_block`]).
 fn refresh_scores(
     swarm: &mut Swarm<NodeBehaviour>,
     desk: &Mutex<HeartbeatDesk>,
     scores: &Mutex<HashMap<String, f64>>,
     started: MonoClock,
+    same_ip: &HashMap<Libp2pPeerId, f64>,
 ) {
     let connected: Vec<Libp2pPeerId> = swarm.connected_peers().copied().collect();
     let names: Vec<String> = connected.iter().map(|p| p.to_string()).collect();
@@ -3611,12 +3642,13 @@ fn refresh_scores(
     let graylist = peer_score_params().1.graylist_threshold;
     let behaviour = swarm.behaviour_mut();
     let mut now = HashMap::with_capacity(connected.len());
-    for (peer, (name, score)) in connected.iter().zip(app) {
-        behaviour.gossipsub.set_application_score(peer, score);
+    for (peer, (name, por_score)) in connected.iter().zip(app) {
+        let (p5, block) = p5_and_block(por_score, same_ip.get(peer).copied().unwrap_or(0.0), graylist);
+        behaviour.gossipsub.set_application_score(peer, p5);
         if let Some(total) = behaviour.gossipsub.peer_score(peer) {
             now.insert(name.to_string(), total);
         }
-        if score <= graylist {
+        if block {
             behaviour.blocked.block_peer(*peer);
         }
     }
@@ -3627,6 +3659,64 @@ fn refresh_scores(
     }
     if let Ok(mut s) = scores.lock() {
         *s = now;
+    }
+}
+
+/// A peer's application score (P5) and whether to block it, from its PoR
+/// score and its same-IP penalty (K10, T-158). P5 is PoR + P6, scaled so that
+/// P6 counts at weight 1 whatever [`por::APP_SPECIFIC_WEIGHT`] is; blocking
+/// is the PoR part alone, so sharing an IP never disconnects a peer (A6
+/// design v3 §3: P6 only affects gossip).
+fn p5_and_block(por_score: f64, same_ip: f64, graylist: f64) -> (f64, bool) {
+    (por_score + same_ip / por::APP_SPECIFIC_WEIGHT, por_score <= graylist)
+}
+
+/// Least time between two score refreshes asked for by connection events.
+const SCORE_REFRESH_MIN_GAP: Duration = Duration::from_secs(1);
+
+/// Connection events ask for a score refresh, because the same-IP penalty
+/// follows connections; this caps them at one per [`SCORE_REFRESH_MIN_GAP`]
+/// (CEO, T-158), so a peer opening and closing connections in a loop cannot
+/// make the node rescore everyone on every one. An event inside the gap is
+/// held and answered by one refresh at its end, so P6 lags a connection
+/// change by at most the gap. The periodic refresh is separate.
+#[derive(Default)]
+struct ScoreRefreshGate {
+    last: Option<Instant>,
+    held: bool,
+}
+
+impl ScoreRefreshGate {
+    /// A connection opened or closed at `now`: refresh at once?
+    fn poke(&mut self, now: Instant) -> bool {
+        match self.last {
+            Some(last) if now.saturating_duration_since(last) < SCORE_REFRESH_MIN_GAP => {
+                self.held = true;
+                false
+            }
+            _ => {
+                self.last = Some(now);
+                self.held = false;
+                true
+            }
+        }
+    }
+
+    /// When the held refresh is due, if one is held.
+    fn due(&self) -> Option<Instant> {
+        self.last.filter(|_| self.held).map(|last| last + SCORE_REFRESH_MIN_GAP)
+    }
+
+    /// The held refresh's time may have come: refresh now?
+    fn fire(&mut self, now: Instant) -> bool {
+        match self.due() {
+            Some(due) if now >= due => {
+                self.last = Some(now);
+                self.held = false;
+                true
+            }
+            _ => false,
+        }
     }
 }
 
@@ -5157,13 +5247,81 @@ mod tests {
     }
 
     #[test]
+    fn p5_carries_the_same_ip_penalty_but_only_por_blocks() {
+        // K10 (T-158; ADR-304 revision C6 ①): P5 = PoR + P6; blocking on PoR.
+        let graylist = peer_score_params().1.graylist_threshold;
+        assert_eq!(p5_and_block(0.0, 0.0, graylist), (0.0, false));
+        assert_eq!(p5_and_block(por::REGISTERED_BONUS, -5.0, graylist), (por::REGISTERED_BONUS - 5.0, false));
+        // Sixteen peers on one IP: −180 from P6 alone is far below the
+        // graylist threshold, and still no block.
+        assert_eq!(p5_and_block(0.0, -180.0, graylist), (-180.0, false));
+        // A forgery blocks, with or without a shared IP.
+        assert_eq!(p5_and_block(-100.0, 0.0, graylist), (-100.0, true));
+        assert_eq!(p5_and_block(-100.0, -5.0, graylist), (-105.0, true));
+        assert!(p5_and_block(graylist, 0.0, graylist).1, "at the threshold, as before");
+    }
+
+    #[test]
+    fn connection_events_refresh_scores_at_most_once_a_second() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        // A lone event refreshes at once.
+        let mut g = ScoreRefreshGate::default();
+        assert!(g.poke(at(0)));
+        assert_eq!(g.due(), None);
+        // One 300 ms later is held until 1 s after the last refresh.
+        assert!(!g.poke(at(300)));
+        assert_eq!(g.due(), Some(at(1000)));
+        assert!(!g.fire(at(999)));
+        assert!(g.fire(at(1000)), "the held event is answered within 1 s");
+        assert_eq!(g.due(), None);
+        // After a quiet second, the next one refreshes at once again.
+        assert!(g.poke(at(2500)));
+
+        // Bursts: events every `events_ms` within [0, span) (an event every
+        // 2 ms for 5 s, ...), with the held refresh fired when it is due, as
+        // the event loop's timer does. Refreshes are at least 1 s apart and the
+        // last comes less than 1 s after the last event, so at most
+        // ⌈span⌉ + 1 of them.
+        for (events_ms, span_ms) in [(2u64, 5_000u64), (50, 7_300), (999, 10_000), (1, 400)] {
+            let mut g = ScoreRefreshGate::default();
+            let mut refreshes = 0;
+            let mut t = 0;
+            while t < span_ms {
+                if let Some(due) = g.due()
+                    && due <= at(t)
+                {
+                    assert!(g.fire(due));
+                    refreshes += 1;
+                }
+                if g.poke(at(t)) {
+                    refreshes += 1;
+                }
+                t += events_ms;
+            }
+            if let Some(due) = g.due() {
+                assert!(g.fire(due), "the last held event is answered too");
+                refreshes += 1;
+            }
+            let bound = span_ms.div_ceil(1000) + 1;
+            assert!(
+                refreshes <= bound,
+                "{} events over {span_ms} ms: {refreshes} refreshes, at most {bound}",
+                span_ms.div_ceil(events_ms)
+            );
+            assert!(refreshes >= 1);
+        }
+    }
+
+    #[test]
     fn peer_score_ip_colocation_is_explicit() {
         // P6 is stated, not inherited (A6 design v3 §3): if libp2p's default
-        // or ours drifts, this fails. No IP is exempt outside tests.
+        // or ours drifts, this fails. Since K10 (T-158) the node applies it
+        // through P5 from its own count, so GossipSub's own P6 is off; the
+        // curve is still libp2p's default. No IP is exempt outside tests.
         let (params, _) = peer_score_params();
         assert_eq!((outbound::P6_WEIGHT, outbound::P6_THRESHOLD), (-5.0, 10.0));
-        assert_eq!(params.ip_colocation_factor_weight, outbound::P6_WEIGHT);
-        assert_eq!(params.ip_colocation_factor_threshold, outbound::P6_THRESHOLD);
+        assert_eq!(params.ip_colocation_factor_weight, 0.0, "GossipSub's P6 off, or it counts twice");
         assert!(params.ip_colocation_factor_whitelist.is_empty());
         let default = gossipsub::PeerScoreParams::default();
         assert_eq!(

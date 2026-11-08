@@ -25,8 +25,12 @@ const SEVERITY_ORDER: Record<string, number> = {
   info: 2,
 };
 
+// Keys below come from input, and "constructor" is a key every plain object answers.
+const hasOwn = (o: object, key: string): boolean => Object.prototype.hasOwnProperty.call(o, key);
+
 function severityRank(s: string | undefined): number {
-  return SEVERITY_ORDER[(s ?? "").toLowerCase()] ?? 3;
+  const key = (s ?? "").toLowerCase();
+  return hasOwn(SEVERITY_ORDER, key) ? SEVERITY_ORDER[key] : 3;
 }
 
 function scoreToGrade(score: number): string {
@@ -45,7 +49,7 @@ function estimateEffort(count: number): string {
 }
 
 function groupByCategory(violations: Violation[]): Record<string, Violation[]> {
-  const groups: Record<string, Violation[]> = {};
+  const groups: Record<string, Violation[]> = Object.create(null);
   for (const v of violations) {
     const cat = v.category || "uncategorized";
     if (!groups[cat]) groups[cat] = [];
@@ -97,7 +101,7 @@ function buildCategoryBreakdown(
   const cats = Object.keys(groups).sort();
   for (const cat of cats) {
     const violations = groups[cat];
-    const catScore = categories?.[cat];
+    const catScore = categories && hasOwn(categories, cat) ? categories[cat] : undefined;
     const scoreStr = catScore !== undefined ? ` (score: ${catScore}/100)` : "";
     lines.push(`### ${cat.charAt(0).toUpperCase() + cat.slice(1)}${scoreStr}`);
     lines.push("");

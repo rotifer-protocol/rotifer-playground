@@ -27,8 +27,13 @@ const SEVERITY_BADGE: Record<string, string> = {
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low"];
 
+// Severity comes from input, and "constructor" is a key every plain object answers.
+function severityBadge(severity: string): string {
+  return Object.prototype.hasOwnProperty.call(SEVERITY_BADGE, severity) ? SEVERITY_BADGE[severity] : severity;
+}
+
 function countBySeverity(vulns: Vulnerability[]): Record<string, number> {
-  const counts: Record<string, number> = {};
+  const counts: Record<string, number> = Object.create(null);
   for (const v of vulns) {
     counts[v.severity] = (counts[v.severity] ?? 0) + 1;
   }
@@ -72,7 +77,7 @@ function buildFindingsTable(vulns: Vulnerability[]): string {
 
   for (let i = 0; i < sorted.length; i++) {
     const v = sorted[i];
-    const badge = SEVERITY_BADGE[v.severity] ?? v.severity;
+    const badge = severityBadge(v.severity);
     lines.push(`| ${i + 1} | ${badge} | ${v.type} | ${v.location} | ${v.description} |`);
   }
 
@@ -97,7 +102,7 @@ function buildRecommendations(vulns: Vulnerability[], summary?: string): string[
     const key = `${v.type}:${v.recommendation}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    recs.push(`[${(SEVERITY_BADGE[v.severity] ?? v.severity)}] ${v.type}: ${v.recommendation}`);
+    recs.push(`[${severityBadge(v.severity)}] ${v.type}: ${v.recommendation}`);
   }
 
   return recs;

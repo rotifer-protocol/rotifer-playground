@@ -93,7 +93,9 @@ function analyzeVirality(v: OptimizerInput["virality"]): ScoredSuggestion[] {
 
     for (const factor of weak) {
       const named = typeof factor.name === "string";
-      const tip = named ? factorTips[factor.name.toLowerCase()] : undefined;
+      const key = named ? factor.name.toLowerCase() : "";
+      // A factor can be named "constructor", which a plain object answers for itself.
+      const tip = Object.prototype.hasOwnProperty.call(factorTips, key) ? factorTips[key] : undefined;
       if (tip) {
         suggestions.push({ text: tip, impact: 12 });
       } else {

@@ -20,8 +20,10 @@ verify_jwt = false
 [functions.agent-memory]
 verify_jwt = true
 
-# node-attestation (v0.9.5) serves signed-in accounts only. The gateway check
-# refuses a request with no valid token before the function, or Supabase Auth
-# on its behalf, does any work.
+# node-attestation (v0.9.5) serves signed-in accounts only, and checks the
+# caller's token itself (user-token.ts). The gateway check stays off because
+# the target project signs with ES256 and Supabase documents no support for
+# that key type in verify_jwt. `supabase functions deploy` turns the check
+# back on unless given --no-verify-jwt.
 [functions.node-attestation]
-verify_jwt = true
+verify_jwt = false

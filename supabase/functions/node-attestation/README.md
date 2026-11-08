@@ -58,7 +58,7 @@ Token (`por.ts`):
 | A PeerId live under another account is refused until that certificate expires or is revoked | `node_attestation_issue` |
 | ≤ 3 distinct live PeerIds per account, counted on the append-only log (deleting a `nodes` row frees nothing); a renewal takes no extra slot; revoked certificates stop counting | `node_attestation_issue` |
 | Concurrent redemptions are serialised: PeerId lock, then account lock | `node_attestation_issue`, `race-check.sh` |
-| The function reaches the database only as `por_issuer`, a role that can execute the two issuing functions and nothing else; it reads no broader key. Revoking and the JWKS export belong to `por_operator`, which the function never uses | migration ("The issuing and operator roles"), `store.ts`, `index.ts`, `store.test.ts`; pgTAP S7, S10–S15 |
+| The function reaches the database only as `por_issuer`, a role that can execute the three functions it calls and nothing else; it reads no broader key. Revoking and the JWKS export belong to `por_operator`, which the function never uses | migration ("The issuing and operator roles"), `store.ts`, `index.ts`, `store.test.ts`; pgTAP S7, S10–S15 |
 | The token and the response carry the pseudonym, never the user id | `handler.ts`, `handler.test.ts` |
 
 "Live" means a verifier would still accept the certificate: `exp + 60 s` has
@@ -72,6 +72,7 @@ not passed and no revocation with `not_after ≥ iat` covers it.
 | `jwks.ts` | The static JWKS file with `rotifer_revoked`; `scripts/por-jwks.ts` is its CLI |
 | `handler.ts` | Routing, validation, order of checks, error codes |
 | `store.ts` | The two database functions, called over a connection logged in as `por_issuer` |
+| `user-token.ts` | The caller's token, checked in the function before Auth is asked: ES256 only, against the project's published keys |
 | `index.ts` | `Deno.serve`, environment, `auth.getUser`, the Postgres connection |
 | `*.test.ts` | Deno tests: `deno test --allow-read --allow-write --allow-run --allow-env supabase/functions/node-attestation/` |
 | `pgtap-deferred.sh` | Applies the deferred migration to a throwaway database and runs its pgTAP, failing on a skip (CI runs it) |
@@ -135,9 +136,13 @@ in order:
    last one remain. To use another number, change the migration before pushing
    it. There is no per-IP limit yet: it needs confirming which
    `x-forwarded-for` value this platform lets a caller set.
-6. Confirm the gateway check after deploying: `verify_jwt = true` is declared
-   in `supabase/config.toml`, so a request with no token gets a 401 from the
-   gateway.
+6. Deploy with `--no-verify-jwt`: `verify_jwt = false` is declared in
+   `supabase/config.toml`, and a plain `supabase functions deploy` would turn
+   the gateway check back on. The function checks tokens itself
+   (`user-token.ts`). The project must sign user tokens with ES256; with no
+   ES256 key published, every request fails. Probe after deploying: with no
+   `Authorization` header, the function itself answers 401 with the code
+   `POR_UNAUTHENTICATED`.
 7. A revocation routine, and republishing the JWKS. Both run as
    `por_operator`, by an operator, never through the function: give that role
    a login only where operators run them, kept apart from `POR_DB_URL`.

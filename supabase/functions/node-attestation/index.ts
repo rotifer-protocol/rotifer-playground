@@ -26,6 +26,7 @@ import postgres from "npm:postgres@3.4.7";
 import { type Deps, errorResponse, handle, PorError } from "./handler.ts";
 import { fromB64url, importPseudonymKey, importSigningJwk, parseSigningKey } from "./por.ts";
 import { issuerUser, postgresStore } from "./store.ts";
+import { authenticator, fetchProjectJwks, userTokenCheck } from "./user-token.ts";
 
 function required(name: string): string {
   const v = Deno.env.get(name);
@@ -51,12 +52,13 @@ async function configure(): Promise<Deps> {
   // pooler; the database functions take only transaction-scoped locks.
   const sql = postgres(dbUrl, { max: 1, prepare: false, idle_timeout: 20, connect_timeout: 10 });
   return {
-    async authenticate(authorization) {
-      const jwt = authorization?.match(/^Bearer (.+)$/)?.[1];
-      if (!jwt) return null;
-      const { data, error } = await auth.auth.getUser(jwt);
-      return error || !data.user ? null : data.user.id;
-    },
+    authenticate: authenticator(
+      userTokenCheck(fetchProjectJwks(url), () => Math.floor(Date.now() / 1000)),
+      async (jwt) => {
+        const { data, error } = await auth.auth.getUser(jwt);
+        return error || !data.user ? null : data.user.id;
+      },
+    ),
     store: postgresStore((text, params) => sql.unsafe(text, params as never[])),
     signer,
     pseudonymKey,

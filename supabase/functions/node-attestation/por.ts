@@ -230,6 +230,14 @@ export async function importSigningJwk(jwk: JsonWebKey & { kid?: unknown }): Pro
   if (jwk.alg !== undefined && jwk.alg !== "EdDSA") throw new Error("the signing key's alg must be EdDSA");
   const { kid, ...rest } = jwk;
   const key = await crypto.subtle.importKey("jwk", { ...rest, key_ops: ["sign"] }, { name: "Ed25519" }, false, ["sign"]);
+  // Import does not compare d with x. Nodes verify against x, so a mismatched
+  // pair would issue certificates that make honest nodes look forged.
+  const publicHalf = await crypto.subtle.importKey("jwk", { kty: "OKP", crv: "Ed25519", x: jwk.x }, { name: "Ed25519" }, false, ["verify"]);
+  const probe = enc.encode("node-attestation signing key pair check");
+  const probeSignature = await crypto.subtle.sign({ name: "Ed25519" }, key, probe);
+  if (!(await crypto.subtle.verify({ name: "Ed25519" }, publicHalf, probeSignature, probe))) {
+    throw new Error("the signing key's d and x are not a pair");
+  }
   return { kid, key };
 }
 

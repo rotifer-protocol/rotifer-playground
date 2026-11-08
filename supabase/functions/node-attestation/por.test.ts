@@ -241,6 +241,18 @@ Deno.test("signing JWK validation: public-only, wrong curve, missing kid are ref
   await assertRejects(() => importSigningJwk(priv), Error, "kid");
 });
 
+Deno.test("a signing key whose d and x are not a pair is refused at import, and the error repeats neither", async () => {
+  const privateJwk = async () => {
+    const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
+    return await crypto.subtle.exportKey("jwk", pair.privateKey);
+  };
+  const a = await privateJwk();
+  const b = await privateJwk();
+  const error = await assertRejects(() => importSigningJwk({ ...a, x: b.x, kid: "k" }), Error, "not a pair");
+  assert(!error.message.includes(a.d!) && !error.message.includes(b.x!));
+  await importSigningJwk({ ...a, kid: "k" });
+});
+
 // ---------------------------------------------------------------------------
 // Strict Ed25519 acceptance. The arithmetic below is independent of por.ts: it
 // checks that the rejected encodings really are the small-order points.

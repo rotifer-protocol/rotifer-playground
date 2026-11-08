@@ -301,6 +301,19 @@ Deno.test("no small-order public key passes, with either sign bit, even with the
   }
 });
 
+// With A = identity, R = B and S = 1, the equation SB = R + kA holds for every
+// message, and R and S are well formed: only the check on A refuses this.
+Deno.test("the identity as public key is refused when R and S are well formed and the signature fits every message", async () => {
+  const identity = new Uint8Array(32);
+  identity[0] = 1;
+  const basePoint = hex("58" + "66".repeat(31));
+  const forged = sigWith(basePoint, identity);
+  assert(strictEd25519Input(NODE_A.pub.slice(4), forged), "R and S must pass by themselves");
+  for (const text of ["any message at all", "another message"]) {
+    assertEquals(await verifyNodeSignature(libp2pPublicKey(identity), new TextEncoder().encode(text), forged), false);
+  }
+});
+
 Deno.test("encodings of y at or above p are refused, as is S at or above the group order", () => {
   const honestA = NODE_A.pub.slice(4);
   const ok = sigWith(honestA, new Uint8Array(32));

@@ -1,10 +1,11 @@
 import { Command } from "commander";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve, extname } from "node:path";
+import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
 import * as display from "../utils/display.js";
 import { c } from "../utils/palette.js";
-import { loadConfig } from "../utils/config.js";
+import { getProjectRoot, loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { createAgentCore } from "./agent-create.js";
 import { buildGeneExecutor, findAgent, printProtocolInsights } from "./agent-run.js";
@@ -158,8 +159,12 @@ export const helloCommand = new Command("hello")
       "the install command, or that the gene is not available. hello asks Rotifer Cloud\n" +
       "(read-only, 5 s limit) but never downloads or installs anything itself.\n",
   )
-  .action(async (options: HelloOptions) => {
-    const root = requireProjectRoot();
+  .action(reportingFailures(async (options: HelloOptions) => {
+    // The program declares --json too, and takes the flag before this command
+    // sees it, so the program-level hook's output mode is the one to read.
+    options.json = options.json || display.isJsonMode();
+
+    const root = options.json ? workspaceRootOrFailure() : requireProjectRoot();
     const config = loadConfig(root);
     const genesDir = join(root, config.genes_dir);
 
@@ -167,10 +172,6 @@ export const helloCommand = new Command("hello")
       printTemplateList(genesDir);
       return;
     }
-
-    // The program declares --json too, and takes the flag before this command
-    // sees it, so the program-level hook's output mode is the one to read.
-    options.json = options.json || display.isJsonMode();
 
     if (options.json) {
       display.setOutputMode("json");
@@ -195,6 +196,8 @@ export const helloCommand = new Command("hello")
         process.exit(1);
       }
       selected = found;
+    } else if (options.json) {
+      throw new HelloFailure("template_required", "--json needs --template <id>: there is no one to answer the picker");
     } else {
       selected = await promptTemplateSelection(genesDir);
     }
@@ -246,8 +249,7 @@ export const helloCommand = new Command("hello")
         });
         display.success(`Agent '${agentName}' created`);
       } catch (err: any) {
-        display.error(`Failed to create agent: ${err.message}`);
-        process.exit(1);
+        throw new HelloFailure("agent_create_failed", `Failed to create agent: ${forOutput(err.message)}`);
       }
     }
 
@@ -295,7 +297,66 @@ export const helloCommand = new Command("hello")
     display.hint("  → Customize your agent:  rotifer agent create my-agent --genes <g1> <g2>");
     display.hint("  → Browse more genes:     rotifer search <keyword>");
     display.hint("  → Compete in Arena:      rotifer arena submit <gene>");
-  });
+  }));
+
+/** A reason `hello` stops that the person or program calling it can act on. */
+class HelloFailure extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "HelloFailure";
+  }
+}
+
+/**
+ * Text that came from somewhere else (a gene's error, a Node error) can name
+ * paths on this machine. A JSON failure is handed to programs and logs, so it
+ * carries the reason without them.
+ */
+function withoutLocalPaths(text: string): string {
+  let out = text;
+  for (const known of [process.cwd(), homedir()]) {
+    if (known.length > 1) out = out.split(known).join("<path>");
+  }
+  return out.replace(/(?:file:\/\/)?(?<![\w.:/])(?:[A-Za-z]:\\|\/)[^\s'"`:,)]+[\\/][^\s'"`:,)]*/g, "<path>");
+}
+
+function forOutput(text: string): string {
+  return display.isJsonMode() ? withoutLocalPaths(text) : text;
+}
+
+function workspaceRootOrFailure(): string {
+  try {
+    return getProjectRoot();
+  } catch {
+    throw new HelloFailure("not_in_workspace", "Not in a Rotifer Agent workspace. Run 'rotifer init' first.");
+  }
+}
+
+/**
+ * Every way out of `hello` under --json is a document on stdout, including an
+ * error nobody planned for; without --json a planned failure prints as it
+ * always did.
+ */
+function reportingFailures(
+  action: (options: HelloOptions) => Promise<void>,
+): (options: HelloOptions) => Promise<void> {
+  return async (options) => {
+    try {
+      await action(options);
+    } catch (err) {
+      const isJson = options.json || display.isJsonMode();
+      if (err instanceof HelloFailure) {
+        display.error(err.message);
+        if (isJson) await exitWithJson({ ok: false, code: err.code, error: err.message });
+        process.exit(1);
+      }
+      if (!isJson) throw err;
+      const error = withoutLocalPaths(err instanceof Error ? err.message : String(err));
+      display.error(error);
+      await exitWithJson({ ok: false, code: "internal_error", error });
+    }
+  };
+}
 
 /** Writes a failure document and exits 1, after stdout has taken all of it. */
 function exitWithJson(report: Record<string, unknown>): Promise<never> {
@@ -344,16 +405,11 @@ async function resolveInput(
   options: HelloOptions,
   genesDir: string,
 ): Promise<Record<string, unknown>> {
-  if (options.json && options.input) {
-    return JSON.parse(options.input);
-  }
-
   if (options.input) {
     try {
       return JSON.parse(options.input);
     } catch {
-      display.error("Invalid --input JSON: " + options.input);
-      process.exit(1);
+      throw new HelloFailure("invalid_input", "Invalid --input JSON: " + options.input);
     }
   }
 
@@ -387,11 +443,16 @@ async function resolveInput(
 function readFileInput(filePath: string, template: HelloTemplate): Record<string, unknown> {
   const absPath = resolve(filePath);
   if (!existsSync(absPath)) {
-    display.error(`File not found: ${filePath}`);
-    process.exit(1);
+    throw new HelloFailure("input_not_found", `File not found: ${filePath}`);
   }
 
-  const content = readFileSync(absPath, "utf-8");
+  let content: string;
+  try {
+    content = readFileSync(absPath, "utf-8");
+  } catch (err) {
+    const reason = (err as NodeJS.ErrnoException).code ?? "read failed";
+    throw new HelloFailure("input_unreadable", `Cannot read file: ${filePath} (${reason})`);
+  }
   const ext = extname(absPath).toLowerCase();
 
   if (template.fileMapping && template.fileMapping[ext]) {
@@ -408,8 +469,7 @@ function readFileInput(filePath: string, template: HelloTemplate): Record<string
 function readDirInput(dirPath: string, template: HelloTemplate): Record<string, unknown> {
   const absPath = resolve(dirPath);
   if (!existsSync(absPath) || !statSync(absPath).isDirectory()) {
-    display.error(`Directory not found: ${dirPath}`);
-    process.exit(1);
+    throw new HelloFailure("input_not_found", `Directory not found: ${dirPath}`);
   }
 
   if (template.dirMapping) {
@@ -856,10 +916,10 @@ export async function executeGenomePipeline(
       display.warn(`${step} L0 gate could not run (${l0.detail}) — running this local gene unchecked.`);
     }
     if (blocked) {
-      display.error(`${step} L0 gate blocked '${geneName}': ${blocked}`);
+      display.error(`${step} L0 gate blocked '${geneName}': ${forOutput(blocked)}`);
       hasFailed = true;
       failedGene = geneName;
-      error = `L0 gate blocked: ${blocked}`;
+      error = `L0 gate blocked: ${forOutput(blocked)}`;
       break;
     }
 
@@ -881,7 +941,7 @@ export async function executeGenomePipeline(
       } else {
         hasFailed = true;
         failedGene = geneName;
-        error = outcome.error ?? "unknown error";
+        error = forOutput(outcome.error ?? "unknown error");
         display.error(`${step} ${geneName} failed: ${error}`);
       }
       continue;
@@ -909,10 +969,10 @@ export async function executeGenomePipeline(
       }
       display.success(`${step} ${geneName} completed`);
     } catch (err: any) {
-      display.error(`${step} ${geneName} failed: ${err.message}`);
+      error = forOutput(err.message);
+      display.error(`${step} ${geneName} failed: ${error}`);
       hasFailed = true;
       failedGene = geneName;
-      error = err.message;
     }
   }
 

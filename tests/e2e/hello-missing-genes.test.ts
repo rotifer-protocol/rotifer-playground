@@ -216,6 +216,9 @@ describe("rotifer hello when a template's genes are missing", () => {
     expect(code).toBe(1);
     expect(out).toMatch(/security-scanner: could not check Rotifer Cloud/);
     expect(out).not.toMatch(/not published/);
+    // The next step has to be something that can be done: there are no commands to run.
+    expect(out).toContain("Check your network connection");
+    expect(out).not.toContain("Run the commands above");
   });
 
   it("does not hang when the Registry accepts the connection and never answers", async () => {
@@ -249,7 +252,123 @@ describe("rotifer hello when a template's genes are missing", () => {
     expect(out).not.toContain("Genome Snapshot");
   });
 
+  it("treats a gene that arrived as WASM only as runnable, the way an install delivers it", async () => {
+    // Not a valid module, on purpose: what matters here is that the command
+    // hands it to the sandbox instead of refusing it as a gene with no code.
+    const dir = join(project, "genes", "gene-health-scanner");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "phenotype.json"),
+      JSON.stringify({ name: "gene-health-scanner", version: "0.1.0", domain: "t", fidelity: "Native", inputSchema: {}, outputSchema: {} }),
+    );
+    writeFileSync(join(dir, "gene.ir.wasm"), Buffer.from([0, 97, 115, 109]));
+
+    const { out } = await hello("quality-advisor", "--input", "{}");
+    expect(out).not.toContain("no runnable code");
+    expect(out).toContain("Executing gene: gene-health-scanner");
+
+    const listing = await run(["hello", "--list-templates"], project, reg.url, tmp);
+    expect(listing.stdout.split("\n").find((l) => l.includes("quality-advisor"))).not.toContain("[comes with");
+  });
+
+  it("reports a --file that cannot be read without a stack trace", async () => {
+    mkdirSync(join(project, "a-directory"));
+    const dir = join(project, "genes", "gene-health-scanner");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "phenotype.json"),
+      JSON.stringify({ name: "gene-health-scanner", version: "0.1.0", domain: "t", fidelity: "Native", inputSchema: {}, outputSchema: {} }),
+    );
+    writeFileSync(join(dir, "index.js"), `module.exports.express = (i) => i;\n`);
+
+    const { out, code } = await hello("quality-advisor", "--file", "a-directory");
+    expect(code).toBe(1);
+    expect(out).toContain("Cannot read file: a-directory");
+    expect(out).not.toMatch(/^\s+at /m);
+  });
+
   describe("--json", () => {
+    /** A failure a caller can parse, with nothing of this machine in it. */
+    function expectCleanFailure(r: Result, failureCode: string): Record<string, unknown> {
+      expect(r.code).toBe(1);
+      const report = JSON.parse(r.stdout);
+      expect(report).toMatchObject({ ok: false, code: failureCode });
+      expect(typeof report.error).toBe("string");
+      expect(r.out).not.toMatch(/^\s+at /m);
+      expect(r.out).not.toContain("SyntaxError");
+      expect(r.out).not.toContain(CLI);
+      return report;
+    }
+
+    const installedGene = (body: string, phenotype?: string) => {
+      const dir = join(project, "genes", "gene-health-scanner");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "phenotype.json"),
+        phenotype ?? JSON.stringify({ name: "gene-health-scanner", version: "0.1.0", domain: "t", fidelity: "Native", inputSchema: {}, outputSchema: {} }),
+      );
+      writeFileSync(join(dir, "index.js"), body);
+    };
+
+    it("reports malformed --input as a failure document", async () => {
+      installedGene(`module.exports.express = (i) => i;\n`);
+      const report = expectCleanFailure(await hello("quality-advisor", "--json", "--input", "{bad"), "invalid_input");
+      expect(report.error).toContain("Invalid --input JSON");
+    });
+
+    it("reports a --file that does not exist", async () => {
+      installedGene(`module.exports.express = (i) => i;\n`);
+      const report = expectCleanFailure(await hello("quality-advisor", "--json", "--file", "nope.md"), "input_not_found");
+      expect(report.error).toContain("File not found: nope.md");
+    });
+
+    it("reports a --file that cannot be read", async () => {
+      installedGene(`module.exports.express = (i) => i;\n`);
+      mkdirSync(join(project, "a-directory"));
+      const report = expectCleanFailure(await hello("quality-advisor", "--json", "--file", "a-directory"), "input_unreadable");
+      expect(report.error).toContain("Cannot read file: a-directory");
+    });
+
+    it("reports a --dir that does not exist", async () => {
+      installedGene(`module.exports.express = (i) => i;\n`);
+      const report = expectCleanFailure(await hello("quality-advisor", "--json", "--dir", "nope"), "input_not_found");
+      expect(report.error).toContain("Directory not found: nope");
+    });
+
+    it("reports running outside a workspace", async () => {
+      const outside = join(tmp, "not-a-workspace");
+      mkdirSync(outside);
+      const report = expectCleanFailure(
+        await run(["hello", "--template", "quality-advisor", "--json"], outside, reg.url, tmp),
+        "not_in_workspace",
+      );
+      expect(report.error).toContain("rotifer init");
+    });
+
+    it("refuses to open the interactive picker", async () => {
+      const report = expectCleanFailure(await run(["hello", "--json"], project, reg.url, tmp), "template_required");
+      expect(report.error).toContain("--template");
+    });
+
+    it("keeps an unexpected error parseable, with no stack and no paths", async () => {
+      installedGene(`module.exports.express = (i) => i;\n`, "{ this is not json");
+      const r = await hello("quality-advisor", "--json", "--input", "{}");
+      expect(r.code).toBe(1);
+      const report = JSON.parse(r.stdout);
+      expect(report.ok).toBe(false);
+      expect(r.out).not.toMatch(/^\s+at /m);
+      expect(r.out).not.toContain(project);
+      expect(r.out).not.toContain(CLI);
+    });
+
+    it("does not pass a local path through from a failing gene", async () => {
+      installedGene(`module.exports.express = () => { throw new Error("cannot open " + __filename); };\n`);
+      const report = expectCleanFailure(await hello("quality-advisor", "--json", "--input", "{}"), "execution_failed");
+      expect(report.error).toContain("cannot open");
+      const r2 = await hello("quality-advisor", "--json", "--input", "{}");
+      expect(r2.out).not.toContain(project);
+    });
+
     it("writes one parseable object to stdout when genes are missing", async () => {
       const { stdout, code } = await hello("web3-toolkit", "--json");
       expect(code).toBe(1);

@@ -29,6 +29,9 @@ const GENESIS_GENES = [
 // the required genes are available". Ship the gene the recommendation depends on.
 const RECOMMENDED_TEMPLATE_GENES = ["gene-health-scanner"];
 
+/** Every gene `init` copies into a new workspace. */
+export const GENES_SEEDED_BY_INIT = [...GENESIS_GENES, ...RECOMMENDED_TEMPLATE_GENES];
+
 export const initCommand = new Command("init")
   .description("Initialize a new Rotifer Agent workspace")
   .argument("[workspace-name]", "Agent workspace directory name", "my-agent")

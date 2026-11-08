@@ -137,12 +137,16 @@ Two paths — pick by what the user wants first, a result or an understanding.
 rotifer hello
 ```
 
-An interactive builder: pick one of six templates (quality-advisor,
-uiux-diagnosis, content-analysis, code-security, doc-qa, web3-toolkit), and it
-selects Genes, composes them, creates the Agent and runs it. Use this when the
-user wants to *see* Rotifer work before learning what a Gene is.
-`rotifer hello --list-templates` shows what is on offer; `--template <id>`,
-`--input <json>`, `--file <path>` and `--dir <path>` skip the prompts.
+An interactive builder: pick a template, and it selects Genes, composes them,
+creates the Agent and runs it. Use this when the user wants to *see* Rotifer
+work before learning what a Gene is. In a new workspace, start with
+`rotifer hello --template quality-advisor`, the one template whose Genes come
+with `rotifer init`. `rotifer hello --list-templates` shows which templates can
+run here. The others (uiux-diagnosis, content-analysis, code-security, doc-qa,
+web3-toolkit) need Genes first: running one exits 1 and says, Gene by Gene,
+whether it can be installed or is not available. `hello` never installs
+anything itself. `--template <id>`, `--input <json>`, `--file <path>` and
+`--dir <path>` skip the prompts; `--json` puts one JSON document on stdout.
 
 **Full lifecycle — one command per concept:**
 

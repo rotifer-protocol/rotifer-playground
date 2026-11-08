@@ -104,7 +104,12 @@ Nothing here is deployed. Deploying is binding-layer work and needs these,
 in order:
 
 1. The user's keyword for v0.9.5 stage 2 B1. Then move the migration into
-   `supabase/migrations/` and push it, following the migration rule.
+   `supabase/migrations/`, renaming it with a timestamp later than the newest
+   entry in the production ledger and later than `20261030220000`. Run
+   `supabase migration list --linked` and check the pending list entry by
+   entry: it must hold this migration and nothing else. If anything else is
+   pending, stop and ask; never use `--include-all`. Then push it, following
+   the migration rule.
 2. The signing key and K_pseudo, made in the deployment environment and
    stored only as its secrets (`POR_SIGNING_KEY`, `POR_PSEUDONYM_KEY`;
    `index.ts`). Making or saving the real keys needs the user's approval.
@@ -123,11 +128,26 @@ in order:
 4. The public key published in `https://rotifer.dev/.well-known/jwks.json`
    (`scripts/por-jwks.ts`) and confirmed to be served, **before** the
    function signs with it. Rotation order is in the script's header.
-5. Rate limiting for both operations. The database caps open challenges at 5
-   per account, but that is not a request limit.
-6. `[functions.node-attestation] verify_jwt = true` in `supabase/config.toml`.
-7. A revocation routine for banned accounts and replaced node keys
-   (`node_attestation_revoke`), and republishing the JWKS from
-   `node_attestation_revocations_for_jwks()`. Both run as `por_operator`, by
-   an operator, never through the function: give that role a login only
-   where operators run them, kept apart from `POR_DB_URL`.
+5. A decision on the request limits. The migration allows each account **60
+   requests per hour** across both operations
+   (`node_attestation_rate_consume`), in fixed hours, and refuses a second
+   certificate for one PeerId within 24 hours unless under 48 hours of the
+   last one remain. To use another number, change the migration before pushing
+   it. There is no per-IP limit yet: it needs confirming which
+   `x-forwarded-for` value this platform lets a caller set.
+6. Confirm the gateway check after deploying: `verify_jwt = true` is declared
+   in `supabase/config.toml`, so a request with no token gets a 401 from the
+   gateway.
+7. A revocation routine, and republishing the JWKS. Both run as
+   `por_operator`, by an operator, never through the function: give that role
+   a login only where operators run them, kept apart from `POR_DB_URL`.
+   - `node_attestation_revoke`: for a banned account or a leaked node key,
+     pass a far-future `not_after`, such as `253402300799`. Only a node
+     replacing its own key uses the default, now; with the default the same
+     PeerId can be issued a new certificate a second later.
+   - Republish with `scripts/por-jwks.ts --revoked <file>`, the file holding
+     `node_attestation_revocations_for_jwks()`. The flag is required, because
+     leaving the list out would bring every revoked certificate back.
+   - If the only signing key leaks, publish with `--emergency-no-keys`: no
+     keys, revocations kept. Verifiers then accept no certificate until a new
+     key is published.

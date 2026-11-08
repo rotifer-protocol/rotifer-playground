@@ -220,8 +220,16 @@ try {
   const r4 = await call("issue", jwt1, await signedIssueBody(jwt1, U1, n4));
   check(r4.status === 409 && (r4.body.error as { code: string })?.code === "POR_QUOTA_EXCEEDED", "P0: the 4th PeerId is refused", JSON.stringify(r4.body));
   check(!("token" in r4.body), "the refusal carries no token");
+  // A renewal needs an earlier certificate at least 24 h old, so date PeerId 1's
+  // back 25 h. The log is append-only; the trigger is bypassed for this statement.
+  await psql(`SET session_replication_role = replica;
+    UPDATE node_attestation_issuances SET iat = iat - 90000, exp = exp - 90000 WHERE peer_id = '${n1.peerId}';
+    SET session_replication_role = origin;`);
   const renew = await call("issue", jwt1, await signedIssueBody(jwt1, U1, n1));
   check(renew.status === 200, "renewing PeerId 1 at the limit is allowed", JSON.stringify(renew.body));
+  const early = await call("issue", jwt1, await signedIssueBody(jwt1, U1, n1));
+  check(early.status === 409 && (early.body.error as { code: string })?.code === "POR_RENEWAL_TOO_EARLY", "renewing it again within 24 hours is refused", JSON.stringify(early.body));
+  check(!("token" in early.body), "that refusal carries no token");
 
   // 4. rebinding
   const rb = await call("issue", jwt2, await signedIssueBody(jwt2, U2, n1));
@@ -259,6 +267,11 @@ try {
   check(await psql(`SELECT count(*) FROM node_attestation_issuances WHERE user_id = '${U1}'`) === "4", "issuance log: 3 certificates + 1 renewal");
   check(await psql(`SELECT count(*) FROM node_attestation_issuances WHERE peer_id = '${n4.peerId}'`) === "0", "nothing recorded for the refused 4th PeerId");
   check(await psql(`SELECT user_id FROM nodes WHERE peer_id = '${n1.peerId}'`) === U1, "PeerId 1 still belongs to U1");
+
+  // 9. the hourly limit, through the real function and database
+  await psql(`UPDATE node_attestation_rate_buckets SET calls = 60 WHERE user_id = '${U2}'`);
+  const limited = await call("challenge", jwt2, {});
+  check(limited.status === 429 && (limited.body.error as { code: string })?.code === "POR_RATE_LIMITED", "the 61st request of the hour is refused", JSON.stringify(limited.body));
 } finally {
   try {
     await cleanup();

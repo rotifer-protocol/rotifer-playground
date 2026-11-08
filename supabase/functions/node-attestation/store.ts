@@ -76,6 +76,15 @@ function result(rows: Record<string, unknown>[], fn: string): Record<string, unk
 
 export function postgresStore(query: Query): AttestationStore {
   return {
+    async consume(userId) {
+      const data = result(
+        await query("SELECT public.node_attestation_rate_consume($1::uuid) AS r", [userId]),
+        "node_attestation_rate_consume",
+      );
+      if (data.error !== undefined) return { error: storeCode(data.error) };
+      if (data.ok !== true) throw new PorError("POR_INTERNAL", "unexpected rate-limit result from the database");
+      return { ok: true };
+    },
     async challenge(userId, aud) {
       const data = result(
         await query("SELECT public.node_attestation_challenge($1::uuid, $2::text) AS r", [userId, aud]),

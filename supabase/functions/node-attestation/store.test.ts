@@ -67,6 +67,16 @@ Deno.test("anything else from the database is an internal error, never a success
   }
 });
 
+Deno.test("consume calls the rate-limit function with the account and maps its answer", async () => {
+  const f = fake([{ r: { ok: true } }]);
+  assertEquals(await postgresStore(f.query).consume(RECORD.userId), { ok: true });
+  assertEquals(f.calls, [{ text: "SELECT public.node_attestation_rate_consume($1::uuid) AS r", params: [RECORD.userId] }]);
+  assertEquals(await postgresStore(fake([{ r: { error: "POR_RATE_LIMITED" } }]).query).consume(RECORD.userId), { error: "POR_RATE_LIMITED" });
+  for (const r of [{}, { ok: false }, { error: "SOMETHING_ELSE" }]) {
+    await assertRejects(() => postgresStore(fake([{ r }]).query).consume(RECORD.userId), PorError);
+  }
+});
+
 Deno.test("POR_DB_URL must log in as por_issuer", () => {
   assertEquals(issuerUser("postgresql://por_issuer:pw@db.example:5432/postgres?sslmode=require"), "por_issuer");
   assertEquals(issuerUser("postgres://por_issuer.abcdefgh:pw@pooler.example:6543/postgres?sslmode=verify-full"), "por_issuer.abcdefgh");

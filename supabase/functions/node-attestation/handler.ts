@@ -12,7 +12,9 @@
  *     200 { token, peerId, iat, exp }
  *   4xx/5xx { error: { code, message } }
  *
- * Both need a signed-in Cloud account. The handler takes its collaborators
+ * Both need a signed-in Cloud account, and each signed-in request costs one
+ * call from the account's hourly allowance, checked before the body is read
+ * or a signature verified. The handler takes its collaborators
  * (who is calling, the database, keys, clock) as Deps so it can be tested
  * without a stack; index.ts wires the real ones.
  *
@@ -52,6 +54,8 @@ export type ErrorCode =
   | "POR_PEER_BOUND_ELSEWHERE"
   | "POR_PEER_REVOKED"
   | "POR_QUOTA_EXCEEDED"
+  | "POR_RENEWAL_TOO_EARLY"
+  | "POR_RATE_LIMITED"
   | "POR_NOT_CONFIGURED"
   | "POR_INTERNAL";
 
@@ -67,6 +71,8 @@ const STATUS: Record<ErrorCode, number> = {
   POR_PEER_BOUND_ELSEWHERE: 409,
   POR_PEER_REVOKED: 409,
   POR_QUOTA_EXCEEDED: 409,
+  POR_RENEWAL_TOO_EARLY: 409,
+  POR_RATE_LIMITED: 429,
   POR_NOT_CONFIGURED: 503,
   POR_INTERNAL: 500,
 };
@@ -83,6 +89,8 @@ const MESSAGE: Record<ErrorCode, string> = {
   POR_PEER_BOUND_ELSEWHERE: "this node has a live certificate under another account; it must expire or be revoked first",
   POR_PEER_REVOKED: "this node is revoked",
   POR_QUOTA_EXCEEDED: "this account already has live certificates for 3 nodes",
+  POR_RENEWAL_TOO_EARLY: "this node's certificate is recent; renew when under 48 hours of it remain",
+  POR_RATE_LIMITED: "too many requests for this account; try again in an hour",
   POR_NOT_CONFIGURED: "node attestation is not configured on this server",
   POR_INTERNAL: "internal error",
 };
@@ -115,6 +123,8 @@ export interface IssueRecord {
 
 /** Database side. A refusal resolves to its error code; a database failure rejects. */
 export interface AttestationStore {
+  /** Takes one call from the account's hourly allowance. */
+  consume(userId: string): Promise<{ ok: true } | { error: ErrorCode }>;
   challenge(userId: string, aud: string): Promise<{ nonce: Bytes; challengeExp: number } | { error: ErrorCode }>;
   issue(record: IssueRecord): Promise<{ ok: true } | { error: ErrorCode }>;
 }
@@ -139,6 +149,8 @@ const STORE_CODES = new Set<string>([
   "POR_PEER_BOUND_ELSEWHERE",
   "POR_PEER_REVOKED",
   "POR_QUOTA_EXCEEDED",
+  "POR_RENEWAL_TOO_EARLY",
+  "POR_RATE_LIMITED",
 ]);
 
 /** A refusal code from the database, checked against the known set. */
@@ -223,6 +235,8 @@ export async function handle(request: Request, deps: Deps): Promise<Response> {
     if (op !== "challenge" && op !== "issue") throw new PorError("POR_BAD_REQUEST", "unknown operation; use /challenge or /issue");
     const userId = await deps.authenticate(request.headers.get("Authorization"));
     if (userId === null) throw new PorError("POR_UNAUTHENTICATED");
+    const allowed = await deps.store.consume(userId);
+    if ("error" in allowed) throw new PorError(allowed.error);
     return op === "challenge" ? await challenge(deps, userId, request) : await issue(deps, userId, request);
   } catch (e) {
     if (e instanceof PorError) return errorResponse(e);

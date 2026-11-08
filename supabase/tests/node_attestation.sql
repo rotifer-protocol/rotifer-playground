@@ -25,7 +25,7 @@ SELECT to_regclass('public.nodes') IS NOT NULL AS has_nodes \gset
 
 BEGIN;
 
-SELECT plan(79);
+SELECT plan(96);
 
 -- The edge function's role and the operators' role. postgres may switch to
 -- them only once granted. pgTAP's own functions live in the extensions
@@ -257,6 +257,12 @@ RESET ROLE;
 SELECT is((SELECT count(*)::int FROM node_attestation_issuances WHERE peer_id = :P4)
         + (SELECT count(*)::int FROM nodes WHERE peer_id = :P4), 0, 'Q3: the refusal recorded nothing for P4');
 
+-- A renewal needs an earlier certificate at least 24 h old (RN1 below), so
+-- date P2's first one 25 h back. The log is append-only and P2 already has a
+-- row; the trigger is bypassed for this statement only, and rolled back.
+SET LOCAL session_replication_role = replica;
+UPDATE node_attestation_issuances SET iat = :now - 90000, exp = :now - 90000 + 604800 WHERE peer_id = :P2;
+SET LOCAL session_replication_role = origin;
 SET LOCAL ROLE por_issuer;
 SELECT node_attestation_challenge(:A, :AUD) AS c \gset
 SELECT is(node_attestation_issue(:A, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :P2, :SUBA, :now, :exp, 'k2'),
@@ -447,6 +453,88 @@ SET LOCAL ROLE authenticated;
 SELECT is((SELECT count(*)::int FROM node_attestation_issuances), 0, 'L13: with a stray grant, RLS still shows no issuance rows');
 SELECT is((SELECT count(*)::int FROM node_attestation_challenges), 0, 'L14: with a stray grant, RLS still shows no challenges');
 SELECT is((SELECT count(*)::int FROM node_attestation_revocations), 0, 'L15: with a stray grant, RLS still shows no revocations');
+RESET ROLE;
+
+-- ── Requests per account per hour ─────────────────────────
+
+SELECT is(
+  (SELECT count(*)::int FROM pg_class
+    WHERE relnamespace = 'public'::regnamespace AND relrowsecurity AND relname = 'node_attestation_rate_buckets')
+  + (SELECT count(*)::int FROM pg_policies WHERE schemaname = 'public' AND tablename = 'node_attestation_rate_buckets'),
+  1, 'RL1: the rate table has RLS on and no policy');
+SELECT is(
+  (SELECT count(*)::int
+     FROM unnest(ARRAY['anon', 'authenticated', 'service_role', 'por_issuer', 'por_operator']) r,
+          unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p
+    WHERE has_table_privilege(r, 'public.node_attestation_rate_buckets', p)),
+  0, 'RL2: no role but the owner can touch the rate table');
+SELECT is(
+  (SELECT array_agg(r ORDER BY r)
+     FROM unnest(ARRAY['anon', 'authenticated', 'service_role', 'por_issuer', 'por_operator']) r
+    WHERE has_function_privilege(r, 'public.node_attestation_rate_consume(uuid)', 'EXECUTE')),
+  ARRAY['por_issuer'], 'RL3: only por_issuer can call node_attestation_rate_consume');
+
+SET LOCAL ROLE por_issuer;
+SELECT is((SELECT count(*)::int FROM generate_series(1, 60) WHERE node_attestation_rate_consume(:A) = '{"ok": true}'::jsonb),
+  60, 'RL4: the first 60 calls of the hour are allowed');
+SELECT is(node_attestation_rate_consume(:A), '{"error": "POR_RATE_LIMITED"}'::jsonb, 'RL5: the 61st is refused');
+SELECT is(node_attestation_rate_consume(:A), '{"error": "POR_RATE_LIMITED"}'::jsonb, 'RL6: and so is the one after');
+SELECT is(node_attestation_rate_consume(:B), '{"ok": true}'::jsonb, 'RL7: another account has its own allowance');
+RESET ROLE;
+UPDATE node_attestation_rate_buckets SET window_start = window_start - 3600 WHERE user_id = :A;
+SET LOCAL ROLE por_issuer;
+SELECT is(node_attestation_rate_consume(:A), '{"ok": true}'::jsonb, 'RL8: the next hour starts a new count');
+RESET ROLE;
+SELECT is((SELECT calls FROM node_attestation_rate_buckets WHERE user_id = :A), 1, 'RL9: and that count starts from one');
+
+-- ── Renewing too early ────────────────────────────────────
+-- Q4 has just renewed P2 at :now for A.
+
+SET LOCAL ROLE por_issuer;
+SELECT node_attestation_challenge(:A, :AUD) AS c \gset
+SELECT is(node_attestation_issue(:A, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :P2, :SUBA, :now, :exp, 'k3'),
+  '{"error": "POR_RENEWAL_TOO_EARLY"}'::jsonb, 'RN1: a second certificate for P2 within 24 h is refused');
+SELECT is(node_attestation_issue(:A, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :P2, :SUBA, :now, :exp, 'k3'),
+  '{"error": "POR_CHALLENGE_INVALID"}'::jsonb, 'RN2: that refusal consumed the nonce');
+RESET ROLE;
+SELECT is((SELECT count(*)::int FROM node_attestation_issuances WHERE peer_id = :P2 AND kid = 'k3'), 0, 'RN3: and recorded nothing');
+
+INSERT INTO auth.users (id, email, raw_user_meta_data) VALUES
+  ('d0e66666-6666-4666-8666-666666666666', 'por-f@example.com', '{"user_name": "por_f"}'::jsonb),
+  ('d0e77777-7777-4777-8777-777777777777', 'por-g@example.com', '{"user_name": "por_g"}'::jsonb);
+\set F '''d0e66666-6666-4666-8666-666666666666'''
+\set G '''d0e77777-7777-4777-8777-777777777777'''
+\set SUBF '''fffffffffffffffffffffffffffffffffffffffffff'''
+\set SUBG '''ggggggggggggggggggggggggggggggggggggggggggg'''
+\set PD '''12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD'''
+\set PE '''12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAE'''
+\set PF '''12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAF'''
+\set PG '''12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAG'''
+\set PH '''12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH'''
+INSERT INTO node_attestation_issuances (peer_id, user_id, iat, exp, kid) VALUES
+  (:PD, :F, :now - 86400, :now - 86400 + 604800, 'k0'),  -- exactly 24 h old
+  (:PE, :F, :now - 86399, :now - 86399 + 604800, 'k0'),  -- one second younger
+  (:PF, :F, :now - 3600, :now + 172860, 'k0'),           -- recent, 48 h + 60 s left
+  (:PG, :G, :now - 3600, :now + 172861, 'k0'),           -- recent, one second more left
+  (:PH, :G, :now - 100, :now - 100 + 604800, 'k0');      -- recent, revoked below
+SET LOCAL ROLE por_operator;
+SELECT node_attestation_revoke(:PH, :now - 50, 'test: replaced key');
+SET LOCAL ROLE por_issuer;
+SELECT node_attestation_challenge(:F, :AUD) AS c \gset
+SELECT is(node_attestation_issue(:F, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :PD, :SUBF, :now, :exp, 'k1'),
+  '{"ok": true}'::jsonb, 'RN4: a certificate exactly 24 h old can be renewed');
+SELECT node_attestation_challenge(:F, :AUD) AS c \gset
+SELECT is(node_attestation_issue(:F, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :PE, :SUBF, :now, :exp, 'k1'),
+  '{"error": "POR_RENEWAL_TOO_EARLY"}'::jsonb, 'RN5: one second younger cannot');
+SELECT node_attestation_challenge(:F, :AUD) AS c \gset
+SELECT is(node_attestation_issue(:F, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :PF, :SUBF, :now, :exp, 'k1'),
+  '{"ok": true}'::jsonb, 'RN6: however recent, a certificate with 48 h + 60 s left can be renewed');
+SELECT node_attestation_challenge(:G, :AUD) AS c \gset
+SELECT is(node_attestation_issue(:G, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :PG, :SUBG, :now, :exp, 'k1'),
+  '{"error": "POR_RENEWAL_TOO_EARLY"}'::jsonb, 'RN7: one second more left cannot');
+SELECT node_attestation_challenge(:G, :AUD) AS c \gset
+SELECT is(node_attestation_issue(:G, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :PH, :SUBG, :now, :exp, 'k1'),
+  '{"ok": true}'::jsonb, 'RN8: a revoked certificate does not hold up its replacement');
 RESET ROLE;
 
 SELECT * FROM finish();

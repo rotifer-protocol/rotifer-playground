@@ -10,6 +10,8 @@
 #   3. rebinding: two accounts claiming one new PeerId at once: one wins.
 #   4. burst: 5 sessions, one account, 5 different PeerIds, released
 #      together: exactly 3 are accepted.
+#   5. rate limit: 10 sessions, one account with 2 calls left in its hour,
+#      released together: exactly 2 are allowed.
 #
 # Every challenge is taken before the race starts, so a session waits in
 # node_attestation_issue (on its locks), not in node_attestation_challenge.
@@ -145,5 +147,23 @@ echo "accepted $ok, refused $refused; U3 live PeerIds: $(live $U3)"
 [ "$refused" = 2 ] || fail "4: $refused refused with POR_QUOTA_EXCEEDED, expected 2"
 [ "$(live $U3)" = 3 ] || fail "4: U3 has $(live $U3) live PeerIds, expected 3"
 
+echo "## 5. rate limit: U1 has 2 calls left this hour; 10 sessions released together"
+# Keep the burst inside one fixed hour.
+[ $(( $(date +%s) % 3600 )) -lt 3590 ] || sleep 11
+q "INSERT INTO node_attestation_rate_buckets (user_id, window_start, calls)
+     VALUES ('$U1', floor(extract(epoch FROM now()) / 3600)::bigint * 3600, 58)" >/dev/null
+dir=$(mktemp -d)
+for i in 0 1 2 3 4 5 6 7 8 9; do
+  ( while [ ! -e "$dir/go" ]; do :; done
+    iq "SELECT coalesce(r->>'error', 'OK') FROM (SELECT node_attestation_rate_consume('$U1') r) s;" | tail -1 > "$dir/out$i" ) &
+done
+touch "$dir/go"; wait
+ok=$(cat "$dir"/out* | grep -c '^OK$')
+refused=$(cat "$dir"/out* | grep -c '^POR_RATE_LIMITED$')
+rm -rf "$dir"
+echo "allowed $ok, refused $refused"
+[ "$ok" = 2 ] || fail "5: $ok allowed, expected 2"
+[ "$refused" = 8 ] || fail "5: $refused refused with POR_RATE_LIMITED, expected 8"
+
 cleanup
-echo "all 4 checks passed"
+echo "all 5 checks passed"

@@ -1,0 +1,67 @@
+{
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  },
+  "testCases": [
+    {
+      "input": {
+        "riskScore": 70,
+        "summary": "2 issues found",
+        "vulnerabilities": [
+          {
+            "type": "tx-origin",
+            "severity": "high",
+            "location": "line 3",
+            "description": "Uses tx.origin for auth",
+            "recommendation": "Use msg.sender"
+          },
+          {
+            "type": "selfdestruct",
+            "severity": "critical",
+            "location": "line 4",
+            "description": "Anyone can destroy the contract",
+            "recommendation": "Remove selfdestruct"
+          }
+        ]
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "report",
+          "executiveSummary"
+        ],
+        "properties": {
+          "report": {
+            "type": "string",
+            "pattern": "Risk Score: 70/100"
+          },
+          "executiveSummary": {
+            "type": "string",
+            "pattern": "2 potential issue"
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "riskScore": 1,
+        "summary": "x"
+      }
+    },
+    {
+      "input": {
+        "vulnerabilities": "none",
+        "riskScore": 1,
+        "summary": "x"
+      }
+    },
+    {
+      "input": {
+        "vulnerabilities": [],
+        "riskScore": "high",
+        "summary": "x"
+      }
+    }
+  ]
+}

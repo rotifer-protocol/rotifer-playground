@@ -12,6 +12,7 @@ import { buildGeneExecutor, findAgent, printProtocolInsights } from "./agent-run
 import { tryLoadBinding } from "../utils/binding.js";
 import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
 import { createGatewayFetch } from "../runtime/network-gateway.js";
+import { readErrorEnvelope } from "../testsuite/gate.js";
 import { diagnoseLocalGene, diagnoseRegistryGene, type GeneDiagnosis } from "../cloud/gene-availability.js";
 
 /**
@@ -265,8 +266,15 @@ export const helloCommand = new Command("hello")
 
     console.log();
     if (pipeline.failed) {
+      // A scan that found nothing reaches the first gene as an empty input, and
+      // "missing required field" does not tell anyone what to point --dir at.
+      const nextStep = options.dir && selected.fileMapping && !hasMeaningfulHelloInput(input)
+        ? `No ${Object.keys(selected.fileMapping).join(", ")} files in ${options.dir}. ` +
+          "Point --dir at a directory that has them, or pass one with --file <path>."
+        : undefined;
       display.error(
-        `Execution failed at ${pipeline.failedGene ?? "unknown gene"}: ${pipeline.error ?? "unknown error"}`
+        `Execution failed at ${pipeline.failedGene ?? "unknown gene"}: ${pipeline.error ?? "unknown error"}`,
+        nextStep,
       );
       display.keyValue("Duration", `${elapsed.toFixed(0)}ms`);
       display.hint("Fix the failing gene or input, then re-run this template.");
@@ -277,6 +285,7 @@ export const helloCommand = new Command("hello")
           template: selected.id,
           failed_gene: pipeline.failedGene ?? null,
           error: pipeline.error ?? "unknown error",
+          ...(nextStep ? { next_step: nextStep } : {}),
         });
       }
       process.exit(1);
@@ -961,12 +970,27 @@ export async function executeGenomePipeline(
 
       // A Hybrid gene reaches the network only through the gateway on its
       // second argument, as `run`, `test` and `agent run` give it (#444).
+      let output: unknown;
       if (phenotype.fidelity === "Hybrid" && phenotype.network) {
         const { gatewayFetch } = createGatewayFetch(phenotype.network);
-        current = await mod.express(current, { gatewayFetch });
+        output = await mod.express(current, { gatewayFetch });
       } else {
-        current = await mod.express(current);
+        output = await mod.express(current);
       }
+
+      // A lone __rotifer_error is the gene refusing (ADR-334). The sandbox
+      // reports it as INVALID_INPUT; read it the same way here, rather than
+      // as a result to pass on.
+      const refusal = readErrorEnvelope(output);
+      if (refusal) {
+        hasFailed = true;
+        failedGene = geneName;
+        error = forOutput(refusal);
+        display.error(`${step} ${geneName} failed: ${error}`);
+        continue;
+      }
+
+      current = output;
       display.success(`${step} ${geneName} completed`);
     } catch (err: any) {
       error = forOutput(err.message);

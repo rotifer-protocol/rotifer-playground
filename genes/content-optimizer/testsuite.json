@@ -1,0 +1,73 @@
+{
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  },
+  "testCases": [
+    {
+      "input": {
+        "readability": {
+          "score": 35,
+          "grade": "Dense",
+          "language": "English"
+        },
+        "virality": {
+          "score": 20,
+          "factors": [
+            {
+              "name": "hook",
+              "score": 10
+            }
+          ]
+        },
+        "sentiment": {
+          "tone": "Neutral",
+          "score": 0
+        },
+        "structure": {
+          "paragraphs": 2,
+          "avgLength": 180,
+          "hasHeadings": false,
+          "codeBlocks": 0,
+          "links": 0,
+          "wordCount": 360
+        }
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "optimizedSuggestions"
+        ],
+        "properties": {
+          "optimizedSuggestions": {
+            "type": "array",
+            "contains": {
+              "const": "Add H2/H3 section headings to improve scannability and SEO"
+            }
+          }
+        }
+      }
+    },
+    {
+      "input": {}
+    },
+    {
+      "input": {
+        "readability": 42,
+        "virality": {},
+        "sentiment": {},
+        "structure": {}
+      }
+    },
+    {
+      "input": {
+        "readability": {
+          "score": "low"
+        },
+        "virality": {},
+        "sentiment": {},
+        "structure": {}
+      }
+    }
+  ]
+}

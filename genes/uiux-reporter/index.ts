@@ -25,8 +25,8 @@ const SEVERITY_ORDER: Record<string, number> = {
   info: 2,
 };
 
-function severityRank(s: string): number {
-  return SEVERITY_ORDER[s.toLowerCase()] ?? 3;
+function severityRank(s: string | undefined): number {
+  return SEVERITY_ORDER[(s ?? "").toLowerCase()] ?? 3;
 }
 
 function scoreToGrade(score: number): string {
@@ -150,14 +150,39 @@ function buildFullViolationList(sorted: Violation[]): string {
   return lines.join("\n");
 }
 
-export function express(input: ReporterInput): ReporterOutput {
-  if (!input || !Array.isArray(input.violations)) {
-    return {
-      report: "No violations data provided. Ensure upstream uiux-analyzer completed successfully.",
-      prioritizedFixes: [],
-      estimatedEffort: "N/A",
-    };
+/** A lone `__rotifer_error` key is this gene refusing its input (ADR-334). */
+interface Refusal {
+  __rotifer_error: { message: string };
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** How the input breaks the inputSchema in phenotype.json, or null if it doesn't. */
+function inputProblem(input: unknown): string | null {
+  if (!isObject(input)) return "input must be an object";
+  const { score, violations, passed, total, categories } = input;
+  if (score === undefined) return "missing required field 'score'";
+  if (typeof score !== "number") return "'score' must be a number";
+  if (violations === undefined) return "missing required field 'violations'";
+  if (!Array.isArray(violations)) return "'violations' must be an array";
+  for (const [i, item] of violations.entries()) {
+    if (!isObject(item)) return `'violations[${i}]' must be an object`;
+    for (const field of ["rule", "severity", "message", "category"]) {
+      if (item[field] !== undefined && typeof item[field] !== "string") {
+        return `'violations[${i}].${field}' must be a string`;
+      }
+    }
   }
+  if (passed !== undefined && !Number.isInteger(passed)) return "'passed' must be an integer";
+  if (total !== undefined && !Number.isInteger(total)) return "'total' must be an integer";
+  if (categories !== undefined && !isObject(categories)) return "'categories' must be an object";
+  return null;
+}
+
+export function express(input: ReporterInput): ReporterOutput | Refusal {
+  const problem = inputProblem(input);
+  if (problem) return { __rotifer_error: { message: problem } };
 
   const grade = scoreToGrade(input.score ?? 0);
   const sorted = [...input.violations].sort(

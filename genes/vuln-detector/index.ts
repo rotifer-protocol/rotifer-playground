@@ -180,8 +180,27 @@ function findEnclosingFunction(lines: string[], lineIndex: number): number | nul
   return null;
 }
 
-export function express(input: DetectorInput): DetectorOutput {
-  if (!input?.source || typeof input.source !== "string") {
+/** A lone `__rotifer_error` key is this gene refusing its input (ADR-334). */
+interface Refusal {
+  __rotifer_error: { message: string };
+}
+
+/** How the input breaks the inputSchema in phenotype.json, or null if it doesn't. */
+function inputProblem(input: unknown): string | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return "input must be an object";
+  const { source, filename } = input as Record<string, unknown>;
+  if (source === undefined) return "missing required field 'source'";
+  if (typeof source !== "string") return "'source' must be a string";
+  if (filename !== undefined && typeof filename !== "string") return "'filename' must be a string";
+  return null;
+}
+
+export function express(input: DetectorInput): DetectorOutput | Refusal {
+  const problem = inputProblem(input);
+  if (problem) return { __rotifer_error: { message: problem } };
+
+  // An empty string is allowed by the schema, and has nothing to analyze.
+  if (!input.source) {
     return {
       vulnerabilities: [],
       riskScore: 0,

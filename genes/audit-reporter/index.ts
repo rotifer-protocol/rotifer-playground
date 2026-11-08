@@ -103,14 +103,34 @@ function buildRecommendations(vulns: Vulnerability[], summary?: string): string[
   return recs;
 }
 
-export function express(input: ReporterInput): ReporterOutput {
-  if (!input || !Array.isArray(input.vulnerabilities)) {
-    return {
-      report: "No vulnerability data provided. Ensure upstream vuln-detector completed successfully.",
-      executiveSummary: "No data",
-      recommendations: [],
-    };
+/** A lone `__rotifer_error` key is this gene refusing its input (ADR-334). */
+interface Refusal {
+  __rotifer_error: { message: string };
+}
+
+/** How the input breaks the inputSchema in phenotype.json, or null if it doesn't. */
+function inputProblem(input: unknown): string | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return "input must be an object";
+  const { vulnerabilities, riskScore, summary } = input as Record<string, unknown>;
+  if (vulnerabilities === undefined) return "missing required field 'vulnerabilities'";
+  if (!Array.isArray(vulnerabilities)) return "'vulnerabilities' must be an array";
+  for (const [i, item] of vulnerabilities.entries()) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return `'vulnerabilities[${i}]' must be an object`;
+    for (const field of ["type", "severity", "location", "description", "recommendation"]) {
+      const value = (item as Record<string, unknown>)[field];
+      if (value !== undefined && typeof value !== "string") return `'vulnerabilities[${i}].${field}' must be a string`;
+    }
   }
+  if (riskScore === undefined) return "missing required field 'riskScore'";
+  if (typeof riskScore !== "number") return "'riskScore' must be a number";
+  if (summary === undefined) return "missing required field 'summary'";
+  if (typeof summary !== "string") return "'summary' must be a string";
+  return null;
+}
+
+export function express(input: ReporterInput): ReporterOutput | Refusal {
+  const problem = inputProblem(input);
+  if (problem) return { __rotifer_error: { message: problem } };
 
   const executiveSummary = buildExecutiveSummary(
     input.vulnerabilities,

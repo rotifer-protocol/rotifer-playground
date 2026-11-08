@@ -2,7 +2,7 @@
   "name": "audit-reporter",
   "version": "0.2.0",
   "domain": "web3.reporting",
-  "fidelity": "Hybrid",
+  "fidelity": "Native",
   "description": "Generate structured Markdown audit reports from vulnerability scan results. Produces executive summary, findings table with severity badges, prioritized recommendations, and disclaimer.",
   "author": "Rotifer Protocol Contributors",
   "license": "Apache-2.0",
@@ -40,10 +40,6 @@
   "tags": ["audit", "report", "security", "web3", "markdown", "smart-contract"],
   "dependencies": [],
   "transparency": "Open",
-  "network": {
-    "allowedDomains": [],
-    "maxRequestsPerExecution": 0
-  },
   "semanticRequirements": {
     "timeModel": "Sync",
     "concurrencyModel": "Stateless",

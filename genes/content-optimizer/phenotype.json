@@ -2,7 +2,7 @@
   "name": "content-optimizer",
   "version": "0.2.0",
   "domain": "quality.content",
-  "fidelity": "Hybrid",
+  "fidelity": "Native",
   "description": "Generates prioritized content optimization suggestions based on quality analysis results — improves readability, virality, and structure",
   "author": "Rotifer Protocol Contributors",
   "license": "Apache-2.0",
@@ -57,13 +57,8 @@
   },
   "displayField": "estimatedImpact",
   "tags": ["content", "optimization", "writing", "suggestions"],
-  "dependencies": ["content-quality-analyzer"],
+  "dependencies": [],
   "transparency": "Open",
-  "network": {
-    "allowedDomains": [],
-    "maxRequestsPerExecution": 0,
-    "timeoutMs": 5000
-  },
   "semanticRequirements": {
     "timeModel": "Sync",
     "concurrencyModel": "Stateless",

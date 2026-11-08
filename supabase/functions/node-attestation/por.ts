@@ -206,6 +206,17 @@ export interface SigningKey {
   key: CryptoKey; // Ed25519 private key
 }
 
+/** The POR_SIGNING_KEY secret as an object. The error never repeats the text: JSON.parse's own would. */
+export function parseSigningKey(text: string): JsonWebKey {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error("POR_SIGNING_KEY is not JSON");
+  }
+  return value as JsonWebKey;
+}
+
 /**
  * The signing key from a private OKP/Ed25519 JWK that carries a `kid`.
  * Rejects anything else, so a misconfigured secret fails at start-up, not

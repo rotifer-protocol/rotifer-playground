@@ -33,20 +33,31 @@ function fail(message: string): never {
   Deno.exit(1);
 }
 
-/** "-" reads standard input (once), so a key never has to be written to a file. */
+function readText(path: string): string {
+  if (path !== "-") return Deno.readTextFileSync(path);
+  const chunks: Uint8Array[] = [];
+  const buf = new Uint8Array(4096);
+  for (let n; (n = Deno.stdin.readSync(buf)) !== null;) chunks.push(buf.slice(0, n));
+  const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  chunks.reduce((at, c) => (all.set(c, at), at + c.length), 0);
+  return new TextDecoder().decode(all);
+}
+
+/**
+ * "-" reads standard input (once), so a key never has to be written to a file.
+ * A parse error names the input only: JSON.parse's own message quotes the text.
+ */
 function readJson(path: string): unknown {
+  let text: string;
   try {
-    if (path === "-") {
-      const chunks: Uint8Array[] = [];
-      const buf = new Uint8Array(4096);
-      for (let n; (n = Deno.stdin.readSync(buf)) !== null;) chunks.push(buf.slice(0, n));
-      const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
-      chunks.reduce((at, c) => (all.set(c, at), at + c.length), 0);
-      return JSON.parse(new TextDecoder().decode(all));
-    }
-    return JSON.parse(Deno.readTextFileSync(path));
+    text = readText(path);
   } catch (err) {
     fail(`cannot read ${path}: ${(err as Error).message}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    fail(`${path} is not JSON`);
   }
 }
 

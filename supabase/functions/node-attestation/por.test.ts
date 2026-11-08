@@ -11,6 +11,7 @@ import {
   ISSUER,
   type Jwk,
   libp2pPublicKey,
+  parseSigningKey,
   peerIdFromPublicKey,
   pseudonym,
   signToken,
@@ -329,4 +330,25 @@ Deno.test("a signature with a small-order R, or with S + L, is refused even thou
   assert(await verifyNodeSignature(libp2pPublicKey(A), message, honest));
   const malleated = sigWith(honest.slice(0, 32), toBytes(toNumber(honest.slice(32)) + L));
   assertEquals(await verifyNodeSignature(libp2pPublicKey(A), message, malleated), false);
+});
+
+Deno.test("a signing key that is not JSON is reported without any of its text", () => {
+  // JSON.parse quotes the text around the error, which would put part of the
+  // private key into the function's log. These values are made up.
+  for (const text of ['{"kty":"OKP","d":FAKEPRIVATEKEYTEXT}', "FAKEPRIVATEKEYTEXT", '{"d":"FAKEPRIVATEKEYTEXT"']) {
+    let message = "";
+    try {
+      parseSigningKey(text);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    assertEquals(message, "POR_SIGNING_KEY is not JSON");
+  }
+  assertEquals(parseSigningKey('{"kty":"OKP"}'), { kty: "OKP" });
+});
+
+Deno.test("index.ts parses the signing key only through parseSigningKey", async () => {
+  const src = await Deno.readTextFile(new URL("index.ts", import.meta.url));
+  assert(src.includes('parseSigningKey(required("POR_SIGNING_KEY"))'));
+  assertEquals(src.includes("JSON.parse"), false);
 });

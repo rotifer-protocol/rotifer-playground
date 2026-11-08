@@ -24,7 +24,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import postgres from "npm:postgres@3.4.7";
 import { type Deps, errorResponse, handle, PorError } from "./handler.ts";
-import { fromB64url, importPseudonymKey, importSigningJwk } from "./por.ts";
+import { fromB64url, importPseudonymKey, importSigningJwk, parseSigningKey } from "./por.ts";
 import { issuerUser, postgresStore } from "./store.ts";
 
 function required(name: string): string {
@@ -39,13 +39,7 @@ async function configure(): Promise<Deps> {
   const dbUrl = required("POR_DB_URL");
   issuerUser(dbUrl);
   const aud = required("NODE_ATTESTATION_AUD");
-  let jwk: JsonWebKey;
-  try {
-    jwk = JSON.parse(required("POR_SIGNING_KEY"));
-  } catch (e) {
-    throw new Error(`POR_SIGNING_KEY: ${(e as Error).message}`);
-  }
-  const signer = await importSigningJwk(jwk);
+  const signer = await importSigningJwk(parseSigningKey(required("POR_SIGNING_KEY")));
   const rawPseudo = fromB64url(required("POR_PSEUDONYM_KEY"));
   if (rawPseudo === null) throw new Error("POR_PSEUDONYM_KEY is not base64url");
   const pseudonymKey = await importPseudonymKey(rawPseudo);

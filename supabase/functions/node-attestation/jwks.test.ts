@@ -113,6 +113,13 @@ Deno.test({
       assertEquals(refused.stdout.length, 0);
       const why = new TextDecoder().decode(refused.stderr);
       assert(why.includes("private key"), why);
+
+      // A file that is not JSON is named, and none of its text is repeated.
+      const notJson = await run(["--key", "-", "--revoked", `${dir}/revoked.json`], '{"kty":"OKP","d":FAKEPRIVATEKEYTEXT}');
+      assertEquals(notJson.success, false);
+      const notJsonWhy = new TextDecoder().decode(notJson.stderr);
+      assert(notJsonWhy.includes("is not JSON"), notJsonWhy);
+      assertEquals(notJsonWhy.includes("FAKEPRIVAT"), false, notJsonWhy);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

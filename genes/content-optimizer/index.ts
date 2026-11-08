@@ -31,7 +31,7 @@ interface ScoredSuggestion {
 
 function analyzeReadability(r: OptimizerInput["readability"]): ScoredSuggestion[] {
   const suggestions: ScoredSuggestion[] = [];
-  const grade = r.grade.toLowerCase();
+  const grade = (r.grade ?? "").toLowerCase();
 
   if (grade === "academic" || grade === "dense") {
     suggestions.push({
@@ -44,7 +44,7 @@ function analyzeReadability(r: OptimizerInput["readability"]): ScoredSuggestion[
     });
   }
 
-  if (r.language.toLowerCase() === "english" && r.score < 50) {
+  if ((r.language ?? "").toLowerCase() === "english" && r.score < 50) {
     suggestions.push({
       text: "Simplify vocabulary — use common words to improve Flesch readability score above 50",
       impact: 20,
@@ -77,7 +77,8 @@ function analyzeVirality(v: OptimizerInput["virality"]): ScoredSuggestion[] {
   const suggestions: ScoredSuggestion[] = [];
 
   if (v.factors) {
-    const weak = v.factors.filter((f) => f.score < 10).sort((a, b) => a.score - b.score);
+    // The schema does not say what a factor is, so one can be null or have no name.
+    const weak = v.factors.filter((f) => f?.score < 10).sort((a, b) => a.score - b.score);
 
     const factorTips: Record<string, string> = {
       emotion: "Add emotionally resonant language — use storytelling or vivid examples",
@@ -91,13 +92,15 @@ function analyzeVirality(v: OptimizerInput["virality"]): ScoredSuggestion[] {
     };
 
     for (const factor of weak) {
-      const key = factor.name.toLowerCase();
-      const tip = factorTips[key];
+      const named = typeof factor.name === "string";
+      const key = named ? factor.name.toLowerCase() : "";
+      // A factor can be named "constructor", which a plain object answers for itself.
+      const tip = Object.prototype.hasOwnProperty.call(factorTips, key) ? factorTips[key] : undefined;
       if (tip) {
         suggestions.push({ text: tip, impact: 12 });
       } else {
         suggestions.push({
-          text: `Improve "${factor.name}" factor (currently ${factor.score}/100) — strengthen this dimension`,
+          text: `Improve ${named ? `"${factor.name}"` : "an unnamed"} factor (currently ${factor.score}/100) — strengthen this dimension`,
           impact: 8,
         });
       }
@@ -116,7 +119,7 @@ function analyzeVirality(v: OptimizerInput["virality"]): ScoredSuggestion[] {
 
 function analyzeSentiment(s: OptimizerInput["sentiment"]): ScoredSuggestion[] {
   const suggestions: ScoredSuggestion[] = [];
-  const tone = s.tone.toLowerCase();
+  const tone = (s.tone ?? "").toLowerCase();
 
   if (tone === "negative" || s.score < -0.3) {
     suggestions.push({
@@ -216,14 +219,59 @@ function estimateImpact(
   return "Low (+5-10 points — content is already in good shape)";
 }
 
-export function express(input: OptimizerInput): OptimizerOutput {
-  if (!input?.readability || !input?.structure) {
-    return {
-      optimizedSuggestions: ["No content analysis data provided. Ensure upstream content-quality-analyzer completed successfully."],
-      priorityActions: [],
-      estimatedImpact: "N/A",
-    };
+/** A lone `__rotifer_error` key is this gene refusing its input (ADR-334). */
+interface Refusal {
+  __rotifer_error: { message: string };
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+// The four required sections of the inputSchema in phenotype.json.
+const SECTIONS: Record<string, Record<string, string>> = {
+  readability: { score: "number", grade: "string", language: "string" },
+  virality: { score: "number", factors: "array" },
+  sentiment: { tone: "string", score: "number" },
+  structure: {
+    paragraphs: "integer",
+    avgLength: "number",
+    hasHeadings: "boolean",
+    codeBlocks: "integer",
+    links: "integer",
+    wordCount: "integer",
+  },
+};
+
+function hasType(value: unknown, type: string): boolean {
+  if (type === "array") return Array.isArray(value);
+  if (type === "integer") return Number.isInteger(value);
+  return typeof value === type;
+}
+
+/** How the input breaks the inputSchema in phenotype.json, or null if it doesn't. */
+function inputProblem(input: unknown): string | null {
+  if (!isObject(input)) return "input must be an object";
+  for (const [section, fields] of Object.entries(SECTIONS)) {
+    const value = input[section];
+    if (value === undefined) return `missing required field '${section}'`;
+    if (!isObject(value)) return `'${section}' must be an object`;
+    for (const [field, type] of Object.entries(fields)) {
+      if (value[field] !== undefined && !hasType(value[field], type)) {
+        return `'${section}.${field}' must be ${type === "integer" ? "an" : "a"} ${type}`;
+      }
+    }
   }
+  const { recommendations } = input;
+  if (recommendations !== undefined) {
+    if (!Array.isArray(recommendations)) return "'recommendations' must be an array";
+    if (recommendations.some((r) => typeof r !== "string")) return "'recommendations' must contain only strings";
+  }
+  return null;
+}
+
+export function express(input: OptimizerInput): OptimizerOutput | Refusal {
+  const problem = inputProblem(input);
+  if (problem) return { __rotifer_error: { message: problem } };
 
   const allSuggestions: ScoredSuggestion[] = [
     ...analyzeReadability(input.readability),
@@ -243,7 +291,14 @@ export function express(input: OptimizerInput): OptimizerOutput {
   const optimizedSuggestions = allSuggestions.map((s) => s.text);
   const priorityActions = allSuggestions.slice(0, 3).map((s) => s.text);
 
-  const impact = estimateImpact(
+  // Fields the schema leaves optional. Without them there is no basis for an estimate.
+  const unknown = [
+    input.readability.grade === undefined && "readability.grade",
+    input.readability.language === undefined && "readability.language",
+    input.sentiment.tone === undefined && "sentiment.tone",
+  ].filter(Boolean);
+
+  const impact = unknown.length > 0 ? `Unknown (the analysis did not include ${unknown.join(", ")})` : estimateImpact(
     input.readability.score,
     input.virality.score,
     input.sentiment.score,

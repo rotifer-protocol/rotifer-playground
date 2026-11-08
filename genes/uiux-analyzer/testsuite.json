@@ -1,0 +1,50 @@
+{
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  },
+  "testCases": [
+    {
+      "input": {
+        "html": "<html><body><img src=\"logo.png\"><div onclick=\"go()\">Open</div></body></html>"
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "score",
+          "violations"
+        ],
+        "properties": {
+          "violations": {
+            "type": "array",
+            "contains": {
+              "type": "object",
+              "required": [
+                "rule"
+              ],
+              "properties": {
+                "rule": {
+                  "const": "img-alt"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "input": {}
+    },
+    {
+      "input": {
+        "html": 42
+      }
+    },
+    {
+      "input": {
+        "html": "<p>x</p>",
+        "format": "verbose"
+      }
+    }
+  ]
+}

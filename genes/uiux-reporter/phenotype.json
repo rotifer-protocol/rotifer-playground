@@ -2,7 +2,7 @@
   "name": "uiux-reporter",
   "version": "0.2.0",
   "domain": "quality.uiux",
-  "fidelity": "Hybrid",
+  "fidelity": "Native",
   "description": "Transforms UI/UX analyzer violations into prioritized natural-language optimization report with effort estimates",
   "author": "Rotifer Protocol Contributors",
   "license": "Apache-2.0",
@@ -39,13 +39,8 @@
   },
   "displayField": "report",
   "tags": ["uiux", "report", "accessibility", "optimization"],
-  "dependencies": ["uiux-analyzer"],
+  "dependencies": [],
   "transparency": "Open",
-  "network": {
-    "allowedDomains": [],
-    "maxRequestsPerExecution": 0,
-    "timeoutMs": 5000
-  },
   "semanticRequirements": {
     "timeModel": "Sync",
     "concurrencyModel": "Stateless",

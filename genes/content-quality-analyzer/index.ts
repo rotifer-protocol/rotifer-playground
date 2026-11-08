@@ -452,8 +452,32 @@ function generateRecommendations(
   return recs;
 }
 
-export function express(input: ContentInput): ContentOutput {
-  if (!input?.text || typeof input.text !== "string") {
+/** A lone `__rotifer_error` key is this gene refusing its input (ADR-334). */
+interface Refusal {
+  __rotifer_error: { message: string };
+}
+
+const PLATFORMS = ["dev.to", "medium", "hashnode", "blog", "general"];
+
+/** How the input breaks the inputSchema in phenotype.json, or null if it doesn't. */
+function inputProblem(input: unknown): string | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return "input must be an object";
+  const { text, platform, targetAudience } = input as Record<string, unknown>;
+  if (text === undefined) return "missing required field 'text'";
+  if (typeof text !== "string") return "'text' must be a string";
+  if (platform !== undefined && !PLATFORMS.includes(platform as string)) {
+    return `'platform' must be one of: ${PLATFORMS.join(", ")}`;
+  }
+  if (targetAudience !== undefined && typeof targetAudience !== "string") return "'targetAudience' must be a string";
+  return null;
+}
+
+export function express(input: ContentInput): ContentOutput | Refusal {
+  const problem = inputProblem(input);
+  if (problem) return { __rotifer_error: { message: problem } };
+
+  // An empty string is allowed by the schema, and has nothing to analyze.
+  if (!input.text) {
     return {
       readability: { score: 0, grade: "N/A", language: "unknown" },
       virality: { score: 0, factors: [] },

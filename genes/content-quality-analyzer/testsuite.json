@@ -1,0 +1,63 @@
+{
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  },
+  "testCases": [
+    {
+      "input": {
+        "text": "# Why zebras cross rivers\n\nZebras crossed the river in 2026. Researchers counted 417 of them.\n\n```js\nconsole.log(1)\n```\n",
+        "platform": "dev.to"
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "readability",
+          "structure"
+        ],
+        "properties": {
+          "readability": {
+            "type": "object",
+            "required": [
+              "language"
+            ],
+            "properties": {
+              "language": {
+                "const": "English"
+              }
+            }
+          },
+          "structure": {
+            "type": "object",
+            "required": [
+              "hasHeadings",
+              "codeBlocks"
+            ],
+            "properties": {
+              "hasHeadings": {
+                "const": true
+              },
+              "codeBlocks": {
+                "const": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "input": {}
+    },
+    {
+      "input": {
+        "text": 42
+      }
+    },
+    {
+      "input": {
+        "text": "hello",
+        "platform": "myspace"
+      }
+    }
+  ]
+}

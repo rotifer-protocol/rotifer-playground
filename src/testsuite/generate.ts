@@ -55,5 +55,27 @@ export function generateTestInput(schema: any, seed: number): Record<string, any
       input[key] = seed % 2 === 0;
     }
   }
+  fillRequiredFields(input, schema, seed);
   return input;
+}
+
+/**
+ * Adds the required fields the loop above has no branch for, so an input is not
+ * illegal merely because a required field is an object or an integer.
+ *
+ * Runs after the loop and never touches its rng: an input that was already
+ * complete stays byte-identical, which is what keeps S_r reproducible.
+ */
+function fillRequiredFields(input: Record<string, any>, schema: any, seed: number): void {
+  for (const key of schema.required ?? []) {
+    if (input[key] !== undefined) continue;
+    const prop = schema.properties?.[key];
+    if (prop?.type === "object" && prop.properties) {
+      input[key] = generateTestInput(prop, seed);
+    } else if (prop?.type === "integer") {
+      const min = Math.ceil(prop.minimum ?? 1);
+      const max = Math.floor(prop.maximum ?? 100);
+      input[key] = Math.min(min + seed, max);
+    }
+  }
 }

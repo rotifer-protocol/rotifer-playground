@@ -12,6 +12,7 @@ import { buildGeneExecutor, findAgent, printProtocolInsights } from "./agent-run
 import { tryLoadBinding } from "../utils/binding.js";
 import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
 import { createGatewayFetch } from "../runtime/network-gateway.js";
+import { readErrorEnvelope } from "../testsuite/gate.js";
 import { diagnoseLocalGene, diagnoseRegistryGene, type GeneDiagnosis } from "../cloud/gene-availability.js";
 
 /**
@@ -59,7 +60,7 @@ export const TEMPLATES: HelloTemplate[] = [
     description: "Stop your UI from looking AI-generated",
     genes: ["uiux-analyzer", "uiux-reporter"],
     fallbackGenes: ["genesis-web-search"],
-    availability: "unavailable",
+    availability: "cloud",
     composition: "Seq",
     exampleInput: { html: "<html><body><img src='logo.png'><div style='color:red'><div style='font-size:10px'><input type='text'></div></div></body></html>", css: "body { color: white; background: #eee; } .btn { z-index: 999; } .card { z-index: 100; } .modal { z-index: 50; } .nav { z-index: 200; } .popup { z-index: 300; } .overlay { z-index: 400; }" },
     section: "quick",
@@ -71,7 +72,7 @@ export const TEMPLATES: HelloTemplate[] = [
     description: "Write articles that actually go viral",
     genes: ["content-quality-analyzer", "content-optimizer"],
     fallbackGenes: ["genesis-web-search"],
-    availability: "unavailable",
+    availability: "cloud",
     composition: "Seq",
     exampleInput: { text: "# How to Build Your First AI Agent in 5 Minutes\n\nHave you ever wanted to create an AI agent but felt overwhelmed? In this guide, I'll show you exactly how to do it.\n\n## Step 1: Install Rotifer\n\n```bash\nnpm install -g @rotifer/playground\n```\n\n## Step 2: Initialize\n\nRun `rotifer init my-agent` and you're ready to go!\n\nThis amazing framework makes it incredibly easy to get started.", platform: "dev.to" },
     section: "quick",
@@ -111,7 +112,7 @@ export const TEMPLATES: HelloTemplate[] = [
     description: "Contract audit + chain data",
     genes: ["solidity-parser", "vuln-detector", "audit-reporter"],
     fallbackGenes: ["genesis-code-format", "genesis-file-read"],
-    availability: "unavailable",
+    availability: "cloud",
     composition: "Seq",
     exampleInput: { source: "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n\ncontract SimpleToken {\n    mapping(address => uint256) public balances;\n\n    function deposit() public payable {\n        balances[msg.sender] += msg.value;\n    }\n\n    function withdraw(uint256 amount) public {\n        require(balances[msg.sender] >= amount);\n        (bool success, ) = msg.sender.call{value: amount}(\"\");\n        require(success);\n        balances[msg.sender] -= amount;\n    }\n}" },
     section: "power",
@@ -265,8 +266,15 @@ export const helloCommand = new Command("hello")
 
     console.log();
     if (pipeline.failed) {
+      // A scan that found nothing reaches the first gene as an empty input, and
+      // "missing required field" does not tell anyone what to point --dir at.
+      const nextStep = options.dir && selected.fileMapping && !hasMeaningfulHelloInput(input)
+        ? `No ${Object.keys(selected.fileMapping).join(", ")} files in ${options.dir}. ` +
+          "Point --dir at a directory that has them, or pass one with --file <path>."
+        : undefined;
       display.error(
-        `Execution failed at ${pipeline.failedGene ?? "unknown gene"}: ${pipeline.error ?? "unknown error"}`
+        `Execution failed at ${pipeline.failedGene ?? "unknown gene"}: ${pipeline.error ?? "unknown error"}`,
+        nextStep,
       );
       display.keyValue("Duration", `${elapsed.toFixed(0)}ms`);
       display.hint("Fix the failing gene or input, then re-run this template.");
@@ -277,6 +285,7 @@ export const helloCommand = new Command("hello")
           template: selected.id,
           failed_gene: pipeline.failedGene ?? null,
           error: pipeline.error ?? "unknown error",
+          ...(nextStep ? { next_step: nextStep } : {}),
         });
       }
       process.exit(1);
@@ -961,12 +970,27 @@ export async function executeGenomePipeline(
 
       // A Hybrid gene reaches the network only through the gateway on its
       // second argument, as `run`, `test` and `agent run` give it (#444).
+      let output: unknown;
       if (phenotype.fidelity === "Hybrid" && phenotype.network) {
         const { gatewayFetch } = createGatewayFetch(phenotype.network);
-        current = await mod.express(current, { gatewayFetch });
+        output = await mod.express(current, { gatewayFetch });
       } else {
-        current = await mod.express(current);
+        output = await mod.express(current);
       }
+
+      // A lone __rotifer_error is the gene refusing (ADR-334). The sandbox
+      // reports it as INVALID_INPUT; read it the same way here, rather than
+      // as a result to pass on.
+      const refusal = readErrorEnvelope(output);
+      if (refusal) {
+        hasFailed = true;
+        failedGene = geneName;
+        error = forOutput(refusal);
+        display.error(`${step} ${geneName} failed: ${error}`);
+        continue;
+      }
+
+      current = output;
       display.success(`${step} ${geneName} completed`);
     } catch (err: any) {
       error = forOutput(err.message);

@@ -1,0 +1,54 @@
+{
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  },
+  "testCases": [
+    {
+      "input": {
+        "source": "pragma solidity ^0.8.0;\ncontract Vault {\n  function kill() public {\n    require(tx.origin == msg.sender);\n    selfdestruct(payable(msg.sender));\n  }\n}\n"
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "vulnerabilities",
+          "riskScore"
+        ],
+        "properties": {
+          "vulnerabilities": {
+            "type": "array",
+            "contains": {
+              "type": "object",
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "const": "Selfdestruct"
+                }
+              }
+            }
+          },
+          "riskScore": {
+            "type": "number",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    {
+      "input": {}
+    },
+    {
+      "input": {
+        "source": 42
+      }
+    },
+    {
+      "input": {
+        "source": "contract A {}",
+        "filename": 7
+      }
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  },
+  "testCases": [
+    {
+      "input": {
+        "source": "pragma solidity ^0.8.0;\ncontract Vault {\n  uint256 public total;\n  event Paid(address to);\n  function pay() public {}\n}\n"
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "contracts",
+          "functions",
+          "events"
+        ],
+        "properties": {
+          "contracts": {
+            "type": "array",
+            "contains": {
+              "type": "object",
+              "required": [
+                "name"
+              ],
+              "properties": {
+                "name": {
+                  "const": "Vault"
+                }
+              }
+            }
+          },
+          "functions": {
+            "type": "array",
+            "contains": {
+              "type": "object",
+              "required": [
+                "name"
+              ],
+              "properties": {
+                "name": {
+                  "const": "pay"
+                }
+              }
+            }
+          },
+          "events": {
+            "type": "array",
+            "contains": {
+              "type": "object",
+              "required": [
+                "name"
+              ],
+              "properties": {
+                "name": {
+                  "const": "Paid"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "input": {}
+    },
+    {
+      "input": {
+        "source": 42
+      }
+    },
+    {
+      "input": {
+        "source": "contract A {}",
+        "filename": 7
+      }
+    }
+  ]
+}

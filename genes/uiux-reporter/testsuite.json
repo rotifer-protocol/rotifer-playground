@@ -1,0 +1,70 @@
+{
+  "config": {
+    "fuzzIterations": 10,
+    "seed": 1
+  },
+  "testCases": [
+    {
+      "input": {
+        "score": 60,
+        "passed": 3,
+        "total": 5,
+        "categories": {
+          "accessibility": 50
+        },
+        "violations": [
+          {
+            "rule": "img-alt",
+            "severity": "critical",
+            "message": "Image has no alt text",
+            "category": "accessibility"
+          },
+          {
+            "rule": "small-font",
+            "severity": "warning",
+            "message": "Font is below 12px",
+            "category": "visual"
+          }
+        ]
+      },
+      "expectedSchema": {
+        "type": "object",
+        "required": [
+          "report",
+          "prioritizedFixes"
+        ],
+        "properties": {
+          "report": {
+            "type": "string",
+            "pattern": "Grade D"
+          },
+          "prioritizedFixes": {
+            "type": "array",
+            "minItems": 2
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "violations": []
+      }
+    },
+    {
+      "input": {
+        "score": "high",
+        "violations": []
+      }
+    },
+    {
+      "input": {
+        "score": 60,
+        "violations": [
+          {
+            "rule": 7
+          }
+        ]
+      }
+    }
+  ]
+}

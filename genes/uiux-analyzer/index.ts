@@ -509,8 +509,30 @@ function computeCategoryScores(
   return scores as { accessibility: number; visual: number; semantics: number; consistency: number };
 }
 
-export function express(input: AnalyzerInput): AnalyzerOutput {
-  if (!input?.html || typeof input.html !== "string") {
+/** A lone `__rotifer_error` key is this gene refusing its input (ADR-334). */
+interface Refusal {
+  __rotifer_error: { message: string };
+}
+
+/** How the input breaks the inputSchema in phenotype.json, or null if it doesn't. */
+function inputProblem(input: unknown): string | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return "input must be an object";
+  const { html, css, format } = input as Record<string, unknown>;
+  if (html === undefined) return "missing required field 'html'";
+  if (typeof html !== "string") return "'html' must be a string";
+  if (css !== undefined && typeof css !== "string") return "'css' must be a string";
+  if (format !== undefined && format !== "summary" && format !== "detailed") {
+    return "'format' must be 'summary' or 'detailed'";
+  }
+  return null;
+}
+
+export function express(input: AnalyzerInput): AnalyzerOutput | Refusal {
+  const problem = inputProblem(input);
+  if (problem) return { __rotifer_error: { message: problem } };
+
+  // An empty string is allowed by the schema, and has nothing to analyze.
+  if (!input.html) {
     return {
       score: 0,
       violations: [{

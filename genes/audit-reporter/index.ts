@@ -27,8 +27,13 @@ const SEVERITY_BADGE: Record<string, string> = {
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low"];
 
+// Severity comes from input, and "constructor" is a key every plain object answers.
+function severityBadge(severity: string): string {
+  return Object.prototype.hasOwnProperty.call(SEVERITY_BADGE, severity) ? SEVERITY_BADGE[severity] : severity;
+}
+
 function countBySeverity(vulns: Vulnerability[]): Record<string, number> {
-  const counts: Record<string, number> = {};
+  const counts: Record<string, number> = Object.create(null);
   for (const v of vulns) {
     counts[v.severity] = (counts[v.severity] ?? 0) + 1;
   }
@@ -72,7 +77,7 @@ function buildFindingsTable(vulns: Vulnerability[]): string {
 
   for (let i = 0; i < sorted.length; i++) {
     const v = sorted[i];
-    const badge = SEVERITY_BADGE[v.severity] ?? v.severity;
+    const badge = severityBadge(v.severity);
     lines.push(`| ${i + 1} | ${badge} | ${v.type} | ${v.location} | ${v.description} |`);
   }
 
@@ -97,20 +102,40 @@ function buildRecommendations(vulns: Vulnerability[], summary?: string): string[
     const key = `${v.type}:${v.recommendation}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    recs.push(`[${(SEVERITY_BADGE[v.severity] ?? v.severity)}] ${v.type}: ${v.recommendation}`);
+    recs.push(`[${severityBadge(v.severity)}] ${v.type}: ${v.recommendation}`);
   }
 
   return recs;
 }
 
-export function express(input: ReporterInput): ReporterOutput {
-  if (!input || !Array.isArray(input.vulnerabilities)) {
-    return {
-      report: "No vulnerability data provided. Ensure upstream vuln-detector completed successfully.",
-      executiveSummary: "No data",
-      recommendations: [],
-    };
+/** A lone `__rotifer_error` key is this gene refusing its input (ADR-334). */
+interface Refusal {
+  __rotifer_error: { message: string };
+}
+
+/** How the input breaks the inputSchema in phenotype.json, or null if it doesn't. */
+function inputProblem(input: unknown): string | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return "input must be an object";
+  const { vulnerabilities, riskScore, summary } = input as Record<string, unknown>;
+  if (vulnerabilities === undefined) return "missing required field 'vulnerabilities'";
+  if (!Array.isArray(vulnerabilities)) return "'vulnerabilities' must be an array";
+  for (const [i, item] of vulnerabilities.entries()) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return `'vulnerabilities[${i}]' must be an object`;
+    for (const field of ["type", "severity", "location", "description", "recommendation"]) {
+      const value = (item as Record<string, unknown>)[field];
+      if (value !== undefined && typeof value !== "string") return `'vulnerabilities[${i}].${field}' must be a string`;
+    }
   }
+  if (riskScore === undefined) return "missing required field 'riskScore'";
+  if (typeof riskScore !== "number") return "'riskScore' must be a number";
+  if (summary === undefined) return "missing required field 'summary'";
+  if (typeof summary !== "string") return "'summary' must be a string";
+  return null;
+}
+
+export function express(input: ReporterInput): ReporterOutput | Refusal {
+  const problem = inputProblem(input);
+  if (problem) return { __rotifer_error: { message: problem } };
 
   const executiveSummary = buildExecutiveSummary(
     input.vulnerabilities,

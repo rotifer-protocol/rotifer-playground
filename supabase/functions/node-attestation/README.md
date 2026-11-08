@@ -136,9 +136,9 @@ in order:
    last one remain. To use another number, change the migration before pushing
    it. There is no per-IP limit yet: it needs confirming which
    `x-forwarded-for` value this platform lets a caller set.
-6. Deploy with `--no-verify-jwt`: `verify_jwt = false` is declared in
-   `supabase/config.toml`, and a plain `supabase functions deploy` would turn
-   the gateway check back on. The function checks tokens itself
+6. Deploy with `--no-verify-jwt` as well as the `verify_jwt = false` declared
+   in `supabase/config.toml`: a deploy that does not read that file turns the
+   gateway check back on. The function checks tokens itself
    (`user-token.ts`). The project must sign user tokens with ES256; with no
    ES256 key published, every request fails. Probe after deploying: with no
    `Authorization` header, the function itself answers 401 with the code

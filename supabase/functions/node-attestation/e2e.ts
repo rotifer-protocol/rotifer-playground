@@ -1,7 +1,11 @@
 /**
  * End to end against a real local stack: the real function served by the
- * Supabase CLI (gateway JWT check on), real auth (getUser), the real database
- * with the deferred migration applied. No mocks.
+ * Supabase CLI, real auth (the function's own token check, then getUser), the
+ * real database with the deferred migration applied. No mocks.
+ *
+ * The stack's Auth must sign with ES256, the only algorithm the function
+ * accepts: set [auth] signing_keys_path in a throwaway copy of config.toml
+ * (SUPABASE_WORKDIR), with a key from `supabase gen signing-key`.
  *
  *   supabase start                              (gotrue, kong, postgrest, edge-runtime needed)
  *   psql "$DB_URL" -f supabase/migrations-deferred-v095-por/20261102200000_node_attestation.sql
@@ -243,6 +247,9 @@ try {
   // 6. not signed in
   const anon = await call("challenge", null, {});
   check(anon.status === 401, "no token: 401", `${anon.status}`);
+  check((anon.body.error as { code?: string } | undefined)?.code === "POR_UNAUTHENTICATED", "the function itself answers it, not the gateway", JSON.stringify(anon.body));
+  const forged = await call("challenge", `${b64url(enc.encode('{"alg":"none"}'))}.${b64url(enc.encode('{"role":"authenticated","sub":"x","exp":9999999999}'))}.`, {});
+  check(forged.status === 401, "alg none: 401", `${forged.status}`);
 
   // 7. a signed-in account cannot reach the database functions directly
   //    (that would skip the signature check), through the REST API either

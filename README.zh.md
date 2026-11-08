@@ -162,7 +162,7 @@ playground/
 | 命令 | 说明 |
 |------|------|
 | `rotifer init [workspace-name]` | 初始化新的 Rotifer Agent 工作区 |
-| `rotifer hello [--template <id>]` | 在 Rotifer Agent 工作区内从精选模板创建并运行一个预设 agent |
+| `rotifer hello [--template <id>]` | 在 Rotifer Agent 工作区内从精选模板创建并运行一个预设 agent。`--list-templates` 显示哪些模板在当前工作区能跑；缺基因的模板以退出码 1 结束，并逐个说明能否安装 |
 | `rotifer scan [path]` | 扫描候选基因和本地技能 |
 | `rotifer wrap <gene-name>` | 将函数或 `SKILL.md` 包装为基因 |
 | `rotifer test [gene-name]` | 在沙箱中测试基因 |

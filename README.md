@@ -164,7 +164,7 @@ Run `rotifer --help` for the grouped command list. The commands below cover the 
 | Command | Description |
 |---------|-------------|
 | `rotifer init [workspace-name]` | Initialize a new Agent workspace with Genesis genes |
-| `rotifer hello [--template <id>]` | Create and run a preset agent from curated templates inside a Rotifer Agent workspace |
+| `rotifer hello [--template <id>]` | Create and run a preset agent from curated templates inside a Rotifer Agent workspace. `--list-templates` shows which can run here; a template missing genes exits 1 and says what can be installed |
 | `rotifer scan [path]` | Scan for candidate genes and local skills |
 | `rotifer wrap <gene-name>` | Wrap a function or SKILL.md as a gene (offers to publish, default yes — see [Publishing by default](#publishing-by-default)) |
 | `rotifer test [gene-name]` | Test a gene (WASM sandbox preferred, `--compliance` for structural checks) |

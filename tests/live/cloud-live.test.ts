@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DEFAULT_CLOUD_ANON_KEY } from "../../src/cloud/types.js";
 import { announceSimulation, simulatedService, type SimulatedService } from "./simulate.js";
+import { diagnoseRegistryGene, OFFICIAL_GENE_PUBLISHER } from "../../src/cloud/gene-availability.js";
+import { TEMPLATES } from "../../src/commands/hello.js";
 
 /**
  * The real Rotifer Cloud, on a schedule (.github/workflows/live-checks.yml),
@@ -128,5 +130,31 @@ describe("the real Rotifer Cloud", () => {
     expect(Object.keys(rows[0]).sort()).toEqual([...keys].sort());
     // score is a JSON number in both (0 or 0.1157).
     expect(shape(rows[0], keys)).toEqual(shape(recorded, keys));
+  });
+
+  // What `hello` tells someone whose template is missing genes, against the
+  // real answers. A generous limit: slowness is a different failure from these.
+  const HELLO_LOOKUP_MS = 30_000;
+
+  it("hello: a published gene with code reads as installable, with a qualified command", async () => {
+    const gene = await diagnoseRegistryGene("genesis-code-format", HELLO_LOOKUP_MS);
+    expect(gene).toMatchObject({
+      status: "installable",
+      install_command: `rotifer install @${OFFICIAL_GENE_PUBLISHER}/genesis-code-format`,
+    });
+  });
+
+  it("hello: a name nobody published reads as not published", async () => {
+    const gene = await diagnoseRegistryGene("no-such-gene-rotifer-live-check", HELLO_LOOKUP_MS);
+    expect(gene).toMatchObject({ status: "not_published", install_command: null });
+  });
+
+  it("hello: every gene a `cloud` template depends on can be installed and run", async () => {
+    for (const template of TEMPLATES.filter((t) => t.availability === "cloud")) {
+      for (const name of template.genes) {
+        const gene = await diagnoseRegistryGene(name, HELLO_LOOKUP_MS);
+        expect(gene.status, `${template.id} needs ${name}: ${gene.detail}`).toBe("installable");
+      }
+    }
   });
 });

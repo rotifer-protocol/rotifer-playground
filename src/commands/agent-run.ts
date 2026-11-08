@@ -604,7 +604,7 @@ function refuseNodeExecution(geneDir: string, isTrustUnsigned: boolean): string 
   return "Cloud-installed genes cannot run via Node.js without sandbox.";
 }
 
-async function buildGeneExecutor(
+export async function buildGeneExecutor(
   geneName: string,
   geneDir: string,
   irWasmPath: string,

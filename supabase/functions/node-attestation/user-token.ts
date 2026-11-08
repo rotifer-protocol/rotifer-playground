@@ -90,10 +90,8 @@ export function userTokenCheck(fetchJwks: () => Promise<unknown>, nowSeconds: ()
 
   async function keyFor(kid: string): Promise<CryptoKey | null> {
     const now = nowSeconds();
-    if (keys === null || now - loadedAt >= CACHE_SECONDS) {
+    if (keys === null || now - loadedAt >= CACHE_SECONDS || (!keys.has(kid) && now - loadedAt >= UNKNOWN_KID_REFETCH_SECONDS)) {
       if (now - failedAt < FAILED_FETCH_RETRY_SECONDS) throw new Error("the signing keys are unavailable");
-      await load();
-    } else if (!keys.has(kid) && now - loadedAt >= UNKNOWN_KID_REFETCH_SECONDS) {
       await load();
     }
     return keys?.get(kid) ?? null;
@@ -109,6 +107,8 @@ export function userTokenCheck(fetchJwks: () => Promise<unknown>, nowSeconds: ()
     if (header.alg !== "ES256" || header.crit !== undefined || typeof header.kid !== "string" || header.kid === "") return false;
     if (typeof claims.exp !== "number" || claims.exp <= nowSeconds()) return false;
     if (claims.role !== "authenticated" || typeof claims.sub !== "string" || claims.sub === "") return false;
+    // An anonymous sign-in needs no registration, so a per-account limit would not hold.
+    if (claims.is_anonymous === true) return false;
     const signature: Bytes | null = fromB64url(parts[2]);
     if (signature === null || signature.length !== 64) return false;
     const key = await keyFor(header.kid);

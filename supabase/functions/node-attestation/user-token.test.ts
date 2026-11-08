@@ -143,6 +143,12 @@ Deno.test("a token that is not a signed-in user's: 401 without calling Auth", as
   await refused(t, `Bearer ${await token(t.key, {}, { kid: undefined })}`, "no kid");
 });
 
+Deno.test("an anonymous sign-in's token: 401 without calling Auth", async () => {
+  const t = await setup();
+  await refused(t, `Bearer ${await token(t.key, { is_anonymous: true })}`, "anonymous sign-in");
+  assertEquals((await t.send(`Bearer ${await token(t.key, { is_anonymous: false })}`)).status, 200, "a registered account's token says false");
+});
+
 Deno.test("keys are cached for 10 minutes, no longer", async () => {
   const t = await setup();
   const jwt = `Bearer ${await token(t.key)}`;
@@ -213,6 +219,31 @@ Deno.test("a stale key set is not used when the refresh fails, and a failing sou
   fail = false;
   assertEquals((await t.send(jwt)).status, 200, "it recovers");
   assertEquals(t.jwksFetches, 3);
+});
+
+Deno.test("unknown kids wait out a failed key fetch too, and known keys keep working meanwhile", async () => {
+  let fail = false;
+  const t = await setup({ jwks: () => (fail ? Promise.reject(new Error("down")) : Promise.resolve(t.jwks)) });
+  const known = `Bearer ${await token(t.key)}`;
+  assertEquals((await t.send(known)).status, 200);
+  assertEquals(t.jwksFetches, 1);
+  const stranger = `Bearer ${await token(await esKey("nobody"))}`;
+  fail = true;
+  t.now += 60;
+  for (let i = 0; i < 10; i++) assertEquals((await t.send(stranger)).status, 500, "the keys could not be had");
+  assertEquals(t.jwksFetches, 2, "ten requests in the same second: one attempt");
+  assertEquals((await t.send(known)).status, 200, "a known key inside its cache life does not need the fetch");
+  assertEquals(t.jwksFetches, 2);
+  t.now += 4;
+  assertEquals((await t.send(stranger)).status, 500);
+  assertEquals(t.jwksFetches, 2, "still inside the 5 seconds");
+  t.now += 1;
+  assertEquals((await t.send(stranger)).status, 500);
+  assertEquals(t.jwksFetches, 3, "at 5 seconds, one more attempt");
+  fail = false;
+  t.now += 5;
+  assertEquals((await t.send(stranger)).status, 401, "once the source is back, an unknown key is an ordinary 401");
+  assertEquals(t.jwksFetches, 4);
 });
 
 Deno.test("concurrent requests share one key fetch", async () => {

@@ -237,3 +237,18 @@ Deno.test("storeCode passes known refusal codes and turns anything else into an 
     assertEquals(e.code, "POR_INTERNAL");
   }
 });
+
+Deno.test("a small-order public key proves nothing: the all-accepting key and signature are refused and nothing is issued", async () => {
+  // With A and R of small order and S = 0, the verification equation holds for
+  // every message, so no private key is needed to produce this "signature".
+  const t = await setup();
+  const raw = new Uint8Array(32);
+  raw[0] = 1;
+  const signature = new Uint8Array(64);
+  signature[0] = 1;
+  const body = { publicKey: b64url(libp2pPublicKey(raw)), signature: b64url(signature), nonce: b64url(t.nonce), challengeExp: NOW + 300 };
+  const res = await handle(post("issue", body), t.deps);
+  assertEquals(res.status, 403);
+  assertEquals(await errorCode(res), "POR_BAD_SIGNATURE");
+  assertEquals(t.issued, []);
+});

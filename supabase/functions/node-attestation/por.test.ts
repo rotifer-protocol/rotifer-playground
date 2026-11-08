@@ -2,6 +2,7 @@ import { assert, assertEquals, assertNotEquals, assertRejects } from "jsr:@std/a
 import {
   b64url,
   base58btc,
+  type Bytes,
   challengeMessage,
   ed25519FromLibp2pPublicKey,
   fromB64url,
@@ -13,6 +14,8 @@ import {
   peerIdFromPublicKey,
   pseudonym,
   signToken,
+  SMALL_ORDER_POINTS,
+  strictEd25519Input,
   TTL_SECONDS,
   verifyNodeSignature,
   verifyToken,
@@ -235,4 +238,95 @@ Deno.test("signing JWK validation: public-only, wrong curve, missing kid are ref
   const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
   const priv = await crypto.subtle.exportKey("jwk", pair.privateKey);
   await assertRejects(() => importSigningJwk(priv), Error, "kid");
+});
+
+// ---------------------------------------------------------------------------
+// Strict Ed25519 acceptance. The arithmetic below is independent of por.ts: it
+// checks that the rejected encodings really are the small-order points.
+
+const P = 2n ** 255n - 19n;
+const L = 2n ** 252n + 27742317777372353535851937790883648493n;
+const mod = (n: bigint, m = P) => ((n % m) + m) % m;
+function power(b: bigint, e: bigint): bigint {
+  let r = 1n;
+  for (b = mod(b); e > 0n; e >>= 1n, b = mod(b * b)) if (e & 1n) r = mod(r * b);
+  return r;
+}
+const inv = (n: bigint) => power(n, P - 2n);
+const D = mod(-121665n * inv(121666n));
+const toNumber = (b: Uint8Array) => b.reduceRight((n, x) => (n << 8n) | BigInt(x), 0n);
+function toBytes(n: bigint, length = 32): Bytes {
+  const out = new Uint8Array(length);
+  for (let i = 0; i < length; i++, n >>= 8n) out[i] = Number(n & 0xffn);
+  return out;
+}
+function pointFromY(y: bigint): [bigint, bigint] {
+  const x2 = mod((y * y - 1n) * inv(D * y * y + 1n));
+  let x = power(x2, (P + 3n) / 8n);
+  if (mod(x * x) !== x2) x = mod(x * power(2n, (P - 1n) / 4n));
+  assertEquals(mod(x * x), x2, "the encoding is on the curve");
+  return [x, y];
+}
+function double([x, y]: [bigint, bigint]): [bigint, bigint] {
+  const xy = mod(x * y);
+  const dxy = mod(D * xy * xy);
+  return [mod(2n * xy * inv(1n + dxy)), mod((y * y + x * x) * inv(1n - dxy))];
+}
+
+Deno.test("each rejected encoding is a point of order dividing 8, and all five y values of small order are listed", () => {
+  assertEquals(SMALL_ORDER_POINTS.length, 5);
+  for (const point of SMALL_ORDER_POINTS) {
+    assertEquals(double(double(double(pointFromY(toNumber(point))))), [0n, 1n]);
+  }
+});
+
+const sigWith = (r: Uint8Array, s: Uint8Array) => {
+  const out = new Uint8Array(64);
+  out.set(r);
+  out.set(s, 32);
+  return out;
+};
+
+Deno.test("no small-order public key passes, with either sign bit, even with the signature that fits every message", async () => {
+  const identity = new Uint8Array(32);
+  identity[0] = 1;
+  const anyMessage = new TextEncoder().encode("any message at all");
+  for (const point of SMALL_ORDER_POINTS) {
+    for (const signBit of [0, 0x80]) {
+      const raw = point.slice();
+      raw[31] |= signBit;
+      assertEquals(await verifyNodeSignature(libp2pPublicKey(raw), anyMessage, sigWith(identity, new Uint8Array(32))), false);
+    }
+  }
+});
+
+Deno.test("encodings of y at or above p are refused, as is S at or above the group order", () => {
+  const honestA = NODE_A.pub.slice(4);
+  const ok = sigWith(honestA, new Uint8Array(32));
+  assert(strictEd25519Input(honestA, ok));
+  for (const y of [P + 2n, P + 18n]) assertEquals(strictEd25519Input(toBytes(y), ok), false, `A with y = p + ${y - P}`);
+  for (const s of [L, L + 1n]) assertEquals(strictEd25519Input(honestA, sigWith(honestA, toBytes(s))), false, `S = L + ${s - L}`);
+  assert(strictEd25519Input(honestA, sigWith(honestA, toBytes(L - 1n))));
+});
+
+Deno.test("a signature with a small-order R, or with S + L, is refused even though it satisfies the equation", async () => {
+  const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
+  const A = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+  const seed = fromB64url((await crypto.subtle.exportKey("jwk", pair.privateKey)).d!)!;
+  const expanded = new Uint8Array(await crypto.subtle.digest("SHA-512", seed)).slice(0, 32);
+  expanded[0] &= 248;
+  expanded[31] = (expanded[31] & 127) | 64;
+  const a = toNumber(expanded);
+  const message = new TextEncoder().encode("a message");
+  const R = new Uint8Array(32);
+  R[0] = 1; // the identity: the signer's nonce was 0
+  const input = new Uint8Array([...R, ...A, ...message]);
+  const k = mod(toNumber(new Uint8Array(await crypto.subtle.digest("SHA-512", input))), L);
+  const smallR = sigWith(R, toBytes(mod(k * a, L)));
+  assertEquals(await verifyNodeSignature(libp2pPublicKey(A), message, smallR), false);
+
+  const honest = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, pair.privateKey, message));
+  assert(await verifyNodeSignature(libp2pPublicKey(A), message, honest));
+  const malleated = sigWith(honest.slice(0, 32), toBytes(toNumber(honest.slice(32)) + L));
+  assertEquals(await verifyNodeSignature(libp2pPublicKey(A), message, malleated), false);
 });

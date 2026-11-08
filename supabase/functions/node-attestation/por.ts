@@ -127,10 +127,48 @@ export function peerIdFromPublicKey(pb: Bytes): string | null {
   return base58btc(mh);
 }
 
+const hexBytes = (hex: string) => Uint8Array.from(hex.match(/../g)!, (b) => parseInt(b, 16));
+
+/**
+ * The y coordinates of the Ed25519 points of order 1, 2, 4 and 8, little-endian,
+ * sign bit clear. With such a key and R, S = 0 satisfies the verification
+ * equation for every message, so a signature proves no private key.
+ */
+export const SMALL_ORDER_POINTS: Bytes[] = [
+  "0000000000000000000000000000000000000000000000000000000000000000", // y = 0, order 4
+  "0100000000000000000000000000000000000000000000000000000000000000", // y = 1, order 1
+  "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", // y = p - 1, order 2
+  "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05", // order 8
+  "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a", // order 8
+].map(hexBytes);
+
+const FIELD_P = 2n ** 255n - 19n;
+const GROUP_ORDER = 2n ** 252n + 27742317777372353535851937790883648493n;
+const littleEndian = (b: Uint8Array) => b.reduceRight((n, x) => (n << 8n) | BigInt(x), 0n);
+
+/** y of an encoded point, without the sign bit of x. */
+const yOf = (point: Uint8Array) => littleEndian(point) & (2n ** 255n - 1n);
+
+function hasSmallOrder(point: Uint8Array): boolean {
+  const y = yOf(point) % FIELD_P; // y = p and p + 1 are other encodings of 0 and 1
+  return SMALL_ORDER_POINTS.some((s) => yOf(s) === y);
+}
+
+/**
+ * The checks strict verification adds to the equation: A has one encoding and
+ * is not of small order, R is not of small order, S is below the group order.
+ * WebCrypto leaves these to the implementation, and a certificate issued on
+ * the strength of a keyless "signature" cannot be recalled.
+ */
+export function strictEd25519Input(publicKey: Uint8Array, signature: Uint8Array): boolean {
+  return yOf(publicKey) < FIELD_P && !hasSmallOrder(publicKey) && !hasSmallOrder(signature.subarray(0, 32)) &&
+    littleEndian(signature.subarray(32)) < GROUP_ORDER;
+}
+
 /** Verifies an Ed25519 signature by the key inside a libp2p public key. */
 export async function verifyNodeSignature(pb: Bytes, message: Bytes, signature: Bytes): Promise<boolean> {
   const raw = ed25519FromLibp2pPublicKey(pb);
-  if (raw === null || signature.length !== 64) return false;
+  if (raw === null || signature.length !== 64 || !strictEd25519Input(raw, signature)) return false;
   const key = await crypto.subtle.importKey("raw", raw, { name: "Ed25519" }, false, ["verify"]);
   return crypto.subtle.verify({ name: "Ed25519" }, key, signature, message);
 }

@@ -68,8 +68,8 @@ Deno.test("anything else from the database is an internal error, never a success
 });
 
 Deno.test("POR_DB_URL must log in as por_issuer", () => {
-  assertEquals(issuerUser("postgresql://por_issuer:pw@db.example:5432/postgres"), "por_issuer");
-  assertEquals(issuerUser("postgres://por_issuer.abcdefgh:pw@pooler.example:6543/postgres"), "por_issuer.abcdefgh");
+  assertEquals(issuerUser("postgresql://por_issuer:pw@db.example:5432/postgres?sslmode=require"), "por_issuer");
+  assertEquals(issuerUser("postgres://por_issuer.abcdefgh:pw@pooler.example:6543/postgres?sslmode=verify-full"), "por_issuer.abcdefgh");
   for (const url of [
     "postgresql://postgres:pw@db.example:5432/postgres",
     "postgresql://service_role:pw@db.example:5432/postgres",
@@ -80,6 +80,55 @@ Deno.test("POR_DB_URL must log in as por_issuer", () => {
   ]) {
     assertThrows(() => issuerUser(url), Error, undefined, url);
   }
+});
+
+Deno.test("POR_DB_URL outside this machine must require TLS", () => {
+  const url = (host: string, query = "") => `postgresql://por_issuer:pw@${host}/postgres${query}`;
+
+  // Local development and the test stack have no TLS and do not need it.
+  for (const host of ["localhost", "localhost:54322", "127.0.0.1:54322", "127.8.8.8", "[::1]:5432", "db:5432"]) {
+    assertEquals(issuerUser(url(host)), "por_issuer", host);
+  }
+
+  // Supabase's direct production host begins with "db.": only the bare
+  // Compose service name "db" counts as local.
+  for (
+    const host of [
+      "db.abcdefghijklmnopqrst.supabase.co:5432",
+      "db.example",
+      "db.",
+      "dbx:5432",
+      "aws-0-us-east-1.pooler.supabase.com:6543",
+      "localhost.example",
+      "127.0.0.1.example",
+      "localhost,evil.example",
+      "::ffff:7f00:1",
+    ]
+  ) {
+    assertThrows(() => issuerUser(url(host)), Error, undefined, host);
+  }
+
+  // prefer and allow fall back to plain text; disable never starts TLS. The
+  // driver reads the last value of a repeated parameter.
+  for (
+    const query of ["", "?sslmode=disable", "?sslmode=prefer", "?sslmode=allow", "?ssl=require", "?sslmode=require&sslmode=disable", "?sslmode=REQUIRE"]
+  ) {
+    assertThrows(() => issuerUser(url("db.abcdefghijklmnopqrst.supabase.co:5432", query)), Error, "sslmode", query);
+  }
+
+  for (const query of ["?sslmode=require", "?sslmode=verify-full", "?sslmode=disable&sslmode=require"]) {
+    assertEquals(issuerUser(url("db.abcdefghijklmnopqrst.supabase.co:5432", query)), "por_issuer", query);
+  }
+
+  // The refusal must not repeat the connection string, which holds the password.
+  assertThrows(() => {
+    try {
+      issuerUser("postgresql://por_issuer:SECRETPW@db.abcdefghijklmnopqrst.supabase.co:5432/postgres");
+    } catch (err) {
+      if ((err as Error).message.includes("SECRETPW")) throw new TypeError("message repeats the password");
+      throw new RangeError((err as Error).message);
+    }
+  }, RangeError);
 });
 
 Deno.test("the function holds no service_role key", async () => {

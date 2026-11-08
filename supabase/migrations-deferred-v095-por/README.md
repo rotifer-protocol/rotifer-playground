@@ -38,10 +38,10 @@ DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres \
 签发函数以专用的 `por_issuer` 角色连数据库，这个角色只能执行两个入账用的函数（发挑战、入账），不能直接读写任何表，也不绕过 RLS。撤销证书、为 JWKS 导出撤销表这两个函数，签发函数的代码根本不调，所以不给 `por_issuer`，改给单独的运维角色 `por_operator`：它只供运维手动撤销、导出撤销表时使用，签发函数永远不用它——否则签发函数一旦被攻破，攻击者就能撤销任意证书。迁移只建这两个角色、都不给登录权限，B1 部署时由绑定层：
 
 1. 在部署环境里给 `por_issuer` 设密码（`ALTER ROLE por_issuer LOGIN PASSWORD …`）；
-2. 把连接串存成签发函数的密钥 `POR_DB_URL`（走 Supabase 连接池时用户名是 `por_issuer.<项目 ref>`，用 transaction 模式）；
+2. 把连接串存成签发函数的密钥 `POR_DB_URL`（走 Supabase 连接池时用户名是 `por_issuer.<项目 ref>`，用 transaction 模式），连接串末尾必须带 `?sslmode=require` 或 `?sslmode=verify-full`，否则函数拒绝启动（本机地址除外）；
 3. 只在运维执行撤销的地方给 `por_operator` 开登录，它的连接串不放进签发函数的环境。
 
-本目录和本仓库都不配任何真实连接串。本地测试（`race-check.sh`、`e2e.ts`）用临时生成的密码，经标准输入传给 psql，不落盘，跑完收回登录权限。在 colima 里跑 `e2e.ts`，签发函数要按网络别名 `db:5432` 连数据库（容器名 `supabase_db_<项目 id>` 解析不到）；脚本默认就用它，栈里别名不同时设 `POR_DB_HOST`。
+本目录和本仓库都不配任何真实连接串。本地测试（`race-check.sh`、`e2e.ts`）用临时生成的密码，经标准输入传给 psql，不落盘，跑完收回登录权限。在 colima 里跑 `e2e.ts`，签发函数要按网络别名 `db:5432` 连数据库（容器名 `supabase_db_<项目 id>` 解析不到）；脚本默认就用它；`POR_DB_HOST` 只能改成函数认作本机的地址，其他地址没有 TLS 会被函数拒绝。
 
 ---
 

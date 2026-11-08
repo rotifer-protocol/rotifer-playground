@@ -76,7 +76,7 @@ not passed and no revocation with `not_after ≥ iat` covers it.
 | `*.test.ts` | Deno tests: `deno test --allow-read --allow-write --allow-run --allow-env supabase/functions/node-attestation/` |
 | `pgtap-deferred.sh` | Applies the deferred migration to a throwaway database and runs its pgTAP, failing on a skip (CI runs it) |
 | `race-check.sh` | Multi-session checks against a local database (exits 1 on failure) |
-| `e2e.ts` | End to end against a local stack, with keys created in memory and never written to disk (see its header). The function reaches the database at `db:5432`, the database's alias on the stack's network; set `POR_DB_HOST` if your stack names it otherwise (under colima the container name does not resolve, the alias does) |
+| `e2e.ts` | End to end against a local stack, with keys created in memory and never written to disk (see its header). The function reaches the database at `db:5432`, the database's alias on the stack's network; `POR_DB_HOST` overrides it, but only with another name the function treats as local, since it refuses any other host without TLS (under colima the container name does not resolve, the alias does) |
 
 ## Database access
 
@@ -114,7 +114,12 @@ in order:
    string as the function's secret `POR_DB_URL`. Through Supabase's pooler
    the user name is `por_issuer.<project ref>`; use transaction mode (the
    function prepares no statements and takes only transaction-scoped locks).
-   The function refuses a `POR_DB_URL` for any other user.
+   End the string with `?sslmode=require`, or `?sslmode=verify-full`.
+   `require` encrypts the connection without checking the server's
+   certificate; `verify-full` checks it too, and connects only if the runtime
+   trusts that certificate's CA. The function refuses to start on a
+   `POR_DB_URL` for any other user, or on one without either mode unless the
+   host is local (`localhost`, `127.x.x.x`, `[::1]`, or exactly `db`).
 4. The public key published in `https://rotifer.dev/.well-known/jwks.json`
    (`scripts/por-jwks.ts`) and confirmed to be served, **before** the
    function signs with it. Rotation order is in the script's header.

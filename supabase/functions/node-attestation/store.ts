@@ -19,9 +19,24 @@ export type Query = (text: string, params: unknown[]) => Promise<Record<string, 
 export const ISSUER_ROLE = "por_issuer";
 
 /**
- * Checks that a connection string logs in as the issuing role. A string for
- * postgres or any other broad role would still work, with far more rights
- * than the function needs, so it is refused rather than used.
+ * This machine, or "db", the service name inside a local Supabase stack. Only
+ * the exact name: Supabase's direct production host is db.<ref>.supabase.co.
+ */
+function isLocalHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "db" || hostname === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
+}
+
+/**
+ * The modes that cannot end up in plain text. "prefer" and "allow" fall back
+ * to it, and the connection would carry the issuing role's password.
+ */
+const TLS_MODES = ["require", "verify-full"];
+
+/**
+ * Checks that a connection string logs in as the issuing role, over TLS unless
+ * the database is local. A string for postgres or any other broad role would
+ * still work, with far more rights than the function needs, so it is refused
+ * rather than used.
  */
 export function issuerUser(dbUrl: string): string {
   let url: URL;
@@ -34,6 +49,11 @@ export function issuerUser(dbUrl: string): string {
   const user = decodeURIComponent(url.username);
   if (user !== ISSUER_ROLE && !user.startsWith(`${ISSUER_ROLE}.`)) {
     throw new Error(`POR_DB_URL must log in as ${ISSUER_ROLE}, not "${user}"`);
+  }
+  // The driver takes the last value of a repeated parameter; get() returns the first.
+  const sslmode = url.searchParams.getAll("sslmode").at(-1);
+  if (!isLocalHost(url.hostname) && !TLS_MODES.includes(sslmode ?? "")) {
+    throw new Error("POR_DB_URL must set sslmode=require or sslmode=verify-full for a database that is not local");
   }
   return user;
 }

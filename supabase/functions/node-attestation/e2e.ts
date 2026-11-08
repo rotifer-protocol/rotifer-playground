@@ -17,7 +17,8 @@
  * run and takes the login away again at the end. From inside the edge
  * runtime the database is reached by its alias on the stack's network, db:5432
  * (the container name supabase_db_<project_id> does not resolve there under
- * every Docker runtime); POR_DB_HOST overrides it. The script makes a
+ * every Docker runtime); POR_DB_HOST overrides it with another local name
+ * (the function refuses any other host without TLS). The script makes a
  * throwaway signing key, pseudonym key and node keys in memory and starts
  * `supabase functions serve node-attestation` itself,
  * handing the two server secrets over a pipe (--env-file /dev/stdin), so no

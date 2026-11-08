@@ -40,6 +40,12 @@ Deno.test("other key types, a missing kid, a duplicate kid, a short x and no key
   assertThrows(() => buildJwks([], [], NOW), JwksError);
 });
 
+Deno.test("a file with no keys needs the explicit option, and keeps its revocations", () => {
+  const { jwks } = buildJwks([], [{ peer_id: PEER_A, not_after: NOW }], NOW, { allowNoKeys: true });
+  assertEquals(jwks, { keys: [], rotifer_revoked: [{ peer_id: PEER_A, not_after: NOW }] });
+  assertThrows(() => buildJwks([], [], NOW, { allowNoKeys: false }), JwksError);
+});
+
 Deno.test("revocations: kept until not_after + 7 days + 60 s, then dropped; the boundary second is kept", async () => {
   const k = await keyPair("k");
   const last = NOW - TTL_SECONDS - 60; // still needed exactly at NOW
@@ -108,7 +114,7 @@ Deno.test({
       assertEquals(out.rotifer_revoked, [{ peer_id: PEER_A, not_after: NOW }]);
 
       // The throwaway private JWK goes through a pipe, never to disk.
-      const refused = await run(["--key", "-"], JSON.stringify(k.priv));
+      const refused = await run(["--key", "-", "--revoked", `${dir}/revoked.json`], JSON.stringify(k.priv));
       assertEquals(refused.success, false);
       assertEquals(refused.stdout.length, 0);
       const why = new TextDecoder().decode(refused.stderr);
@@ -120,6 +126,33 @@ Deno.test({
       const notJsonWhy = new TextDecoder().decode(notJson.stderr);
       assert(notJsonWhy.includes("is not JSON"), notJsonWhy);
       assertEquals(notJsonWhy.includes("FAKEPRIVAT"), false, notJsonWhy);
+
+      // Leaving --revoked out would publish an empty list and revive every
+      // revoked certificate, so it is an error; no revocations is said explicitly.
+      const noList = await run(["--key", `${dir}/k1.json`, "--now", String(NOW)]);
+      assertEquals(noList.success, false);
+      assertEquals(noList.stdout.length, 0);
+      const noListWhy = new TextDecoder().decode(noList.stderr);
+      assert(noListWhy.includes("--revoked is required"), noListWhy);
+      await Deno.writeTextFile(`${dir}/none.json`, "[]");
+      const explicitNone = await run(["--key", `${dir}/k1.json`, "--revoked", `${dir}/none.json`, "--now", String(NOW)]);
+      assert(explicitNone.success, new TextDecoder().decode(explicitNone.stderr));
+      assertEquals(JSON.parse(new TextDecoder().decode(explicitNone.stdout)).rotifer_revoked, []);
+
+      // A leaked only key: publish no keys, keep the revocations.
+      const emergency = await run(["--emergency-no-keys", "--revoked", `${dir}/revoked.json`, "--now", String(NOW)]);
+      assert(emergency.success, new TextDecoder().decode(emergency.stderr));
+      assertEquals(JSON.parse(new TextDecoder().decode(emergency.stdout)), { keys: [], rotifer_revoked: [{ peer_id: PEER_A, not_after: NOW }] });
+      assert(new TextDecoder().decode(emergency.stderr).includes("EMERGENCY"));
+      const emergencyNoList = await run(["--emergency-no-keys", "--now", String(NOW)]);
+      assertEquals(emergencyNoList.success, false);
+      assertEquals(emergencyNoList.stdout.length, 0);
+      const emergencyWithKey = await run(["--emergency-no-keys", "--key", `${dir}/k1.json`, "--revoked", `${dir}/revoked.json`]);
+      assertEquals(emergencyWithKey.success, false);
+      assertEquals(emergencyWithKey.stdout.length, 0);
+      const noKeys = await run(["--revoked", `${dir}/revoked.json`]);
+      assertEquals(noKeys.success, false);
+      assertEquals(noKeys.stdout.length, 0);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

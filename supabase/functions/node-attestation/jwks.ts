@@ -74,8 +74,14 @@ export function revocationStillNeeded(r: Revocation, nowSeconds: number): boolea
   return nowSeconds <= r.not_after + TTL_SECONDS + SKEW_SECONDS;
 }
 
-export function buildJwks(keys: unknown[], revoked: unknown[], nowSeconds: number): { jwks: PorJwks; pruned: number } {
-  if (keys.length === 0) throw new JwksError("at least one public key is required");
+/** allowNoKeys is the emergency path for a leaked only key; nothing else may publish an empty key set. */
+export function buildJwks(
+  keys: unknown[],
+  revoked: unknown[],
+  nowSeconds: number,
+  options: { allowNoKeys?: boolean } = {},
+): { jwks: PorJwks; pruned: number } {
+  if (keys.length === 0 && options.allowNoKeys !== true) throw new JwksError("at least one public key is required");
   const parsed = keys.map(publicKey);
   const kids = new Set<string>();
   for (const k of parsed) {

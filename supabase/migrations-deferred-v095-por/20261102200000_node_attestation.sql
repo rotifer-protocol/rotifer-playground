@@ -67,7 +67,7 @@ COMMENT ON TABLE node_attestation_issuances IS
 
 CREATE TABLE node_attestation_revocations (
   peer_id    TEXT NOT NULL CHECK (peer_id ~ '^[1-9A-HJ-NP-Za-km-z]{46,60}$'),
-  not_after  BIGINT NOT NULL CHECK (not_after >= 0),
+  not_after  BIGINT NOT NULL CHECK (not_after BETWEEN 0 AND 253402300799),
   reason     TEXT CHECK (octet_length(reason) <= 1000),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (peer_id, not_after)
@@ -398,6 +398,8 @@ GRANT EXECUTE ON FUNCTION node_attestation_issue(UUID, TEXT, BYTEA, BIGINT, TEXT
 --   A banned account or a leaked identity.key: pass a far-future not_after,
 --   such as 253402300799, so that no later certificate escapes. With the
 --   default, the same PeerId could be issued a new certificate a second later.
+-- 253402300799 is also the largest value the table accepts: the JWKS export
+-- adds to not_after, and one overflowing row would stop every later export.
 
 CREATE OR REPLACE FUNCTION node_attestation_revoke(p_peer_id TEXT, p_not_after BIGINT DEFAULT NULL, p_reason TEXT DEFAULT NULL)
 RETURNS VOID

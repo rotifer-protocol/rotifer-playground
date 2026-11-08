@@ -25,7 +25,7 @@ SELECT to_regclass('public.nodes') IS NOT NULL AS has_nodes \gset
 
 BEGIN;
 
-SELECT plan(96);
+SELECT plan(100);
 
 -- The edge function's role and the operators' role. postgres may switch to
 -- them only once granted. pgTAP's own functions live in the extensions
@@ -535,6 +535,21 @@ SELECT is(node_attestation_issue(:G, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'he
 SELECT node_attestation_challenge(:G, :AUD) AS c \gset
 SELECT is(node_attestation_issue(:G, :AUD, decode((:'c'::jsonb) ->> 'nonce', 'hex'), ((:'c'::jsonb) ->> 'challenge_exp')::bigint, :PH, :SUBG, :now, :exp, 'k1'),
   '{"ok": true}'::jsonb, 'RN8: a revoked certificate does not hold up its replacement');
+RESET ROLE;
+
+-- ── not_after range ──────────────────────────────────────
+-- The JWKS export computes not_after + 604800 + 60, so one oversized value
+-- would make every later export fail, and por_operator cannot delete it.
+SET LOCAL ROLE por_operator;
+SELECT node_attestation_revoke(:P6, 253402300799, 'test: the largest not_after allowed');
+SELECT is((SELECT e -> 'not_after' FROM jsonb_array_elements(node_attestation_revocations_for_jwks()) e WHERE e ->> 'peer_id' = :P6),
+  '253402300799'::jsonb, 'NA1: the far-future value the runbook uses is accepted and exported');
+SELECT throws_ok(format($q$ SELECT node_attestation_revoke(%L, 253402300800, NULL) $q$, :P6),
+  '23514', NULL, 'NA2: one past the limit is refused');
+SELECT throws_ok(format($q$ SELECT node_attestation_revoke(%L, 9223372036854775807, NULL) $q$, :P6),
+  '23514', NULL, 'NA3: the bigint maximum is refused, so the export cannot overflow');
+SELECT throws_ok(format($q$ SELECT node_attestation_revoke(%L, -1, NULL) $q$, :P6),
+  '23514', NULL, 'NA4: a negative value is refused');
 RESET ROLE;
 
 SELECT * FROM finish();

@@ -115,9 +115,12 @@ in order:
    stored only as its secrets (`POR_SIGNING_KEY`, `POR_PSEUDONYM_KEY`;
    `index.ts`). Making or saving the real keys needs the user's approval.
 3. A login for `por_issuer`: the migration creates the role without one.
-   Give it a password in the deployment environment
-   (`ALTER ROLE por_issuer LOGIN PASSWORD …`), and store the connection
-   string as the function's secret `POR_DB_URL`. Through Supabase's pooler
+   Generate a random password in the deployment environment, compute its
+   SCRAM-SHA-256 verifier there (the format psql's `\password` sends), and
+   pass `ALTER ROLE por_issuer LOGIN PASSWORD '<verifier>'` to `psql` on
+   standard input. Never put the plain password in that statement: the
+   database can log DDL. Store the connection string as the function's
+   secret `POR_DB_URL`. Through Supabase's pooler
    the user name is `por_issuer.<project ref>`; use transaction mode (the
    function prepares no statements and takes only transaction-scoped locks).
    End the string with `?sslmode=require`, or `?sslmode=verify-full`.
@@ -139,15 +142,17 @@ in order:
 6. Deploy with `--no-verify-jwt` as well as the `verify_jwt = false` declared
    in `supabase/config.toml`: a deploy that does not read that file turns the
    gateway check back on. The function checks tokens itself
-   (`user-token.ts`). The project must sign user tokens with ES256; with no
-   ES256 key published, every request fails. Probe after deploying: with no
+   (`user-token.ts`) and refuses anonymous sign-ins. The project must sign
+   user tokens with ES256; with no ES256 key published, every request fails.
+   Probe after deploying: with no
    `Authorization` header, the function itself answers 401 with the code
    `POR_UNAUTHENTICATED`.
 7. A revocation routine, and republishing the JWKS. Both run as
    `por_operator`, by an operator, never through the function: give that role
    a login only where operators run them, kept apart from `POR_DB_URL`.
    - `node_attestation_revoke`: for a banned account or a leaked node key,
-     pass a far-future `not_after`, such as `253402300799`. Only a node
+     pass a far-future `not_after`, such as `253402300799`, the largest value
+     accepted. Only a node
      replacing its own key uses the default, now; with the default the same
      PeerId can be issued a new certificate a second later.
    - Republish with `scripts/por-jwks.ts --revoked <file>`, the file holding

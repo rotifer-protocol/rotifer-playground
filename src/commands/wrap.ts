@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { writeFileSync, existsSync, readFileSync, mkdirSync, copyFileSync, readdirSync, statSync } from "node:fs";
+import { writeFileSync, existsSync, readFileSync, mkdirSync, copyFileSync, readdirSync, statSync, lstatSync } from "node:fs";
 import { join, resolve, relative, dirname, basename } from "node:path";
 import { createInterface } from "node:readline";
 import { contentHash } from "../utils/content-hash.js";
@@ -10,6 +10,7 @@ import * as display from "../utils/display.js";
 import { c } from "../utils/palette.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
+import { isWrappedFromClawhub } from "../utils/l0-gate.js";
 import { parseSkillFrontmatter } from "./scan.js";
 import { suggestDomains } from "../utils/domain-suggest.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
@@ -22,15 +23,18 @@ import {
   type ClawHubRequestOptions,
   type ClawHubSkillInfo,
 } from "../utils/clawhub-client.js";
+import { assertOnlyRegularFiles, assertSafeZip, UnsafeArchiveError } from "../utils/zip-safety.js";
 
-async function downloadAndExtract(slug: string, options: ClawHubRequestOptions): Promise<string> {
+export async function downloadAndExtract(slug: string, options: ClawHubRequestOptions): Promise<string> {
   const zipBuf = await fetchClawHubPackage(slug, options);
+  assertSafeZip(zipBuf);
   const workDir = join(tmpdir(), `rotifer-clawhub-${slug}-${Date.now()}`);
   mkdirSync(workDir, { recursive: true });
   const zipPath = join(workDir, `${slug}.zip`);
   writeFileSync(zipPath, zipBuf);
   execFileSync("unzip", ["-o", zipPath, "-d", join(workDir, "extracted")], { stdio: "pipe" });
   const extracted = join(workDir, "extracted");
+  assertOnlyRegularFiles(extracted);
   const entries = readdirSync(extracted);
   if (entries.length === 1 && statSync(join(extracted, entries[0])).isDirectory()) {
     return join(extracted, entries[0]);
@@ -38,17 +42,71 @@ async function downloadAndExtract(slug: string, options: ClawHubRequestOptions):
   return extracted;
 }
 
-function copyDirRecursive(src: string, dest: string): void {
-  mkdirSync(dest, { recursive: true });
-  for (const entry of readdirSync(src)) {
-    const srcPath = join(src, entry);
-    const destPath = join(dest, entry);
-    if (statSync(srcPath).isDirectory()) {
-      copyDirRecursive(srcPath, destPath);
+/**
+ * Files at the root of a gene directory that the CLI writes and later reads
+ * back as fact about the gene. A package does not get to supply them. Compared
+ * in lower case because macOS and Windows would let PHENOTYPE.JSON land on
+ * phenotype.json.
+ */
+const CLI_OWNED_ROOT_FILES = new Set([
+  "phenotype.json",
+  ".cloud-manifest.json",
+  ".gene-manifest.json",
+  ".clawhub-origin.json",
+  ".compile-result.json",
+  ".arena-cache.json",
+]);
+
+/**
+ * What a later wrap must carry over from the existing manifest. The package's
+ * code stays on disk when a gene is wrapped again, so rewriting the manifest
+ * must not turn it into the user's own.
+ */
+function keptClawhubOrigin(geneDir: string): Record<string, unknown> {
+  if (!isWrappedFromClawhub(geneDir)) return {};
+  try {
+    const { fromClawhub, clawhubVersion } = JSON.parse(readFileSync(join(geneDir, ".gene-manifest.json"), "utf-8"));
+    return { fromClawhub: fromClawhub ?? "unknown", clawhubVersion };
+  } catch {
+    return { fromClawhub: "unknown" };
+  }
+}
+
+/** Copies a package into the gene directory and returns the root names it left out. */
+export function copyPackageFiles(packageDir: string, geneDir: string): string[] {
+  const skipped: string[] = [];
+  for (const entry of readdirSync(packageDir)) {
+    if (CLI_OWNED_ROOT_FILES.has(entry.toLowerCase())) {
+      skipped.push(entry);
     } else {
-      copyFileSync(srcPath, destPath);
+      copyEntry(join(packageDir, entry), join(geneDir, entry));
     }
   }
+  return skipped;
+}
+
+/** Never follows a link, on either side: lstat decides, and a link is refused. */
+function copyEntry(src: string, dest: string): void {
+  const stat = lstatSync(src);
+  if (stat.isDirectory()) {
+    mkdirSync(dest, { recursive: true });
+    for (const entry of readdirSync(src)) copyEntry(join(src, entry), join(dest, entry));
+  } else if (stat.isFile() && !lstatSync(dest, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    copyFileSync(src, dest);
+  } else {
+    throw new UnsafeArchiveError(`${basename(src)} would be copied through a symbolic link`);
+  }
+}
+
+function refuseUnsafePackage(slug: string, e: UnsafeArchiveError): never {
+  display.rustStyleError({
+    code: "E0013",
+    message: `Refused ClawHub skill '${slug}': ${e.message}`,
+    file: `ClawHub package for ${slug}`,
+    suggestion: "A package may not contain symbolic links or paths outside itself. Nothing was added to your project; report this to the skill's author.",
+    docsUrl: "https://rotifer.dev/docs/migration",
+  });
+  process.exit(1);
 }
 
 function determineFidelity(skillDir: string): string {
@@ -219,6 +277,7 @@ export const wrapCommand = new Command("wrap")
       try {
         skillDir = await downloadAndExtract(slug, clawhub);
       } catch (e) {
+        if (e instanceof UnsafeArchiveError) refuseUnsafePackage(slug, e);
         const isNotFound = e instanceof ClawHubError && e.kind === "not_found";
         display.rustStyleError({
           code: "E0011",
@@ -297,7 +356,16 @@ export const wrapCommand = new Command("wrap")
       const phenotypeStr = JSON.stringify(phenotype, null, 2);
       writeFileSync(join(geneDir, "phenotype.json"), phenotypeStr + "\n");
 
-      copyDirRecursive(skillDir, geneDir);
+      let skipped: string[];
+      try {
+        skipped = copyPackageFiles(skillDir, geneDir);
+      } catch (e) {
+        if (e instanceof UnsafeArchiveError) refuseUnsafePackage(slug, e);
+        throw e;
+      }
+      if (skipped.length > 0) {
+        display.warn(`Skipped ${skipped.join(", ")} from the package: the CLI writes these itself.`);
+      }
 
       if (existsSync(join(geneDir, "_meta.json"))) {
         const clawMeta = JSON.parse(readFileSync(join(geneDir, "_meta.json"), "utf-8"));
@@ -332,6 +400,7 @@ export const wrapCommand = new Command("wrap")
       display.hint("  rotifer compile " + geneName + "       # validate phenotype");
       display.hint("  rotifer vg " + vgHintPath(geneDir) + "            # security scan");
       display.hint("  rotifer arena submit " + geneName + "  # compete in Arena");
+      display.hint("This gene is external code: it runs in the sandbox once compiled; on Node.js it needs --trust-unsigned.");
       await offerAutoPublish({ geneName, geneDir, fidelity: resolveWrapFidelity(phenotype, options.fidelity) });
       return;
     }
@@ -392,7 +461,7 @@ export const wrapCommand = new Command("wrap")
       writeFileSync(
         join(geneDir, ".gene-manifest.json"),
         JSON.stringify(
-          { geneId, name: geneName, domain, fidelity: options.fidelity, wrappedAt: new Date().toISOString(), fromSkill: relative(root, skillFile) },
+          { geneId, name: geneName, domain, fidelity: options.fidelity, wrappedAt: new Date().toISOString(), fromSkill: relative(root, skillFile), ...keptClawhubOrigin(geneDir) },
           null,
           2
         ) + "\n"
@@ -464,7 +533,7 @@ export const wrapCommand = new Command("wrap")
     writeFileSync(phenotypePath, phenotypeStr + "\n");
     writeFileSync(
       join(geneDir, ".gene-manifest.json"),
-      JSON.stringify({ geneId, name: geneName, domain, fidelity: options.fidelity, wrappedAt: new Date().toISOString() }, null, 2) + "\n"
+      JSON.stringify({ geneId, name: geneName, domain, fidelity: options.fidelity, wrappedAt: new Date().toISOString(), ...keptClawhubOrigin(geneDir) }, null, 2) + "\n"
     );
 
     display.success(`Gene '${geneName}' wrapped successfully`);

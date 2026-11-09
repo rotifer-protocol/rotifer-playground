@@ -7,7 +7,7 @@ import * as display from "../utils/display.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding } from "../utils/binding.js";
-import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
+import { evaluateL0, isExternallySourced, nodeRefusalMessage } from "../utils/l0-gate.js";
 import { toRustPhenotype } from "../utils/rust-phenotype.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import {
@@ -249,7 +249,7 @@ export const testCommand = new Command("test")
       const isCloudGene = isExternallySourced(geneDir);
       if (isCloudGene) {
         failed++;
-        display.error("Test 6: Cloud-installed genes cannot run via Node.js without sandbox.");
+        display.error("Test 6: " + nodeRefusalMessage(geneDir));
         display.info("  Compile the gene first: rotifer compile " + geneName);
       } else {
       display.info("Test 6: Node.js Fallback — express() Execution");

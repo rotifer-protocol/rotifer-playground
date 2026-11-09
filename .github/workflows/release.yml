@@ -27,6 +27,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # javy-cli downloads its binary on first run. Doing that here, with
+      # retries, keeps it out of the parallel tests (scripts/ci-fetch-javy.mjs).
+      - name: Fetch the javy binary
+        run: node scripts/ci-fetch-javy.mjs
+
       - name: Verify Rust/npm version alignment
         run: npm run verify:versions
 
@@ -79,6 +84,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # javy-cli downloads its binary on first run. Doing that here, with
+      # retries, keeps it out of the parallel tests (scripts/ci-fetch-javy.mjs).
+      - name: Fetch the javy binary
+        run: node scripts/ci-fetch-javy.mjs
 
       - name: Build
         run: npm run build

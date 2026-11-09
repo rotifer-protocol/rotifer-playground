@@ -172,6 +172,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # javy-cli downloads its binary on first run. Doing that here, with
+      # retries, keeps it out of the parallel tests (scripts/ci-fetch-javy.mjs).
+      - name: Fetch the javy binary
+        run: node scripts/ci-fetch-javy.mjs
+
       - name: Build TypeScript
         run: npm run build
 

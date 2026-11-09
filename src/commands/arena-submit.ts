@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { ALLOW_CREDENTIALS_OPTION, requireCredentialConsent, executeGene } from "../utils/credential-consent.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -74,7 +75,8 @@ export const arenaSubmitCommand = new Command("submit")
   .argument("<gene-name>", "gene name to submit")
   .option("--skip-test", "skip pre-submission test", false)
   .option("--cloud", "submit to cloud Arena (requires login)", false)
-  .action(async (geneName: string, options: { skipTest: boolean; cloud: boolean }) => {
+  .option(...ALLOW_CREDENTIALS_OPTION)
+  .action(async (geneName: string, options: { skipTest: boolean; cloud: boolean; allowCredentials?: string }) => {
     const root = requireProjectRoot();
     const config = loadConfig(root);
 
@@ -182,6 +184,8 @@ export const arenaSubmitCommand = new Command("submit")
       }
       let contractFailures = 0;
 
+      await requireCredentialConsent([{ name: geneName, dir: geneDir }], options);
+
       let fuelRetries = 0;
       for (let i = 0; i < SANDBOX_RUNS; i++) {
         const testInput = generateTestInput(phenotype.inputSchema, i);
@@ -194,7 +198,9 @@ export const arenaSubmitCommand = new Command("submit")
           let execResult!: ReturnType<typeof binding.executeGene>;
           let failureKind: RunFailureKind | null = null;
           for (let rung = 0; rung < FUEL_LADDER.length; rung++) {
-            execResult = binding.executeGene(
+            execResult = executeGene(
+              binding,
+              geneDir,
               irWasm,
               JSON.stringify(testInput),
               JSON.stringify(phenotypeForExec),

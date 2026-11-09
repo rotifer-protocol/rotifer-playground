@@ -21,6 +21,11 @@ pub use memory_calls::{MemoryLink, MemoryOp, ERR_MEMORY_NOT_FOUND};
 /// `lastAccessedBy`; without it a gene's memory calls are denied.
 pub const CALLER_GENE_ID_EXTENSION: &str = "rotifer.callerGeneId";
 
+/// `Context.binding_extensions` key carrying which hosts this gene may send
+/// each credential to (`CredentialScope` as JSON). Absent: the binding put no
+/// limit on this gene. Set for genes from outside the user's own workspace.
+pub const CREDENTIAL_SCOPE_EXTENSION: &str = "rotifer.credentialScope";
+
 use crate::types::gene::Phenotype;
 use crate::types::{Context, GeneResult};
 use thiserror::Error;

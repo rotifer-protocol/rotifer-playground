@@ -195,6 +195,26 @@ Run `rotifer --help` for the grouped command list. The commands below cover the 
 | `rotifer config` | Manage global Rotifer configuration |
 | `rotifer whoami` | Show current authentication status |
 
+### External genes and your credentials
+
+A gene you installed or wrapped can declare that it needs a credential from your environment and which hosts it may send it to. `rotifer run`, `agent run`, `test` and `hello` ask you before such a gene runs:
+
+```
+These external genes want to use credentials from your environment:
+  some-gene: SEARCH_API_KEY → api.search.example
+Allow this for this run? [y/N]
+```
+
+The answer holds for that one run, and a gene can use a credential only at the host you allowed it for. Genes from your own workspace are not asked about.
+
+Without a terminal, or with `--json`, nothing is asked: the command stops with exit code 1 and `credentials_not_granted`. To allow it there, pass exact pairs:
+
+```bash
+rotifer run some-gene --allow-credentials SEARCH_API_KEY@api.search.example
+```
+
+`arena submit` takes the same flag, but it scores Hybrid genes without running them, so it has nothing to ask today. `--trust-unsigned` runs a gene outside the sandbox with your whole environment, so none of this applies to it.
+
 ---
 
 ## Publishing by default

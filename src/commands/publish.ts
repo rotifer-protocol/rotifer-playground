@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { executeGene } from "../utils/credential-consent.js";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import * as display from "../utils/display.js";
@@ -173,7 +174,9 @@ export async function publishSingleGene(
           ? (input) => {
               try {
                 return outcomeFromSandbox(
-                  gateBinding.executeGene(
+                  executeGene(
+                    gateBinding,
+                    geneDir,
                     wasmBytes,
                     JSON.stringify(input),
                     JSON.stringify(phenotypeForGate),

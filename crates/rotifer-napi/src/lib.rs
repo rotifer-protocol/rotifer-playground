@@ -6,6 +6,7 @@ use rotifer_core::arena::{ArenaEngine, ArenaEntry, LocalArena};
 use rotifer_core::compiler::{self, CandidateFunction};
 use rotifer_core::fitness;
 use rotifer_core::l0::{L0Gate, AuditLog};
+use rotifer_core::sandbox::hybrid::CredentialScope;
 use rotifer_core::sandbox::{memory_calls, ConstraintSet, MemoryLink, MemoryOp, Sandbox, WasmtimeSandbox};
 use rotifer_core::types::{Context, GeneResult, PermissionSet};
 
@@ -800,11 +801,44 @@ fn process_env(name: &str) -> Option<String> {
 fn credentials_for(
     phenotype: &rotifer_core::types::gene::Phenotype,
     env: &dyn Fn(&str) -> Option<String>,
+    scope: Option<&CredentialScope>,
 ) -> std::result::Result<std::collections::HashMap<String, String>, Vec<String>> {
     if !PermissionSet::declared_by(phenotype).network_access {
         return Ok(std::collections::HashMap::new());
     }
-    rotifer_core::sandbox::hybrid::resolve_credentials(phenotype, env)
+    rotifer_core::sandbox::hybrid::resolve_credentials_in_scope(phenotype, scope, env)
+}
+
+/// `credentialScopeJson` of `executeGene`, or one gene's entry in
+/// `executeAlgebra`'s. A value the CLI wrote and cannot be read is an error,
+/// never "no limit".
+fn parse_json_arg<T: serde::de::DeserializeOwned>(raw: Option<String>) -> Result<Option<T>> {
+    raw.map(|json| {
+        serde_json::from_str(&json)
+            .map_err(|e| Error::from_reason(format!("invalid credential scope JSON: {e}")))
+    })
+    .transpose()
+}
+
+/// What the sandbox reads off a single gene's context; `None` when empty.
+fn gene_extensions(
+    caller_gene_id: Option<&String>,
+    scope: Option<&CredentialScope>,
+) -> Option<std::collections::HashMap<String, serde_json::Value>> {
+    let mut extensions = std::collections::HashMap::new();
+    if let Some(id) = caller_gene_id {
+        extensions.insert(
+            rotifer_core::sandbox::CALLER_GENE_ID_EXTENSION.to_string(),
+            serde_json::Value::String(id.clone()),
+        );
+    }
+    if let Some(scope) = scope {
+        extensions.insert(
+            rotifer_core::sandbox::CREDENTIAL_SCOPE_EXTENSION.to_string(),
+            serde_json::to_value(scope).expect("a map of strings always serializes"),
+        );
+    }
+    (!extensions.is_empty()).then_some(extensions)
 }
 
 /// Names the unset variables and says where to set them. Never includes a
@@ -1130,9 +1164,11 @@ impl PlaygroundBinding {
         phenotype_json: String,
         constraints_json: Option<String>,
         memory_context_json: Option<String>,
+        credential_scope_json: Option<String>,
     ) -> Result<ExecutionResultView> {
         let memory = parse_memory_context(memory_context_json)?;
-        self.execute_gene_inner(wasm_bytes, input_json, phenotype_json, constraints_json, &process_env, memory)
+        let scope = parse_json_arg(credential_scope_json)?;
+        self.execute_gene_inner(wasm_bytes, input_json, phenotype_json, constraints_json, &process_env, memory, scope)
     }
 
     /// `execute_gene` with the credential lookup injected (tests pass a map).
@@ -1144,9 +1180,23 @@ impl PlaygroundBinding {
         constraints_json: Option<String>,
         env: &dyn Fn(&str) -> Option<String>,
     ) -> Result<ExecutionResultView> {
-        self.execute_gene_inner(wasm_bytes, input_json, phenotype_json, constraints_json, env, None)
+        self.execute_gene_inner(wasm_bytes, input_json, phenotype_json, constraints_json, env, None, None)
     }
 
+    /// `execute_gene` with both the credential lookup and a scope injected.
+    pub fn execute_gene_scoped_with_env(
+        &self,
+        wasm_bytes: Buffer,
+        input_json: String,
+        phenotype_json: String,
+        constraints_json: Option<String>,
+        env: &dyn Fn(&str) -> Option<String>,
+        scope: CredentialScope,
+    ) -> Result<ExecutionResultView> {
+        self.execute_gene_inner(wasm_bytes, input_json, phenotype_json, constraints_json, env, None, Some(scope))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn execute_gene_inner(
         &self,
         wasm_bytes: Buffer,
@@ -1155,6 +1205,7 @@ impl PlaygroundBinding {
         constraints_json: Option<String>,
         env: &dyn Fn(&str) -> Option<String>,
         memory: Option<MemoryContextArg>,
+        scope: Option<CredentialScope>,
     ) -> Result<ExecutionResultView> {
         let input: serde_json::Value = serde_json::from_str(&input_json)
             .map_err(|e| Error::from_reason(format!("invalid input JSON: {e}")))?;
@@ -1180,17 +1231,12 @@ impl PlaygroundBinding {
             // phenotype declares, and nothing it does not (v0.9.3 §3.5).
             permissions: PermissionSet::declared_by(&phenotype),
             trace_id: Some(uuid::Uuid::new_v4().to_string()),
-            binding_extensions: memory.as_ref().and_then(|m| m.gene_id.as_ref()).map(|id| {
-                std::collections::HashMap::from([(
-                    rotifer_core::sandbox::CALLER_GENE_ID_EXTENSION.to_string(),
-                    serde_json::Value::String(id.clone()),
-                )])
-            }),
+            binding_extensions: gene_extensions(memory.as_ref().and_then(|m| m.gene_id.as_ref()), scope.as_ref()),
         };
 
         // Network permission is decided first: a gene that gets none is never
         // asked for a key (spec gate order: fidelity, network, credentials).
-        let secrets = match credentials_for(&phenotype, env) {
+        let secrets = match credentials_for(&phenotype, env, scope.as_ref()) {
             Ok(secrets) => secrets,
             Err(missing) => {
                 return Ok(ExecutionResultView {
@@ -1561,9 +1607,24 @@ impl PlaygroundBinding {
         input_json: String,
         constraints_json: Option<String>,
         memory_context_json: Option<String>,
+        credential_scope_json: Option<String>,
     ) -> Result<AlgebraResultView> {
         let memory = parse_memory_context(memory_context_json)?;
-        self.execute_algebra_inner(algebra_json, gene_entries_json, input_json, constraints_json, &process_env, memory)
+        let scopes = parse_json_arg(credential_scope_json)?.unwrap_or_default();
+        self.execute_algebra_inner(algebra_json, gene_entries_json, input_json, constraints_json, &process_env, memory, scopes)
+    }
+
+    /// `execute_algebra` with both the credential lookup and scopes injected.
+    pub fn execute_algebra_scoped_with_env(
+        &self,
+        algebra_json: String,
+        gene_entries_json: String,
+        input_json: String,
+        constraints_json: Option<String>,
+        env: &dyn Fn(&str) -> Option<String>,
+        scopes: std::collections::HashMap<String, CredentialScope>,
+    ) -> Result<AlgebraResultView> {
+        self.execute_algebra_inner(algebra_json, gene_entries_json, input_json, constraints_json, env, None, scopes)
     }
 
     /// `execute_algebra` with the credential lookup injected (tests pass a map).
@@ -1575,9 +1636,10 @@ impl PlaygroundBinding {
         constraints_json: Option<String>,
         env: &dyn Fn(&str) -> Option<String>,
     ) -> Result<AlgebraResultView> {
-        self.execute_algebra_inner(algebra_json, gene_entries_json, input_json, constraints_json, env, None)
+        self.execute_algebra_inner(algebra_json, gene_entries_json, input_json, constraints_json, env, None, Default::default())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn execute_algebra_inner(
         &self,
         algebra_json: String,
@@ -1586,6 +1648,7 @@ impl PlaygroundBinding {
         constraints_json: Option<String>,
         env: &dyn Fn(&str) -> Option<String>,
         memory: Option<MemoryContextArg>,
+        mut scopes: std::collections::HashMap<String, CredentialScope>,
     ) -> Result<AlgebraResultView> {
         use rotifer_core::algebra::{AlgebraExpr, AlgebraExecutor};
         use std::collections::HashMap;
@@ -1611,16 +1674,21 @@ impl PlaygroundBinding {
 
         let mut gene_store: HashMap<rotifer_core::types::GeneId, Gene> = HashMap::new();
         let mut gene_ids: HashMap<rotifer_core::types::GeneId, String> = HashMap::new();
+        let mut gene_scopes: HashMap<rotifer_core::types::GeneId, CredentialScope> = HashMap::new();
         // Every gene's credentials are loaded once; the sandbox hands each
         // gene only the names it declares itself.
         let mut secrets: HashMap<String, String> = HashMap::new();
         let mut missing: Vec<String> = Vec::new();
         for (hex_id, entry) in raw_map {
-            match credentials_for(&entry.phenotype, env) {
+            let scope = scopes.remove(&hex_id);
+            match credentials_for(&entry.phenotype, env, scope.as_ref()) {
                 Ok(found) => secrets.extend(found),
                 Err(names) => missing.extend(names),
             }
             let id = hex_to_gene_id(&hex_id)?;
+            if let Some(scope) = scope {
+                gene_scopes.insert(id, scope);
+            }
             if let Some(v2) = entry.v2_id.filter(|v| rotifer_core::gene_id::is_valid(v)) {
                 gene_ids.insert(id, v2);
             }
@@ -1675,6 +1743,7 @@ impl PlaygroundBinding {
         // permission set is not used (v0.9.3 §3.5).
         let executor = AlgebraExecutor::new(&sandbox, &gene_store)
             .with_gene_ids(gene_ids)
+            .with_credential_scopes(gene_scopes)
             .with_declared_permissions();
 
         match executor.execute(&expr, &context, input) {
@@ -1983,6 +2052,7 @@ mod permission_tests {
                 phenotype.to_string(),
                 Some(CLI_CONSTRAINTS.into()),
                 None,
+                None,
             )
             .unwrap()
     }
@@ -1998,7 +2068,7 @@ mod permission_tests {
         });
         let expr = serde_json::json!({"Seq": [{"Gene": id}]});
         binding()
-            .execute_algebra(expr.to_string(), entries.to_string(), "{}".into(), Some(CLI_CONSTRAINTS.into()), None)
+            .execute_algebra(expr.to_string(), entries.to_string(), "{}".into(), Some(CLI_CONSTRAINTS.into()), None, None)
             .unwrap()
     }
 
@@ -2058,6 +2128,7 @@ mod permission_tests {
                 native_phenotype().to_string(),
                 Some(DEADLINE.into()),
                 None,
+                None,
             )
             .unwrap();
         assert!(!r.success);
@@ -2077,7 +2148,7 @@ mod permission_tests {
         });
         let expr = serde_json::json!({"Try": {"primary": {"Gene": spin}, "fallback": {"Gene": echo}}});
         let r = binding()
-            .execute_algebra(expr.to_string(), entries.to_string(), "{}".into(), Some(DEADLINE.into()), None)
+            .execute_algebra(expr.to_string(), entries.to_string(), "{}".into(), Some(DEADLINE.into()), None, None)
             .unwrap();
         assert!(r.success, "the handler should have run: {:?}", r.error_message);
         assert_eq!(r.output["error"]["errorCode"], "TIMEOUT", "handler input: {}", r.output);
@@ -2232,6 +2303,48 @@ mod permission_tests {
         assert_no_sentinel(&dir, &[&msg, &r.output.to_string()]);
     }
 
+    fn scope_for(name: &str, hosts: &[&str]) -> CredentialScope {
+        std::collections::HashMap::from([(name.to_string(), hosts.iter().map(|h| h.to_string()).collect())])
+    }
+
+    fn run_scoped(env: &'static [(&'static str, &'static str)], scope: CredentialScope) -> ExecutionResultView {
+        let (b, _) = binding_in();
+        b.execute_gene_scoped_with_env(
+            Buffer::from(bearer_gene("T93_KEY")),
+            "{}".into(),
+            declaring(&["T93_KEY"]).to_string(),
+            Some(CLI_CONSTRAINTS.into()),
+            &env_of(env),
+            scope,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_granted_credential_for_this_host_is_substituted() {
+        let r = run_scoped(&[("T93_KEY", SENTINEL)], scope_for("T93_KEY", &[HOST]));
+        assert_let_through(guest_code(r.error_message.as_deref().unwrap()));
+    }
+
+    #[test]
+    fn a_credential_granted_for_another_host_is_refused() {
+        let r = run_scoped(&[("T93_KEY", SENTINEL)], scope_for("T93_KEY", &["other.example"]));
+        assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2);
+    }
+
+    #[test]
+    fn a_declared_credential_with_no_grant_is_neither_read_nor_reported_missing() {
+        let r = run_scoped(&[], std::collections::HashMap::new());
+        // Unset and ungranted: the gene runs and is refused at the request,
+        // rather than stopping with "set this variable" for a key it may not use.
+        assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2);
+    }
+
+    #[test]
+    fn a_scope_that_is_not_json_is_an_error_not_no_limit() {
+        assert!(parse_json_arg::<CredentialScope>(Some("nope".into())).is_err());
+    }
+
     #[test]
     fn a_name_the_gene_did_not_declare_is_never_read() {
         // The variable is set, but the gene declares nothing.
@@ -2288,6 +2401,7 @@ mod permission_tests {
                 declaring(&["PATH"]).to_string(),
                 Some(CLI_CONSTRAINTS.into()),
                 None,
+                None,
             )
             .unwrap();
         assert!(!r.success);
@@ -2331,6 +2445,42 @@ mod permission_tests {
         let msg = r.error_message.unwrap();
         assert_let_through(guest_code(&msg));
         assert_no_sentinel(&dir, &[&msg, &r.output.to_string()]);
+    }
+
+    fn algebra_scoped(env: &'static [(&'static str, &'static str)], scope: CredentialScope) -> AlgebraResultView {
+        let (b, _) = binding_in();
+        let id = [12u8; 32];
+        let entries = serde_json::json!({
+            hex::encode(id): {"wasm": bearer_gene("T93_KEY"), "phenotype": declaring(&["T93_KEY"])}
+        });
+        let expr = serde_json::json!({"Seq": [{"Gene": id}]});
+        b.execute_algebra_scoped_with_env(
+            expr.to_string(),
+            entries.to_string(),
+            "{}".into(),
+            Some(CLI_CONSTRAINTS.into()),
+            &env_of(env),
+            std::collections::HashMap::from([(hex::encode(id), scope)]),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn in_algebra_a_credential_granted_for_this_host_is_substituted() {
+        let r = algebra_scoped(&[("T93_KEY", SENTINEL)], scope_for("T93_KEY", &[HOST]));
+        assert_let_through(guest_code(r.error_message.as_deref().unwrap()));
+    }
+
+    #[test]
+    fn in_algebra_a_credential_granted_for_another_host_is_refused() {
+        let r = algebra_scoped(&[("T93_KEY", SENTINEL)], scope_for("T93_KEY", &["other.example"]));
+        assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2);
+    }
+
+    #[test]
+    fn in_algebra_a_declared_credential_with_no_grant_is_neither_read_nor_reported_missing() {
+        let r = algebra_scoped(&[], std::collections::HashMap::new());
+        assert_eq!(guest_code(r.error_message.as_deref().unwrap()), -2);
     }
 
     /// In a composition every declared credential is loaded once, so the
@@ -2509,6 +2659,7 @@ mod memory_tests {
                 native("text.x").to_string(),
                 cli_constraints(),
                 context,
+                None,
             )
             .unwrap()
         };
@@ -2525,7 +2676,7 @@ mod memory_tests {
         assert_eq!(with.output["createdBy"], v2(7));
         assert_eq!(b.memory_get(AGENT.into()).unwrap()["entries"][0]["createdBy"], v2(7));
 
-        let bad = b.execute_gene(Buffer::from(guest(0, READ_LANG)), "{}".into(), native("text.x").to_string(), None, Some("{".into()));
+        let bad = b.execute_gene(Buffer::from(guest(0, READ_LANG)), "{}".into(), native("text.x").to_string(), None, Some("{".into()), None);
         match bad {
             Err(e) => assert!(e.reason.starts_with("MEMORY_INVALID_INPUT: "), "{}", e.reason),
             Ok(_) => panic!("a malformed memoryContext was accepted"),
@@ -2544,7 +2695,7 @@ mod memory_tests {
         });
         let expr = serde_json::json!({"Seq": [{"Gene": writer}, {"Gene": reader}]});
         let r = b
-            .execute_algebra(expr.to_string(), entries.to_string(), "{}".into(), cli_constraints(), ctx(AGENT, None))
+            .execute_algebra(expr.to_string(), entries.to_string(), "{}".into(), cli_constraints(), ctx(AGENT, None), None)
             .unwrap();
         assert!(r.success, "{:?}", r.error_message);
         assert_eq!(r.output["createdBy"], v2(1));
@@ -2686,7 +2837,7 @@ mod memory_tests {
         let audit_before = std::fs::read_to_string(rotifer.join("audit.jsonl")).unwrap();
         let telemetry_before = std::fs::read_to_string(rotifer.join("telemetry.jsonl")).unwrap().lines().count();
         let run = b
-            .execute_gene(Buffer::from(guest(1, WRITE_LANG)), "{}".into(), native("text.x").to_string(), cli_constraints(), None)
+            .execute_gene(Buffer::from(guest(1, WRITE_LANG)), "{}".into(), native("text.x").to_string(), cli_constraints(), None, None)
             .unwrap();
         assert!(run.error_message.unwrap().contains("MEMORY_ACCESS_DENIED: no agent context"));
         let telemetry = std::fs::read_to_string(rotifer.join("telemetry.jsonl")).unwrap();

@@ -3352,6 +3352,7 @@ name = "rotifer-napi"
 version = "0.35.0"
 dependencies = [
  "base64 0.22.1",
+ "ed25519-dalek",
  "hex",
  "napi",
  "napi-build",
@@ -3359,6 +3360,7 @@ dependencies = [
  "rotifer-core",
  "serde",
  "serde_json",
+ "tempfile",
  "uuid",
  "wasm-encoder 0.251.0",
 ]

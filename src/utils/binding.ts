@@ -199,6 +199,12 @@ export interface NetworkRepublishResult {
   recordAcked: number;
 }
 
+/** A node's answer to an issuer's challenge, unpadded base64url. */
+export interface PorChallengeSignature {
+  publicKey: string;
+  signature: string;
+}
+
 export interface P2pNodeHandle {
   start(): void;
   peerId(): string;
@@ -221,6 +227,10 @@ export interface P2pNodeHandle {
   republishLocalGene?(genesRoot: string, name: string, geneId: string): Promise<NetworkRepublishResult>;
   /** Stop providing `geneId` and drop this node's own copy of its record (absent likewise). */
   withdrawGene?(geneId: string): void;
+  /** Answer an issuer's challenge; the node builds the message itself (absent before T-170). */
+  signPorChallenge?(aud: string, userId: string, nonce: string, challengeExp: number): PorChallengeSignature;
+  /** Carry this certificate in heartbeats, or none (absent likewise). */
+  setAttestation?(token: string | null): void;
   stop(): void;
 }
 

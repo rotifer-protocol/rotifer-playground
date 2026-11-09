@@ -156,6 +156,34 @@ A record's time window bounds one claim. It does not bound a stolen node key:
 whoever holds the key can keep signing. Rotate the node key (delete
 `~/.rotifer/identity.pem`, restart) if it leaks.
 
+### A6. Get a certificate for your node (optional)
+
+`rotifer network attest` needs a release after 0.35.0, and the certificate
+service is not open yet: until it is, the command says so and the node keeps
+running without one.
+
+A certificate proves to other nodes that this node belongs to a registered
+account. It is off until you turn it on, because it links the node to a
+pseudonym for your account in public, and Rotifer Cloud can trace that pseudonym
+back to you.
+
+```bash
+rotifer login
+rotifer network attest enable   # asks first; scripts pass --accept-public-pseudonym
+rotifer network attest status   # add --json for scripts
+```
+
+A certificate lasts 7 days. While the node is online the daemon renews it once
+less than 48 hours remain; a failed renewal does not affect the node and shows
+in `status`. One account can hold certificates for 3 nodes.
+
+If your account is banned or a certificate is revoked, other nodes stop
+accepting it within about 24 hours of the revocation being published. Without a
+published revocation it stops working when it expires, at most 7 days after
+issue. Turning certificates off with `rotifer network attest disable` stops
+renewal but does not void the current one, and neither does replacing the node
+key: a new key is a new node and needs `attest enable` again.
+
 Stop any node with `rotifer network stop`.
 
 ## Path B — from-source build

@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 use rotifer_core::p2p::messages::{encode_announcement, local_announcement, ANNOUNCEMENTS_TOPIC};
 use rotifer_core::p2p::discover::{SearchOutcome, SearchQuery};
 use rotifer_core::p2p::node::{AnnounceReport, Node as CoreNode, NodeHandle, RepublishReport};
+use rotifer_core::p2p::por::{AttestationStatus, TrustAnchor};
 use rotifer_core::p2p::NetworkConfig;
 use rotifer_core::p2p::outbound::ColocationStats;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -208,22 +209,18 @@ impl P2pNode {
     /// `~/.rotifer/identity.pem`, so the `PeerId` is stable across runs.
     /// `mdns_enabled` (default true) allows mDNS LAN discovery; it only runs
     /// when `listen_host` is not loopback (P2P RFC §5.1, `--no-mdns`).
+    /// `trust_anchors` replaces the issuers this node trusts (ADR-300; default
+    /// `https://rotifer.dev`). The CLI never passes it: it is for local
+    /// test setups. `start` refuses plain http to anything but loopback.
     #[napi(constructor)]
     pub fn new(
         listen_host: String,
         listen_port: u32,
         bootstrap_peers: Vec<String>,
         mdns_enabled: Option<bool>,
+        trust_anchors: Option<Vec<NetworkTrustAnchor>>,
     ) -> Result<Self> {
-        let config = NetworkConfig {
-            node_id: uuid::Uuid::new_v4().to_string(),
-            listen_host,
-            listen_port: listen_port as u16,
-            bootstrap_peers,
-            enabled: true,
-            mdns_enabled: mdns_enabled.unwrap_or(true),
-            ..NetworkConfig::default()
-        };
+        let config = node_config(listen_host, listen_port, bootstrap_peers, mdns_enabled, trust_anchors);
         let inner = CoreNode::new(config)
             .map_err(|e| Error::from_reason(format!("create p2p node: {e}")))?;
         Ok(Self { inner })
@@ -365,6 +362,40 @@ impl P2pNode {
         NetworkColocationStats::from(self.inner.colocation_stats())
     }
 
+    /// Answer a proof-of-registration challenge with this node's key (ADR-300
+    /// revision 2). Takes the challenge's four fields; the node builds the
+    /// message itself, so this cannot be used to sign anything else. `nonce`
+    /// and the results are unpadded base64url.
+    #[napi]
+    pub fn sign_por_challenge(
+        &self,
+        aud: String,
+        user_id: String,
+        nonce: String,
+        challenge_exp: i64,
+    ) -> Result<PorChallengeSignature> {
+        sign_challenge(&self.inner, &aud, &user_id, &nonce, challenge_exp)
+    }
+
+    /// Carry this proof-of-registration token in heartbeats from now on;
+    /// `null` makes them anonymous. Refused unless it is a token for this
+    /// node's own PeerId.
+    #[napi]
+    pub fn set_attestation(&self, token: Option<String>) -> Result<()> {
+        self.inner.set_attestation(token).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// What `peer`'s newest heartbeat said about its registration, or `null`
+    /// if no heartbeat from it has been accepted. The account pseudonym is
+    /// left out on purpose.
+    #[napi]
+    pub fn peer_attestation(&self, peer: String) -> Option<NetworkPeerAttestation> {
+        self.inner.peer_attestation(&peer).map(|a| NetworkPeerAttestation {
+            status: attestation_status(a.status).to_string(),
+            exp: a.exp.map(|v| v as f64),
+        })
+    }
+
     /// Stop the swarm and release the listen port.
     #[napi]
     pub fn stop(&mut self) -> Result<()> {
@@ -372,6 +403,73 @@ impl P2pNode {
             .stop()
             .map_err(|e| Error::from_reason(format!("stop p2p node: {e}")))
     }
+}
+
+/// An issuer a node trusts: tokens claiming `iss` are checked against the
+/// keys published at `jwks_url`.
+#[napi(object)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkTrustAnchor {
+    pub iss: String,
+    pub jwks_url: String,
+}
+
+/// A node's answer to an issuer's challenge, unpadded base64url.
+#[napi(object)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PorChallengeSignature {
+    /// The libp2p-protobuf public key of this node.
+    pub public_key: String,
+    pub signature: String,
+}
+
+/// A peer's registration as its newest heartbeat showed it.
+#[napi(object)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetworkPeerAttestation {
+    /// `none`, `valid`, `expired` or `revoked`.
+    pub status: String,
+    /// The token's expiry in Unix seconds, when its signature checked out.
+    pub exp: Option<f64>,
+}
+
+fn attestation_status(status: AttestationStatus) -> &'static str {
+    match status {
+        AttestationStatus::None => "none",
+        AttestationStatus::Valid => "valid",
+        AttestationStatus::Expired => "expired",
+        AttestationStatus::Revoked => "revoked",
+    }
+}
+
+fn node_config(
+    listen_host: String,
+    listen_port: u32,
+    bootstrap_peers: Vec<String>,
+    mdns_enabled: Option<bool>,
+    trust_anchors: Option<Vec<NetworkTrustAnchor>>,
+) -> NetworkConfig {
+    let defaults = NetworkConfig::default();
+    NetworkConfig {
+        node_id: uuid::Uuid::new_v4().to_string(),
+        listen_host,
+        listen_port: listen_port as u16,
+        bootstrap_peers,
+        enabled: true,
+        mdns_enabled: mdns_enabled.unwrap_or(true),
+        trust_anchors: trust_anchors.map_or(defaults.trust_anchors.clone(), |list| {
+            list.into_iter().map(|a| TrustAnchor { iss: a.iss, jwks_url: a.jwks_url }).collect()
+        }),
+        ..defaults
+    }
+}
+
+fn sign_challenge(node: &CoreNode, aud: &str, user_id: &str, nonce: &str, challenge_exp: i64) -> Result<PorChallengeSignature> {
+    let exp = u64::try_from(challenge_exp).map_err(|_| Error::from_reason("challenge expiry is negative"))?;
+    let answer = node
+        .sign_por_challenge(aud, user_id, nonce, exp)
+        .map_err(|e| Error::from_reason(e.to_string()))?;
+    Ok(PorChallengeSignature { public_key: answer.public_key, signature: answer.signature })
 }
 
 /// [`rotifer_core::p2p::outbound::ColocationStats`] for JS (counts saturate
@@ -396,6 +494,93 @@ impl From<ColocationStats> for NetworkColocationStats {
             max_peers_on_one_ip: n(c.max_peers_on_one_ip),
             ips_over_threshold_with_registered_peer: n(c.ips_over_threshold_with_registered_peer),
         }
+    }
+}
+
+#[cfg(test)]
+mod por_tests {
+    use super::*;
+    use base64::Engine as _;
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    const AUD: &str = "http://127.0.0.1:54321/functions/v1/node-attestation";
+    const USER: &str = "00000000-0000-4000-8000-000000000001";
+    const EXP: i64 = 1_767_225_600;
+    /// ADR-300 revision 2's test vector.
+    const VECTOR_HEX: &str = concat!(
+        "0000000e726f74696665722d706f722d763100000034687474703a2f2f313237",
+        "2e302e302e313a35343332312f66756e6374696f6e732f76312f6e6f64652d61",
+        "74746573746174696f6e0000002430303030303030302d303030302d34303030",
+        "2d383030302d3030303030303030303030310000002000010203040506070809",
+        "0a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000008000000006955",
+        "b900",
+    );
+
+    fn b64() -> base64::engine::GeneralPurpose {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+    }
+
+    fn nonce() -> String {
+        b64().encode((0u8..32).collect::<Vec<u8>>())
+    }
+
+    fn config(trust_anchors: Option<Vec<NetworkTrustAnchor>>) -> NetworkConfig {
+        node_config("127.0.0.1".into(), 0, vec![], Some(false), trust_anchors)
+    }
+
+    fn node(dir: &tempfile::TempDir, trust_anchors: Option<Vec<NetworkTrustAnchor>>) -> CoreNode {
+        CoreNode::with_keypair_path(config(trust_anchors), dir.path().join("id")).expect("build node")
+    }
+
+    #[test]
+    fn the_signing_entry_signs_exactly_the_adr_vector() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let n = node(&dir, None);
+        let out = sign_challenge(&n, AUD, USER, &nonce(), EXP).expect("sign");
+        let pb = b64().decode(&out.public_key).expect("public key");
+        assert_eq!(&pb[..4], &[0x08, 0x01, 0x12, 0x20], "libp2p protobuf, Ed25519");
+        let key = VerifyingKey::from_bytes(pb[4..].try_into().expect("32 bytes")).expect("key");
+        let sig: [u8; 64] = b64().decode(&out.signature).expect("signature").try_into().expect("64 bytes");
+        let vector = hex::decode(VECTOR_HEX).expect("hex");
+        assert!(key.verify(&vector, &Signature::from_bytes(&sig)).is_ok());
+    }
+
+    #[test]
+    fn the_signing_entry_refuses_what_is_not_a_challenge() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let n = node(&dir, None);
+        assert!(sign_challenge(&n, AUD, USER, &nonce(), -1).is_err());
+        assert!(sign_challenge(&n, AUD, USER, "not base64url!", EXP).is_err());
+        assert!(sign_challenge(&n, AUD, USER, &b64().encode([0u8; 31]), EXP).is_err());
+        assert!(sign_challenge(&n, AUD, "NOT-A-UUID", &nonce(), EXP).is_err());
+        assert!(sign_challenge(&n, "", USER, &nonce(), EXP).is_err());
+    }
+
+    #[test]
+    fn trust_anchors_default_to_the_protocols_and_can_be_replaced() {
+        assert_eq!(config(None).trust_anchors, NetworkConfig::default().trust_anchors);
+        let local = NetworkTrustAnchor { iss: "https://rotifer.dev".into(), jwks_url: "http://127.0.0.1:9/jwks.json".into() };
+        let got = config(Some(vec![local])).trust_anchors;
+        assert_eq!(got, vec![TrustAnchor { iss: "https://rotifer.dev".into(), jwks_url: "http://127.0.0.1:9/jwks.json".into() }]);
+    }
+
+    #[test]
+    fn plain_http_trust_anchors_are_only_for_loopback() {
+        let anchor = |url: &str| Some(vec![NetworkTrustAnchor { iss: "https://rotifer.dev".into(), jwks_url: url.into() }]);
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut off_box = node(&dir, anchor("http://example.com/jwks.json"));
+        assert!(off_box.start().is_err(), "plain http off this machine");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut loopback = node(&dir, anchor("http://127.0.0.1:9/jwks.json"));
+        loopback.start().expect("plain http to loopback");
+        loopback.stop().expect("stop");
+    }
+
+    #[test]
+    fn a_status_has_one_name_each() {
+        let names = [AttestationStatus::None, AttestationStatus::Valid, AttestationStatus::Expired, AttestationStatus::Revoked]
+            .map(attestation_status);
+        assert_eq!(names, ["none", "valid", "expired", "revoked"]);
     }
 }
 

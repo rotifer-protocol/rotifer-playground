@@ -30,6 +30,9 @@ import {
   readDaemonState,
   runDaemon,
 } from "../utils/p2p-daemon.js";
+import { attestCommand, printAttestation } from "./network-attest.js";
+import { KEY_CHANGE_NOTICE } from "../utils/por-client.js";
+import { porStatePath, readPorState, viewOf, type PorView } from "../utils/por-keeper.js";
 
 const ROTIFER_HOME = join(
   process.env.HOME || process.env.USERPROFILE || "/tmp",
@@ -367,6 +370,7 @@ export const networkCommand = new Command("network")
             peers: number;
             dhtPeers?: number;
             connectedPeers?: number;
+            attestation?: PorView;
           };
           display.kv("Status", c.success("● Running"));
           display.kv("PeerId", s.peerId);
@@ -375,10 +379,13 @@ export const networkCommand = new Command("network")
           // Absent when the daemon predates these counts.
           if (s.connectedPeers !== undefined) display.kv("Connected peers", String(s.connectedPeers));
           if (s.dhtPeers !== undefined) display.kv("DHT peers", String(s.dhtPeers));
+          // Absent when this addon cannot hold a certificate.
+          if (s.attestation) printAttestation(s.attestation);
         } else {
           display.kv("Status", c.muted("○ Not running"));
           display.kv("Listen Port", String(config.listen_port));
           display.kv("Bootstrap Peers", String(config.bootstrap_peers.length));
+          printAttestation(viewOf(readPorState(porStatePath(ROTIFER_HOME)), null, Math.floor(Date.now() / 1000)));
           console.log();
           display.hint("Start the daemon: rotifer network start");
         }
@@ -450,6 +457,8 @@ export const networkCommand = new Command("network")
         );
         console.log();
         display.success("P2P daemon running in the background.");
+        const certificate = readPorState(porStatePath(ROTIFER_HOME));
+        if (certificate && state && certificate.peerId !== state.peerId) display.warn(KEY_CHANGE_NOTICE);
         if (host !== "127.0.0.1") {
           display.hint("'rotifer network status' shows the reachable multiaddr — give it to other nodes as --bootstrap");
         }
@@ -623,6 +632,7 @@ export const networkCommand = new Command("network")
         }
       })
   )
+  .addCommand(attestCommand)
   .addCommand(
     new Command("withdraw")
       .description("Stop announcing a gene: no more republishing, and this node stops serving it")

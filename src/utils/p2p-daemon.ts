@@ -17,6 +17,8 @@ import { randomBytes } from "node:crypto";
 import { ensurePrivateDir, tightenPrivateFile } from "./private-fs.js";
 import { loadP2pNode } from "./binding.js";
 import { Republisher, announcedTablePath, type WithdrawMatch } from "./announce-table.js";
+import { isPorCapable, obtainCertificate } from "./por-client.js";
+import { PorKeeper, porStatePath } from "./por-keeper.js";
 
 const ROTIFER_HOME = join(
   process.env.HOME || process.env.USERPROFILE || "/tmp",
@@ -190,6 +192,17 @@ export async function runDaemon(
       : null;
   republisher?.restore();
 
+  // Certificates need an addon that can answer a challenge (T-170).
+  const keeper = isPorCapable(node)
+    ? new PorKeeper({
+        path: porStatePath(ROTIFER_HOME),
+        node,
+        obtain: (n) => obtainCertificate(n),
+        log: (line) => process.stderr.write(`${line}\n`),
+      })
+    : null;
+  keeper?.start();
+
   const server = createServer((req, res) => {
     const send = (code: number, obj: unknown): void => {
       res.writeHead(code, { "content-type": "application/json" });
@@ -211,6 +224,8 @@ export async function runDaemon(
         ...(node.connectedPeers ? { connectedPeers: node.connectedPeers().length } : {}),
         // Cumulative same-IP counters (A6 design v3 §3.4); absent before A6.
         ...(colocationStats ? { colocation: colocationStats.call(node) } : {}),
+        // Absent when this addon cannot hold a certificate.
+        ...(keeper ? { attestation: keeper.view() } : {}),
         startedAt,
       });
       return;
@@ -318,6 +333,14 @@ export async function runDaemon(
       });
       return;
     }
+    if (req.method === "POST" && url.pathname === "/attestation/reload") {
+      if (!keeper) {
+        send(501, { error: "this native addon cannot hold a certificate; update the CLI" });
+        return;
+      }
+      send(200, { ok: true, attestation: keeper.reload() });
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/stop") {
       send(200, { ok: true });
       shutdown();
@@ -330,6 +353,7 @@ export async function runDaemon(
     if (isShuttingDown) return;
     isShuttingDown = true;
     republisher?.stop();
+    keeper?.stop();
     try {
       node.stop();
     } catch {

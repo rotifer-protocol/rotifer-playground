@@ -1048,6 +1048,28 @@ impl Node {
         Ok(())
     }
 
+    /// Answer an issuer's challenge with this node's key: the four challenge
+    /// fields go in, the node builds the ADR-300 message itself and signs it.
+    /// `nonce` and both results are unpadded base64url. There is deliberately
+    /// no way to have the key sign bytes the caller chose.
+    pub fn sign_por_challenge(
+        &self,
+        aud: &str,
+        user_id: &str,
+        nonce: &str,
+        challenge_exp: u64,
+    ) -> Result<PorChallengeAnswer, NetworkError> {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let nonce = b64.decode(nonce).map_err(|_| NetworkError::Config("challenge nonce is not base64url".into()))?;
+        let message = por::challenge_message(aud, user_id, &nonce, challenge_exp).map_err(NetworkError::Config)?;
+        let signature = self.keypair.sign(&message).map_err(|_| NetworkError::Config("this node's key cannot sign".into()))?;
+        Ok(PorChallengeAnswer {
+            public_key: b64.encode(self.keypair.public().encode_protobuf()),
+            signature: b64.encode(signature),
+        })
+    }
+
     /// What `peer`'s newest heartbeat said about its registration, or `None`
     /// if no heartbeat from it has been accepted.
     pub fn peer_attestation(&self, peer: &str) -> Option<PeerAttestation> {
@@ -1665,6 +1687,14 @@ fn default_identity_path() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
     home.join(".rotifer").join("identity.pem")
+}
+
+/// A node's answer to an issuer's challenge, unpadded base64url: the
+/// libp2p-protobuf public key and the Ed25519 signature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PorChallengeAnswer {
+    pub public_key: String,
+    pub signature: String,
 }
 
 /// Load an existing identity keypair from `path`, or generate + persist a new

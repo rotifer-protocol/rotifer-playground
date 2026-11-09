@@ -117,6 +117,7 @@ beforeAll(async () => {
     writeFileSync(join(dir, ".gene-manifest.json"), JSON.stringify({ geneId: "forged", forged: true }));
     writeFileSync(join(dir, ".clawhub-origin.json"), JSON.stringify({ forged: true }));
     writeFileSync(join(dir, ".compile-result.json"), JSON.stringify({ forged: true }));
+    writeFileSync(join(dir, ".arena-cache.json"), JSON.stringify({ forged: true }));
     writeFileSync(join(dir, "index.ts"), "export async function express() { return { ran: true }; }\n");
   });
 
@@ -222,6 +223,7 @@ describe("a package cannot write what the CLI writes", () => {
     const dir = geneDirOf("gene-manifests");
     expect(existsSync(join(dir, ".cloud-manifest.json"))).toBe(false);
     expect(existsSync(join(dir, ".compile-result.json"))).toBe(false);
+    expect(existsSync(join(dir, ".arena-cache.json"))).toBe(false);
     expect(existsSync(join(dir, ".clawhub-origin.json"))).toBe(false);
     const manifest = JSON.parse(readFileSync(join(dir, ".gene-manifest.json"), "utf-8"));
     expect(manifest.forged).toBeUndefined();
@@ -246,5 +248,63 @@ describe("a gene wrapped from ClawHub is external code", () => {
   it("wrap says so when it finishes, before the first run surprises anyone", async () => {
     const { output } = await run(["wrap", "gene-hint", "--from-clawhub", "forged-phenotype"]);
     expect(output).toContain("external code");
+  });
+});
+
+describe("wrapping an existing ClawHub gene again does not make it the user's own", () => {
+  async function wrappedFromClawhub(name: string): Promise<string> {
+    await run(["wrap", name, "--from-clawhub", "forged-manifests"]);
+    expect(isExternallySourced(geneDirOf(name))).toBe(true);
+    return geneDirOf(name);
+  }
+
+  function localSkill(name: string): string {
+    const dir = join(TMP, "local-skills", name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "SKILL.md"), SKILL_MD);
+    return dir;
+  }
+
+  async function expectStillRefused(name: string): Promise<void> {
+    expect(isExternallySourced(geneDirOf(name))).toBe(true);
+    const { output, code } = await run(["run", name, "--no-sandbox", "--input", "{}"]);
+    expect(code, output).toBe(1);
+    expect(output).not.toContain('"ran"');
+  }
+
+  it("a plain re-wrap keeps where it came from", async () => {
+    const dir = await wrappedFromClawhub("gene-rewrap");
+    const { output, code } = await run(["wrap", "gene-rewrap"]);
+    expect(code, output).toBe(0);
+
+    const manifest = JSON.parse(readFileSync(join(dir, ".gene-manifest.json"), "utf-8"));
+    expect(manifest.fromClawhub).toBe("forged-manifests");
+    expect(manifest.clawhubVersion).toBeDefined();
+    await expectStillRefused("gene-rewrap");
+  });
+
+  it("wrapping a local skill over it keeps where it came from", async () => {
+    await wrappedFromClawhub("gene-reskill");
+    const skill = localSkill("reskill");
+    const { output, code } = await run(["wrap", "gene-reskill", "--from-skill", skill, "--domain", "general"]);
+    expect(code, output).toBe(0);
+    await expectStillRefused("gene-reskill");
+  });
+
+  it("a manifest that cannot be read stays external after a re-wrap", async () => {
+    const dir = await wrappedFromClawhub("gene-garbled");
+    writeFileSync(join(dir, ".gene-manifest.json"), "not json");
+    const { output, code } = await run(["wrap", "gene-garbled"]);
+    expect(code, output).toBe(0);
+    await expectStillRefused("gene-garbled");
+  });
+
+  it("a gene that never came from ClawHub is not marked", async () => {
+    const name = "gene-local-rewrap";
+    const skill = localSkill("local");
+    await run(["wrap", name, "--from-skill", skill, "--domain", "general"]);
+    await run(["wrap", name]);
+    const manifest = JSON.parse(readFileSync(join(geneDirOf(name), ".gene-manifest.json"), "utf-8"));
+    expect("fromClawhub" in manifest).toBe(false);
   });
 });

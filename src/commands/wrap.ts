@@ -10,6 +10,7 @@ import * as display from "../utils/display.js";
 import { c } from "../utils/palette.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
+import { isWrappedFromClawhub } from "../utils/l0-gate.js";
 import { parseSkillFrontmatter } from "./scan.js";
 import { suggestDomains } from "../utils/domain-suggest.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
@@ -55,6 +56,21 @@ const CLI_OWNED_ROOT_FILES = new Set([
   ".compile-result.json",
   ".arena-cache.json",
 ]);
+
+/**
+ * What a later wrap must carry over from the existing manifest. The package's
+ * code stays on disk when a gene is wrapped again, so rewriting the manifest
+ * must not turn it into the user's own.
+ */
+function keptClawhubOrigin(geneDir: string): Record<string, unknown> {
+  if (!isWrappedFromClawhub(geneDir)) return {};
+  try {
+    const { fromClawhub, clawhubVersion } = JSON.parse(readFileSync(join(geneDir, ".gene-manifest.json"), "utf-8"));
+    return { fromClawhub: fromClawhub ?? "unknown", clawhubVersion };
+  } catch {
+    return { fromClawhub: "unknown" };
+  }
+}
 
 /** Copies a package into the gene directory and returns the root names it left out. */
 export function copyPackageFiles(packageDir: string, geneDir: string): string[] {
@@ -445,7 +461,7 @@ export const wrapCommand = new Command("wrap")
       writeFileSync(
         join(geneDir, ".gene-manifest.json"),
         JSON.stringify(
-          { geneId, name: geneName, domain, fidelity: options.fidelity, wrappedAt: new Date().toISOString(), fromSkill: relative(root, skillFile) },
+          { geneId, name: geneName, domain, fidelity: options.fidelity, wrappedAt: new Date().toISOString(), fromSkill: relative(root, skillFile), ...keptClawhubOrigin(geneDir) },
           null,
           2
         ) + "\n"
@@ -517,7 +533,7 @@ export const wrapCommand = new Command("wrap")
     writeFileSync(phenotypePath, phenotypeStr + "\n");
     writeFileSync(
       join(geneDir, ".gene-manifest.json"),
-      JSON.stringify({ geneId, name: geneName, domain, fidelity: options.fidelity, wrappedAt: new Date().toISOString() }, null, 2) + "\n"
+      JSON.stringify({ geneId, name: geneName, domain, fidelity: options.fidelity, wrappedAt: new Date().toISOString(), ...keptClawhubOrigin(geneDir) }, null, 2) + "\n"
     );
 
     display.success(`Gene '${geneName}' wrapped successfully`);

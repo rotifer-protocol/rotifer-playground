@@ -101,8 +101,7 @@ describe("login callback port", () => {
     expect(authorize.pathname).toBe("/auth/v1/authorize");
     expect(await accepts(Number(redirect.port))).toBe(true);
 
-    const state = authorize.searchParams.get("state")!;
-    const callback = await fetch(`${redirect.href}?code=code-1&state=${state}`);
+    const callback = await fetch(`${redirect.href}?code=code-1`);
 
     expect(callback.status).toBe(200);
     expect(await outcome).toBe("resolved");
@@ -118,8 +117,7 @@ describe("login callback port", () => {
 
     const authorize = await openedAuthorizeUrl();
     const redirect = new URL(authorize.searchParams.get("redirect_to")!);
-    const state = authorize.searchParams.get("state")!;
-    await fetch(`${redirect.href}?code=code-1&state=${state}`);
+    await fetch(`${redirect.href}?code=code-1`);
     await outcome;
 
     expect(await accepts(Number(redirect.port))).toBe(false);

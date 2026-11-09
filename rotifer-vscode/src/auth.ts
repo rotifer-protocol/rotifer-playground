@@ -138,34 +138,24 @@ export class AuthManager {
 
     const codeVerifier = randomBytes(32).toString("base64url");
     const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
-    const oauthState = randomBytes(16).toString("hex");
 
     try {
-      const { port: callbackPort, server: cbServer, waitForCallback } = await this.startCallbackServer(oauthState);
-      const authUrl = `${this.client.endpoint}/auth/v1/authorize?provider=${provider.value}&redirect_to=http://localhost:${callbackPort}/callback&code_challenge=${codeChallenge}&code_challenge_method=S256&state=${oauthState}`;
+      const { port: callbackPort, server: cbServer, waitForCallback } = await this.startCallbackServer();
+      const authUrl = `${this.client.endpoint}/auth/v1/authorize?provider=${provider.value}&redirect_to=http://localhost:${callbackPort}/callback&code_challenge=${codeChallenge}&code_challenge_method=S256`;
 
       vscode.env.openExternal(vscode.Uri.parse(authUrl));
       vscode.window.showInformationMessage("Complete sign-in in your browser. Waiting for callback...");
 
-      const result = await waitForCallback;
-      let accessToken: string;
-      let refreshToken: string;
-
-      if (result.startsWith("implicit:")) {
-        const parts = result.split(":");
-        accessToken = parts.slice(1, -1).join(":");
-        refreshToken = parts[parts.length - 1];
-      } else {
-        const tokenRes = await fetch(`${this.client.endpoint}/auth/v1/token?grant_type=pkce`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", apikey: this.client.anonKey },
-          body: JSON.stringify({ auth_code: result, code_verifier: codeVerifier }),
-        });
-        if (!tokenRes.ok) throw new Error("Token exchange failed");
-        const tokenData = await tokenRes.json() as any;
-        accessToken = tokenData.access_token;
-        refreshToken = tokenData.refresh_token;
-      }
+      const code = await waitForCallback;
+      const tokenRes = await fetch(`${this.client.endpoint}/auth/v1/token?grant_type=pkce`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: this.client.anonKey },
+        body: JSON.stringify({ auth_code: code, code_verifier: codeVerifier }),
+      });
+      if (!tokenRes.ok) throw new Error("Token exchange failed");
+      const tokenData = await tokenRes.json() as any;
+      const accessToken: string = tokenData.access_token;
+      const refreshToken: string = tokenData.refresh_token;
 
       this.client.setAccessToken(accessToken);
       const userInfo = await this.client.getUserInfo();
@@ -201,7 +191,7 @@ export class AuthManager {
     vscode.window.showInformationMessage(`Signed out (was @${username})`);
   }
 
-  private async startCallbackServer(expectedState: string): Promise<{ port: number; server: any; waitForCallback: Promise<string> }> {
+  private async startCallbackServer(): Promise<{ port: number; server: any; waitForCallback: Promise<string> }> {
     const http = require("node:http") as typeof import("node:http");
 
     const server = http.createServer();
@@ -226,19 +216,11 @@ export class AuthManager {
         const url = new URL(req.url!, `http://localhost:${port}`);
 
         if (url.pathname === "/callback") {
-          const returnedState = url.searchParams.get("state");
-          if (returnedState !== expectedState) {
-            res.writeHead(403, { "Content-Type": "text/html" });
-            res.end("<html><body><h2>Login failed: state mismatch (possible CSRF attack)</h2></body></html>");
-            clearTimeout(timeout);
-            server.close();
-            reject(new Error("OAuth state mismatch — possible CSRF attack"));
-            return;
-          }
-
+          // Only a PKCE code is accepted: it is worthless without this login's
+          // code_verifier. A token handed to this port is never accepted, because any
+          // page open in the browser can make that request. Supabase does not return a
+          // client's state to redirect_to, so there is no state to check here.
           const code = url.searchParams.get("code");
-          const accessToken = url.searchParams.get("access_token");
-          const refreshToken = url.searchParams.get("refresh_token");
 
           res.writeHead(200, { "Content-Type": "text/html" });
           res.end("<html><body><h2>Login successful! You can close this tab.</h2><script>window.close()</script></body></html>");
@@ -246,12 +228,10 @@ export class AuthManager {
           clearTimeout(timeout);
           server.close();
 
-          if (accessToken && refreshToken) {
-            resolve(`implicit:${accessToken}:${refreshToken}`);
-          } else if (code) {
+          if (code) {
             resolve(code);
           } else {
-            reject(new Error("No auth code or token in callback"));
+            reject(new Error("No auth code in callback"));
           }
         }
       });

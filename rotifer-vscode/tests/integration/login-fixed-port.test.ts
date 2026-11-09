@@ -80,7 +80,7 @@ describe("the fixed login callback port", () => {
     expect(authorize.searchParams.get("redirect_to")).toBe(ALLOW_LISTED_REDIRECT);
     expect(bound).toEqual([9876, "127.0.0.1"]);
 
-    await fetch(`${ALLOW_LISTED_REDIRECT}?code=code-1&state=${authorize.searchParams.get("state")}`);
+    await fetch(`${ALLOW_LISTED_REDIRECT}?code=code-1`);
     await login;
     expect(auth.isLoggedIn).toBe(true);
   });

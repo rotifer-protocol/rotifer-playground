@@ -27,9 +27,13 @@ export const POR_LIFETIME_S = 7 * 24 * 3600;
 const REQUEST_TIMEOUT_MS = 15_000;
 
 /** ADR-300, the wording fixed by the 2026-11-02 ruling. */
-export const CONSENT_NOTICE = "你的节点会和一个账号假名关联公开，Cloud 能反查。";
+export const CONSENT_NOTICE =
+  "你的节点会和一个账号假名关联公开，Cloud 能反查。 " +
+  "Your node will be publicly linked to an account pseudonym, and Cloud can trace it back to your account.";
 /** What a certificate commits the user to, shown alongside the consent notice. */
-export const LIFETIME_NOTICE = "证书 7 天内失效；节点在线时会在剩余不足 48 小时时自动续签。";
+export const LIFETIME_NOTICE =
+  "证书 7 天内失效；节点在线时会在剩余不足 48 小时时自动续签。 " +
+  "The certificate expires within 7 days; while the node is online it renews itself when under 48 hours remain.";
 export const CONSENT_FLAG = "--accept-public-pseudonym";
 
 /** por.rs `MAX_JWKS_CACHE_SECS` is the 24 hours; ADR-300 D4 revision is the 7 days. */

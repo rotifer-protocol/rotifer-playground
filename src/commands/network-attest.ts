@@ -5,13 +5,17 @@
  * Every subcommand answers with the same JSON shape under --json:
  * `{ ok: true, action, attestation, daemon, notices }` or
  * `{ ok: false, action, error: { code, message, fix } }`.
+ *
+ * `daemon` from `status` is `running` (one answers its control server) or
+ * `not_running`. From the commands that change the certificate it says whether
+ * a daemon took the change: `loaded`, `cannot_load` or `not_running`.
  */
 import { Command } from "commander";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import * as display from "../utils/display.js";
 import { loadP2pNode } from "../utils/binding.js";
-import { controlRequest } from "../utils/p2p-daemon.js";
+import { controlRequest, isDaemonRunning } from "../utils/p2p-daemon.js";
 import {
   asPorError,
   BAN_NOTICE,
@@ -43,12 +47,14 @@ export const DISABLE_NOTICE =
 
 /** Whether a running daemon picked the change up. */
 export type DaemonLoad = "loaded" | "not_running" | "cannot_load";
+/** Whether a daemon is answering: only `status` reports this. */
+export type DaemonPresence = "running" | "not_running";
 
 export interface AttestOutcome {
   ok: true;
   action: "enable" | "renew" | "disable" | "status";
   attestation: PorView;
-  daemon: DaemonLoad;
+  daemon: DaemonLoad | DaemonPresence;
   notices: string[];
 }
 
@@ -61,6 +67,7 @@ export interface AttestDeps {
   confirm: (question: string) => Promise<boolean>;
   notify: (notices: string[]) => void;
   reloadDaemon: () => Promise<DaemonLoad>;
+  isDaemonRunning: () => Promise<boolean>;
 }
 
 function capableNode(deps: AttestDeps): PorCapableNode {
@@ -133,14 +140,14 @@ export async function attestRenew(deps: AttestDeps): Promise<AttestOutcome> {
 }
 
 export async function attestDisable(deps: AttestDeps): Promise<AttestOutcome> {
-  const hadOne = readPorState(deps.statePath) !== null;
+  const hasCertificate = readPorState(deps.statePath) !== null;
   removePorState(deps.statePath);
   return {
     ok: true,
     action: "disable",
     attestation: viewOf(null, null, nowS(deps)),
     daemon: await deps.reloadDaemon(),
-    notices: hadOne ? [DISABLE_NOTICE] : [],
+    notices: hasCertificate ? [DISABLE_NOTICE] : [],
   };
 }
 
@@ -153,7 +160,7 @@ export async function attestStatus(deps: AttestDeps): Promise<AttestOutcome> {
     ok: true,
     action: "status",
     attestation,
-    daemon: "not_running",
+    daemon: (await deps.isDaemonRunning()) ? "running" : "not_running",
     notices: attestation.state === "key_changed" ? [KEY_CHANGE_NOTICE] : [],
   };
 }
@@ -208,7 +215,7 @@ export async function askYesNo(question: string, input: NodeJS.ReadableStream, o
   }
 }
 
-function defaultDeps(): AttestDeps {
+export function defaultDeps(): AttestDeps {
   return {
     statePath: porStatePath(ROTIFER_HOME),
     loadNode: () => loadP2pNode("127.0.0.1", 0, []),
@@ -223,6 +230,7 @@ function defaultDeps(): AttestDeps {
       const result = await controlRequest("POST", "/attestation/reload");
       return !result ? "not_running" : result.ok ? "loaded" : "cannot_load";
     },
+    isDaemonRunning,
   };
 }
 

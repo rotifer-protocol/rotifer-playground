@@ -15,10 +15,12 @@ import {
   attestEnable,
   attestRenew,
   attestStatus,
+  defaultDeps,
   reportAttest,
   type AttestDeps,
   type AttestOutcome,
 } from "../../src/commands/network-attest.js";
+import { isDaemonRunning } from "../../src/utils/p2p-daemon.js";
 import { PorError, type PorClientDeps } from "../../src/utils/por-client.js";
 import { porStatePath, readPorState, writePorState, type PorState } from "../../src/utils/por-keeper.js";
 import * as display from "../../src/utils/display.js";
@@ -35,6 +37,8 @@ const CERT = `header.${SUB}.signature`;
 const PRIVATE = "SECRET-PRIVATE-KEY";
 
 const ADR_NOTICE = "你的节点会和一个账号假名关联公开，Cloud 能反查";
+const ENGLISH_NOTICE = "publicly linked to an account pseudonym";
+const ENGLISH_LIFETIME = "within 7 days";
 
 let home: string;
 let path: string;
@@ -75,6 +79,7 @@ function deps(over: Partial<AttestDeps> = {}): AttestDeps {
     confirm: async () => false,
     notify: () => {},
     reloadDaemon: async () => "not_running",
+    isDaemonRunning: async () => false,
     ...over,
   };
 }
@@ -160,6 +165,22 @@ describe("off until the user turns it on", () => {
     expect(out.notices).toEqual([]); // already shown
   });
 
+  it("says the same thing in English, in the same notices", async () => {
+    let shown: string[] = [];
+    await attestEnable(
+      { accept: false },
+      deps({
+        isInteractive: () => true,
+        notify: (notices) => void (shown = notices),
+        confirm: async () => true,
+      }),
+    );
+    const consent = shown.find((n) => n.includes(ADR_NOTICE));
+    expect(consent).toContain(ENGLISH_NOTICE);
+    const lifetime = shown.find((n) => n.includes("7 天"));
+    expect(lifetime).toContain(ENGLISH_LIFETIME);
+  });
+
   it("interactive and declined: enables nothing", async () => {
     const d = deps({ isInteractive: () => true, confirm: async () => false });
     expect(await codeOf(attestEnable({ accept: false }, d))).toBe("POR_CONSENT_DECLINED");
@@ -210,6 +231,22 @@ describe("enable", () => {
     const out = await attestEnable({ accept: false }, deps());
     expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(out.attestation.expiresAt).toBe(NOW + WEEK);
+  });
+});
+
+describe("status and the daemon", () => {
+  it("says running when a daemon answers", async () => {
+    const out = await attestStatus(deps({ isDaemonRunning: async () => true }));
+    expect(out.daemon).toBe("running");
+  });
+
+  it("says not_running when none does", async () => {
+    const out = await attestStatus(deps({ isDaemonRunning: async () => false }));
+    expect(out.daemon).toBe("not_running");
+  });
+
+  it("asks the real daemon, not a fixed answer", () => {
+    expect(defaultDeps().isDaemonRunning).toBe(isDaemonRunning);
   });
 });
 

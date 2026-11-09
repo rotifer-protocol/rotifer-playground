@@ -253,6 +253,11 @@ export class PorKeeper {
     let failure: PorError;
     try {
       const cert = await this.deps.obtain(this.deps.node);
+      // `attest disable` may have run during the round: its choice stands.
+      if (!readPorState(this.deps.path)) {
+        this.log("attestation: certificates were turned off during renewal; the new one was dropped");
+        return;
+      }
       if (this.setToken(cert.token)) {
         writePorState(this.deps.path, stateFor(cert, this.now()));
         this.retryAfterMs = 0;

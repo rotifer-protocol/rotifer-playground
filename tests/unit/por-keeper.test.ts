@@ -210,6 +210,36 @@ describe("PorKeeper", () => {
     });
   });
 
+  it("does not bring back a certificate disabled while a renewal was succeeding", async () => {
+    writePorState(path, state());
+    clockS = EXP - 3600;
+    obtain.mockImplementation(async () => {
+      rmSync(path);
+      return { token: "NEW.TOKEN", peerId: PEER, iat: clockS, exp: clockS + 604_800 };
+    });
+    const k = keeper();
+    await k.tick();
+    expect(existsSync(path)).toBe(false);
+    expect(carried).not.toContain("NEW.TOKEN");
+    expect(k.view().state).toBe("off");
+  });
+
+  it("a state file it cannot write does not escape the tick, and later ticks still run", async () => {
+    writePorState(path, state());
+    clockS = EXP - 7200;
+    // A directory where the temporary file goes: a real write failure, as any user.
+    const blocker = `${path}.${process.pid}.tmp`;
+    mkdirSync(blocker);
+    const k = keeper();
+    await expect(k.tick()).resolves.toBeUndefined();
+    expect(logs.join("\n")).toContain("renewal check failed");
+
+    rmSync(blocker, { recursive: true });
+    clockS += HOUR_MS / 1000;
+    await k.tick();
+    expect(readPorState(path)!.token).toBe("NEW.TOKEN");
+  });
+
   it("does not store a certificate the node refused", async () => {
     writePorState(path, state());
     clockS = EXP - 3600;

@@ -23,7 +23,7 @@ import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../../src/utils/sandbox-defaul
 
 const GRANTED_HOST = "rotifer-permission-test.invalid";
 const OTHER_HOST = "rotifer-permission-other.invalid";
-const KEY = "T508_NAPI_KEY";
+const ENV_NAME = "T508_NAPI_KEY";
 const VALUE = "t508-placeholder-value";
 const NETWORK_FAILURES = [-5, -4];
 const REFUSED = -2;
@@ -91,7 +91,7 @@ function fetchGene(envelope: string): Buffer {
 /** A gene that sends the credential to `target`. */
 function bearerGene(target: string): Buffer {
   return fetchGene(
-    JSON.stringify({ method: "GET", url: `https://${target}/`, headers: { Authorization: `Bearer \${env:${KEY}}` } }),
+    JSON.stringify({ method: "GET", url: `https://${target}/`, headers: { Authorization: `Bearer \${env:${ENV_NAME}}` } }),
   );
 }
 
@@ -104,7 +104,7 @@ function phenotype(credentialHost: string, otherHost: string) {
     version: "0.1.0",
     fidelity: "Hybrid",
     externalDependencies: [
-      { apiType: "rest", semanticTag: "credential-test", domains: [credentialHost], credentials: [KEY] },
+      { apiType: "rest", semanticTag: "credential-test", domains: [credentialHost], credentials: [ENV_NAME] },
       { apiType: "rest", semanticTag: "other-dependency", domains: [otherHost] },
     ],
     network: { allowedDomains: [credentialHost, otherHost], maxTimeoutMs: 5000 },
@@ -135,7 +135,7 @@ describe.skipIf(!loaded && !process.env.CI)("the credential limit across the JS 
     if (!loaded) throw new Error("no rotifer native addon: build crates/rotifer-napi from this checkout");
     root = mkdtempSync(join(tmpdir(), "rotifer-scope-napi-"));
     binding = new loaded.constructor(root);
-    vi.stubEnv(KEY, VALUE);
+    vi.stubEnv(ENV_NAME, VALUE);
   });
 
   afterEach(() => {
@@ -146,7 +146,7 @@ describe.skipIf(!loaded && !process.env.CI)("the credential limit across the JS 
   it("a credential granted for one host does not go to another host the gene can reach", async () => {
     const declared = phenotype(GRANTED_HOST, OTHER_HOST);
     const dir = externalGene("gene", declared);
-    await requireCredentialConsent([{ name: "gene", dir }], { allowCredentials: `${KEY}@${GRANTED_HOST}` });
+    await requireCredentialConsent([{ name: "gene", dir }], { allowCredentials: `${ENV_NAME}@${GRANTED_HOST}` });
 
     const run = (target: string) =>
       executeGene(binding, dir, bearerGene(target), "{}", JSON.stringify(declared), DEFAULT_SANDBOX_CONSTRAINTS_JSON);
@@ -164,7 +164,7 @@ describe.skipIf(!loaded && !process.env.CI)("the credential limit across the JS 
     const dirB = externalGene("b", b);
     await requireCredentialConsent(
       [{ name: "a", dir: dirA }, { name: "b", dir: dirB }],
-      { allowCredentials: `${KEY}@${GRANTED_HOST},${KEY}@${OTHER_HOST}` },
+      { allowCredentials: `${ENV_NAME}@${GRANTED_HOST},${ENV_NAME}@${OTHER_HOST}` },
     );
 
     const idA = new Array<number>(32).fill(10);

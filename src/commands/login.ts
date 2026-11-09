@@ -8,6 +8,7 @@ import {
   generateCodeVerifier,
   generateCodeChallenge,
   buildOAuthCallbackUrl,
+  normalizeCloudEndpoint,
 } from "../cloud/auth.js";
 import { loadCloudConfig } from "../cloud/client.js";
 import type { AuthProvider } from "../cloud/types.js";
@@ -42,7 +43,13 @@ export const loginCommand = new Command("login")
     }
 
     const config = loadCloudConfig();
-    const endpoint = options.endpoint || config.endpoint;
+    let endpoint: string;
+    try {
+      endpoint = normalizeCloudEndpoint(options.endpoint || config.endpoint);
+    } catch (err) {
+      display.error((err as Error).message);
+      process.exit(1);
+    }
 
     const codeVerifier = generateCodeVerifier();
     const codeChallenge = generateCodeChallenge(codeVerifier);

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.35.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.34.0...v0.35.0) (2026-11-09)
+
+
+### Features
+
+* **p2p:** A6 part 1 — bootstrap keeper, explicit P6, same-IP counters in /status ([#552](https://github.com/rotifer-protocol/rotifer-playground/issues/552)) ([feb1ed9](https://github.com/rotifer-protocol/rotifer-playground/commit/feb1ed962a66df22d86e3469a735c2e758374263))
+
+
+### Bug Fixes
+
+* **genes:** prepare the seven template genes for publication (T-168) ([#559](https://github.com/rotifer-protocol/rotifer-playground/issues/559)) ([2c83958](https://github.com/rotifer-protocol/rotifer-playground/commit/2c839588633e81eaefa2a3431d5e44e8f59ccc29))
+* **hello:** report what a template can do about missing genes, and stop reporting runs that did nothing ([#558](https://github.com/rotifer-protocol/rotifer-playground/issues/558)) ([a42f227](https://github.com/rotifer-protocol/rotifer-playground/commit/a42f227586317a966fed9e52340fc4dc743cd507))
+* **p2p:** count same-IP peers ourselves and apply P6 through P5, so closing one of a peer's two connections no longer drops its IP (K10, T-158) ([#556](https://github.com/rotifer-protocol/rotifer-playground/issues/556)) ([2b917c5](https://github.com/rotifer-protocol/rotifer-playground/commit/2b917c525a06f07e77c370958c0e88907e286d40))
+
 ## [0.34.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.33.1...v0.34.0) (2026-11-04)
 
 

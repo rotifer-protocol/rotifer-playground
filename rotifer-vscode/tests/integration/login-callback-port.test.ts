@@ -93,7 +93,7 @@ afterEach(async () => {
 
 describe("login callback port", () => {
   it("opens the browser with the port it is really listening on", async () => {
-    const auth = new AuthManager(makeClient(), makeContext());
+    const auth = new AuthManager(makeClient(), makeContext(), 0);
     const outcome = settle(auth.login());
 
     const authorize = await openedAuthorizeUrl();
@@ -113,7 +113,7 @@ describe("login callback port", () => {
   });
 
   it("stops listening once the callback has arrived", async () => {
-    const auth = new AuthManager(makeClient(), makeContext());
+    const auth = new AuthManager(makeClient(), makeContext(), 0);
     const outcome = settle(auth.login());
 
     const authorize = await openedAuthorizeUrl();
@@ -131,7 +131,7 @@ describe("login callback port", () => {
       return this;
     });
 
-    const auth = new AuthManager(makeClient(), makeContext());
+    const auth = new AuthManager(makeClient(), makeContext(), 0);
 
     expect(await settle(auth.login())).toBe("resolved");
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(

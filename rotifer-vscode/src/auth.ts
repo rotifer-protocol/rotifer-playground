@@ -11,6 +11,14 @@ const LEGACY_CREDS_FILE = join(
   "credentials.json",
 );
 
+/**
+ * Fixed loopback port for the OAuth callback. Must exactly match the Supabase Auth
+ * "Redirect URLs" allow-list entry (`http://localhost:9876/callback`). Supabase does
+ * not match a port wildcard, so with any other port the browser lands on the website
+ * and the callback never arrives.
+ */
+const OAUTH_CALLBACK_PORT = 9876;
+
 interface StoredCredentials {
   access_token: string;
   refresh_token: string;
@@ -29,7 +37,11 @@ export class AuthManager {
   private credentials: StoredCredentials | null = null;
   private secrets: vscode.SecretStorage;
 
-  constructor(private client: RotiferCloudClient, context: vscode.ExtensionContext) {
+  constructor(
+    private client: RotiferCloudClient,
+    context: vscode.ExtensionContext,
+    private oauthCallbackPort: number = OAUTH_CALLBACK_PORT,
+  ) {
     this.secrets = context.secrets;
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     this.statusBarItem.command = "rotifer.authMenu";
@@ -195,8 +207,12 @@ export class AuthManager {
     const server = http.createServer();
     // listen() with a host finishes asynchronously: address() is null until then.
     await new Promise<void>((resolve, reject) => {
-      server.once("error", (err: Error) => reject(new Error(`Cannot start callback server: ${err.message}`)));
-      server.listen(0, "127.0.0.1", () => resolve());
+      server.once("error", (err: NodeJS.ErrnoException) => reject(new Error(
+        err.code === "EADDRINUSE"
+          ? `Port ${this.oauthCallbackPort} is already in use, so sign-in cannot finish. Close whatever is using it, such as another Rotifer login in progress, and try again.`
+          : `Cannot start callback server: ${err.message}`,
+      )));
+      server.listen(this.oauthCallbackPort, "127.0.0.1", () => resolve());
     });
     const port = (server.address() as any).port as number;
 

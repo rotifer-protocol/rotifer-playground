@@ -14,7 +14,7 @@ serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
 anyhow = "1"
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 # Every default feature except `cache`: nothing here uses wasmtime's on-disk
 # compilation cache, and that feature alone pulls in zstd (RUSTSEC-2026-0391,
 # -0398, -0403, -0410). The rest of the list is wasmtime 48's `default`

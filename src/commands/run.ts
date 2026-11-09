@@ -8,7 +8,7 @@ import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
 import { flushInvocationReports, recordGeneInvocation } from "../cloud/invocation.js";
 import { recordHeartbeat, flushHeartbeat } from "../telemetry/heartbeat.js";
-import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
+import { evaluateL0, isExternallySourced, nodeRefusalMessage } from "../utils/l0-gate.js";
 import { compileSchemaCheck } from "../utils/arena-success.js";
 import { readErrorEnvelope } from "../testsuite/gate.js";
 
@@ -18,7 +18,7 @@ export const runCommand = new Command("run")
   .option("--input <json>", "input JSON string", '{"name":"world"}')
   .option("--verbose", "show detailed execution output", false)
   .option("--no-sandbox", "run without WASM sandbox (Node.js only)")
-  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed genes", false)
+  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed or ClawHub-wrapped genes", false)
   .option("--no-validate", "skip checking the input and output against the gene's inputSchema / outputSchema")
   .action(
     async (
@@ -180,7 +180,7 @@ export const runCommand = new Command("run")
         // 起步基因和用户自己发布过的基因都带纸条，但那是他们自己的代码。见 l0-gate.ts。
         const isCloudGene = isExternallySourced(geneDir);
         if (isCloudGene && !options.trustUnsigned) {
-          display.error("Cloud-installed genes cannot run via Node.js without sandbox.");
+          display.error(nodeRefusalMessage(geneDir));
           display.hint("Use --trust-unsigned to explicitly allow unsandboxed execution.");
           display.hint("Or compile the gene first: rotifer compile " + geneName);
           process.exit(1);

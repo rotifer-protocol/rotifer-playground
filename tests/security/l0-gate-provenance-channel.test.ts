@@ -23,6 +23,46 @@ import { tmpdir } from "node:os";
 
 const REAL_SHIPPED_GENE = join(__dirname, "..", "..", "genes", "genesis-file-read");
 
+describe("isExternallySourced: a gene wrapped from ClawHub is external whatever else is on disk", () => {
+  let dir: string;
+  const write = (name: string, doc: unknown) =>
+    writeFileSync(join(dir, name), typeof doc === "string" ? doc : JSON.stringify(doc));
+
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "rotifer-prov-claw-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it("the wrap marker alone → external", async () => {
+    const { isExternallySourced } = await import("../../src/utils/l0-gate.js");
+    write(".gene-manifest.json", { geneId: "x", fromClawhub: "some-skill" });
+    expect(isExternallySourced(dir)).toBe(true);
+  });
+
+  it("publishing it later (published_at, no installed_at) does not launder it", async () => {
+    const { isExternallySourced } = await import("../../src/utils/l0-gate.js");
+    write(".gene-manifest.json", { geneId: "x", fromClawhub: "some-skill" });
+    write(".cloud-manifest.json", { published_at: "2026-01-01T00:00:00Z" });
+    expect(isExternallySourced(dir)).toBe(true);
+  });
+
+  it("an unreadable wrap marker → external (fail closed)", async () => {
+    const { isExternallySourced } = await import("../../src/utils/l0-gate.js");
+    write(".gene-manifest.json", "{not json");
+    expect(isExternallySourced(dir)).toBe(true);
+  });
+
+  it("a marker that is valid JSON but not an object → external", async () => {
+    const { isExternallySourced } = await import("../../src/utils/l0-gate.js");
+    write(".gene-manifest.json", "null");
+    expect(isExternallySourced(dir)).toBe(true);
+  });
+
+  it("a gene the user wrapped from their own code stays local", async () => {
+    const { isExternallySourced } = await import("../../src/utils/l0-gate.js");
+    write(".gene-manifest.json", { geneId: "x", name: "mine", wrappedAt: "2026-01-01T00:00:00Z" });
+    expect(isExternallySourced(dir)).toBe(false);
+  });
+});
+
 describe("isExternallySourced judges by channel, not by presence", () => {
   let dir: string;
   const manifest = (doc: unknown) =>

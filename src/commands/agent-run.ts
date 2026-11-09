@@ -8,7 +8,7 @@ import { c } from "../utils/palette.js";
 import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { geneIdV2, tryLoadBinding, type NativeBinding } from "../utils/binding.js";
-import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
+import { evaluateL0, isExternallySourced, nodeRefusalMessage } from "../utils/l0-gate.js";
 import { createGatewayFetch, type GatewayFetchOptions, type GatewayResponse } from "../runtime/network-gateway.js";
 import type { GeneMemoryAccess } from "../memory/index.js";
 import { openAgentMemory, type AgentMemoryHandle, type WasmMemory } from "../memory/host.js";
@@ -42,7 +42,7 @@ export const agentRunCommand = new Command("run")
   .option("--input <json>", "input JSON for the pipeline", '{"name":"world"}')
   .option("--verbose", "show intermediate results", false)
   .option("--no-sandbox", "force Node.js execution (skip WASM sandbox)")
-  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed genes", false)
+  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed or ClawHub-wrapped genes", false)
   .action(async (agentName: string, options: { input: string; verbose: boolean; sandbox: boolean; trustUnsigned: boolean }) => {
     const root = requireProjectRoot();
     const config = loadConfig(root);
@@ -601,7 +601,7 @@ const TRUST_UNSIGNED_HINT = "Use --trust-unsigned to explicitly allow unsandboxe
  */
 function refuseNodeExecution(geneDir: string, isTrustUnsigned: boolean): string | null {
   if (isTrustUnsigned || !isExternallySourced(geneDir)) return null;
-  return "Cloud-installed genes cannot run via Node.js without sandbox.";
+  return nodeRefusalMessage(geneDir);
 }
 
 export async function buildGeneExecutor(

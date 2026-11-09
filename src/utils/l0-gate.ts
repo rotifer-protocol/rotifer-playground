@@ -70,6 +70,7 @@ export function evaluateL0(
  * 不在任何环境里放过一个。
  */
 export function isExternallySourced(geneDir: string): boolean {
+  if (isWrappedFromClawhub(geneDir)) return true;
   const manifestPath = join(geneDir, ".cloud-manifest.json");
   if (!existsSync(manifestPath)) return false;
   try {
@@ -80,4 +81,27 @@ export function isExternallySourced(geneDir: string): boolean {
   } catch {
     return true;
   }
+}
+
+/**
+ * Whether `wrap --from-clawhub` made this gene. The code came from a ClawHub
+ * upload, so it stays external even after the user publishes it, which would
+ * otherwise read as their own. `.gene-manifest.json` is written by wrap and
+ * never taken from the package; one that cannot be read counts as ClawHub.
+ */
+export function isWrappedFromClawhub(geneDir: string): boolean {
+  const manifestPath = join(geneDir, ".gene-manifest.json");
+  if (!existsSync(manifestPath)) return false;
+  try {
+    const m: unknown = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    return m === null || typeof m !== "object" || "fromClawhub" in m;
+  } catch {
+    return true;
+  }
+}
+
+/** Why an external gene may not take the unsandboxed Node.js path. */
+export function nodeRefusalMessage(geneDir: string): string {
+  const who = isWrappedFromClawhub(geneDir) ? "Genes wrapped from ClawHub" : "Cloud-installed genes";
+  return `${who} cannot run via Node.js without sandbox.`;
 }

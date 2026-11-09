@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { ALLOW_CREDENTIALS_OPTION, requireCredentialConsent, executeGene } from "../utils/credential-consent.js";
+import { ALLOW_CREDENTIALS_OPTION, requireCredentialConsent, executeGene } from "../utils/env-grant-consent.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";

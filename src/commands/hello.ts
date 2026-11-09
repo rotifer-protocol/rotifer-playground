@@ -10,7 +10,7 @@ import { requireProjectRoot } from "../utils/project-root.js";
 import { createAgentCore } from "./agent-create.js";
 import { buildGeneExecutor, findAgent, printProtocolInsights } from "./agent-run.js";
 import { tryLoadBinding } from "../utils/binding.js";
-import { ALLOW_CREDENTIALS_OPTION, compiledGenes, requireCredentialConsent } from "../utils/credential-consent.js";
+import { ALLOW_CREDENTIALS_OPTION, compiledGenes, requireCredentialConsent } from "../utils/env-grant-consent.js";
 import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
 import { createGatewayFetch } from "../runtime/network-gateway.js";
 import { readErrorEnvelope } from "../testsuite/gate.js";

@@ -11,7 +11,7 @@ import { recordHeartbeat, flushHeartbeat } from "../telemetry/heartbeat.js";
 import { evaluateL0, isExternallySourced, nodeRefusalMessage } from "../utils/l0-gate.js";
 import { compileSchemaCheck } from "../utils/arena-success.js";
 import { readErrorEnvelope } from "../testsuite/gate.js";
-import { ALLOW_CREDENTIALS_OPTION, requireCredentialConsent, executeGene } from "../utils/credential-consent.js";
+import { ALLOW_CREDENTIALS_OPTION, requireCredentialConsent, executeGene } from "../utils/env-grant-consent.js";
 
 export const runCommand = new Command("run")
   .description("Execute a single gene directly, checking its input and output against the gene's schema")

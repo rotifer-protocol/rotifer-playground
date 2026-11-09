@@ -14,7 +14,7 @@ import {
   requireCredentialConsent,
   type ConsentIo,
   type GeneCredentialRequest,
-} from "../../src/utils/credential-consent.js";
+} from "../../src/utils/env-grant-consent.js";
 
 const ESC = String.fromCharCode(0x1b);
 

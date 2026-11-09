@@ -52,7 +52,7 @@ export interface NativeBinding {
     constraintsJson?: string,
     /** v0.9.4 AgentMemory: {"agentId","geneId"}; omitted → the gene has no agent memory. */
     memoryContextJson?: string,
-    /** #508: {"NAME":["host"]}, for an external gene; omitted → no limit. Call through utils/credential-consent. */
+    /** #508: {"NAME":["host"]}, for an external gene; omitted → no limit. Call through utils/env-grant-consent. */
     credentialScopeJson?: string
   ): ExecutionResultView;
   l0Check(

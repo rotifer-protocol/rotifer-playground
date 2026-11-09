@@ -8,7 +8,7 @@ import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding } from "../utils/binding.js";
 import { evaluateL0, isExternallySourced, nodeRefusalMessage } from "../utils/l0-gate.js";
-import { ALLOW_CREDENTIALS_OPTION, compiledGenes, executeGene, requireCredentialConsent } from "../utils/credential-consent.js";
+import { ALLOW_CREDENTIALS_OPTION, compiledGenes, executeGene, requireCredentialConsent } from "../utils/env-grant-consent.js";
 import { toRustPhenotype } from "../utils/rust-phenotype.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import {

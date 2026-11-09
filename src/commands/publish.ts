@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { executeGene } from "../utils/credential-consent.js";
+import { executeGene } from "../utils/env-grant-consent.js";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import * as display from "../utils/display.js";

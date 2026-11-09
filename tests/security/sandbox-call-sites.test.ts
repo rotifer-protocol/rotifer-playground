@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 /**
- * A sandbox call that goes around utils/credential-consent runs an external
+ * A sandbox call that goes around utils/env-grant-consent runs an external
  * gene with no limit on the credentials it can use (#508).
  */
 
@@ -19,8 +19,8 @@ function sourceFiles(dir: string): string[] {
 const callers = sourceFiles(SRC).filter((f) => /\.execute(Gene|Algebra)\(/.test(readFileSync(f, "utf-8")));
 
 describe("sandbox call sites", () => {
-  it("only utils/credential-consent calls the sandbox directly", () => {
-    expect(callers.map((f) => relative(SRC, f))).toEqual(["utils/credential-consent.ts"]);
+  it("only utils/env-grant-consent calls the sandbox directly", () => {
+    expect(callers.map((f) => relative(SRC, f))).toEqual(["utils/env-grant-consent.ts"]);
   });
 
   it.each(["run", "agent-run", "test", "arena-submit", "hello"])("%s takes --allow-credentials", (command) => {

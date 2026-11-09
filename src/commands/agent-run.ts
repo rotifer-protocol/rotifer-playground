@@ -9,7 +9,7 @@ import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { geneIdV2, tryLoadBinding, type NativeBinding } from "../utils/binding.js";
 import { evaluateL0, isExternallySourced, nodeRefusalMessage } from "../utils/l0-gate.js";
-import { ALLOW_CREDENTIALS_OPTION, compiledGenes, executeAlgebra, executeGene, requireCredentialConsent } from "../utils/credential-consent.js";
+import { ALLOW_CREDENTIALS_OPTION, compiledGenes, executeAlgebra, executeGene, requireCredentialConsent } from "../utils/env-grant-consent.js";
 import { createGatewayFetch, type GatewayFetchOptions, type GatewayResponse } from "../runtime/network-gateway.js";
 import type { GeneMemoryAccess } from "../memory/index.js";
 import { openAgentMemory, type AgentMemoryHandle, type WasmMemory } from "../memory/host.js";

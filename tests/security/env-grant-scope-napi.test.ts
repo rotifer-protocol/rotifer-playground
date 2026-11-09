@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tryLoadBinding, type NativeBinding } from "../../src/utils/binding.js";
-import { executeAlgebra, executeGene, requireCredentialConsent } from "../../src/utils/credential-consent.js";
+import { executeAlgebra, executeGene, requireCredentialConsent } from "../../src/utils/env-grant-consent.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../../src/utils/sandbox-defaults.js";
 
 /**

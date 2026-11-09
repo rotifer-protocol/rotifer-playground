@@ -44,6 +44,11 @@ describe("buildOpenCommand", () => {
     expect(args).toEqual([url]);
   });
 
+  it.each(["win32", "darwin", "linux"])("launches the parsed URL, not the raw text, on %s", (platform) => {
+    const { args } = buildOpenCommand("HTTPS://Example.COM", platform, {});
+    expect(args[args.length - 1]).toBe("https://example.com/");
+  });
+
   describe.each(["win32", "darwin", "linux"])("refuses what is not a plain http(s) URL on %s", (platform) => {
     it.each([
       ["an injected command", 'https://example.com" & calc.exe'],
@@ -57,6 +62,10 @@ describe("buildOpenCommand", () => {
       ["a missing //", "https:example.com"],
       ["a command-line flag", "-a Calculator"],
       ["credentials", "https://user:secret@example.com"],
+      ["a username alone", "https://user@example.com"],
+      ["a password alone", "https://:secret@example.com"],
+      ["a DEL character", "https://example.com/\u007f"],
+      ["a C1 control character", "https://example.com/\u0085"],
       ["something that is not a URL", "http://"],
       ["an empty string", ""],
     ])("%s", (_label, bad) => {

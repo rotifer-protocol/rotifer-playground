@@ -38,7 +38,13 @@ async function nodeKey() {
   };
 }
 
-async function setup(opts: { issueResult?: { ok: true } | { error: ErrorCode }; user?: string | null } = {}) {
+async function setup(
+  opts: {
+    issueResult?: { ok: true } | { error: ErrorCode };
+    consumeResult?: { ok: true } | { error: ErrorCode } | Error;
+    user?: string | null;
+  } = {},
+) {
   const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
   const priv = await crypto.subtle.exportKey("jwk", pair.privateKey);
   const pub = await crypto.subtle.exportKey("jwk", pair.publicKey);
@@ -48,7 +54,13 @@ async function setup(opts: { issueResult?: { ok: true } | { error: ErrorCode }; 
   const nonce = crypto.getRandomValues(new Uint8Array(32));
   const issued: IssueRecord[] = [];
   const challenges: { userId: string; aud: string }[] = [];
+  const consumed: string[] = [];
   const store: AttestationStore = {
+    consume(userId) {
+      consumed.push(userId);
+      if (opts.consumeResult instanceof Error) return Promise.reject(opts.consumeResult);
+      return Promise.resolve(opts.consumeResult ?? { ok: true });
+    },
     challenge(userId, aud) {
       challenges.push({ userId, aud });
       return Promise.resolve({ nonce, challengeExp: NOW + 300 });
@@ -66,7 +78,7 @@ async function setup(opts: { issueResult?: { ok: true } | { error: ErrorCode }; 
     aud: AUD,
     nowSeconds: () => NOW,
   };
-  return { deps, jwk, nonce, issued, challenges, pseudonymKey };
+  return { deps, jwk, nonce, issued, challenges, consumed, pseudonymKey };
 }
 
 function post(op: string, body: unknown, auth = "Bearer good"): Request {
@@ -230,10 +242,68 @@ Deno.test("a database failure is a 500 without the database's text", async () =>
   assertFalse(text.includes("hunter2") || text.includes("10.0.0.5"));
 });
 
+Deno.test("every signed-in request costs one call from the account's hourly allowance", async () => {
+  const t = await setup();
+  await handle(post("challenge", {}), t.deps);
+  await handle(post("issue", await issueBody(await nodeKey(), t.nonce)), t.deps);
+  assertEquals(t.consumed, [USER, USER]);
+});
+
+Deno.test("over the hourly limit: 429 on both operations, before the body is read or a signature checked", async () => {
+  const t = await setup({ consumeResult: { error: "POR_RATE_LIMITED" } });
+  const res = await handle(post("challenge", {}), t.deps);
+  assertEquals(res.status, 429);
+  assertEquals(await errorCode(res), "POR_RATE_LIMITED");
+  assertEquals(t.challenges, []);
+  const junk = await handle(post("issue", "not json"), t.deps);
+  assertEquals(junk.status, 429, "the refusal comes before the body is parsed");
+  const signed = await handle(post("issue", await issueBody(await nodeKey(), t.nonce)), t.deps);
+  assertEquals(signed.status, 429);
+  assertEquals(t.issued, []);
+});
+
+Deno.test("a request that is not signed in costs no account anything", async () => {
+  const t = await setup();
+  assertEquals((await handle(post("challenge", {}, "Bearer bad"), t.deps)).status, 401);
+  assertEquals(t.consumed, []);
+});
+
+Deno.test("if the limit cannot be checked, the request is refused, not let through", async () => {
+  const t = await setup({ consumeResult: new Error("connection reset by SECRET-DB-TEXT") });
+  const res = await handle(post("issue", await issueBody(await nodeKey(), t.nonce)), t.deps);
+  assertEquals(res.status, 500);
+  assertEquals(await errorCode(res), "POR_INTERNAL");
+  assertEquals(t.issued, []);
+});
+
+Deno.test("renewing too early is a 409 that carries no token", async () => {
+  const t = await setup({ issueResult: { error: "POR_RENEWAL_TOO_EARLY" } });
+  const res = await handle(post("issue", await issueBody(await nodeKey(), t.nonce)), t.deps);
+  assertEquals(res.status, 409);
+  const body = await res.json();
+  assertEquals(body.error.code, "POR_RENEWAL_TOO_EARLY");
+  assertFalse("token" in body);
+});
+
 Deno.test("storeCode passes known refusal codes and turns anything else into an internal error", () => {
   assertEquals(storeCode("POR_QUOTA_EXCEEDED"), "POR_QUOTA_EXCEEDED");
   for (const bad of ["SOMETHING_ELSE", "POR_INTERNAL", "POR_BAD_SIGNATURE", 42, null]) {
     const e = assertThrows(() => storeCode(bad), PorError);
     assertEquals(e.code, "POR_INTERNAL");
   }
+});
+
+Deno.test("a small-order public key proves nothing: the all-accepting key and signature are refused and nothing is issued", async () => {
+  // With A and R of small order and S = 0, the verification equation holds for
+  // every message, so no private key is needed to produce this "signature".
+  const t = await setup();
+  const raw = new Uint8Array(32);
+  raw[0] = 1;
+  const signature = new Uint8Array(64);
+  signature[0] = 1;
+  const body = { publicKey: b64url(libp2pPublicKey(raw)), signature: b64url(signature), nonce: b64url(t.nonce), challengeExp: NOW + 300 };
+  const res = await handle(post("issue", body), t.deps);
+  assertEquals(res.status, 403);
+  assertEquals(await errorCode(res), "POR_BAD_SIGNATURE");
+  assertEquals(t.issued, []);
 });

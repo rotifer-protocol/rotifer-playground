@@ -1,7 +1,11 @@
 /**
  * End to end against a real local stack: the real function served by the
- * Supabase CLI (gateway JWT check on), real auth (getUser), the real database
- * with the deferred migration applied. No mocks.
+ * Supabase CLI, real auth (the function's own token check, then getUser), the
+ * real database with the deferred migration applied. No mocks.
+ *
+ * The stack's Auth must sign with ES256, the only algorithm the function
+ * accepts: set [auth] signing_keys_path in a throwaway copy of config.toml
+ * (SUPABASE_WORKDIR), with a key from `supabase gen signing-key`.
  *
  *   supabase start                              (gotrue, kong, postgrest, edge-runtime needed)
  *   psql "$DB_URL" -f supabase/migrations-deferred-v095-por/20261102200000_node_attestation.sql
@@ -17,7 +21,8 @@
  * run and takes the login away again at the end. From inside the edge
  * runtime the database is reached by its alias on the stack's network, db:5432
  * (the container name supabase_db_<project_id> does not resolve there under
- * every Docker runtime); POR_DB_HOST overrides it. The script makes a
+ * every Docker runtime); POR_DB_HOST overrides it with another local name
+ * (the function refuses any other host without TLS). The script makes a
  * throwaway signing key, pseudonym key and node keys in memory and starts
  * `supabase functions serve node-attestation` itself,
  * handing the two server secrets over a pipe (--env-file /dev/stdin), so no
@@ -219,8 +224,16 @@ try {
   const r4 = await call("issue", jwt1, await signedIssueBody(jwt1, U1, n4));
   check(r4.status === 409 && (r4.body.error as { code: string })?.code === "POR_QUOTA_EXCEEDED", "P0: the 4th PeerId is refused", JSON.stringify(r4.body));
   check(!("token" in r4.body), "the refusal carries no token");
+  // A renewal needs an earlier certificate at least 24 h old, so date PeerId 1's
+  // back 25 h. The log is append-only; the trigger is bypassed for this statement.
+  await psql(`SET session_replication_role = replica;
+    UPDATE node_attestation_issuances SET iat = iat - 90000, exp = exp - 90000 WHERE peer_id = '${n1.peerId}';
+    SET session_replication_role = origin;`);
   const renew = await call("issue", jwt1, await signedIssueBody(jwt1, U1, n1));
   check(renew.status === 200, "renewing PeerId 1 at the limit is allowed", JSON.stringify(renew.body));
+  const early = await call("issue", jwt1, await signedIssueBody(jwt1, U1, n1));
+  check(early.status === 409 && (early.body.error as { code: string })?.code === "POR_RENEWAL_TOO_EARLY", "renewing it again within 24 hours is refused", JSON.stringify(early.body));
+  check(!("token" in early.body), "that refusal carries no token");
 
   // 4. rebinding
   const rb = await call("issue", jwt2, await signedIssueBody(jwt2, U2, n1));
@@ -234,6 +247,9 @@ try {
   // 6. not signed in
   const anon = await call("challenge", null, {});
   check(anon.status === 401, "no token: 401", `${anon.status}`);
+  check((anon.body.error as { code?: string } | undefined)?.code === "POR_UNAUTHENTICATED", "the function itself answers it, not the gateway", JSON.stringify(anon.body));
+  const forged = await call("challenge", `${b64url(enc.encode('{"alg":"none"}'))}.${b64url(enc.encode('{"role":"authenticated","sub":"x","exp":9999999999}'))}.`, {});
+  check(forged.status === 401, "alg none: 401", `${forged.status}`);
 
   // 7. a signed-in account cannot reach the database functions directly
   //    (that would skip the signature check), through the REST API either
@@ -258,6 +274,11 @@ try {
   check(await psql(`SELECT count(*) FROM node_attestation_issuances WHERE user_id = '${U1}'`) === "4", "issuance log: 3 certificates + 1 renewal");
   check(await psql(`SELECT count(*) FROM node_attestation_issuances WHERE peer_id = '${n4.peerId}'`) === "0", "nothing recorded for the refused 4th PeerId");
   check(await psql(`SELECT user_id FROM nodes WHERE peer_id = '${n1.peerId}'`) === U1, "PeerId 1 still belongs to U1");
+
+  // 9. the hourly limit, through the real function and database
+  await psql(`UPDATE node_attestation_rate_buckets SET calls = 60 WHERE user_id = '${U2}'`);
+  const limited = await call("challenge", jwt2, {});
+  check(limited.status === 429 && (limited.body.error as { code: string })?.code === "POR_RATE_LIMITED", "the 61st request of the hour is refused", JSON.stringify(limited.body));
 } finally {
   try {
     await cleanup();

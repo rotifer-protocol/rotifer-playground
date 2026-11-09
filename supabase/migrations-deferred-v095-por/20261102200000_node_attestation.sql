@@ -8,7 +8,7 @@
 -- supabase/migrations/ only with the user's keyword for v0.9.5 stage 2 B1
 -- (README in this directory).
 --
--- Four tables:
+-- Five tables:
 --   nodes                         peer_id -> user_id, account pseudonym, current
 --                                 certificate. The owner reads their own rows.
 --   node_attestation_issuances    one row per signed certificate, append-only.
@@ -18,9 +18,10 @@
 --   node_attestation_challenges   one-time nonces, valid <= 5 minutes.
 --   node_attestation_revocations  the database side of the JWKS rotifer_revoked
 --                                 list; a revoked certificate stops counting.
+--   node_attestation_rate_buckets calls per account in the current hour.
 --
--- Writes go only through the SECURITY DEFINER functions below. The two that
--- issue may be executed only by por_issuer, a role made for the edge function
+-- Writes go only through the SECURITY DEFINER functions below. The three the
+-- edge function calls may be executed only by por_issuer, a role made for it
 -- and able to do nothing else: the function verifies the node's signature
 -- first, then records. Revoking and exporting the JWKS revocation list belong
 -- to por_operator, a separate role for operators. anon and authenticated cannot write anything here —
@@ -66,7 +67,7 @@ COMMENT ON TABLE node_attestation_issuances IS
 
 CREATE TABLE node_attestation_revocations (
   peer_id    TEXT NOT NULL CHECK (peer_id ~ '^[1-9A-HJ-NP-Za-km-z]{46,60}$'),
-  not_after  BIGINT NOT NULL CHECK (not_after >= 0),
+  not_after  BIGINT NOT NULL CHECK (not_after BETWEEN 0 AND 253402300799),
   reason     TEXT CHECK (octet_length(reason) <= 1000),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (peer_id, not_after)
@@ -90,16 +91,29 @@ CREATE INDEX nodes_user_idx ON nodes (user_id);
 COMMENT ON TABLE nodes IS
   'PoR: peer_id <-> user_id <-> account pseudonym (sub) <-> current certificate (ADR-300 contract v2 "表"). Owner reads own rows; written only by node_attestation_issue.';
 
+-- One row per account, overwritten as each hour starts, so it stays small and
+-- needs no clean-up.
+CREATE TABLE node_attestation_rate_buckets (
+  user_id      UUID PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE,
+  window_start BIGINT NOT NULL,
+  calls        INT NOT NULL CHECK (calls >= 0)
+);
+
+COMMENT ON TABLE node_attestation_rate_buckets IS
+  'PoR: requests per account in the current fixed hour. Written only by node_attestation_rate_consume.';
+
 -- ── Privileges and RLS ─────────────────────────────────────
 
 ALTER TABLE nodes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE node_attestation_issuances ENABLE ROW LEVEL SECURITY;
 ALTER TABLE node_attestation_challenges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE node_attestation_revocations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE node_attestation_rate_buckets ENABLE ROW LEVEL SECURITY;
 
 -- ── The issuing and operator roles ────────────────────────
 -- The edge function connects as por_issuer. It may execute
--- node_attestation_challenge and node_attestation_issue and nothing else: no
+-- node_attestation_rate_consume, node_attestation_challenge and
+-- node_attestation_issue and nothing else: no
 -- table privilege, no other function, no RLS bypass. So the function holds no
 -- key that can read or write a table directly.
 --
@@ -128,7 +142,8 @@ $$;
 
 -- Supabase's default privileges grant every new table to anon, authenticated
 -- and service_role; take them all back, then give back the one read.
-REVOKE ALL ON nodes, node_attestation_issuances, node_attestation_challenges, node_attestation_revocations
+REVOKE ALL ON nodes, node_attestation_issuances, node_attestation_challenges, node_attestation_revocations,
+              node_attestation_rate_buckets
   FROM PUBLIC, anon, authenticated, service_role, por_issuer, por_operator;
 GRANT SELECT ON nodes TO authenticated;
 
@@ -180,6 +195,43 @@ AS $$
 $$;
 
 REVOKE ALL ON FUNCTION node_attestation_account_open(UUID) FROM PUBLIC, anon, authenticated, service_role;
+
+-- ── node_attestation_rate_consume ─────────────────────────
+-- 60 requests per account per hour, across /challenge and /issue: one
+-- attestation is two requests, so this leaves room for many times the 3 nodes
+-- an account may hold. It caps the signature checks and writes one account can
+-- cause. A single upsert, so concurrent calls cannot both take the last place.
+-- Windows are fixed hours; a late transaction from the previous hour counts
+-- against the current one instead of resetting it.
+
+CREATE OR REPLACE FUNCTION node_attestation_rate_consume(p_user_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_window BIGINT := floor(extract(epoch FROM now()) / 3600)::BIGINT * 3600;
+  v_calls  INT;
+BEGIN
+  IF p_user_id IS NULL THEN
+    RAISE EXCEPTION 'node_attestation_rate_consume: user is required' USING ERRCODE = '22023';
+  END IF;
+  INSERT INTO public.node_attestation_rate_buckets AS b (user_id, window_start, calls)
+  VALUES (p_user_id, v_window, 1)
+  ON CONFLICT (user_id) DO UPDATE
+    SET calls = CASE WHEN b.window_start >= EXCLUDED.window_start THEN b.calls + 1 ELSE 1 END,
+        window_start = GREATEST(b.window_start, EXCLUDED.window_start)
+  RETURNING b.calls INTO v_calls;
+  IF v_calls > 60 THEN
+    RETURN jsonb_build_object('error', 'POR_RATE_LIMITED');
+  END IF;
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION node_attestation_rate_consume(UUID) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION node_attestation_rate_consume(UUID) TO por_issuer;
 
 -- ── node_attestation_challenge ────────────────────────────
 -- Step 1 of the contract: a 32-byte one-time nonce and its deadline (now + 300 s).
@@ -234,6 +286,7 @@ GRANT EXECUTE ON FUNCTION node_attestation_challenge(UUID, TEXT) TO por_issuer;
 --   POR_PEER_BOUND_ELSEWHERE  another account holds a live certificate for this PeerId
 --   POR_PEER_REVOKED          a revocation would void the new certificate on arrival
 --   POR_QUOTA_EXCEEDED        3 other PeerIds already hold live certificates
+--   POR_RENEWAL_TOO_EARLY     this account was issued a certificate for this PeerId under 24 h ago and over 48 h of it remain
 
 CREATE OR REPLACE FUNCTION node_attestation_issue(
   p_user_id UUID, p_aud TEXT, p_nonce BYTEA, p_challenge_exp BIGINT,
@@ -302,6 +355,22 @@ BEGIN
     RETURN jsonb_build_object('error', 'POR_QUOTA_EXCEEDED');
   END IF;
 
+  -- A node renews when under 48 h remain (ADR-300 contract v2). A certificate
+  -- issued under 24 h ago with more than that left means a node re-issuing in
+  -- a loop, each row a permanent line in the append-only log. A revoked
+  -- certificate does not count: its node needs a new one. The 60 s is the same
+  -- skew a verifier allows.
+  IF EXISTS (
+    SELECT 1 FROM public.node_attestation_issuances i
+     WHERE i.peer_id = p_peer_id AND i.user_id = p_user_id
+       AND v_now - i.iat < 86400
+       AND i.exp - v_now > 172800 + 60
+       AND NOT EXISTS (SELECT 1 FROM public.node_attestation_revocations r
+                        WHERE r.peer_id = i.peer_id AND i.iat <= r.not_after)
+  ) THEN
+    RETURN jsonb_build_object('error', 'POR_RENEWAL_TOO_EARLY');
+  END IF;
+
   INSERT INTO public.node_attestation_issuances (peer_id, user_id, iat, exp, kid)
   VALUES (p_peer_id, p_user_id, p_iat, p_exp, p_kid);
 
@@ -321,9 +390,16 @@ GRANT EXECUTE ON FUNCTION node_attestation_issue(UUID, TEXT, BYTEA, BIGINT, TEXT
   TO por_issuer;
 
 -- ── Revocation ────────────────────────────────────────────
--- For a banned account, a leaked identity.key, or a node that replaced its
--- identity.key (the old PeerId's certificates stay valid otherwise; ADR-300
--- D4 revision 2). not_after defaults to now: every certificate issued so far.
+-- A certificate is void when its iat <= not_after, so not_after decides what
+-- a revocation covers:
+--   A node replacing its own identity.key (the old PeerId's certificates stay
+--   valid otherwise; ADR-300 D4 revision 2): the default, now, voids every
+--   certificate issued so far.
+--   A banned account or a leaked identity.key: pass a far-future not_after,
+--   such as 253402300799, so that no later certificate escapes. With the
+--   default, the same PeerId could be issued a new certificate a second later.
+-- 253402300799 is also the largest value the table accepts: the JWKS export
+-- adds to not_after, and one overflowing row would stop every later export.
 
 CREATE OR REPLACE FUNCTION node_attestation_revoke(p_peer_id TEXT, p_not_after BIGINT DEFAULT NULL, p_reason TEXT DEFAULT NULL)
 RETURNS VOID

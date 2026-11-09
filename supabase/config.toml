@@ -19,3 +19,10 @@ verify_jwt = false
 # "authenticated", and RLS limits every query to the caller's own rows.
 [functions.agent-memory]
 verify_jwt = true
+
+# node-attestation (v0.9.5) serves signed-in accounts only, and checks the
+# caller's token itself (user-token.ts). The gateway check stays off because
+# the target project signs with ES256 and Supabase documents no support for
+# that key type in verify_jwt.
+[functions.node-attestation]
+verify_jwt = false

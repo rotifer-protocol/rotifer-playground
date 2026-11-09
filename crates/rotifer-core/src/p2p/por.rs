@@ -104,6 +104,46 @@ pub struct TrustAnchor {
     pub jwks_url: String,
 }
 
+/// Domain tag of the issuing challenge (ADR-300 revision 2): a node key signs
+/// this message for nothing else.
+pub const CHALLENGE_DOMAIN: &str = "rotifer-por-v1";
+/// Length of the issuer's challenge nonce.
+pub const CHALLENGE_NONCE_BYTES: usize = 32;
+
+fn is_lowercase_uuid(s: &str) -> bool {
+    s.len() == 36
+        && s.bytes().enumerate().all(|(i, b)| match i {
+            8 | 13 | 18 | 23 => b == b'-',
+            _ => b.is_ascii_digit() || (b'a'..=b'f').contains(&b),
+        })
+}
+
+/// The bytes a node signs to prove it holds its key (ADR-300 revision 2):
+/// `LP("rotifer-por-v1") || LP(aud) || LP(user_id) || LP(nonce) ||
+/// LP(challenge_exp)`, with `LP(x) = u32_be(len(x)) || x` and `challenge_exp`
+/// a u64 big-endian. Takes the four fields and never raw bytes, so whoever
+/// can reach a node's key through this cannot have it sign anything else.
+pub fn challenge_message(aud: &str, user_id: &str, nonce: &[u8], challenge_exp: u64) -> Result<Vec<u8>, String> {
+    if aud.is_empty() {
+        return Err("challenge aud is empty".into());
+    }
+    if !is_lowercase_uuid(user_id) {
+        return Err("challenge user id is not a lowercase UUID".into());
+    }
+    if nonce.len() != CHALLENGE_NONCE_BYTES {
+        return Err(format!("challenge nonce must be {CHALLENGE_NONCE_BYTES} bytes"));
+    }
+    let exp = challenge_exp.to_be_bytes();
+    let fields: [&[u8]; 5] = [CHALLENGE_DOMAIN.as_bytes(), aud.as_bytes(), user_id.as_bytes(), nonce, &exp];
+    let mut msg = Vec::with_capacity(fields.iter().map(|f| 4 + f.len()).sum());
+    for f in fields {
+        let len = u32::try_from(f.len()).map_err(|_| "challenge field too long".to_string())?;
+        msg.extend_from_slice(&len.to_be_bytes());
+        msg.extend_from_slice(f);
+    }
+    Ok(msg)
+}
+
 /// The default list: just `https://rotifer.dev`.
 pub fn default_trust_anchors() -> Vec<TrustAnchor> {
     vec![TrustAnchor { iss: DEFAULT_ISSUER.into(), jwks_url: DEFAULT_JWKS_URL.into() }]
@@ -879,6 +919,45 @@ impl HeartbeatDesk {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// ADR-300 revision 2's test vector, input and output.
+    const CHALLENGE_VECTOR_HEX: &str = concat!(
+        "0000000e726f74696665722d706f722d763100000034687474703a2f2f313237",
+        "2e302e302e313a35343332312f66756e6374696f6e732f76312f6e6f64652d61",
+        "74746573746174696f6e0000002430303030303030302d303030302d34303030",
+        "2d383030302d3030303030303030303030310000002000010203040506070809",
+        "0a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000008000000006955",
+        "b900",
+    );
+    const VECTOR_AUD: &str = "http://127.0.0.1:54321/functions/v1/node-attestation";
+    const VECTOR_USER: &str = "00000000-0000-4000-8000-000000000001";
+    const VECTOR_EXP: u64 = 1_767_225_600;
+
+    fn vector_nonce() -> Vec<u8> {
+        (0u8..32).collect()
+    }
+
+    #[test]
+    fn challenge_message_is_the_adr_vector_byte_for_byte() {
+        use sha2::{Digest, Sha256};
+        let msg = challenge_message(VECTOR_AUD, VECTOR_USER, &vector_nonce(), VECTOR_EXP).expect("valid fields");
+        assert_eq!(msg.len(), 162);
+        assert_eq!(hex::encode(&msg), CHALLENGE_VECTOR_HEX);
+        assert_eq!(
+            hex::encode(Sha256::digest(&msg)),
+            "2894e45e0a5784ec6365fddc4c292f9b934c0c6eaecdc3855295d7b2f8dab1b2"
+        );
+    }
+
+    #[test]
+    fn challenge_message_refuses_fields_the_contract_rules_out() {
+        let nonce = vector_nonce();
+        assert!(challenge_message("", VECTOR_USER, &nonce, VECTOR_EXP).is_err());
+        assert!(challenge_message(VECTOR_AUD, "00000000-0000-4000-8000-00000000000A", &nonce, VECTOR_EXP).is_err(), "uppercase");
+        assert!(challenge_message(VECTOR_AUD, "not-a-uuid", &nonce, VECTOR_EXP).is_err());
+        assert!(challenge_message(VECTOR_AUD, VECTOR_USER, &nonce[..31], VECTOR_EXP).is_err());
+        assert!(challenge_message(VECTOR_AUD, VECTOR_USER, &[0; 33], VECTOR_EXP).is_err());
+    }
 
     pub(crate) const NOW_S: u64 = 1_800_000_000;
     const ME: &str = "12D3KooWSourceNodeOfTheHeartbeat";

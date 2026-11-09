@@ -29,3 +29,5 @@ napi-build = "2"
 [dev-dependencies]
 wasm-encoder.workspace = true
 base64.workspace = true
+ed25519-dalek = "3"
+tempfile = "3"

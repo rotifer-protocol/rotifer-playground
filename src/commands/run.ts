@@ -12,6 +12,7 @@ import { evaluateL0, isExternallySourced, nodeRefusalMessage } from "../utils/l0
 import { compileSchemaCheck } from "../utils/arena-success.js";
 import { readErrorEnvelope } from "../testsuite/gate.js";
 import { ALLOW_CREDENTIALS_OPTION, requireCredentialConsent, executeGene } from "../utils/env-grant-consent.js";
+import { toRustPhenotype } from "../utils/rust-phenotype.js";
 
 export const runCommand = new Command("run")
   .description("Execute a single gene directly, checking its input and output against the gene's schema")
@@ -139,7 +140,7 @@ export const runCommand = new Command("run")
               geneDir,
               wasmBytes,
               JSON.stringify(input),
-              JSON.stringify(phenotypeForExec),
+              JSON.stringify(toRustPhenotype(phenotypeForExec)),
               DEFAULT_SANDBOX_CONSTRAINTS_JSON,
             );
             console.log();

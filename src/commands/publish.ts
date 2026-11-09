@@ -28,6 +28,7 @@ import { evaluatePublishGate, outcomeFromSandbox, loadNodeRunner } from "../test
 import { evaluateL0 } from "../utils/l0-gate.js";
 import { tryLoadBinding } from "../utils/binding.js";
 import { FUEL_LADDER, constraintsForFuel } from "../utils/run-fuel-ladder.js";
+import { toRustPhenotype } from "../utils/rust-phenotype.js";
 
 
 interface PublishOptions {
@@ -179,7 +180,7 @@ export async function publishSingleGene(
                     geneDir,
                     wasmBytes,
                     JSON.stringify(input),
-                    JSON.stringify(phenotypeForGate),
+                    JSON.stringify(toRustPhenotype(phenotypeForGate)),
                     constraintsForFuel(FUEL_LADDER[0]),
                   ),
                 );

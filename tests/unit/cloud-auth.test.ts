@@ -144,7 +144,7 @@ describe("cloud auth module", () => {
       const body = await res.text();
 
       expect(await isSettled(waitForCallback)).toBe(false);
-      expect(body).toContain("Login failed");
+      expect(body).toContain("Login didn't finish");
 
       // Still listening: the real provider redirect can still complete it.
       await fetch(`http://127.0.0.1:${port}/callback?code=real-code`);

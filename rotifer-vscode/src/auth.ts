@@ -128,13 +128,13 @@ export class AuthManager {
     const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
     const oauthState = randomBytes(16).toString("hex");
 
-    const { port: callbackPort, server: cbServer, waitForCallback } = this.startCallbackServer(oauthState);
-    const authUrl = `${this.client.endpoint}/auth/v1/authorize?provider=${provider.value}&redirect_to=http://localhost:${callbackPort}/callback&code_challenge=${codeChallenge}&code_challenge_method=S256&state=${oauthState}`;
-
-    vscode.env.openExternal(vscode.Uri.parse(authUrl));
-    vscode.window.showInformationMessage("Complete sign-in in your browser. Waiting for callback...");
-
     try {
+      const { port: callbackPort, server: cbServer, waitForCallback } = await this.startCallbackServer(oauthState);
+      const authUrl = `${this.client.endpoint}/auth/v1/authorize?provider=${provider.value}&redirect_to=http://localhost:${callbackPort}/callback&code_challenge=${codeChallenge}&code_challenge_method=S256&state=${oauthState}`;
+
+      vscode.env.openExternal(vscode.Uri.parse(authUrl));
+      vscode.window.showInformationMessage("Complete sign-in in your browser. Waiting for callback...");
+
       const result = await waitForCallback;
       let accessToken: string;
       let refreshToken: string;
@@ -189,11 +189,15 @@ export class AuthManager {
     vscode.window.showInformationMessage(`Signed out (was @${username})`);
   }
 
-  private startCallbackServer(expectedState: string): { port: number; server: any; waitForCallback: Promise<string> } {
+  private async startCallbackServer(expectedState: string): Promise<{ port: number; server: any; waitForCallback: Promise<string> }> {
     const http = require("node:http") as typeof import("node:http");
 
     const server = http.createServer();
-    server.listen(0, "127.0.0.1");
+    // listen() with a host finishes asynchronously: address() is null until then.
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", (err: Error) => reject(new Error(`Cannot start callback server: ${err.message}`)));
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
     const port = (server.address() as any).port as number;
 
     const waitForCallback = new Promise<string>((resolve, reject) => {

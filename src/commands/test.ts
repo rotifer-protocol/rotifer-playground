@@ -188,7 +188,7 @@ export const testCommand = new Command("test")
           result = (wasm?.binding ?? binding).executeGene(
             irWasm,
             JSON.stringify(testInput),
-            JSON.stringify(phenotypeForExec),
+            JSON.stringify(toRustPhenotype(phenotypeForExec)),
             constraintsForFuel(FUEL_LADDER[rung]),
             wasm?.geneContext(geneName),
           );
@@ -380,7 +380,7 @@ export const testCommand = new Command("test")
         const result = binding.executeGene(
           irWasm,
           JSON.stringify(testInput),
-          JSON.stringify(phenotypeForExec),
+          JSON.stringify(toRustPhenotype(phenotypeForExec)),
           DEFAULT_SANDBOX_CONSTRAINTS_JSON,
         );
         if (result.success && result.sandboxType === "wasm") {
@@ -402,7 +402,7 @@ export const testCommand = new Command("test")
         const result = binding.executeGene(
           irWasm,
           JSON.stringify(testInput),
-          JSON.stringify(phenotypeForExec),
+          JSON.stringify(toRustPhenotype(phenotypeForExec)),
           DEFAULT_SANDBOX_CONSTRAINTS_JSON,
         );
         if (result.fuelConsumed > 0) {
@@ -462,7 +462,7 @@ export const testCommand = new Command("test")
         const result = binding.executeGene(
           irWasm,
           JSON.stringify(testInput),
-          JSON.stringify(phenotypeForExec),
+          JSON.stringify(toRustPhenotype(phenotypeForExec)),
           DEFAULT_SANDBOX_CONSTRAINTS_JSON,
         );
         if (result.success && result.fuelConsumed > 0 && result.durationMs >= 0) {
@@ -564,7 +564,7 @@ export const testCommand = new Command("test")
           const r = (t1Memory.wasm?.binding ?? binding).executeGene(
             irWasmForT1,
             JSON.stringify(input),
-            JSON.stringify(phenotypeForT1),
+            JSON.stringify(toRustPhenotype(phenotypeForT1)),
             constraintsForFuel(FUEL_LADDER[0]),
             t1Memory.wasm?.geneContext(geneName),
           );

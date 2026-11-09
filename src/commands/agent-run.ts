@@ -194,7 +194,7 @@ export const agentRunCommand = new Command("run")
           const result = (agentMemory.wasm?.binding ?? binding).executeGene(
             irWasm,
             JSON.stringify(current),
-            JSON.stringify(phenotypeForExec),
+            JSON.stringify(toRustPhenotype(phenotypeForExec)),
             DEFAULT_SANDBOX_CONSTRAINTS_JSON,
             agentMemory.wasm?.geneContext(geneName),
           );
@@ -621,7 +621,7 @@ export async function buildGeneExecutor(
   if (hasWasm && binding) {
     const wasmBytes = readFileSync(irWasmPath) as Buffer;
     const { irHash: _strip, ...phenotypeForExec } = phenotype;
-    const phenoStr = JSON.stringify(phenotypeForExec);
+    const phenoStr = JSON.stringify(toRustPhenotype(phenotypeForExec));
     return async (input: unknown): Promise<GeneExecutionResult> => {
       const start = performance.now();
       try {

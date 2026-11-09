@@ -27,6 +27,8 @@ npx -y @rotifer/playground@latest init my-agent
 
 **Requirements:** Node.js >= 22.18.0 (genes are TypeScript; the CLI relies on Node’s built-in type stripping to run them from source)
 
+`rotifer compile` (TypeScript → WASM) also needs `esbuild` and `javy-cli` on your PATH: `npm i -g esbuild javy-cli`. `init`, `hello` and `arena` on the bundled genes run without them.
+
 ---
 
 ## First Agent in Seconds

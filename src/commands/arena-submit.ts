@@ -23,6 +23,7 @@ import { computeBaseFitness, resolveFitnessReference, FITNESS_FORMULA_VERSION, t
 import { scan } from "../scanner/index.js";
 import type { Severity } from "../scanner/types.js";
 import { mulberry32, generateTestInput } from "../testsuite/generate.js";
+import { toRustPhenotype } from "../utils/rust-phenotype.js";
 
 /**
  * The two §5.1 fitness inputs that still have no measurement behind them.
@@ -197,7 +198,7 @@ export const arenaSubmitCommand = new Command("submit")
             execResult = binding.executeGene(
               irWasm,
               JSON.stringify(testInput),
-              JSON.stringify(phenotypeForExec),
+              JSON.stringify(toRustPhenotype(phenotypeForExec)),
               constraintsForFuel(FUEL_LADDER[rung])
             );
             failureKind = execResult.success

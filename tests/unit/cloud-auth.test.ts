@@ -125,14 +125,53 @@ describe("cloud auth module", () => {
     await expect(waitForCallback).resolves.toBe("test-code");
   });
 
-  it("startOAuthCallbackServer parses implicit token callback on 127.0.0.1", async () => {
-    const mod = await import("../../src/cloud/auth.js");
-    const { port, waitForCallback } = await mod.startOAuthCallbackServer(0);
+  describe("a request carrying tokens cannot end the login (#509)", () => {
+    /** True when the promise has settled after every queued callback has run. */
+    async function isSettled(p: Promise<string>): Promise<boolean> {
+      let settled = false;
+      p.then(() => { settled = true; }, () => { settled = true; });
+      await new Promise((r) => setTimeout(r, 50));
+      return settled;
+    }
 
-    const res = await fetch(
-      `http://127.0.0.1:${port}/callback/token?access_token=tok&refresh_token=ref`
-    );
-    expect(res.status).toBe(200);
-    await expect(waitForCallback).resolves.toBe("implicit:tok:ref");
+    it("the path that used to accept an access_token no longer does", async () => {
+      const mod = await import("../../src/cloud/auth.js");
+      const { port, waitForCallback } = await mod.startOAuthCallbackServer(0);
+
+      const res = await fetch(
+        `http://127.0.0.1:${port}/callback/token?access_token=attacker-jwt&refresh_token=ref`,
+      );
+      const body = await res.text();
+
+      expect(await isSettled(waitForCallback)).toBe(false);
+      expect(body).toContain("Login failed");
+
+      // Still listening: the real provider redirect can still complete it.
+      await fetch(`http://127.0.0.1:${port}/callback?code=real-code`);
+      await expect(waitForCallback).resolves.toBe("real-code");
+    });
+
+    it("an access_token on the callback path itself is ignored too", async () => {
+      const mod = await import("../../src/cloud/auth.js");
+      const { port, waitForCallback } = await mod.startOAuthCallbackServer(0);
+
+      await fetch(`http://127.0.0.1:${port}/callback?access_token=attacker-jwt`);
+
+      expect(await isSettled(waitForCallback)).toBe(false);
+      await fetch(`http://127.0.0.1:${port}/callback?code=real-code`);
+      await expect(waitForCallback).resolves.toBe("real-code");
+    });
+
+    it("the page served without a code runs no script that could forward a URL fragment", async () => {
+      const mod = await import("../../src/cloud/auth.js");
+      const { port, waitForCallback } = await mod.startOAuthCallbackServer(0);
+
+      const body = await (await fetch(`http://127.0.0.1:${port}/callback`)).text();
+
+      expect(body).not.toContain("<script");
+      expect(body).not.toContain("location.hash");
+      await fetch(`http://127.0.0.1:${port}/callback?code=real-code`);
+      await waitForCallback;
+    });
   });
 });

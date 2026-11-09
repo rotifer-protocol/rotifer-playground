@@ -8,6 +8,7 @@ import {
   generateCodeVerifier,
   generateCodeChallenge,
   buildOAuthCallbackUrl,
+  normalizeCloudEndpoint,
 } from "../cloud/auth.js";
 import { loadCloudConfig } from "../cloud/client.js";
 import type { AuthProvider } from "../cloud/types.js";
@@ -42,7 +43,13 @@ export const loginCommand = new Command("login")
     }
 
     const config = loadCloudConfig();
-    const endpoint = options.endpoint || config.endpoint;
+    let endpoint: string;
+    try {
+      endpoint = normalizeCloudEndpoint(options.endpoint || config.endpoint);
+    } catch (err) {
+      display.error((err as Error).message);
+      process.exit(1);
+    }
 
     const codeVerifier = generateCodeVerifier();
     const codeChallenge = generateCodeChallenge(codeVerifier);
@@ -72,44 +79,34 @@ export const loginCommand = new Command("login")
     try {
       const callbackResult = await waitForCallback;
 
-      let accessToken: string;
-      let refreshToken: string;
-
-      if (callbackResult.startsWith("implicit:")) {
-        const parts = callbackResult.split(":");
-        accessToken = parts.slice(1, -1).join(":");
-        refreshToken = parts[parts.length - 1];
-        s.stop();
-      } else {
-        s.update("Exchanging authorization code...");
-        const tokenRes = await fetch(
-          `${endpoint}/auth/v1/token?grant_type=pkce`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              apikey: config.anonKey,
-            },
-            body: JSON.stringify({
-              auth_code: callbackResult,
-              code_verifier: codeVerifier,
-            }),
-          }
-        );
-
-        if (!tokenRes.ok) {
-          s.stop();
-          const err = await tokenRes.text();
-          display.error(`Authentication failed: ${err}`);
-          display.hint("Check your network connection and try again.");
-          process.exit(1);
+      s.update("Exchanging authorization code...");
+      const tokenRes = await fetch(
+        `${endpoint}/auth/v1/token?grant_type=pkce`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: config.anonKey,
+          },
+          body: JSON.stringify({
+            auth_code: callbackResult,
+            code_verifier: codeVerifier,
+          }),
         }
+      );
 
-        const tokenData = (await tokenRes.json()) as any;
-        accessToken = tokenData.access_token;
-        refreshToken = tokenData.refresh_token;
+      if (!tokenRes.ok) {
         s.stop();
+        const err = await tokenRes.text();
+        display.error(`Authentication failed: ${err}`);
+        display.hint("Check your network connection and try again.");
+        process.exit(1);
       }
+
+      const tokenData = (await tokenRes.json()) as any;
+      const accessToken: string = tokenData.access_token;
+      const refreshToken: string = tokenData.refresh_token;
+      s.stop();
 
       const userRes = await fetch(`${endpoint}/auth/v1/user`, {
         headers: {

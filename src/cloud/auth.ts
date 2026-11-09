@@ -160,6 +160,32 @@ export const OAUTH_CALLBACK_HOST = "127.0.0.1";
  */
 export const OAUTH_CALLBACK_PORT = 9876;
 
+/**
+ * Check a Cloud endpoint before anything is sent to it, and strip the trailing
+ * slash. The login code and the anon key go to this address.
+ *
+ * Messages never repeat the input: it may carry a password.
+ */
+export function normalizeCloudEndpoint(raw: string): string {
+  const example = "for example https://cloud.rotifer.dev";
+  if (/[\u0000-\u0020\u007f-\u009f\\]/.test(raw) || !/^https?:\/\//i.test(raw)) {
+    throw new Error(`Cloud endpoint must be a plain http(s) URL, ${example}.`);
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`Cloud endpoint is not a valid URL. Use one ${example}.`);
+  }
+  if (url.username || url.password) {
+    throw new Error(`Cloud endpoint must not contain a username or password. Use one ${example}.`);
+  }
+  if (url.search || url.hash) {
+    throw new Error(`Cloud endpoint must not contain a query or fragment. Use one ${example}.`);
+  }
+  return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
+}
+
 export function buildOAuthCallbackUrl(port: number, path: string = "/callback"): string {
   // Host is `localhost` to match the Supabase redirect allow-list; the server
   // binds the IPv4 loopback (OAUTH_CALLBACK_HOST), which localhost resolves to.
@@ -191,22 +217,9 @@ export async function startOAuthCallbackServer(
       const boundPort = (server.address() as { port: number })?.port || 0;
       const url = new URL(req.url || "/", buildOAuthCallbackUrl(boundPort));
 
-      if (url.pathname === "/callback/token") {
-        const token = url.searchParams.get("access_token");
-        const refresh = url.searchParams.get("refresh_token");
-        if (token) {
-          res.writeHead(200, { "Content-Type": "text/html" });
-          res.end(
-            "<html><body><h2>Login successful!</h2>" +
-              "<p>You can close this window and return to the terminal.</p>" +
-              "</body></html>"
-          );
-          server.close();
-          callbackResolve(`implicit:${token}:${refresh || ""}`);
-          return;
-        }
-      }
-
+      // Only a PKCE code ends the login: it is worthless without this process's
+      // code_verifier. A token handed to this port is never accepted, because any
+      // page open in the user's browser can make that request.
       const code = url.searchParams.get("code");
       if (code) {
         res.writeHead(200, { "Content-Type": "text/html" });
@@ -219,20 +232,7 @@ export async function startOAuthCallbackServer(
         callbackResolve(code);
       } else {
         res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(`<html><body><script>
-if (window.location.hash) {
-  var params = new URLSearchParams(window.location.hash.substring(1));
-  var token = params.get('access_token');
-  var refresh = params.get('refresh_token');
-  if (token) {
-    window.location.href = '/callback/token?access_token=' + encodeURIComponent(token) + '&refresh_token=' + encodeURIComponent(refresh || '');
-  } else {
-    document.body.innerHTML = '<h2>Login failed</h2><p>No token received.</p>';
-  }
-} else {
-  document.body.innerHTML = '<h2>Login failed</h2><p>Missing authorization data.</p>';
-}
-</script><noscript>Enable JavaScript to complete login.</noscript></body></html>`);
+        res.end("<html><body><h2>Login failed</h2><p>Missing authorization code.</p></body></html>");
       }
     });
 

@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
-import { builtinModules } from "node:module";
-import { dirname, join, relative } from "node:path";
+import { readFileSync, existsSync, readdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import ts from "typescript";
-import { detectAsyncExpress, findGeneSource } from "../../src/utils/javy-compiler.js";
+import {
+  detectAsyncExpress,
+  findGeneSource,
+  isNodeBuiltin,
+  resolveEsbuild,
+  scanNodeBuiltins,
+  type NodeBuiltinScan,
+} from "../../src/utils/javy-compiler.js";
 
 /**
  * The genes in `genes/` are what `rotifer init` hands a new user and what this
@@ -18,8 +25,9 @@ import { detectAsyncExpress, findGeneSource } from "../../src/utils/javy-compile
  * Invalidating those rows without fixing the corpus refills the board from the
  * same source.
  *
- * These checks are static: they read the files the compiler reads and apply the
- * guards it applies, without invoking the toolchain.
+ * These checks read the files the compiler reads and apply the guards it
+ * applies. The Node built-in check runs esbuild, exactly as `rotifer compile`
+ * does before bundling for Javy; nothing is compiled to WASM.
  */
 
 const GENES_DIR = join(__dirname, "..", "..", "genes");
@@ -92,35 +100,58 @@ function acceptedFailureSemantics(): { canonical: string[]; aliases: string[] } 
   return { canonical, aliases };
 }
 
-/** What `moduleSpecifiers` reports for `require(x)` / `import(x)` with a non-literal argument. */
+/**
+ * esbuild, resolved the way `rotifer compile` resolves it. It is a
+ * devDependency, so it is always present in this repo and in CI: a missing one
+ * fails the check below instead of skipping it.
+ */
+const ESBUILD = resolveEsbuild();
+
+const scans = new Map<string, NodeBuiltinScan>();
+
+/** `compile`'s own Node built-in scan of a gene's source, once per gene. */
+function scanOf(name: string): NodeBuiltinScan {
+  if (!scans.has(name)) scans.set(name, scanNodeBuiltins(findGeneSource(join(GENES_DIR, name))!, ESBUILD!));
+  return scans.get(name)!;
+}
+
+/** What `runtimeOnlyLoads` reports for `require(x)` / `import(x)` with a non-literal argument. */
 const COMPUTED = "<computed specifier>";
 
+/** Names a gene could reach the host's `require` through. */
+const GLOBAL_OBJECTS = new Set(["globalThis", "global", "window", "self"]);
+
 /**
- * Every module a source text loads: static imports and re-exports,
- * `import x = require()`, `require()` and `import()`. Type-only imports are
- * erased before bundling and are left out.
+ * Loads that are not imports, so neither esbuild nor `compile` can see them,
+ * and under Javy they fail only when the gene runs: `globalThis.require(...)`
+ * (or `global` / `window` / `self`, dotted or bracketed), and `require(x)` /
+ * `import(x)` with a computed `x`.
  *
- * Read from the syntax tree rather than the text: a gene that *talks about*
- * `require(` in a string (vuln-detector's Solidity advice does) loads nothing.
+ * Read from the TypeScript syntax tree rather than the text: a gene that
+ * *talks about* `require(` in a string (vuln-detector's Solidity advice does)
+ * loads nothing.
  */
-function moduleSpecifiers(source: string, fileName = "gene.ts"): string[] {
+function runtimeOnlyLoads(source: string, fileName = "gene.ts"): string[] {
   const found: string[] = [];
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
-  const literal = (node: ts.Node | undefined): string =>
-    node && ts.isStringLiteralLike(node) ? node.text : COMPUTED;
+  const isGlobal = (node: ts.Node): node is ts.Identifier => ts.isIdentifier(node) && GLOBAL_OBJECTS.has(node.text);
 
   const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node)) {
-      if (!node.importClause?.isTypeOnly) found.push(literal(node.moduleSpecifier));
-    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier) {
-      if (!node.isTypeOnly) found.push(literal(node.moduleSpecifier));
-    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
-      if (!node.isTypeOnly) found.push(literal(node.moduleReference.expression));
-    } else if (ts.isCallExpression(node)) {
+    if (ts.isCallExpression(node)) {
       const callee = node.expression;
       const loads =
         callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require");
-      if (loads) found.push(literal(node.arguments[0]));
+      const arg = node.arguments[0];
+      if (loads && !(arg && ts.isStringLiteralLike(arg))) found.push(COMPUTED);
+    } else if (ts.isPropertyAccessExpression(node) && isGlobal(node.expression) && node.name.text === "require") {
+      found.push(`${node.expression.text}.require`);
+    } else if (
+      ts.isElementAccessExpression(node) &&
+      isGlobal(node.expression) &&
+      ts.isStringLiteralLike(node.argumentExpression) &&
+      node.argumentExpression.text === "require"
+    ) {
+      found.push(`${node.expression.text}.require`);
     }
     ts.forEachChild(node, visit);
   };
@@ -128,36 +159,15 @@ function moduleSpecifiers(source: string, fileName = "gene.ts"): string[] {
   return found;
 }
 
-/** A module the Javy sandbox does not have: any Node built-in, with or without `node:`. */
-function isNodeBuiltin(specifier: string): boolean {
-  return specifier.startsWith("node:") || builtinModules.includes(specifier);
-}
-
-/**
- * The modules a gene's entry file loads, following its relative imports into
- * the gene's other files the way the bundler would. Returns `specifier (file)`.
- */
-function geneModuleLoads(entry: string): string[] {
-  const loads: string[] = [];
-  const seen = new Set<string>();
-  const resolveLocal = (from: string, spec: string): string | null => {
-    const base = join(dirname(from), spec);
-    const candidates = [base, `${base}.ts`, `${base}.js`, join(base, "index.ts"), join(base, "index.js")];
-    return candidates.find((p) => existsSync(p) && statSync(p).isFile()) ?? null;
-  };
-  const walk = (file: string): void => {
-    if (seen.has(file)) return;
-    seen.add(file);
-    for (const spec of moduleSpecifiers(readFileSync(file, "utf-8"), file)) {
-      loads.push(`${spec} (${relative(GENES_DIR, file)})`);
-      if (spec.startsWith(".")) {
-        const next = resolveLocal(file, spec);
-        if (next) walk(next);
-      }
-    }
-  };
-  walk(entry);
-  return loads;
+/** Write a throwaway gene, run `fn` on its entry file, clean up. */
+function withGene<T>(files: Record<string, string>, fn: (entry: string) => T): T {
+  const dir = mkdtempSync(join(tmpdir(), "rotifer-builtin-fixture-"));
+  try {
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+    return fn(join(dir, "index.ts"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function failureSemanticsOf(name: string): string | null {
@@ -193,64 +203,118 @@ describe("bundled genes are compilable", () => {
   /**
    * Native means the gene compiles to Rotifer IR (spec, "Fidelity"), and the
    * compiler bundles the source for Javy/QuickJS, which has no Node built-ins.
-   * A Native gene that loads `node:fs` cannot be built at all: `rotifer
-   * compile` stops at "Could not resolve", and the declaration it ships with
-   * is false. Two starter genes did exactly that, and `hello --template
-   * quality-advisor` then could not export its agent.
+   * A Native gene that loads `node:fs` cannot be built at all, and the
+   * declaration it ships with is false. Two starter genes did exactly that,
+   * and `hello --template quality-advisor` then could not export its agent.
+   *
+   * This asks the same question `rotifer compile` now asks before bundling,
+   * with the same esbuild scan, so the corpus and the command cannot disagree.
+   * A source esbuild cannot bundle at all (an import that does not resolve)
+   * counts against the gene rather than passing unread.
    *
    * A gene that genuinely needs the host is Wrapped (no Wasm part) or Hybrid
    * (a Wasm part plus external services) — and says so.
    */
   it("loads no Node built-in module from any Native gene", () => {
+    expect(ESBUILD, "esbuild is a devDependency; without it this check cannot run").not.toBeNull();
+
     const offenders = genes
       .filter((name) => fidelityOf(name) === "Native")
-      .flatMap((name) =>
-        geneModuleLoads(findGeneSource(join(GENES_DIR, name))!)
-          .filter((load) => {
-            const spec = load.slice(0, load.lastIndexOf(" ("));
-            return spec === COMPUTED || isNodeBuiltin(spec);
-          })
-          .map((load) => `${name}: ${load}`),
-      );
+      .flatMap((name) => {
+        const scan = scanOf(name);
+        if (scan.status === "failed") return [`${name}: esbuild could not bundle it: ${scan.message.split("\n")[0]}`];
+        return scan.builtins.map((m) => `${name}: imports ${m}`);
+      });
 
     expect(offenders).toEqual([]);
-  });
+  }, 120_000);
 
   /**
-   * The check above is only as good as what it can see. Each form a gene could
-   * use to reach a built-in, and the one string that merely mentions one.
+   * What the scan above cannot see, because it is not an import: these would
+   * compile, then fail inside the sandbox the first time the line runs.
+   * Checked across every file the bundle reaches.
    */
-  it("sees every way a source loads a module", () => {
-    const src = [
-      'import { readFileSync } from "node:fs";',
-      'import * as path from "path";',
-      'import "fs/promises";',
-      'import type { Stats } from "node:fs";',
-      'export { homedir } from "os";',
-      'import cp = require("child_process");',
-      'const crypto = require("node:crypto");',
-      'const net = await import("net");',
-      "const anything = require(name);",
-      'const advice = "(bool ok, ) = target.call(...); require(ok);";',
-      'import { helper } from "./helper";',
-    ].join("\n");
+  it("reaches for no host require that compile cannot see, in any Native gene", () => {
+    expect(ESBUILD).not.toBeNull();
 
-    expect(moduleSpecifiers(src)).toEqual([
-      "node:fs",
-      "path",
-      "fs/promises",
-      "os",
-      "child_process",
-      "node:crypto",
-      "net",
-      COMPUTED,
-      "./helper",
-    ]);
-    expect(["node:fs", "path", "fs/promises", "os", "child_process", "node:crypto", "net"].every(isNodeBuiltin)).toBe(
+    const offenders = genes
+      .filter((name) => fidelityOf(name) === "Native")
+      .flatMap((name) => {
+        const scan = scanOf(name);
+        if (scan.status === "failed") return [];
+        return scan.files.flatMap((file) =>
+          runtimeOnlyLoads(readFileSync(file, "utf-8"), file).map((load) => `${name}: ${load} (${basename(file)})`),
+        );
+      });
+
+    expect(offenders).toEqual([]);
+  }, 120_000);
+
+  /**
+   * The scan is only as good as what it can see. One gene using every import
+   * form, part of it behind relative imports written the TypeScript-ESM way
+   * (`./helper.js` naming `helper.ts`), plus a type-only import and a string
+   * that merely mentions `require(`, neither of which loads anything.
+   */
+  it("names every Node built-in a source loads, through its relative imports", () => {
+    expect(ESBUILD).not.toBeNull();
+
+    const scan = withGene(
+      {
+        "index.ts": [
+          'import { homedir } from "node:os";',
+          'import type { Stats } from "node:zlib";',
+          'import { sep } from "./helper.js";',
+          'export * from "./more";',
+          'const fs = require("fs");',
+          'const advice = "(bool ok, ) = target.call(...); require(ok);";',
+          'export function express() { return { home: homedir(), sep, fs: !!fs, advice }; }',
+          'export async function later() { return import("node:crypto"); }',
+          "",
+        ].join("\n"),
+        "helper.ts": 'import path from "path";\nexport const sep = path.sep;\n',
+        "more.ts": 'export { createServer } from "http";\n',
+      },
+      (entry) => scanNodeBuiltins(entry, ESBUILD!),
+    );
+
+    expect(scan.status).toBe("ok");
+    if (scan.status !== "ok") return;
+    expect([...scan.builtins].sort()).toEqual(["fs", "http", "node:crypto", "node:os", "path"]);
+    expect(scan.files.map((f) => basename(f)).sort()).toEqual(["helper.ts", "index.ts", "more.ts"]);
+  }, 60_000);
+
+  it("treats an import that does not resolve as a failure, not as clean", () => {
+    expect(ESBUILD).not.toBeNull();
+
+    const scan = withGene(
+      { "index.ts": 'import { y } from "./missing.js";\nexport function express() { return { y }; }\n' },
+      (entry) => scanNodeBuiltins(entry, ESBUILD!),
+    );
+
+    expect(scan.status).toBe("failed");
+    if (scan.status === "failed") expect(scan.message).toMatch(/missing/);
+  }, 60_000);
+
+  it("knows a built-in by either spelling, and nothing else", () => {
+    expect(["node:fs", "path", "fs/promises", "os", "child_process", "node:crypto", "node:test"].every(isNodeBuiltin)).toBe(
       true,
     );
-    expect(isNodeBuiltin("./helper")).toBe(false);
-    expect(isNodeBuiltin("lodash")).toBe(false);
+    expect(["./helper", "lodash", "pathe"].some(isNodeBuiltin)).toBe(false);
+  });
+
+  it("sees the host requires that compile cannot", () => {
+    const src = [
+      "const a = require(name);",
+      "const b = await import(`./${x}`);",
+      'const c = globalThis.require("fs");',
+      'const d = global["require"]("os");',
+      'const e = require("fs");',
+      'const f = await import("node:os");',
+      'const advice = "(bool ok, ) = target.call(...); globalThis.require(ok);";',
+    ].join("\n");
+
+    expect(runtimeOnlyLoads(src)).toEqual([COMPUTED, COMPUTED, "globalThis.require", "global.require"]);
   });
 
   /**

@@ -185,6 +185,18 @@ export const compileCommand = new Command("compile")
             message: err.message,
             suggestion: "Javy/QuickJS has no event loop. Either export a synchronous express(), or declare \"fidelity\": \"Hybrid\" with network.allowedDomains in phenotype.json — a Hybrid gene without --wasm skips Javy and runs under Node.js through the network gateway.",
           });
+        } else if (err?.name === "NodeBuiltinError") {
+          // The gene is fine as what it is: code that needs the host. What it
+          // cannot be is Native, and compile does not change the declaration.
+          const isDeclaredNative = phenotype.fidelity === "Native";
+          display.rustStyleError({
+            code: "E0026",
+            message: `Gene '${geneName}' cannot be compiled to Native: ${err.message}`,
+            file: geneSrc,
+            suggestion: isDeclaredNative
+              ? 'Declare "fidelity": "Wrapped" in phenotype.json (it runs under Node), or remove those imports to keep it Native.'
+              : `It stays ${phenotype.fidelity || "Wrapped"} and runs under Node (rotifer run / rotifer test). To make it Native, remove those imports.`,
+          });
         } else if (err?.name === "ToolchainError") {
           display.rustStyleError({
             code: "E0024",

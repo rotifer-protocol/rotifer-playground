@@ -60,7 +60,7 @@ $ rotifer init my-agent
   ────────────────────────────────────────────────────────
   genesis-file-read           filesystem        Wrapped
   hello-world                 general           Wrapped
-  gene-health-scanner         meta.diagnostics  Native
+  gene-health-scanner         meta.diagnostics  Wrapped
   genesis-l0-constraint       safety            Native
   genesis-web-search          search            Native
   genesis-web-search-lite     search            Native

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { builtinModules } from "node:module";
+import { dirname, join, relative } from "node:path";
+import ts from "typescript";
 import { detectAsyncExpress, findGeneSource } from "../../src/utils/javy-compiler.js";
 
 /**
@@ -90,6 +92,74 @@ function acceptedFailureSemantics(): { canonical: string[]; aliases: string[] } 
   return { canonical, aliases };
 }
 
+/** What `moduleSpecifiers` reports for `require(x)` / `import(x)` with a non-literal argument. */
+const COMPUTED = "<computed specifier>";
+
+/**
+ * Every module a source text loads: static imports and re-exports,
+ * `import x = require()`, `require()` and `import()`. Type-only imports are
+ * erased before bundling and are left out.
+ *
+ * Read from the syntax tree rather than the text: a gene that *talks about*
+ * `require(` in a string (vuln-detector's Solidity advice does) loads nothing.
+ */
+function moduleSpecifiers(source: string, fileName = "gene.ts"): string[] {
+  const found: string[] = [];
+  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
+  const literal = (node: ts.Node | undefined): string =>
+    node && ts.isStringLiteralLike(node) ? node.text : COMPUTED;
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node)) {
+      if (!node.importClause?.isTypeOnly) found.push(literal(node.moduleSpecifier));
+    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier) {
+      if (!node.isTypeOnly) found.push(literal(node.moduleSpecifier));
+    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      if (!node.isTypeOnly) found.push(literal(node.moduleReference.expression));
+    } else if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const loads =
+        callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require");
+      if (loads) found.push(literal(node.arguments[0]));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
+/** A module the Javy sandbox does not have: any Node built-in, with or without `node:`. */
+function isNodeBuiltin(specifier: string): boolean {
+  return specifier.startsWith("node:") || builtinModules.includes(specifier);
+}
+
+/**
+ * The modules a gene's entry file loads, following its relative imports into
+ * the gene's other files the way the bundler would. Returns `specifier (file)`.
+ */
+function geneModuleLoads(entry: string): string[] {
+  const loads: string[] = [];
+  const seen = new Set<string>();
+  const resolveLocal = (from: string, spec: string): string | null => {
+    const base = join(dirname(from), spec);
+    const candidates = [base, `${base}.ts`, `${base}.js`, join(base, "index.ts"), join(base, "index.js")];
+    return candidates.find((p) => existsSync(p) && statSync(p).isFile()) ?? null;
+  };
+  const walk = (file: string): void => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    for (const spec of moduleSpecifiers(readFileSync(file, "utf-8"), file)) {
+      loads.push(`${spec} (${relative(GENES_DIR, file)})`);
+      if (spec.startsWith(".")) {
+        const next = resolveLocal(file, spec);
+        if (next) walk(next);
+      }
+    }
+  };
+  walk(entry);
+  return loads;
+}
+
 function failureSemanticsOf(name: string): string | null {
   const phenotype = JSON.parse(readFileSync(join(GENES_DIR, name, "phenotype.json"), "utf-8"));
   return phenotype?.semanticRequirements?.failureSemantics ?? null;
@@ -118,6 +188,69 @@ describe("bundled genes are compilable", () => {
       .filter((x): x is string => x !== null);
 
     expect(offenders).toEqual([]);
+  });
+
+  /**
+   * Native means the gene compiles to Rotifer IR (spec, "Fidelity"), and the
+   * compiler bundles the source for Javy/QuickJS, which has no Node built-ins.
+   * A Native gene that loads `node:fs` cannot be built at all: `rotifer
+   * compile` stops at "Could not resolve", and the declaration it ships with
+   * is false. Two starter genes did exactly that, and `hello --template
+   * quality-advisor` then could not export its agent.
+   *
+   * A gene that genuinely needs the host is Wrapped (no Wasm part) or Hybrid
+   * (a Wasm part plus external services) — and says so.
+   */
+  it("loads no Node built-in module from any Native gene", () => {
+    const offenders = genes
+      .filter((name) => fidelityOf(name) === "Native")
+      .flatMap((name) =>
+        geneModuleLoads(findGeneSource(join(GENES_DIR, name))!)
+          .filter((load) => {
+            const spec = load.slice(0, load.lastIndexOf(" ("));
+            return spec === COMPUTED || isNodeBuiltin(spec);
+          })
+          .map((load) => `${name}: ${load}`),
+      );
+
+    expect(offenders).toEqual([]);
+  });
+
+  /**
+   * The check above is only as good as what it can see. Each form a gene could
+   * use to reach a built-in, and the one string that merely mentions one.
+   */
+  it("sees every way a source loads a module", () => {
+    const src = [
+      'import { readFileSync } from "node:fs";',
+      'import * as path from "path";',
+      'import "fs/promises";',
+      'import type { Stats } from "node:fs";',
+      'export { homedir } from "os";',
+      'import cp = require("child_process");',
+      'const crypto = require("node:crypto");',
+      'const net = await import("net");',
+      "const anything = require(name);",
+      'const advice = "(bool ok, ) = target.call(...); require(ok);";',
+      'import { helper } from "./helper";',
+    ].join("\n");
+
+    expect(moduleSpecifiers(src)).toEqual([
+      "node:fs",
+      "path",
+      "fs/promises",
+      "os",
+      "child_process",
+      "node:crypto",
+      "net",
+      COMPUTED,
+      "./helper",
+    ]);
+    expect(["node:fs", "path", "fs/promises", "os", "child_process", "node:crypto", "net"].every(isNodeBuiltin)).toBe(
+      true,
+    );
+    expect(isNodeBuiltin("./helper")).toBe(false);
+    expect(isNodeBuiltin("lodash")).toBe(false);
   });
 
   /**

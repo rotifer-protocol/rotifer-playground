@@ -153,15 +153,15 @@ export async function express(input: { prompt: string }): Promise<{ result: stri
   return { result: "AI generated response" };
 }
 
-// ✅ the Native shape — the logic is here
-export async function express(input: {
+// ✅ the Native shape — the logic is here, and express is synchronous
+export function express(input: {
   text: string;
   strict?: boolean;
-}): Promise<{
+}): {
   issues: Array<{ rule: string; message: string; position: number; suggestion: string }>;
   score: number;
   summary: string;
-}> {
+} {
   const issues = [];
 
   // real detection: regex, a state machine, an AST walk — whatever the domain needs
@@ -192,6 +192,7 @@ export async function express(input: {
 - `fetch`, `XMLHttpRequest`, any network call
 - `fs`, `path`, any filesystem access
 - `process`, `os`, any system call
+- an `async` express: Javy/QuickJS has no event loop, so `compile` refuses it (`E0025`)
 
 What is left — computation, string handling, regex, arithmetic, data structures —
 is enough for more capabilities than it first appears.

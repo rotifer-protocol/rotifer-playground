@@ -296,8 +296,10 @@ export async function express(
 **What Hybrid requires:**
 
 - Every request goes through `ctx.gatewayFetch`, the second argument `express`
-  receives, to a host in `allowedDomains`. A global `fetch` does not go through
-  the gateway, and `allowedDomains` does not apply to it.
+  receives, to a host in `allowedDomains`, with an explicit `method` (the gateway
+  sends `POST` when it is left out). A global `fetch` does not go through the
+  gateway, so `allowedDomains` does not apply to it, and `rotifer vg` reports it
+  as `S-04` (HIGH).
 - The API key comes from the environment. A key in the source is a key in the registry.
 - A timeout: `network.maxTimeoutMs`, which the gateway enforces.
 - Graceful degradation on failure — return something sensible rather than throwing.

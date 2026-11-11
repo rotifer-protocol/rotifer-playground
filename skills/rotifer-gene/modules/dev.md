@@ -94,7 +94,9 @@ export function express(input: {
 - Native: no `fetch`, no `fs`, no `net` — no I/O at all.
 - Native: `express` is synchronous. Javy/QuickJS has no event loop, so `compile`
   refuses an `async` one (`E0025`). A Hybrid `express` may be `async`.
-- Hybrid: calls go only to hosts in `allowedDomains`, through `ctx.gatewayFetch` (§5.3).
+- Hybrid: calls go only to hosts in `allowedDomains`, through `ctx.gatewayFetch` with an
+  explicit `method` (§5.3). A global `fetch` does not go through the gateway, so
+  `allowedDomains` does not apply to it, and `rotifer vg` reports it as `S-04` (HIGH).
 - Idempotent: the same input produces the same output, or as close as the domain allows.
 - **Everything a reader sees is in English** — description, comments, README, error messages, SKILL.md.
 
@@ -401,8 +403,9 @@ export async function express(input: { query: string }, ctx: Gateway): Promise<{
 and `agent run` pass a Hybrid Gene: a host that is not listed is refused
 (`Domain "…" is not in the allowed list`), and `maxTimeoutMs` and the rate limit
 hold. A global `fetch` does not go through the gateway, and `allowedDomains` does
-not apply to it. The response has `status`, `headers` and `body` (a string), not
-`ok` or `json()`.
+not apply to it; `rotifer vg` reports a direct `fetch(` as `S-04`, a HIGH finding.
+Pass `method` every time: the gateway sends `POST` when it is left out. The
+response has `status`, `headers` and `body` (a string), not `ok` or `json()`.
 
 `test` runs `express()` under Node.js and makes the real request; here the output
 is `{"status": 200}`. `compile` validates a Hybrid Gene and produces no WASM unless

@@ -151,7 +151,8 @@ anything itself. `--template <id>`, `--input <json>`, `--file <path>` and
 **Full lifecycle — one command per concept:**
 
 ```bash
-rotifer init hello-world --domain content.greeting --fidelity Wrapped
+rotifer init hello-world --domain content.greeting   # a workspace with an example hello-world Gene
+cd hello-world
 rotifer test hello-world
 rotifer compile hello-world
 rotifer arena submit hello-world
@@ -214,8 +215,14 @@ The Web Studio UI at `https://rotifer.ai/studio/` provides a visual 3-step flow
 **Path B — CLI (local, always available):**
 
 ```bash
-rotifer init <name> --domain <domain> --fidelity <fidelity>
+rotifer init <workspace>        # once: an Agent workspace, not a Gene
+cd <workspace>
+mkdir -p genes/<name>           # then write genes/<name>/index.ts
+rotifer wrap <name> --domain <domain> --fidelity <fidelity>
 ```
+
+`wrap` writes `phenotype.json` with empty schemas; fill in the real
+`inputSchema` and `outputSchema` before Phase 4.
 
 **From an existing SKILL.md:**
 
@@ -236,6 +243,11 @@ rotifer wrap <name> --from-clawhub <slug>
 rotifer test <name>
 rotifer compile <name>
 ```
+
+A Gene wrapped from a SKILL.md has no source file (one from ClawHub has one
+only if the package shipped it), so `rotifer test` fails on it with `No gene
+source file found`. Run `rotifer compile <name>` and `rotifer vg genes/<name>`
+for it instead.
 
 After compilation passes, prompt: publish to Cloud (`rotifer publish`) or submit to Arena (`rotifer arena submit`).
 

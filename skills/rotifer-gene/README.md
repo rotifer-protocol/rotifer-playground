@@ -16,8 +16,13 @@ Three manuals, loaded on demand rather than all at once:
 ## Quick Start
 
 ```bash
-npx --yes @rotifer/playground@0.36.1 init my-gene --domain content.grammar --fidelity Native
+# an Agent workspace: genesis Genes plus an example hello-world Gene
+npx --yes @rotifer/playground@0.36.1 init my-workspace
+cd my-workspace
+mkdir -p genes/my-gene
 # write express() in genes/my-gene/index.ts
+npx --yes @rotifer/playground@0.36.1 wrap my-gene --domain content.grammar --fidelity Native
+# replace the empty inputSchema and outputSchema that wrap wrote to genes/my-gene/phenotype.json
 npx --yes @rotifer/playground@0.36.1 test my-gene --verbose
 npx --yes @rotifer/playground@0.36.1 compile my-gene
 npx --yes @rotifer/playground@0.36.1 test my-gene --compliance

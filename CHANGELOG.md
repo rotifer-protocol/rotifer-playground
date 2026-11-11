@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.36.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.36.0...v0.36.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **compile:** say a gene needs Node built-ins instead of blaming the toolchain ([#581](https://github.com/rotifer-protocol/rotifer-playground/issues/581)) ([8d10e8e](https://github.com/rotifer-protocol/rotifer-playground/commit/8d10e8e755a2b9bd2b894faaca9af843cd497b95))
+
 ## [0.36.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.35.0...v0.36.0) (2026-11-10)
 
 

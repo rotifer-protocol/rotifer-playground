@@ -54,8 +54,8 @@ rotifer publish my-gene          # Publish to Cloud
 ## Gene Composition
 
 ```bash
-rotifer agent create bot --genes search formatter --composition Seq
-rotifer agent run bot --input '{"query":"hello"}'
+rotifer agent create review --genes content-quality-analyzer content-optimizer --composition Seq
+rotifer agent run review --input '{"text":"# My article\n\n..."}'
 ```
 
 | Operator | Use |

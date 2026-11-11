@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use super::{AlgebraExpr, MergeStrategy};
+use crate::sandbox::hybrid::CredentialScope;
 use crate::sandbox::{Sandbox, SandboxError, FUEL_EXHAUSTED_MESSAGE, TIMEOUT_MESSAGE_PREFIX};
 use crate::types::gene::Gene;
 use crate::types::{Context, ErrorCode, ExecutionMetadata, GeneId, GeneResult, PermissionSet};
@@ -34,6 +35,7 @@ pub struct AlgebraExecutor<'a> {
     /// store's own ID. Reported as `geneId` in the `GeneError` a TryCatch
     /// handler receives; a gene missing here is reported with `geneId: null`.
     gene_ids: HashMap<GeneId, String>,
+    credential_scopes: HashMap<GeneId, CredentialScope>,
     /// Run each gene with the permissions its own phenotype declares
     /// (`PermissionSet::declared_by`) instead of the caller's context.
     declared_permissions: bool,
@@ -46,6 +48,7 @@ impl<'a> AlgebraExecutor<'a> {
             sandbox,
             gene_store,
             gene_ids: HashMap::new(),
+            credential_scopes: HashMap::new(),
             declared_permissions: false,
         }
     }
@@ -53,6 +56,13 @@ impl<'a> AlgebraExecutor<'a> {
     /// Supply the v2 ID of the genes in the store. The store's keys are
     /// whatever the caller chose (the CLI uses a hash of the gene's local
     /// name); §15.2 `GeneError.geneId` must name the gene that actually ran.
+    /// Which hosts each gene may send each credential to. Per gene: one
+    /// gene's grant is never another's. A gene with no entry has no limit.
+    pub fn with_credential_scopes(mut self, scopes: HashMap<GeneId, CredentialScope>) -> Self {
+        self.credential_scopes = scopes;
+        self
+    }
+
     pub fn with_gene_ids(mut self, gene_ids: HashMap<GeneId, String>) -> Self {
         self.gene_ids = gene_ids;
         self
@@ -189,6 +199,12 @@ impl<'a> AlgebraExecutor<'a> {
             extensions.insert(
                 crate::sandbox::CALLER_GENE_ID_EXTENSION.to_string(),
                 serde_json::Value::String(v2.clone()),
+            );
+        }
+        if let Some(scope) = self.credential_scopes.get(gene_id) {
+            extensions.insert(
+                crate::sandbox::CREDENTIAL_SCOPE_EXTENSION.to_string(),
+                serde_json::to_value(scope).expect("a map of strings always serializes"),
             );
         }
         let with_caller = Context {

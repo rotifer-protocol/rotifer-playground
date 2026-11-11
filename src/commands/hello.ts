@@ -10,6 +10,7 @@ import { requireProjectRoot } from "../utils/project-root.js";
 import { createAgentCore } from "./agent-create.js";
 import { buildGeneExecutor, findAgent, printProtocolInsights } from "./agent-run.js";
 import { tryLoadBinding } from "../utils/binding.js";
+import { ALLOW_CREDENTIALS_OPTION, compiledGenes, requireCredentialConsent } from "../utils/env-grant-consent.js";
 import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
 import { createGatewayFetch } from "../runtime/network-gateway.js";
 import { readErrorEnvelope } from "../testsuite/gate.js";
@@ -128,6 +129,7 @@ interface HelloOptions {
   dir?: string;
   verbose: boolean;
   json: boolean;
+  allowCredentials?: string;
   listTemplates?: boolean;
 }
 
@@ -153,6 +155,7 @@ export const helloCommand = new Command("hello")
   .option("--dir <path>", "scan a directory as input")
   .option("--verbose", "show detailed output (L2)", false)
   .option("--json", "write only JSON to stdout: the output, or {ok:false,code,...} on failure; progress goes to stderr", false)
+  .option(...ALLOW_CREDENTIALS_OPTION)
   .option("--list-templates", "list templates and whether each can run in this workspace, then exit")
   .addHelpText(
     "after",
@@ -261,6 +264,7 @@ export const helloCommand = new Command("hello")
     console.log();
 
     const startTime = performance.now();
+    await requireCredentialConsent(compiledGenes(genesDir, availableGenes), options);
     const pipeline = await executeGenomePipeline(availableGenes, genesDir, input);
     const elapsed = performance.now() - startTime;
 

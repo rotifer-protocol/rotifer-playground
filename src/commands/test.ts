@@ -8,6 +8,7 @@ import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { tryLoadBinding } from "../utils/binding.js";
 import { evaluateL0, isExternallySourced, nodeRefusalMessage } from "../utils/l0-gate.js";
+import { ALLOW_CREDENTIALS_OPTION, compiledGenes, executeGene, requireCredentialConsent } from "../utils/env-grant-consent.js";
 import { toRustPhenotype } from "../utils/rust-phenotype.js";
 import { DEFAULT_SANDBOX_CONSTRAINTS_JSON } from "../utils/sandbox-defaults.js";
 import {
@@ -33,6 +34,7 @@ export const testCommand = new Command("test")
   .option("--compliance", "run structural compliance checks", false)
   .option("--scaffold", `generate a ${"testsuite.json"} skeleton from the phenotype and exit`, false)
   .option("--json", "print T1 results as JSON (spec §47.2 TestResult)", false)
+  .option(...ALLOW_CREDENTIALS_OPTION)
   .action(async (geneName: string | undefined, options: { verbose: boolean; compliance: boolean; scaffold: boolean; json: boolean }) => {
     const root = requireProjectRoot();
     const config = loadConfig(root);
@@ -57,6 +59,10 @@ export const testCommand = new Command("test")
         suggestion: "Run 'rotifer wrap " + geneName + "' first",
       });
       process.exit(1);
+    }
+
+    if (!options.scaffold) {
+      await requireCredentialConsent(compiledGenes(join(root, config.genes_dir), [geneName]), options);
     }
 
     const phenotype = JSON.parse(readFileSync(phenotypePath, "utf-8"));
@@ -185,7 +191,9 @@ export const testCommand = new Command("test")
         // about what a compute-heavy Gene is.
         let result!: ReturnType<typeof binding.executeGene>;
         for (let rung = 0; rung < FUEL_LADDER.length; rung++) {
-          result = (wasm?.binding ?? binding).executeGene(
+          result = executeGene(
+            wasm?.binding ?? binding,
+            geneDir,
             irWasm,
             JSON.stringify(testInput),
             JSON.stringify(toRustPhenotype(phenotypeForExec)),
@@ -377,7 +385,9 @@ export const testCommand = new Command("test")
       if (hasIrWasm && binding) {
         const irWasm = readFileSync(irWasmPath) as Buffer;
         const { irHash: _strip, ...phenotypeForExec } = phenotype;
-        const result = binding.executeGene(
+        const result = executeGene(
+          binding,
+          geneDir,
           irWasm,
           JSON.stringify(testInput),
           JSON.stringify(toRustPhenotype(phenotypeForExec)),
@@ -399,7 +409,9 @@ export const testCommand = new Command("test")
       if (hasIrWasm && binding) {
         const irWasm = readFileSync(irWasmPath) as Buffer;
         const { irHash: _strip, ...phenotypeForExec } = phenotype;
-        const result = binding.executeGene(
+        const result = executeGene(
+          binding,
+          geneDir,
           irWasm,
           JSON.stringify(testInput),
           JSON.stringify(toRustPhenotype(phenotypeForExec)),
@@ -459,7 +471,9 @@ export const testCommand = new Command("test")
       if (hasIrWasm && binding) {
         const irWasm = readFileSync(irWasmPath) as Buffer;
         const { irHash: _strip, ...phenotypeForExec } = phenotype;
-        const result = binding.executeGene(
+        const result = executeGene(
+          binding,
+          geneDir,
           irWasm,
           JSON.stringify(testInput),
           JSON.stringify(toRustPhenotype(phenotypeForExec)),
@@ -561,7 +575,9 @@ export const testCommand = new Command("test")
       const t1Memory = scratchGeneMemory({ genesRoot: join(root, config.genes_dir), geneName, phenotype });
       const runOne = (input: unknown): RunOutcome => {
         try {
-          const r = (t1Memory.wasm?.binding ?? binding).executeGene(
+          const r = executeGene(
+            t1Memory.wasm?.binding ?? binding,
+            geneDir,
             irWasmForT1,
             JSON.stringify(input),
             JSON.stringify(toRustPhenotype(phenotypeForT1)),

@@ -11,6 +11,7 @@ import { recordHeartbeat, flushHeartbeat } from "../telemetry/heartbeat.js";
 import { evaluateL0, isExternallySourced, nodeRefusalMessage } from "../utils/l0-gate.js";
 import { compileSchemaCheck } from "../utils/arena-success.js";
 import { readErrorEnvelope } from "../testsuite/gate.js";
+import { ALLOW_CREDENTIALS_OPTION, requireCredentialConsent, executeGene } from "../utils/env-grant-consent.js";
 import { toRustPhenotype } from "../utils/rust-phenotype.js";
 
 export const runCommand = new Command("run")
@@ -21,10 +22,11 @@ export const runCommand = new Command("run")
   .option("--no-sandbox", "run without WASM sandbox (Node.js only)")
   .option("--trust-unsigned", "allow Node.js execution for Cloud-installed or ClawHub-wrapped genes", false)
   .option("--no-validate", "skip checking the input and output against the gene's inputSchema / outputSchema")
+  .option(...ALLOW_CREDENTIALS_OPTION)
   .action(
     async (
       geneName: string,
-      options: { input: string; verbose: boolean; sandbox: boolean; trustUnsigned: boolean; validate: boolean }
+      options: { input: string; verbose: boolean; sandbox: boolean; trustUnsigned: boolean; validate: boolean; allowCredentials?: string }
     ) => {
       display.header(`Run Gene: ${geneName}`);
       validateGeneName(geneName);
@@ -118,6 +120,7 @@ export const runCommand = new Command("run")
       const binding = tryLoadBinding();
 
       if (existsSync(wasmPath) && isSandboxEnabled) {
+        if (binding) await requireCredentialConsent([{ name: geneName, dir: geneDir }], options);
         // #58: warn when the source was edited after the last compile — the
         // sandbox would otherwise silently execute stale WASM.
         const { isWasmStale } = await import("../utils/javy-compiler.js");
@@ -132,7 +135,9 @@ export const runCommand = new Command("run")
             const wasmBytes = readFileSync(wasmPath);
             const rawPhenotype = JSON.parse(readFileSync(join(geneDir, "phenotype.json"), "utf-8"));
             const { irHash: _strip, ...phenotypeForExec } = rawPhenotype;
-            const execResult = binding.executeGene(
+            const execResult = executeGene(
+              binding,
+              geneDir,
               wasmBytes,
               JSON.stringify(input),
               JSON.stringify(toRustPhenotype(phenotypeForExec)),

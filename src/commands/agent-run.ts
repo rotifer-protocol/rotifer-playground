@@ -9,6 +9,7 @@ import { loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { geneIdV2, tryLoadBinding, type NativeBinding } from "../utils/binding.js";
 import { evaluateL0, isExternallySourced, nodeRefusalMessage } from "../utils/l0-gate.js";
+import { ALLOW_CREDENTIALS_OPTION, compiledGenes, executeAlgebra, executeGene, requireCredentialConsent } from "../utils/env-grant-consent.js";
 import { createGatewayFetch, type GatewayFetchOptions, type GatewayResponse } from "../runtime/network-gateway.js";
 import type { GeneMemoryAccess } from "../memory/index.js";
 import { openAgentMemory, type AgentMemoryHandle, type WasmMemory } from "../memory/host.js";
@@ -43,7 +44,8 @@ export const agentRunCommand = new Command("run")
   .option("--verbose", "show intermediate results", false)
   .option("--no-sandbox", "force Node.js execution (skip WASM sandbox)")
   .option("--trust-unsigned", "allow Node.js execution for Cloud-installed or ClawHub-wrapped genes", false)
-  .action(async (agentName: string, options: { input: string; verbose: boolean; sandbox: boolean; trustUnsigned: boolean }) => {
+  .option(...ALLOW_CREDENTIALS_OPTION)
+  .action(async (agentName: string, options: { input: string; verbose: boolean; sandbox: boolean; trustUnsigned: boolean; allowCredentials?: string }) => {
     const root = requireProjectRoot();
     const config = loadConfig(root);
 
@@ -95,6 +97,7 @@ export const agentRunCommand = new Command("run")
     // 「跳过宪法级约束」。binding 保持原语义，供沙箱执行路径使用。
     const l0Binding = tryLoadBinding();
     const binding = isSandboxEnabled ? l0Binding : null;
+    if (binding) await requireCredentialConsent(compiledGenes(genesDir, agent.genome), options);
     const startTime = performance.now();
     // The agent's memory for this run (spec §38.2): ctx.memory on the Node
     // path, and the project binding + memoryContext on the WASM path.
@@ -191,7 +194,9 @@ export const agentRunCommand = new Command("run")
 
           // With native memory, run on the project binding so the gene's
           // memory calls reach the agent's store.
-          const result = (agentMemory.wasm?.binding ?? binding).executeGene(
+          const result = executeGene(
+            agentMemory.wasm?.binding ?? binding,
+            geneDir,
             irWasm,
             JSON.stringify(current),
             JSON.stringify(toRustPhenotype(phenotypeForExec)),
@@ -625,7 +630,9 @@ export async function buildGeneExecutor(
     return async (input: unknown): Promise<GeneExecutionResult> => {
       const start = performance.now();
       try {
-        const result = (wasmMemory?.binding ?? binding).executeGene(
+        const result = executeGene(
+          wasmMemory?.binding ?? binding,
+          geneDir,
           wasmBytes,
           JSON.stringify(input),
           phenoStr,
@@ -789,6 +796,8 @@ function executeViaAlgebra(
 
   const geneEntries: Record<string, { wasm: number[]; phenotype: Record<string, unknown>; v2Id?: string }> = {};
 
+  const geneDirs: Record<string, { dir: string; phenotype: unknown }> = {};
+
   for (const geneName of agent.genome) {
     const geneDir = join(genesDir, geneName);
     const irWasmPath = join(geneDir, "gene.ir.wasm");
@@ -808,6 +817,7 @@ function executeViaAlgebra(
       : {};
 
     const hexId = geneNameToId(geneName);
+    geneDirs[hexId] = { dir: geneDir, phenotype };
     // The v2 ID of the gene actually installed here, read from the same
     // directory as the wasm above. A TryCatch handler reports it as
     // GeneError.geneId (spec §15.2); hexId is only the executor's lookup key.
@@ -898,7 +908,9 @@ function executeViaAlgebra(
     // them the binding falls back to ConstraintSet::default() (1M fuel),
     // below what one compiled gene of ordinary size needs. A binding older
     // than this argument ignores it.
-    const result = (wasmMemory?.binding ?? binding).executeAlgebra(
+    const result = executeAlgebra(
+      wasmMemory?.binding ?? binding,
+      geneDirs,
       JSON.stringify(algebraExpr),
       JSON.stringify(geneEntries),
       JSON.stringify(input),

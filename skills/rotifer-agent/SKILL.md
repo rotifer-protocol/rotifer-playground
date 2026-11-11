@@ -19,7 +19,7 @@ Decompose user intent into capability units, select Genes from the ecosystem, co
 This Skill requires the Rotifer CLI:
 
 ```bash
-npx --yes @rotifer/playground@0.27.0 --version
+npx --yes @rotifer/playground@0.36.1 --version
 rotifer doctor
 ```
 

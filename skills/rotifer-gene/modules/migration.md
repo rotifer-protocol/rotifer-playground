@@ -214,7 +214,7 @@ Step 4: declare the network allowlist
   set a timeout and a rate limit you would be comfortable defending
 
 Step 5: implement the call
-  fetch only allowlisted hosts
+  call only allowlisted hosts, through ctx.gatewayFetch
   authenticate from the runtime environment
   handle timeout and retry
 
@@ -253,53 +253,53 @@ Steps 6-7: as §2.1 steps 5-6
 ### 3.3 A Hybrid `express`
 
 ```typescript
-export async function express(input: {
-  text: string;
-  targetLang: string;
-}): Promise<{
-  translated: string;
-  sourceLang: string;
-  confidence: number;
-}> {
+type GatewayFetch = (
+  url: string,
+  options?: { method?: string; headers?: Record<string, string>; body?: string },
+) => Promise<{ status: number; headers: Record<string, string>; body: string; isTruncated: boolean }>;
+
+export async function express(
+  input: { text: string; targetLang: string },
+  ctx: { gatewayFetch: GatewayFetch },
+): Promise<{ translated: string; sourceLang: string; confidence: number }> {
   const apiKey = process.env.TRANSLATION_API_KEY;
   if (!apiKey) {
     return { translated: input.text, sourceLang: "unknown", confidence: 0 };
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
-
   try {
-    const res = await fetch("https://api.example.com/translate", {
+    // the gateway checks allowedDomains and enforces maxTimeoutMs; a global fetch bypasses both
+    const res = await ctx.gatewayFetch("https://api.example.com/translate", {
       method: "POST",
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({ text: input.text, target: input.targetLang }),
-      signal: controller.signal,
     });
 
-    if (!res.ok) {
+    // the response has status, headers and a string body, not ok or json()
+    if (res.status < 200 || res.status >= 300) {
       return { translated: input.text, sourceLang: "unknown", confidence: 0 };
     }
 
-    const data = await res.json();
+    const data = JSON.parse(res.body);
     return {
       translated: data.translated_text,
       sourceLang: data.detected_source,
       confidence: data.confidence ?? 1.0,
     };
   } catch {
+    // a refused host, a timeout, the rate limit, or a body that is not JSON
     return { translated: input.text, sourceLang: "unknown", confidence: 0 };
-  } finally {
-    clearTimeout(timeout);
   }
 }
 ```
 
 **What Hybrid requires:**
 
-- Every `fetch` target appears in `allowedDomains`.
+- Every request goes through `ctx.gatewayFetch`, the second argument `express`
+  receives, to a host in `allowedDomains`. A global `fetch` does not go through
+  the gateway, and `allowedDomains` does not apply to it.
 - The API key comes from the environment. A key in the source is a key in the registry.
-- A timeout, via `AbortController`.
+- A timeout: `network.maxTimeoutMs`, which the gateway enforces.
 - Graceful degradation on failure — return something sensible rather than throwing.
   A Gene that throws scores zero on robustness, and F(g) is multiplicative.
 

@@ -94,7 +94,7 @@ export function express(input: {
 - Native: no `fetch`, no `fs`, no `net` — no I/O at all.
 - Native: `express` is synchronous. Javy/QuickJS has no event loop, so `compile`
   refuses an `async` one (`E0025`). A Hybrid `express` may be `async`.
-- Hybrid: calls go only to hosts in `allowedDomains`.
+- Hybrid: calls go only to hosts in `allowedDomains`, through `ctx.gatewayFetch` (§5.3).
 - Idempotent: the same input produces the same output, or as close as the domain allows.
 - **Everything a reader sees is in English** — description, comments, README, error messages, SKILL.md.
 
@@ -376,18 +376,37 @@ Inside a workspace:
 
 ```bash
 mkdir -p genes/my-api-gene
-# write genes/my-api-gene/index.ts; it fetches only from example.com
+# write genes/my-api-gene/index.ts (below)
 rotifer wrap my-api-gene --domain search.web --fidelity Hybrid
 # wrap adds a "network" block with an empty allowedDomains; in phenotype.json set
 #   "allowedDomains": ["example.com"], "maxTimeoutMs": 5000
-# and replace the empty schemas
+# and replace the empty schemas: input { "query": string }, output { "status": number }
 rotifer test my-api-gene
 rotifer compile my-api-gene
 ```
 
-`test` runs `express()` under Node.js through the network gateway, so it makes the
-real request: it passes only when the allowed host answers. `compile` validates a
-Hybrid Gene and produces no WASM unless you pass `--wasm`.
+```typescript
+type Gateway = {
+  gatewayFetch: (url: string, options?: { method?: string }) => Promise<{ status: number; body: string }>;
+};
+
+export async function express(input: { query: string }, ctx: Gateway): Promise<{ status: number }> {
+  // the gateway sends POST unless method says otherwise
+  const res = await ctx.gatewayFetch(`https://example.com/?q=${encodeURIComponent(input.query)}`, { method: "GET" });
+  return { status: res.status };
+}
+```
+
+`allowedDomains` applies to `ctx.gatewayFetch`, the second argument that `test`, `run`
+and `agent run` pass a Hybrid Gene: a host that is not listed is refused
+(`Domain "…" is not in the allowed list`), and `maxTimeoutMs` and the rate limit
+hold. A global `fetch` does not go through the gateway, and `allowedDomains` does
+not apply to it. The response has `status`, `headers` and `body` (a string), not
+`ok` or `json()`.
+
+`test` runs `express()` under Node.js and makes the real request; here the output
+is `{"status": 200}`. `compile` validates a Hybrid Gene and produces no WASM unless
+you pass `--wasm`.
 
 ### 5.4 Compose an Agent
 

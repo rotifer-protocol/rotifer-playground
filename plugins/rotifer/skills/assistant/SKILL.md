@@ -1,6 +1,6 @@
 ---
 name: rotifer-assistant
-version: 0.9.12
+version: 0.9.13
 description: Unified entry point for Rotifer Protocol — guide, architect, and challenge your agents
 author: rotifer-protocol
 ---
@@ -111,8 +111,8 @@ Each of the five factors lies in [0, 1], so F(g) does too: a perfect score is 1.
 ### Watch Live Rankings
 
 ```
-rotifer arena watch           # Live leaderboard
-rotifer arena watch --domain code.security  # Filter by domain
+rotifer arena watch all             # Live leaderboard, every domain
+rotifer arena watch code.security   # One domain
 ```
 
 ### Head-to-Head Comparison

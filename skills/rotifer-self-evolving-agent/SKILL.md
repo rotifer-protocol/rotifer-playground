@@ -109,7 +109,8 @@ This writes one Agent definition into the project's `.rotifer/agents/`
 (`create_agent`). The assistant first shows the Agent's name, the local Genes it
 composes and the composition strategy, and writes the file after you approve. The
 Genes must already be in the project's `genes/`: this command does not fetch,
-install or change any of them, and it makes no network request.
+install or change any of them. It makes no network request of its own; when you
+are logged in, the call is logged like every other tool call (see [Network requests](#network-requests)).
 
 ### Run Your Agent
 ```bash

@@ -52,7 +52,8 @@ only you can do, from a terminal.
 
 `/evolve create-agent` writes one Agent definition into `.rotifer/agents/` from
 Genes already in the project, after showing you what it will write. It installs
-nothing and makes no network request.
+nothing and makes no network request of its own; when you are logged in, the
+call is logged like every other tool call (see **Sends** below).
 
 The six commands marked read-only never modify or execute anything.
 

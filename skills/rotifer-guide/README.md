@@ -20,6 +20,9 @@ One Skill, five capabilities — each one asks about **Rotifer**:
 | "Find a Rotifer Gene for web search" | **Explorer** — `rotifer search` across the Gene registry |
 | "Upgrade my Wrapped Gene to Native" | **Upgrade** — evaluates migration path, re-scans V(g) after the rewrite |
 
+Along the way it can submit a Gene to the Arena (`rotifer arena submit`, scored on
+your machine) and follow its ranking (`rotifer arena list`, `rotifer arena watch`).
+
 ## Quick Start
 
 Invoke it explicitly when you are working with Rotifer, then describe what you
@@ -51,12 +54,17 @@ permissions are for: the CLI acting, not this Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.36.1`; fetched from npm at that exact version if it is not already installed. |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.36.1`. If it is not installed, `npx` fetches that exact version into npm's cache, `npm i -g` puts it in npm's global prefix, and `npm install --save-dev` keeps it inside the project. |
 | **Reads** | Genes and Agent definitions in the current project. |
-| **Writes** | Genes into the project's `genes/`, Agent definitions into `.rotifer/agents/`. Nothing outside the project. |
-| **Sends** | Registry and Arena queries to the public Rotifer API. Two paths send more than a query, and both are opt-in: the Web Studio scaffold path (`/api/playground/generate`, `scan`, `publish`) transmits the description you write and the generated Gene source to rotifer.ai, and `rotifer publish` transmits a Gene's source and makes it public. The CLI scaffold path is entirely local and produces the same result — prefer it for anything you would not post publicly. Nothing else in your project is read or uploaded. |
+| **Writes in the project** | Genes into `genes/` (with their compiled output and score caches), and Agent definitions into `.rotifer/agents/`. |
+| **Writes outside the project** | The CLI's own state in your home directory: `~/.rotifer/` (a local database, an audit log, a run log, the telemetry setting, and your session token if you run `rotifer login`) and `~/.config/rotifer/` (a daily update-check cache), plus the WASM runtime's compile cache in your user cache folder. Installing the CLI writes to npm's cache, or to npm's global prefix with `npm i -g`. |
+| **Sends** | Registry and Arena queries to the public Rotifer API, one version check per day to `registry.npmjs.org` (skipped under `npx`, in CI, or with `ROTIFER_NO_UPDATE_CHECK` set), and a package download from ClawHub for `rotifer wrap --from-clawhub`. When you are signed in, running a Gene installed from Cloud also records that invocation (the Gene id and your Agent) against your account. The CLI also sends an anonymous heartbeat each time it runs a Gene: a random machine id, the channel it ran from and the CLI version, nothing about the Gene or your files. `rotifer telemetry off`, `ROTIFER_TELEMETRY=0` or `DO_NOT_TRACK=1` turns it off, and each of the three also stops the signed-in record. Three steps send your work, and each runs only when the user asks for it: the Web Studio scaffold path sends the description and the generated source to rotifer.ai (`/api/playground/generate`, `scan`, `publish`); `rotifer publish` uploads a Gene's source to the Rotifer Cloud Registry and makes it public; `rotifer arena submit --cloud` sends a published Gene's scores, and the measurements from each run, to the Cloud Arena's public record. Without those, your code stays on this machine. |
 
-Commands that install, publish or overwrite are proposed for your approval
+The CLI scaffold path is the default: it is entirely local and produces the same
+scaffold, so prefer it for anything you would not post publicly.
+
+Commands that install software, send work off the machine (Path A, `rotifer publish`,
+`rotifer arena submit --cloud`) or overwrite files are proposed for your approval
 first, never run silently. Full detail in [SKILL.md](SKILL.md).
 
 ## Related Skills

@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import yaml from "js-yaml";
 import {
   CLAWHUB_BUNDLE_MANIFESTS,
@@ -21,6 +21,12 @@ import {
  * plugins/rotifer carries both .claude-plugin/ and .cursor-plugin/, and since
  * openclaw/clawhub#4031 a bundle may carry only one. The pull request's
  * --dry-run had passed, because a dry run never reaches the server.
+ *
+ * The second real publish, from the single-manifest copy, failed on the next
+ * server rule: "Native package entrypoints require the code-plugin family",
+ * because package.json still declared openclaw.extensions. The copy now drops
+ * the native entry point and declares the MCP server where OpenClaw reads a
+ * Claude bundle's MCP config.
  *
  * These tests run the publish job's own steps in order, in bash, with a fake
  * `npx` that records its arguments, and then check the folder the job hands
@@ -158,29 +164,72 @@ describe("release-root-plugin-family.yml publishes the ClawHub package", () => {
 });
 
 describe("scripts/stage-clawhub-plugin.mjs", () => {
+  const SOURCE_DIR = join(ROOT, "plugins/rotifer");
+  const sourceJson = (path: string) => JSON.parse(readFileSync(join(SOURCE_DIR, path), "utf-8"));
+
   it("plugins/rotifer itself would be rejected, which is why it is staged", () => {
-    expect(checkClawhubBundle(join(ROOT, "plugins/rotifer"), familyVersion)).toEqual([
+    expect(checkClawhubBundle(SOURCE_DIR, familyVersion)).toEqual([
       "bundle-plugin requires exactly one supported bundle manifest; found 2 (.claude-plugin/plugin.json, .cursor-plugin/plugin.json)",
+      "Native package entrypoints require the code-plugin family",
     ]);
   });
 
-  it("the staged copy keeps only the claude manifest and every other file", () => {
+  // The copy the second real publish of root-plugin-v0.9.13 sent (run 43147958796):
+  // plugins/rotifer without .cursor-plugin/, everything else unchanged.
+  it("the copy the second publish sent is rejected for its native entry point and unseen MCP server", () => {
+    const old = join(dir, "old-staging");
+    cpSync(SOURCE_DIR, old, {
+      recursive: true,
+      filter: (src) => !relative(SOURCE_DIR, src).split(sep).join("/").startsWith(".cursor-plugin"),
+    });
+    expect(checkClawhubBundle(old, familyVersion)).toEqual([
+      "Native package entrypoints require the code-plugin family",
+      'MCP server "rotifer" is not declared where OpenClaw reads a claude bundle (.claude-plugin/plugin.json mcpServers or .mcp.json)',
+    ]);
+  });
+
+  it("the staged copy keeps one manifest, drops the native entry point, and declares the MCP server", () => {
     const out = join(dir, "staged");
     stageClawhubPlugin(out);
     expect(checkClawhubBundle(out, familyVersion)).toEqual([]);
+
     const dropped = CLAWHUB_BUNDLE_MANIFESTS.filter((m) => m.format !== PUBLISHED_FORMAT).map((m) => m.path);
-    for (const path of dropped) expect(existsSync(join(out, path))).toBe(false);
+    for (const path of [...dropped, "index.js"]) expect(existsSync(join(out, path))).toBe(false);
+
+    const sourcePkg = sourceJson("package.json");
+    expect(sourcePkg.openclaw.extensions).toEqual(["./index.js"]);
+    const { main: _main, ...pkgWithoutMain } = sourcePkg;
+    const { extensions: _extensions, ...openclawWithoutExtensions } = sourcePkg.openclaw;
+    const stagedPkg = JSON.parse(readFileSync(join(out, "package.json"), "utf-8"));
+    expect(stagedPkg).toEqual({ ...pkgWithoutMain, openclaw: openclawWithoutExtensions });
+
+    const servers = sourcePkg.openclaw.mcpServers;
+    expect(Object.keys(servers)).toEqual(["rotifer"]);
+    const stagedManifest = JSON.parse(readFileSync(join(out, ".claude-plugin/plugin.json"), "utf-8"));
+    expect(stagedManifest).toEqual({
+      ...sourceJson(".claude-plugin/plugin.json"),
+      mcpServers: { rotifer: { command: servers.rotifer.command, args: servers.rotifer.args } },
+    });
+    expect(stagedManifest.mcpServers.rotifer.args).toContain(
+      sourceJson(".cursor-plugin/plugin.json").mcpServers.rotifer.args.find((a: string) => a.startsWith("@rotifer/mcp-server@")),
+    );
+
     for (const kept of [
-      ".claude-plugin/plugin.json",
       ".codebuddy-plugin/plugin.json",
       "openclaw.plugin.json",
-      "package.json",
-      "index.js",
       "cordis.patch.yml",
+      "README.md",
       "skills/evolve/SKILL.md",
     ]) {
-      expect(readFileSync(join(out, kept))).toEqual(readFileSync(join(ROOT, "plugins/rotifer", kept)));
+      expect(readFileSync(join(out, kept))).toEqual(readFileSync(join(SOURCE_DIR, kept)));
     }
+  });
+
+  it("staging leaves plugins/rotifer untouched", () => {
+    const before = ["package.json", ".claude-plugin/plugin.json", "index.js"].map((p) => readFileSync(join(SOURCE_DIR, p)));
+    stageClawhubPlugin(join(dir, "staged"));
+    const after = ["package.json", ".claude-plugin/plugin.json", "index.js"].map((p) => readFileSync(join(SOURCE_DIR, p)));
+    expect(after).toEqual(before);
   });
 
   it("rejects no bundle manifest, the wrong one, and a version that does not match", () => {
@@ -193,6 +242,7 @@ describe("scripts/stage-clawhub-plugin.mjs", () => {
     writeFileSync(join(out, ".cursor-plugin/plugin.json"), JSON.stringify({ name: "rotifer", version: familyVersion }));
     expect(checkClawhubBundle(out, familyVersion)).toEqual([
       "the listing is a claude bundle, but the manifest left is .cursor-plugin/plugin.json",
+      'MCP server "rotifer" is not declared where OpenClaw reads a cursor bundle (.cursor-plugin/plugin.json mcpServers or .mcp.json)',
     ]);
 
     stageClawhubPlugin(out);

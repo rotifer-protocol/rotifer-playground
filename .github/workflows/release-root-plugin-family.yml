@@ -18,6 +18,7 @@ on:
     paths:
       - "plugin-source/**"
       - "plugins/rotifer/**"
+      - "scripts/stage-clawhub-plugin.mjs"
       - ".github/workflows/release-root-plugin-family.yml"
   workflow_dispatch:
     inputs:
@@ -141,6 +142,19 @@ jobs:
             *) echo "dry_run=true" >> "$GITHUB_OUTPUT" ;;
           esac
 
+      # plugins/rotifer carries both .claude-plugin/ and .cursor-plugin/ for
+      # its other hosts. ClawHub's server (openclaw/clawhub#4031) rejects a
+      # bundle-plugin with more than one supported bundle manifest — the
+      # root-plugin-v0.9.13 failure — and --dry-run never reaches that check.
+      # So publish a staged copy with only the claude manifest the listing was
+      # created with, checked against the server's rule, on every run.
+      - name: Stage the ClawHub package
+        id: stage
+        run: |
+          OUT="$RUNNER_TEMP/clawhub-rotifer"
+          node scripts/stage-clawhub-plugin.mjs "$OUT"
+          echo "dir=$OUT" >> "$GITHUB_OUTPUT"
+
       # Fail loudly rather than skipping: a real publish that silently does
       # nothing looks identical to a successful one in the run summary.
       - name: Require a token for a real publish
@@ -166,9 +180,12 @@ jobs:
       - name: Publish the rotifer package
         run: |
           VERSION="${{ steps.mode.outputs.version }}"
+          DIR="${{ steps.stage.outputs.dir }}"
+          node scripts/stage-clawhub-plugin.mjs --check "$DIR"
           ARGS=(
-            package publish "$GITHUB_WORKSPACE/plugins/rotifer"
+            package publish "$DIR"
             --family bundle-plugin
+            --bundle-format claude
             --version "$VERSION"
             --tags latest
             --changelog "Root plugin family $VERSION. https://github.com/${{ github.repository }}/releases/tag/root-plugin-v$VERSION"

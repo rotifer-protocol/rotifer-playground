@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.36.2](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.36.1...v0.36.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **plugin:** make the root plugin's arena watch and Seq examples run, root family 0.9.13 ([#588](https://github.com/rotifer-protocol/rotifer-playground/issues/588)) ([0f9c836](https://github.com/rotifer-protocol/rotifer-playground/commit/0f9c8363d18da79e5b5da071bedc07d280a8d95f))
+* **plugin:** publish a single-manifest copy so ClawHub accepts the bundle ([#590](https://github.com/rotifer-protocol/rotifer-playground/issues/590)) ([b316e70](https://github.com/rotifer-protocol/rotifer-playground/commit/b316e708c0c9fa6fd95ad2a66d8deda27240e306))
+* **plugin:** stage the ClawHub bundle without a native entry point ([#592](https://github.com/rotifer-protocol/rotifer-playground/issues/592)) ([16fe1af](https://github.com/rotifer-protocol/rotifer-playground/commit/16fe1af4bc897b259849893a8423123abd610203))
+
 ## [0.36.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.36.0...v0.36.1) (2026-11-10)
 
 

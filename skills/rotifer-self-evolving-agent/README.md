@@ -30,7 +30,7 @@ cp -r rotifer-self-evolving-agent/ ~/.openclaw/workspace/skills/rotifer-self-evo
 
 /evolve upgrade <name>           # Propose a replacement — asks first, then installs
 /evolve rollback [name]          # Undo the last replacement; no name lists what can be undone
-/evolve create-agent <name>      # Write an Agent definition into this project
+/evolve create-agent <name>      # Write an Agent definition into this project — asks first
 
 /evolve run-agent <name>         # EXECUTES a local Agent — runs Gene code
 ```
@@ -44,10 +44,15 @@ replaced, so `/evolve rollback` puts it back.
 
 ⚠️ `/evolve run-agent` does not change what is installed, but it is not
 read-only either: it **executes** the Genes in an Agent, through the `rotifer`
-CLI or an `npx` fallback. Gene code runs inside a WASM sandbox, and this Skill
+CLI or a pinned `npx -y @rotifer/playground@0.36.1` fallback. Gene code runs
+inside a WASM sandbox, and this Skill
 cannot switch that off — `no_sandbox` is refused unless the server was launched
 with `--allow=no-sandbox`, which it is not. Running it unsandboxed is something
 only you can do, from a terminal.
+
+`/evolve create-agent` writes one Agent definition into `.rotifer/agents/` from
+Genes already in the project, after showing you what it will write. It installs
+nothing and makes no network request.
 
 The six commands marked read-only never modify or execute anything.
 
@@ -80,10 +85,10 @@ being precise about what that means. The full version is in
 |---|---|
 | **Runs remote code** | `npx @rotifer/mcp-server@0.20.0`, fetched from npm on first use and cached. `/evolve run-agent` additionally shells out to the `rotifer` CLI, falling back to `npx -y @rotifer/playground@0.36.1` (the version server 0.20.0 pins; the server has pinned an exact version since 0.19.3) when it is not installed; installing the CLI at a reviewed version (`npm i -g @rotifer/playground@0.36.1`) means it never fetches anything. Both are remote code — [read the source](https://github.com/rotifer-protocol/rotifer-mcp-server) or check `npm view @rotifer/mcp-server@0.20.0 dist.integrity` first. |
 | **Reads** | Installed Genes under `genes/`, and Agents under `.rotifer/agents/` — both in the project you are working in. |
-| **Executes** | `/evolve run-agent` runs an Agent's Genes, inside the WASM sandbox. This Skill cannot disable that sandbox. Each run appends a line to `~/.rotifer/run-logs/<gene>.jsonl` and updates a fitness file beside the Agent — both local, neither transmitted. |
-| **Writes** | Genes into `genes/` (`/evolve upgrade`) and Agent definitions into `.rotifer/agents/` (`/evolve create-agent`) — both are project files, written under the project root, not into your home directory. That root defaults to the directory you are in and is an argument the install tool accepts, so it is whichever project the call names; these commands name the current one, and `rotifer.json`'s `genes_dir` can rename `genes/`. Plus a run log at `~/.rotifer/run-logs/<gene>.jsonl` when you run an Agent, and an update-check cache at `~/.config/rotifer/update-check.json`. Nothing outside those four. |
-| **Sends** | Gene and Arena queries to the public Rotifer API, and one version check per day to `registry.npmjs.org`. **When you are logged in, each MCP tool call is also logged to Rotifer Cloud** — the tool's name, the Gene it acted on, whether it succeeded, how long it took, and your Rotifer user id. **Logged out, no usage record is sent** — but installing a Gene bumps that Gene's public install counter either way, one request carrying the Gene id and no identity. `ROTIFER_TELEMETRY=0` stops all three. Argument values, file contents, environment variables and your local configuration are not sent. |
-| **Credentials** | It does not read your environment variables or other tools' secrets. Public data needs no login. If you do log in, your Rotifer session token is written to `~/.rotifer/credentials.json` with `0600` permissions and sent only to the Rotifer API. Genes and Agents do not live there — they are project files. |
+| **Executes** | `/evolve run-agent` runs an Agent's Genes, inside the WASM sandbox, when you ask for it. This Skill cannot disable that sandbox. Each run appends a line to `~/.rotifer/run-logs/<gene>.jsonl` and updates a fitness file beside the Agent, and the CLI keeps its own state under `~/.rotifer/` (a local database and a telemetry setting) — all local, none of it transmitted. |
+| **Writes** | Genes into `genes/` (`/evolve upgrade`) and Agent definitions into `.rotifer/agents/` (`/evolve create-agent`) — both are project files, written under the project root, not into your home directory. That root defaults to the directory you are in and is an argument the install tool accepts, so it is whichever project the call names; these commands name the current one, and `rotifer.json`'s `genes_dir` can rename `genes/`. Plus a run log at `~/.rotifer/run-logs/<gene>.jsonl` and the CLI's own state under `~/.rotifer/` when you run an Agent, an update-check cache at `~/.config/rotifer/update-check.json`, and a renewed session token when you are logged in (see Credentials). Nothing else. |
+| **Sends** | Gene and Arena queries to the public Rotifer API, and one version check per day to `registry.npmjs.org`. **When you are logged in, each MCP tool call is also logged to Rotifer Cloud** — the tool's name, the Gene it acted on, whether it succeeded, how long it took, and your Rotifer user id. **Logged out, no usage record is sent** — but installing a Gene bumps that Gene's public install counter either way, one request carrying the Gene id and no identity. `ROTIFER_TELEMETRY=0` stops all three. `/evolve run-agent` goes through the `rotifer` CLI, which sends an anonymous heartbeat each time it runs a Gene — a random machine id, the channel and the CLI version, nothing else; `ROTIFER_TELEMETRY=0` or `DO_NOT_TRACK=1` stops it too. Argument values, file contents, environment variables and your local configuration are not sent. |
+| **Credentials** | It does not read your environment variables or other tools' secrets, and it cannot log you in or out. Public data needs no login. If you log in yourself with `rotifer login`, the session token is saved to `~/.rotifer/credentials.json` with `0600` permissions. The MCP server then attaches it to its Rotifer API requests and usage records, and renews it there when it expires, writing the new token back to the same file. It is not shown to the assistant and is sent nowhere else. Genes and Agents do not live there — they are project files. |
 
 **Every replacement is confirmed by you.** `/evolve` and `/evolve status` only
 read and report. `/evolve upgrade` proposes a specific swap and waits — no Gene

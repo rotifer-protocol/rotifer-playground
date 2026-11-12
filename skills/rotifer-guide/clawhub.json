@@ -1,9 +1,9 @@
 {
   "name": "rotifer-guide",
   "display_name": "Rotifer Guide",
-  "description": "Entry point for Rotifer Protocol — onboarding to Rotifer Genes, scaffolding a Gene from a description, diagnosing a Gene's F(g) or compile failure, searching the Rotifer Gene registry, and upgrading a Gene's fidelity from Wrapped to Native. Invoke explicitly when starting with Rotifer, or when unsure which Rotifer capability to use. Do NOT use for general onboarding, tutorials, troubleshooting, or search — every capability here operates on Rotifer Genes and the Rotifer CLI, and nothing else.",
+  "description": "Entry point for Rotifer Protocol. Onboards a user to Rotifer Genes, scaffolds a Gene from a description, diagnoses a Gene's F(g) score or compile failure, searches the Rotifer Gene registry, upgrades a Gene's fidelity from Wrapped to Native, and submits a Gene to the Arena and follows its ranking. It works by proposing `rotifer` CLI commands; the ones that install software, send work to Rotifer's servers, publish a Gene or overwrite files wait for the user's approval. Meant to be invoked explicitly when working with Rotifer, or when unsure which Rotifer capability fits. Its scope is Rotifer Genes and the Rotifer CLI; onboarding, tutorials, troubleshooting or search for anything else are outside it.",
   "tagline": "From zero to your first Gene in five minutes",
-  "version": "1.2.11",
+  "version": "1.2.12",
   "author": "rotifer-protocol",
   "license": "Apache-2.0",
   "category": "developer-tools",

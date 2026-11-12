@@ -3319,7 +3319,7 @@ dependencies = [
 
 [[package]]
 name = "rotifer-core"
-version = "0.36.1"
+version = "0.36.2"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
@@ -3349,7 +3349,7 @@ dependencies = [
 
 [[package]]
 name = "rotifer-napi"
-version = "0.36.1"
+version = "0.36.2"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",

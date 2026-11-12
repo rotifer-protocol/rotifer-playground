@@ -1,24 +1,36 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import yaml from "js-yaml";
+import {
+  CLAWHUB_BUNDLE_MANIFESTS,
+  PUBLISHED_FORMAT,
+  checkClawhubBundle,
+  stageClawhubPlugin,
+} from "../../scripts/stage-clawhub-plugin.mjs";
 
 /**
  * The root plugin family is also the ClawHub package `rotifer`. Nothing in the
  * release path used to run `clawhub package publish`, so the listing stayed at
- * 0.9.3 (2026-08-18) while the repository moved on to 0.9.12.
+ * 0.9.3 (2026-08-18) while the repository moved on.
  *
- * release-root-plugin-family.yml now publishes on a `root-plugin-v*` tag and
- * dry-runs on pull requests. These tests run the job's own step scripts in
- * bash, with a fake `npx` on PATH that records every call.
+ * Then the first real publish, root-plugin-v0.9.13, failed on ClawHub's
+ * server: "bundle-plugin requires exactly one supported bundle manifest".
+ * plugins/rotifer carries both .claude-plugin/ and .cursor-plugin/, and since
+ * openclaw/clawhub#4031 a bundle may carry only one. The pull request's
+ * --dry-run had passed, because a dry run never reaches the server.
+ *
+ * These tests run the publish job's own steps in order, in bash, with a fake
+ * `npx` that records its arguments, and then check the folder the job hands
+ * to ClawHub the way ClawHub's server does.
  */
 
 const ROOT = join(__dirname, "../..");
 const WORKFLOW = join(ROOT, ".github/workflows/release-root-plugin-family.yml");
 
-interface Step { name?: string; run?: string; if?: string }
+interface Step { name?: string; id?: string; run?: string; if?: string; uses?: string }
 interface Job { needs?: string | string[]; steps: Step[] }
 interface Workflow {
   on: { push: { tags: string[] }; pull_request: { paths: string[] }; workflow_dispatch: unknown };
@@ -27,92 +39,163 @@ interface Workflow {
 
 const wf = yaml.load(readFileSync(WORKFLOW, "utf-8")) as Workflow;
 const job = wf.jobs["publish-clawhub"];
-const step = (name: string) => job.steps.find((s) => s.name === name)!;
+const step = (name: string) => job.steps.find((s) => s.name === name);
 const familyVersion: string = JSON.parse(readFileSync(join(ROOT, "plugin-source/families.json"), "utf-8")).root.version;
 
 let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "root-plugin-wf-"));
+  mkdirSync(join(dir, "runner-temp"));
   const fake = join(dir, "npx");
   writeFileSync(fake, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" >> "${dir}/npx-calls"\necho '{}'\n`);
   chmodSync(fake, 0o755);
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+interface Ctx { event: string; dryInput?: boolean }
+
 /** Substitute the GitHub expressions a step uses, then run it in bash from the repo root. */
-function run(script: string, ctx: { event: string; dryInput?: boolean; outputs?: Record<string, string> }) {
+function runStep(script: string, ctx: Ctx, outputs: Record<string, Record<string, string>>) {
   const output = join(dir, "github-output");
   writeFileSync(output, "");
-  const outputs = ctx.outputs ?? {};
   const body = script
     .replace(/\$\{\{\s*github\.event_name\s*\}\}/g, ctx.event)
     .replace(/\$\{\{\s*inputs\.clawhub_dry_run\s*\}\}/g, String(ctx.dryInput ?? true))
     .replace(/\$\{\{\s*github\.repository\s*\}\}/g, "rotifer-protocol/rotifer-playground")
     .replace(/\$\{\{\s*github\.sha\s*\}\}/g, "abc123")
     .replace(/\$\{\{\s*github\.ref\s*\}\}/g, "refs/tags/root-plugin-v" + familyVersion)
-    .replace(/\$\{\{\s*steps\.mode\.outputs\.(\w+)\s*\}\}/g, (_, k: string) => outputs[k] ?? "");
+    .replace(/\$\{\{\s*steps\.(\w+)\.outputs\.(\w+)\s*\}\}/g, (_, id: string, k: string) => outputs[id]?.[k] ?? "");
   const r = spawnSync("bash", ["-euo", "pipefail", "-c", body], {
     cwd: ROOT,
-    env: { PATH: `${dir}:${process.env.PATH}`, HOME: dir, GITHUB_OUTPUT: output, GITHUB_WORKSPACE: ROOT },
+    env: {
+      PATH: `${dir}:${process.env.PATH}`,
+      HOME: dir,
+      GITHUB_OUTPUT: output,
+      GITHUB_WORKSPACE: ROOT,
+      RUNNER_TEMP: join(dir, "runner-temp"),
+    },
     encoding: "utf-8",
   });
   const parsed = Object.fromEntries(
-    readFileSync(output, "utf-8").split("\n").filter(Boolean).map((l) => l.split("=") as [string, string]),
+    readFileSync(output, "utf-8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
   );
-  let calls: string[] = [];
-  try {
-    calls = readFileSync(join(dir, "npx-calls"), "utf-8").split("\n").filter(Boolean);
-  } catch {
-    /* npx was not called */
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr, outputs: parsed };
+}
+
+/** Every `run:` step of the job in order, skipping the ones that only run on a real publish with secrets. */
+function runJob(ctx: Ctx) {
+  const outputs: Record<string, Record<string, string>> = {};
+  const log: string[] = [];
+  for (const s of job.steps) {
+    if (!s.run) continue;
+    if (["Require a token for a real publish", "Log in", "Confirm the listing moved"].includes(s.name ?? "")) continue;
+    const r = runStep(s.run, ctx, outputs);
+    log.push(`${s.name}: exit ${r.status}${r.stderr ? `\n${r.stderr}` : ""}`);
+    if (s.id) outputs[s.id] = r.outputs;
+    if (r.status !== 0) return { failedAt: s.name, log, calls: calls() };
   }
-  return { status: r.status, stderr: r.stderr, outputs: parsed, calls };
+  return { failedAt: undefined, log, calls: calls() };
+}
+
+function calls(): string[] {
+  const path = join(dir, "npx-calls");
+  return existsSync(path) ? readFileSync(path, "utf-8").split("\n").filter(Boolean) : [];
 }
 
 describe("release-root-plugin-family.yml publishes the ClawHub package", () => {
   it("runs on the root-plugin tag, on plugin pull requests, and by hand", () => {
     expect(wf.on.push.tags).toContain("root-plugin-v*");
-    expect(wf.on.pull_request.paths).toEqual(expect.arrayContaining(["plugin-source/**", "plugins/rotifer/**"]));
+    expect(wf.on.pull_request.paths).toEqual(
+      expect.arrayContaining(["plugin-source/**", "plugins/rotifer/**", "scripts/stage-clawhub-plugin.mjs"]),
+    );
     expect(wf.on.workflow_dispatch).toBeTruthy();
     expect(job.needs).toBe("validate");
   });
 
   it("a tag publishes for real; a pull request and the default dispatch only dry-run", () => {
-    const decide = step("Decide what this run does").run!;
-    expect(run(decide, { event: "push" }).outputs).toEqual({ version: familyVersion, dry_run: "false" });
-    expect(run(decide, { event: "pull_request" }).outputs).toEqual({ version: familyVersion, dry_run: "true" });
-    expect(run(decide, { event: "workflow_dispatch" }).outputs.dry_run).toBe("true");
-    expect(run(decide, { event: "workflow_dispatch", dryInput: false }).outputs.dry_run).toBe("false");
+    const decide = step("Decide what this run does")!.run!;
+    expect(runStep(decide, { event: "push" }, {}).outputs).toEqual({ version: familyVersion, dry_run: "false" });
+    expect(runStep(decide, { event: "pull_request" }, {}).outputs).toEqual({ version: familyVersion, dry_run: "true" });
+    expect(runStep(decide, { event: "workflow_dispatch" }, {}).outputs.dry_run).toBe("true");
+    expect(runStep(decide, { event: "workflow_dispatch", dryInput: false }, {}).outputs.dry_run).toBe("false");
   });
 
   it("login and the listing check only run on a real publish", () => {
     for (const name of ["Require a token for a real publish", "Log in", "Confirm the listing moved"]) {
-      expect(step(name).if).toBe("steps.mode.outputs.dry_run == 'false'");
+      expect(step(name)?.if).toBe("steps.mode.outputs.dry_run == 'false'");
     }
   });
 
-  it("publishes plugins/rotifer as the bundle-plugin at the family version, linked to its source", () => {
-    const publish = step("Publish the rotifer package").run!;
-    const real = run(publish, { event: "push", outputs: { version: familyVersion, dry_run: "false" } });
-    expect(real.status, real.stderr).toBe(0);
-    const args = real.calls;
-    expect(args.slice(0, 4)).toEqual(["--yes", "clawhub@0.23.3", "package", "publish"]);
-    expect(args[4]).toBe(join(ROOT, "plugins/rotifer"));
-    const value = (flag: string) => args[args.indexOf(flag) + 1];
-    expect(value("--family")).toBe("bundle-plugin");
-    expect(value("--version")).toBe(familyVersion);
-    expect(value("--source-path")).toBe("plugins/rotifer");
-    expect(value("--source-commit")).toBe("abc123");
-    expect(value("--source-ref")).toBe(`refs/tags/root-plugin-v${familyVersion}`);
-    expect(args).not.toContain("--dry-run");
-
-    const dry = run(publish, { event: "pull_request", outputs: { version: familyVersion, dry_run: "true" } });
-    expect(dry.status, dry.stderr).toBe(0);
-    expect(dry.calls).toContain("--dry-run");
-  });
+  // The root-plugin-v0.9.13 failure, caught before a tag instead of after.
+  for (const event of ["push", "pull_request"]) {
+    it(`${event}: the folder handed to ClawHub passes its server's bundle-plugin rule`, () => {
+      const result = runJob({ event });
+      expect(result.failedAt, result.log.join("\n")).toBeUndefined();
+      const args = result.calls;
+      expect(args.slice(0, 4)).toEqual(["--yes", "clawhub@0.23.3", "package", "publish"]);
+      const folder = args[4];
+      expect(checkClawhubBundle(folder, familyVersion)).toEqual([]);
+      const value = (flag: string) => args[args.indexOf(flag) + 1];
+      expect(value("--family")).toBe("bundle-plugin");
+      expect(value("--bundle-format")).toBe(PUBLISHED_FORMAT);
+      expect(value("--version")).toBe(familyVersion);
+      expect(value("--source-path")).toBe("plugins/rotifer");
+      expect(value("--source-commit")).toBe("abc123");
+      expect(value("--source-ref")).toBe(`refs/tags/root-plugin-v${familyVersion}`);
+      if (event === "push") expect(args).not.toContain("--dry-run");
+      else expect(args).toContain("--dry-run");
+    });
+  }
 
   it("the version it publishes is the one every plugin manifest carries", () => {
     for (const manifest of ["plugins/rotifer/package.json", "plugins/rotifer/openclaw.plugin.json"]) {
       expect(JSON.parse(readFileSync(join(ROOT, manifest), "utf-8")).version).toBe(familyVersion);
     }
+  });
+});
+
+describe("scripts/stage-clawhub-plugin.mjs", () => {
+  it("plugins/rotifer itself would be rejected, which is why it is staged", () => {
+    expect(checkClawhubBundle(join(ROOT, "plugins/rotifer"), familyVersion)).toEqual([
+      "bundle-plugin requires exactly one supported bundle manifest; found 2 (.claude-plugin/plugin.json, .cursor-plugin/plugin.json)",
+    ]);
+  });
+
+  it("the staged copy keeps only the claude manifest and every other file", () => {
+    const out = join(dir, "staged");
+    stageClawhubPlugin(out);
+    expect(checkClawhubBundle(out, familyVersion)).toEqual([]);
+    const dropped = CLAWHUB_BUNDLE_MANIFESTS.filter((m) => m.format !== PUBLISHED_FORMAT).map((m) => m.path);
+    for (const path of dropped) expect(existsSync(join(out, path))).toBe(false);
+    for (const kept of [
+      ".claude-plugin/plugin.json",
+      ".codebuddy-plugin/plugin.json",
+      "openclaw.plugin.json",
+      "package.json",
+      "index.js",
+      "cordis.patch.yml",
+      "skills/evolve/SKILL.md",
+    ]) {
+      expect(readFileSync(join(out, kept))).toEqual(readFileSync(join(ROOT, "plugins/rotifer", kept)));
+    }
+  });
+
+  it("rejects no bundle manifest, the wrong one, and a version that does not match", () => {
+    const out = join(dir, "staged");
+    stageClawhubPlugin(out);
+    rmSync(join(out, ".claude-plugin"), { recursive: true });
+    expect(checkClawhubBundle(out, familyVersion)[0]).toMatch(/exactly one supported bundle manifest; found 0/);
+
+    mkdirSync(join(out, ".cursor-plugin"));
+    writeFileSync(join(out, ".cursor-plugin/plugin.json"), JSON.stringify({ name: "rotifer", version: familyVersion }));
+    expect(checkClawhubBundle(out, familyVersion)).toEqual([
+      "the listing is a claude bundle, but the manifest left is .cursor-plugin/plugin.json",
+    ]);
+
+    stageClawhubPlugin(out);
+    expect(checkClawhubBundle(out, "0.0.0").length).toBeGreaterThan(0);
   });
 });

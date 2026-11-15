@@ -71,12 +71,14 @@ not passed and no revocation with `not_after ≥ iat` covers it.
 | `por.ts` | Challenge bytes, PeerId, pseudonym, token signing and a reference verifier |
 | `jwks.ts` | The static JWKS file with `rotifer_revoked`; `scripts/por-jwks.ts` is its CLI |
 | `handler.ts` | Routing, validation, order of checks, error codes |
-| `store.ts` | The two database functions, called over a connection logged in as `por_issuer` |
+| `store.ts` | The two database functions, called over a connection logged in as `por_issuer`; the connection's TLS checks (`databaseTls`) |
+| `supabase-root-ca.ts` | Supabase's root CAs, with their sources and fingerprints, for checking the database's certificate |
 | `user-token.ts` | The caller's token, checked in the function before Auth is asked: ES256 only, against the project's published keys |
 | `index.ts` | `Deno.serve`, environment, `auth.getUser`, the Postgres connection |
 | `*.test.ts` | Deno tests: `deno test --allow-read --allow-write --allow-run --allow-env supabase/functions/node-attestation/` |
 | `pgtap-deferred.sh` | Applies the deferred migration to a throwaway database and runs its pgTAP, failing on a skip (CI runs it) |
 | `race-check.sh` | Multi-session checks against a local database (exits 1 on failure) |
+| `tls-check.sh` | The driver against a throwaway TLS server: gets in only with the right root CA and host name (exits 1 on failure; needs Postgres binaries and openssl on `PATH`) |
 | `e2e.ts` | End to end against a local stack, with keys created in memory and never written to disk (see its header). The function reaches the database at `db:5432`, the database's alias on the stack's network; `POR_DB_HOST` overrides it, but only with another name the function treats as local, since it refuses any other host without TLS (under colima the container name does not resolve, the alias does) |
 
 ## Database access
@@ -123,12 +125,17 @@ in order:
    secret `POR_DB_URL`. Through Supabase's pooler
    the user name is `por_issuer.<project ref>`; use transaction mode (the
    function prepares no statements and takes only transaction-scoped locks).
-   End the string with `?sslmode=require`, or `?sslmode=verify-full`.
-   `require` encrypts the connection without checking the server's
-   certificate; `verify-full` checks it too, and connects only if the runtime
-   trusts that certificate's CA. The function refuses to start on a
-   `POR_DB_URL` for any other user, or on one without either mode unless the
-   host is local (`localhost`, `127.x.x.x`, `[::1]`, or exactly `db`).
+   End the string with `?sslmode=verify-full`. The function checks the
+   server's certificate chain against Supabase's root CAs, which it carries
+   in `supabase-root-ca.ts`, and the host name against the certificate;
+   nothing about the runtime's own trusted CAs matters. The function refuses
+   to start on a `POR_DB_URL` for any other user, or on one without
+   `verify-full` unless the host is local (`localhost`, `127.x.x.x`,
+   `[::1]`, or exactly `db`). `require` is refused: it encrypts without
+   checking who answers. `tls-check.sh` shows the checks against a real
+   server. The root CAs fail a test 60 days before they expire; replace them
+   from Supabase's dashboard (Database settings, SSL configuration) or
+   Supabase's CLI repository, and record the new fingerprint.
 4. The public key published in `https://rotifer.dev/.well-known/jwks.json`
    (`scripts/por-jwks.ts`) and confirmed to be served, **before** the
    function signs with it. Rotation order is in the script's header.

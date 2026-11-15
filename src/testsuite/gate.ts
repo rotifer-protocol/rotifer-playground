@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { basename, dirname } from "node:path";
-import { geneEgressFromDir, runInGeneEgress, withGeneEgress } from "../runtime/egress-guard.js";
+import { geneEgressFromDir, withGeneEgress } from "../runtime/egress-guard.js";
 import { loadTestSuite } from "./load.js";
 import { runT1 } from "./run.js";
 import type { GeneRunner, RunOutcome } from "./run.js";
@@ -49,7 +49,7 @@ export interface GateInput {
   run: GeneRunner | null;
 }
 
-export function evaluatePublishGate(input: GateInput): GateVerdict {
+export async function evaluatePublishGate(input: GateInput): Promise<GateVerdict> {
   const load = loadTestSuite(input.geneDir);
 
   if (load.status === "absent") {
@@ -82,7 +82,7 @@ export function evaluatePublishGate(input: GateInput): GateVerdict {
     };
   }
 
-  const report = runT1(load.suite, {
+  const report = await runT1(load.suite, {
     inputSchema: (input.phenotype.inputSchema as Record<string, unknown>) ?? null,
     outputSchema: (input.phenotype.outputSchema as Record<string, unknown>) ?? null,
     run: input.run,
@@ -161,8 +161,9 @@ export function outcomeFromSandbox(r: {
  * through the gap — the shape of thing this plan exists to stop. So the hole is
  * closed first, and the relabel then costs what it should.
  *
- * Async because a dynamic import is: the module is loaded once here, and the
- * returned runner is synchronous over the resolved export.
+ * Async because a dynamic import is: the module is loaded once here. The
+ * returned runner is async too: it answers when `express` has settled, so an
+ * async `express` is judged on what it resolves to, as under `rotifer run`.
  *
  * The L0 gate is consulted BEFORE the import, not before express(): importing
  * executes module top-level code, so a check afterwards checks nothing.
@@ -218,10 +219,12 @@ export async function loadNodeRunner(
     return { refusal: `could not load the gene module: ${(e as Error).message}` };
   }
 
-  const runner: GeneRunner = (input) => {
+  const runner: GeneRunner = async (input) => {
     const started = Date.now();
     try {
-      const output = runInGeneEgress(egress, () => expressFn(input, ctx));
+      // Awaited inside the window: the gene's requests after its first `await`
+      // answer to its declaration too, and the window closes when it is done.
+      const output = await withGeneEgress(egress, () => expressFn(input, ctx));
 
       // ADR-334: the WASM sandbox turns a lone `__rotifer_error` key into
       // GeneResult::Error, and this path has to agree with it. It does not go

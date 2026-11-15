@@ -102,7 +102,7 @@ export const testCommand = new Command("test")
     let skipped = 0;
     // Shared by both T1 paths — WASM sandbox and Node — so the two cannot drift
     // into reporting the same run differently.
-    const reportT1 = (report: ReturnType<typeof runT1>): void => {
+    const reportT1 = (report: Awaited<ReturnType<typeof runT1>>): void => {
       for (const r of report.results) {
         if (r.passed) {
           passed++;
@@ -539,7 +539,7 @@ export const testCommand = new Command("test")
           display.error("  could not run the gene: " + loaded.refusal);
         } else {
           reportT1(
-            runT1(suiteLoad.suite, {
+            await runT1(suiteLoad.suite, {
               inputSchema: (phenotype.inputSchema as Record<string, unknown>) ?? null,
               outputSchema: (phenotype.outputSchema as Record<string, unknown>) ?? null,
               run: loaded.runner,
@@ -578,9 +578,9 @@ export const testCommand = new Command("test")
         }
       };
 
-      let report: ReturnType<typeof runT1>;
+      let report: Awaited<ReturnType<typeof runT1>>;
       try {
-        report = runT1(suiteLoad.suite, {
+        report = await runT1(suiteLoad.suite, {
           inputSchema: (phenotype.inputSchema as Record<string, unknown>) ?? null,
           outputSchema: (phenotype.outputSchema as Record<string, unknown>) ?? null,
           run: runOne,

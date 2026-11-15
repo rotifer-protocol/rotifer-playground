@@ -18,8 +18,9 @@ import type { AddressInfo } from "node:net";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { geneEgress, runInGeneEgress, withGeneEgress } from "../../src/runtime/egress-guard.js";
+import { geneEgress, withGeneEgress } from "../../src/runtime/egress-guard.js";
 import { loadNodeRunner } from "../../src/testsuite/gate.js";
+import { runT1, type GeneRunner, type RunOutcome } from "../../src/testsuite/run.js";
 
 let server: Server;
 let base = "";
@@ -167,48 +168,114 @@ describe("a gene's global fetch while the CLI runs it", () => {
 const ORIGINAL_FETCH = globalThis.fetch;
 const ORIGINAL_WEBSOCKET = globalThis.WebSocket;
 
-describe("a synchronous call (the runner a test suite is run with)", () => {
-  const nextMacrotask = () => new Promise<void>((r) => setImmediate(r));
+describe("the runner a test suite is run with (rotifer test, rotifer publish)", () => {
+  /** A gene directory holding `source` as index.mjs beside a phenotype naming it `name`. */
+  const geneWith = (name: string, source: string[], phenotype: Record<string, unknown> = {}): string => {
+    const dir = mkdtempSync(join(tmpdir(), "egress-runner-"));
+    writeFileSync(join(dir, "phenotype.json"), JSON.stringify({ name, domain: "tools", ...phenotype }));
+    writeFileSync(join(dir, "index.mjs"), source.join("\n"));
+    return dir;
+  };
+  const runnerOf = async (dir: string): Promise<GeneRunner> => {
+    const loaded = await loadNodeRunner(join(dir, "index.mjs"), { kind: "ok" });
+    if (!("runner" in loaded)) throw new Error(loaded.refusal);
+    return loaded.runner;
+  };
+  const probe = (key: string) => (globalThis as Record<string, Promise<string> | undefined>)[key];
 
-  it("checks a request the gene starts during the call or in a microtask it queued, then restores the globals", async () => {
-    let started!: Promise<Response>;
-    let queued!: Promise<Response>;
-    const value = runInGeneEgress(geneEgress("probe", {}, LOOPBACK), () => {
-      started = fetch(`${base}/sync`);
-      queueMicrotask(() => {
-        queued = fetch(`${base}/microtask`);
-      });
-      return 7;
-    });
-    expect(value).toBe(7);
-    await expect(started).rejects.toThrow(/Gene 'probe' declares no network access/);
-    await expect(queued).rejects.toThrow(/Gene 'probe' declares no network access/);
-    await nextMacrotask();
-    expect(globalThis.fetch).toBe(ORIGINAL_FETCH);
-    expect(seen).toHaveLength(0);
+  it("checks a request a sync express starts during the call or in a microtask it queued, then restores the globals", async () => {
+    const dir = geneWith("sync-probe", [
+      "export function express() {",
+      `  globalThis.__during = fetch(${JSON.stringify(`${base}/sync`)}).then(() => "sent", (e) => e.message);`,
+      `  queueMicrotask(() => { globalThis.__queued = fetch(${JSON.stringify(`${base}/microtask`)}).then(() => "sent", (e) => e.message); });`,
+      "  return { ok: true };",
+      "}",
+    ]);
+    try {
+      const outcome = await (await runnerOf(dir))({});
+      expect(outcome.success).toBe(true);
+      expect(globalThis.fetch).toBe(ORIGINAL_FETCH);
+      expect(await probe("__during")).toMatch(/Gene 'sync-probe' declares no network access/);
+      expect(await probe("__queued")).toMatch(/Gene 'sync-probe' declares no network access/);
+      expect(seen).toHaveLength(0);
+    } finally {
+      delete (globalThis as Record<string, unknown>).__during;
+      delete (globalThis as Record<string, unknown>).__queued;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
-  it("keeps the window open until an async call has settled", async () => {
-    const result = runInGeneEgress(geneEgress("probe", {}, LOOPBACK), async () => {
-      await null;
-      await new Promise((r) => setTimeout(r, 20));
-      // resumed long after the call returned
-      return fetch(`${base}/late`).then(() => "sent", (e: Error) => e.message);
-    });
-    expect(await result).toMatch(/Gene 'probe' declares no network access/);
-    await nextMacrotask();
-    expect(globalThis.fetch).toBe(ORIGINAL_FETCH);
-    expect(seen).toHaveLength(0);
+  it("waits for an async express, and checks the requests it makes after its first await", async () => {
+    const dir = geneWith("async-probe", [
+      "export async function express() {",
+      "  await null;",
+      "  await new Promise((r) => setTimeout(r, 20));",
+      `  const late = await fetch(${JSON.stringify(`${base}/late`)}).then(() => "sent", (e) => e.message);`,
+      "  return { ok: true, late };",
+      "}",
+    ]);
+    try {
+      const outcome = await (await runnerOf(dir))({});
+      expect(outcome.success).toBe(true);
+      // the value it resolved to, not its Promise
+      expect((outcome.output as { late: string }).late).toMatch(/Gene 'async-probe' declares no network access/);
+      expect(globalThis.fetch).toBe(ORIGINAL_FETCH);
+      expect(seen).toHaveLength(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
-  it("restores the globals when the call throws", async () => {
-    expect(() =>
-      runInGeneEgress(geneEgress("probe", {}, LOOPBACK), () => {
-        throw new Error("gene broke");
-      }),
-    ).toThrow("gene broke");
-    await nextMacrotask();
-    expect(globalThis.fetch).toBe(ORIGINAL_FETCH);
+  it("restores the globals when express throws, and reports a rejected async express as a crash", async () => {
+    const dir = geneWith("broken-probe", [
+      "export function express(input) {",
+      "  if (input.async) return Promise.reject(new Error('gene broke later'));",
+      "  throw new Error('gene broke');",
+      "}",
+    ]);
+    try {
+      const run = await runnerOf(dir);
+      const thrown: RunOutcome = await run({});
+      expect(thrown).toMatchObject({ success: false, crashed: true, errorMessage: "gene broke" });
+      expect(globalThis.fetch).toBe(ORIGINAL_FETCH);
+      const rejected: RunOutcome = await run({ async: true });
+      expect(rejected).toMatchObject({ success: false, crashed: true, errorMessage: "gene broke later" });
+      expect(globalThis.fetch).toBe(ORIGINAL_FETCH);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("T1 judges an async express on what it resolves to", async () => {
+    const inputSchema = { type: "object", required: ["q"], properties: { q: { type: "string" } } };
+    const outputSchema = { type: "object", required: ["echo"], properties: { echo: { type: "string" } } };
+    const dir = geneWith("async-t1", [
+      "export async function express(input) {",
+      "  await null;",
+      "  if (typeof input?.q !== 'string') return { __rotifer_error: { message: 'q must be a string' } };",
+      "  return { echo: input.q };",
+      "}",
+    ], { inputSchema, outputSchema });
+    try {
+      const report = await runT1(
+        {
+          config: { fuzzIterations: 3, seed: 1 },
+          testCases: [
+            { input: { q: "hi" }, expectedOutput: { echo: "hi" } },
+            { input: { q: 1 } },
+          ],
+        },
+        { inputSchema, outputSchema, run: await runnerOf(dir) },
+      );
+      const by = Object.fromEntries(report.results.map((r) => [r.testId, r]));
+      // a Promise equals no expectedOutput, is no refusal, and has no `echo`
+      expect(by["t1-positive-0"].passed, by["t1-positive-0"].failureReason).toBe(true);
+      expect(by["t1-negative-1"].details).toMatch(/Gene refused illegal input: INVALID_INPUT: q must be a string/);
+      expect(by["t1-property-schema-legality"].passed, by["t1-property-schema-legality"].failureReason).toBe(true);
+      expect(report.gatePassed).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("loadNodeRunner holds the gene to the phenotype.json beside its source", async () => {
@@ -226,7 +293,7 @@ describe("a synchronous call (the runner a test suite is run with)", () => {
       );
       const loaded = await loadNodeRunner(join(dir, "index.mjs"), { kind: "ok" });
       expect("runner" in loaded).toBe(true);
-      const outcome = (loaded as { runner: (i: unknown) => { success: boolean } }).runner({});
+      const outcome = await (loaded as { runner: GeneRunner }).runner({});
       expect(outcome.success).toBe(true);
       const g = globalThis as { __suiteProbe?: Promise<string> };
       expect(await g.__suiteProbe).toMatch(/Gene 'suite-probe' declares no network access/);

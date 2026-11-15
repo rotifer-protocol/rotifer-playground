@@ -123,8 +123,7 @@ const TOP_LEVEL_SOURCE = [
 ].join("\n");
 
 /**
- * A synchronous `express` that fires the request and does not wait for it —
- * the shape `rotifer test`'s T1 suite runs (its runner is synchronous). A
+ * A synchronous `express` that fires the request and does not wait for it. A
  * refusal is caught; a request that gets out is counted by the server.
  */
 const FIRE_AND_FORGET_SOURCE = [
@@ -135,7 +134,7 @@ const FIRE_AND_FORGET_SOURCE = [
   "",
 ].join("\n");
 
-/** A suite every case of which FIRE_AND_FORGET_SOURCE passes. */
+/** A suite every case of which each *_SOURCE below passes, judged on what it returns once settled. */
 const PASSING_SUITE = {
   config: { fuzzIterations: 2, seed: 1 },
   testCases: [
@@ -145,9 +144,9 @@ const PASSING_SUITE = {
 };
 
 /**
- * Requests that start after `express` has returned to the suite's synchronous
- * runner: an async `express` resumed after an `await` (the starter template is
- * async), and a sync one that queues a microtask.
+ * Requests that start after `express` has returned: an async `express` resumed
+ * after an `await` (the starter template is async), and a sync one that queues
+ * a microtask.
  */
 const AFTER_AWAIT_SOURCE = [
   "export async function express(input: { q?: unknown }) {",
@@ -164,7 +163,12 @@ const MICROTASK_SOURCE = [
   "}",
   "",
 ].join("\n");
-/** The suite runner hands an async express's Promise to the schema check, so no `required`. */
+/**
+ * A suite those sources pass whether T1 judges what they resolve to or the
+ * Promise an async one returns. The tests that count requests use it, so the
+ * count is what decides them: a suite the gene failed would end the run
+ * before a request it let out could land.
+ */
 const LOOSE_SUITE = {
   config: { fuzzIterations: 2, seed: 1 },
   testCases: [
@@ -297,9 +301,9 @@ describe.runIf(existsSync(CLI))("a gene's global fetch under the CLI", () => {
   }, 240_000);
 
   describe("rotifer test's T1 suite (testsuite.json, run under Node)", () => {
-    async function withSuite(network: Network): Promise<string> {
-      const project = await projectWith(GENE, network, "Wrapped", FIRE_AND_FORGET_SOURCE);
-      writeFileSync(join(project, "genes", GENE, "testsuite.json"), JSON.stringify(PASSING_SUITE));
+    async function withSuite(network: Network, source = FIRE_AND_FORGET_SOURCE, suite: object = PASSING_SUITE): Promise<string> {
+      const project = await projectWith(GENE, network, "Wrapped", source);
+      writeFileSync(join(project, "genes", GENE, "testsuite.json"), JSON.stringify(suite));
       // `q` must be a string, so { q: 1 } is the suite's negative case — publish's gate needs one.
       const phenotypePath = join(project, "genes", GENE, "phenotype.json");
       const phenotype = JSON.parse(readFileSync(phenotypePath, "utf-8"));
@@ -309,19 +313,8 @@ describe.runIf(existsSync(CLI))("a gene's global fetch under the CLI", () => {
       return project;
     }
 
-    it("holds every case the suite runs to the gene's declaration", async () => {
-      const r = await cli(await withSuite(null), ["test", GENE]);
-      expect(r.out).toMatch(/T1 TestSuite/);
-      expect(r.code, r.out).toBe(0);
-      // the suite's two cases and its property runs, plus the plain test run: none got out
-      expect(hits).toBe(0);
-    }, 240_000);
-
-    it("holds them to it under rotifer publish too, which runs the suite before uploading", async () => {
-      const project = await withSuite(null);
-      // A made-up login that needs no refresh, so publish gets as far as the
-      // suite. The upload after it goes to the local server, which answers it
-      // slowly with a 503: time for anything the suite let out to land.
+    /** `rotifer publish` under a made-up login that needs no refresh, so it gets as far as the suite. */
+    function publish(project: string): Promise<Result> {
       mkdirSync(join(project, ".home", ".rotifer"), { recursive: true });
       writeFileSync(
         join(project, ".home", ".rotifer", "credentials.json"),
@@ -330,21 +323,40 @@ describe.runIf(existsSync(CLI))("a gene's global fetch under the CLI", () => {
           user: { id: "u", username: "egress", avatar_url: null, provider_id: "" },
         }),
       );
-      const r = await cli(project, ["publish", GENE, "--skip-arena"], { ROTIFER_CLOUD_ENDPOINT: origin });
+      // The upload after the suite goes to the local server, which answers it
+      // slowly with a 503: time for anything the suite let out to land.
+      return cli(project, ["publish", GENE, "--skip-arena"], { ROTIFER_CLOUD_ENDPOINT: origin });
+    }
+
+    const SOURCES = [
+      ["a sync express that does not wait for its request", FIRE_AND_FORGET_SOURCE],
+      ["an async express, after an await", AFTER_AWAIT_SOURCE],
+      ["a sync express, from a queued microtask", MICROTASK_SOURCE],
+    ] as const;
+
+    it.each(SOURCES)("holds every case the suite runs to the gene's declaration: %s", async (_label, source) => {
+      const r = await cli(await withSuite(null, source, LOOSE_SUITE), ["test", GENE]);
+      expect(r.out).toMatch(/T1 TestSuite/);
+      expect(r.code, r.out).toBe(0);
+      // the suite's two cases and its property runs, plus the plain test run: none got out
+      expect(hits).toBe(0);
+    }, 240_000);
+
+    it.each(SOURCES)("holds them to it under rotifer publish too, which runs the suite before uploading: %s", async (_label, source) => {
+      const r = await publish(await withSuite(null, source, LOOSE_SUITE));
       expect(r.out).toMatch(/T1 publishing gate: T1 satisfied/);
       // the CLI's own request is not the gene's: it reaches the server
       expect(r.out).toMatch(/Cloud API error \(503\)/);
       expect(hits).toBe(0);
     }, 240_000);
 
-    it.each([
-      ["an async express, after an await", AFTER_AWAIT_SOURCE],
-      ["a sync express, from a queued microtask", MICROTASK_SOURCE],
-    ])("holds a request that starts after the call returns: %s", async (_label, source) => {
-      const project = await projectWith(GENE, null, "Wrapped", source);
-      writeFileSync(join(project, "genes", GENE, "testsuite.json"), JSON.stringify(LOOSE_SUITE));
-      const r = await cli(project, ["test", GENE]);
-      expect(r.out).toMatch(/T1 TestSuite/);
+    it("judges an async express on what it resolves to, under test and publish", async () => {
+      // `required: ["ok"]`: the value has it, the Promise does not
+      const tested = await cli(await withSuite(null, AFTER_AWAIT_SOURCE), ["test", GENE]);
+      expect(tested.out).toMatch(/t1-positive-0: output conforms to expectedSchema/);
+      expect(tested.code, tested.out).toBe(0);
+      const published = await publish(await withSuite(null, AFTER_AWAIT_SOURCE));
+      expect(published.out).toMatch(/T1 publishing gate: T1 satisfied/);
       expect(hits).toBe(0);
     }, 240_000);
 

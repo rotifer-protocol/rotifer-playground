@@ -47,7 +47,7 @@ const LEGAL = { text: "hello" };
 const ILLEGAL = { text: 42 };
 
 describe("TestSuite file format (spec §4.2)", () => {
-  it("rejects an unknown field instead of ignoring it", () => {
+  it("rejects an unknown field instead of ignoring it", async () => {
     // A typo'd assertion field that gets dropped produces a case which asserts
     // nothing and still reports as passing — the failure this plan exists to close.
     const r = parseTestSuite(
@@ -58,7 +58,7 @@ describe("TestSuite file format (spec §4.2)", () => {
     expect((r as { errors: string[] }).errors.join(" ")).toMatch(/expectedOutputs.*unknown field/);
   });
 
-  it("names the offending field and index, not just 'invalid'", () => {
+  it("names the offending field and index, not just 'invalid'", async () => {
     const r = parseTestSuite(
       JSON.stringify({ testCases: [{ input: LEGAL }, { input: LEGAL, timeout: "soon" }] }),
       "t.json",
@@ -66,13 +66,13 @@ describe("TestSuite file format (spec §4.2)", () => {
     expect((r as { errors: string[] }).errors[0]).toMatch(/testCases\[1\]\.timeout/);
   });
 
-  it("rejects an empty testCases array", () => {
+  it("rejects an empty testCases array", async () => {
     const r = parseTestSuite(JSON.stringify({ testCases: [] }), "t.json");
     expect(r.status).toBe("invalid");
     expect((r as { errors: string[] }).errors.join(" ")).toMatch(/asserts nothing/);
   });
 
-  it("accepts a suite using exactly the spec's fields", () => {
+  it("accepts a suite using exactly the spec's fields", async () => {
     const r = parseTestSuite(
       JSON.stringify({
         testCases: [{ input: LEGAL, expectedOutput: { score: 1 }, timeout: 500 }],
@@ -88,12 +88,12 @@ describe("positive/negative classification is derived, not declared", () => {
   const ajv = new Ajv({ allErrors: true, strict: false });
   const validator = ajv.compile(INPUT_SCHEMA);
 
-  it("splits cases by whether the input conforms to inputSchema", () => {
+  it("splits cases by whether the input conforms to inputSchema", async () => {
     const got = classify([{ input: LEGAL }, { input: ILLEGAL }], validator);
     expect(got.map((c) => c.kind)).toEqual(["positive", "negative"]);
   });
 
-  it("explains why a case landed in the negative bucket", () => {
+  it("explains why a case landed in the negative bucket", async () => {
     // An author who meant this to be positive needs to see which field
     // disqualified it, not merely that it was reclassified.
     const [c] = classify([{ input: ILLEGAL }], validator);
@@ -103,8 +103,8 @@ describe("positive/negative classification is derived, not declared", () => {
 });
 
 describe("§47.5 T1 gate", () => {
-  it("passes when a suite has a legal case, an illegal case, and a sound Gene", () => {
-    const report = runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }]), {
+  it("passes when a suite has a legal case, an illegal case, and a sound Gene", async () => {
+    const report = await runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }]), {
       inputSchema: INPUT_SCHEMA,
       outputSchema: OUTPUT_SCHEMA,
       run: wellBehaved,
@@ -113,8 +113,8 @@ describe("§47.5 T1 gate", () => {
     expect(report.gatePassed).toBe(true);
   });
 
-  it("fails when the suite has no negative case", () => {
-    const report = runT1(suiteOf([{ input: LEGAL }]), {
+  it("fails when the suite has no negative case", async () => {
+    const report = await runT1(suiteOf([{ input: LEGAL }]), {
       inputSchema: INPUT_SCHEMA,
       outputSchema: OUTPUT_SCHEMA,
       run: wellBehaved,
@@ -123,8 +123,8 @@ describe("§47.5 T1 gate", () => {
     expect(report.gatePassed).toBe(false);
   });
 
-  it("fails when the suite has no positive case", () => {
-    const report = runT1(suiteOf([{ input: ILLEGAL }]), {
+  it("fails when the suite has no positive case", async () => {
+    const report = await runT1(suiteOf([{ input: ILLEGAL }]), {
       inputSchema: INPUT_SCHEMA,
       outputSchema: OUTPUT_SCHEMA,
       run: wellBehaved,
@@ -133,13 +133,13 @@ describe("§47.5 T1 gate", () => {
     expect(report.gatePassed).toBe(false);
   });
 
-  it("fails when the Gene returns output for illegal input and the case declares nothing", () => {
+  it("fails when the Gene returns output for illegal input and the case declares nothing", async () => {
     // Measured on real Genes, "returned output" cannot mean acceptance:
     // json-validator answering { valid: false } is correct handling, while
     // source-linker echoing the illegal value back is the bug. Indistinguishable
     // from the outcome — so an undeclared case fails rather than guessing.
     const permissive: GeneRunner = () => ({ success: true, output: { score: 1 } });
-    const report = runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }]), {
+    const report = await runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }]), {
       inputSchema: INPUT_SCHEMA,
       outputSchema: OUTPUT_SCHEMA,
       run: permissive,
@@ -149,13 +149,13 @@ describe("§47.5 T1 gate", () => {
     expect(report.results[1].details).toMatch(/silently accepting/);
   });
 
-  it("passes when the author declares what correct handling looks like", () => {
+  it("passes when the author declares what correct handling looks like", async () => {
     // The json-validator shape: illegal input is answered, not refused.
     const validatorLike: GeneRunner = (input) =>
       typeof (input as Record<string, unknown>).text === "string"
         ? { success: true, output: { score: 1 } }
         : { success: true, output: { score: 0 } };
-    const report = runT1(
+    const report = await runT1(
       suiteOf([{ input: LEGAL }, { input: ILLEGAL, expectedOutput: { score: 0 } }]),
       { inputSchema: INPUT_SCHEMA, outputSchema: OUTPUT_SCHEMA, run: validatorLike },
     );
@@ -163,17 +163,17 @@ describe("§47.5 T1 gate", () => {
     expect(report.gatePassed).toBe(true);
   });
 
-  it("fails when the declared handling shape does not match what the Gene did", () => {
+  it("fails when the declared handling shape does not match what the Gene did", async () => {
     const validatorLike: GeneRunner = () => ({ success: true, output: { score: 99 } });
-    const report = runT1(
+    const report = await runT1(
       suiteOf([{ input: LEGAL }, { input: ILLEGAL, expectedOutput: { score: 0 } }]),
       { inputSchema: INPUT_SCHEMA, outputSchema: OUTPUT_SCHEMA, run: validatorLike },
     );
     expect(report.requirements.negative).toBe(false);
   });
 
-  it("passes when the Gene refuses illegal input outright", () => {
-    const report = runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }]), {
+  it("passes when the Gene refuses illegal input outright", async () => {
+    const report = await runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }]), {
       inputSchema: INPUT_SCHEMA,
       outputSchema: OUTPUT_SCHEMA,
       run: wellBehaved,
@@ -181,14 +181,14 @@ describe("§47.5 T1 gate", () => {
     expect(report.requirements.negative).toBe(true);
   });
 
-  it("fails the negative case when the Gene crashes rather than rejects", () => {
+  it("fails the negative case when the Gene crashes rather than rejects", async () => {
     // Dying is not handling. Distinguished from a controlled rejection by the
     // crashed flag, so the two failure modes report differently.
     const brittle: GeneRunner = (input) =>
       (input as Record<string, unknown>).text === "hello"
         ? { success: true, output: { score: 1 } }
         : ({ success: false, crashed: true, errorMessage: "wasm trap: unreachable" } as RunOutcome);
-    const report = runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }]), {
+    const report = await runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }]), {
       inputSchema: INPUT_SCHEMA,
       outputSchema: OUTPUT_SCHEMA,
       run: brittle,
@@ -197,10 +197,10 @@ describe("§47.5 T1 gate", () => {
     expect(report.results[1].failureReason).toMatch(/crashed on illegal input/);
   });
 
-  it("fails a positive case that asserts nothing at all", () => {
+  it("fails a positive case that asserts nothing at all", async () => {
     // No expectedOutput, no expectedSchema, and no outputSchema to fall back
     // on: such a case passes on any output whatsoever, so it must not count.
-    const report = runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }]), {
+    const report = await runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }]), {
       inputSchema: INPUT_SCHEMA,
       outputSchema: null,
       run: wellBehaved,
@@ -209,9 +209,9 @@ describe("§47.5 T1 gate", () => {
     expect(report.results[0].failureReason).toMatch(/asserts nothing/);
   });
 
-  it("checks a positive case against the Gene's outputSchema when it asserts neither", () => {
+  it("checks a positive case against the Gene's outputSchema when it asserts neither", async () => {
     const wrongShape: GeneRunner = () => ({ success: true, output: { scores: 1 } });
-    const report = runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }]), {
+    const report = await runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }]), {
       inputSchema: INPUT_SCHEMA,
       outputSchema: OUTPUT_SCHEMA,
       run: wrongShape,
@@ -222,7 +222,7 @@ describe("§47.5 T1 gate", () => {
 });
 
 describe("expectedOutput compares by content, not by key order", () => {
-  it("matches an output whose keys are in a different order", () => {
+  it("matches an output whose keys are in a different order", async () => {
     // JSON.stringify is key-order sensitive, so a case declaring
     // {formatted, changed, language} failed against a Gene returning
     // {changed, formatted, language} — the same object by every meaning
@@ -230,7 +230,7 @@ describe("expectedOutput compares by content, not by key order", () => {
     // the Gene, and every author writing an expectedOutput by hand would hit
     // it. Found by hitting it, on genesis-code-format.
     const reordering: GeneRunner = () => ({ success: true, output: { b: 2, a: 1, score: 1 } });
-    const report = runT1(
+    const report = await runT1(
       suiteOf([
         { input: LEGAL, expectedOutput: { score: 1, a: 1, b: 2 } },
         { input: ILLEGAL },
@@ -240,17 +240,17 @@ describe("expectedOutput compares by content, not by key order", () => {
     expect(report.results[0].passed).toBe(true);
   });
 
-  it("still distinguishes different content, and array order still counts", () => {
+  it("still distinguishes different content, and array order still counts", async () => {
     // The control. Sorting keys must not turn the comparison into "any object
     // with the same field names", and reordering an array is a real difference.
     const differing: GeneRunner = () => ({ success: true, output: { score: 2, items: [1, 2] } });
-    const wrongValue = runT1(
+    const wrongValue = await runT1(
       suiteOf([{ input: LEGAL, expectedOutput: { score: 1, items: [1, 2] } }, { input: ILLEGAL }]),
       { inputSchema: INPUT_SCHEMA, outputSchema: OUTPUT_SCHEMA, run: differing },
     );
     expect(wrongValue.results[0].passed).toBe(false);
 
-    const wrongOrder = runT1(
+    const wrongOrder = await runT1(
       suiteOf([{ input: LEGAL, expectedOutput: { score: 2, items: [2, 1] } }, { input: ILLEGAL }]),
       { inputSchema: INPUT_SCHEMA, outputSchema: OUTPUT_SCHEMA, run: differing },
     );
@@ -259,7 +259,7 @@ describe("expectedOutput compares by content, not by key order", () => {
 });
 
 describe("a case the author wrote must pass, not merely be outnumbered", () => {
-  it("blocks when one negative fails even though another passes", () => {
+  it("blocks when one negative fails even though another passes", async () => {
     // §47.5 sets a floor on coverage — "at least 1 negative" — not permission
     // to ship failing assertions. Caught on design-tokens: removing the fix
     // turned one negative red while `negative: met` stayed true on the strength
@@ -274,7 +274,7 @@ describe("a case the author wrote must pass, not merely be outnumbered", () => {
       // not sign off on.
       return { success: true, output: { score: 9 } };
     };
-    const report = runT1(
+    const report = await runT1(
       suiteOf([
         { input: LEGAL },
         { input: ILLEGAL, expectedOutput: { score: 0 } },
@@ -288,13 +288,13 @@ describe("a case the author wrote must pass, not merely be outnumbered", () => {
 });
 
 describe("§47.4 schema-legality property test", () => {
-  it("runs 10 iterations by default, as §47.5 specifies", () => {
+  it("runs 10 iterations by default, as §47.5 specifies", async () => {
     let calls = 0;
     const counting: GeneRunner = (input) => {
       calls++;
       return wellBehaved(input);
     };
-    runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }]), {
+    await runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }]), {
       inputSchema: INPUT_SCHEMA,
       outputSchema: OUTPUT_SCHEMA,
       run: counting,
@@ -303,11 +303,11 @@ describe("§47.4 schema-legality property test", () => {
     expect(calls - 2).toBe(DEFAULT_FUZZ_ITERATIONS);
   });
 
-  it("is reproducible: the same seed feeds the same inputs", () => {
+  it("is reproducible: the same seed feeds the same inputs", async () => {
     const seen: string[][] = [];
     for (const _ of [0, 1]) {
       const inputs: string[] = [];
-      runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }], { seed: 99 }), {
+      await runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }], { seed: 99 }), {
         inputSchema: INPUT_SCHEMA,
         outputSchema: OUTPUT_SCHEMA,
         run: (input) => {
@@ -320,13 +320,13 @@ describe("§47.4 schema-legality property test", () => {
     expect(seen[0]).toEqual(seen[1]);
   });
 
-  it("reports the seed on failure so the run can be replayed", () => {
+  it("reports the seed on failure so the run can be replayed", async () => {
     const flaky: GeneRunner = (input) =>
       typeof (input as Record<string, unknown>).text === "string" &&
       (input as Record<string, string>).text.endsWith("3")
         ? { success: true, output: { score: "not a number" } }
         : wellBehaved(input);
-    const report = runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }], { seed: 1 }), {
+    const report = await runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }], { seed: 1 }), {
       inputSchema: INPUT_SCHEMA,
       outputSchema: OUTPUT_SCHEMA,
       run: flaky,
@@ -336,8 +336,8 @@ describe("§47.4 schema-legality property test", () => {
     expect(prop.details).toMatch(/reproduce with seed 1/);
   });
 
-  it("does not count a zero-iteration property test as satisfied", () => {
-    const report = runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }], { fuzzIterations: 0 }), {
+  it("does not count a zero-iteration property test as satisfied", async () => {
+    const report = await runT1(suiteOf([{ input: LEGAL }, { input: ILLEGAL }], { fuzzIterations: 0 }), {
       inputSchema: INPUT_SCHEMA,
       outputSchema: OUTPUT_SCHEMA,
       run: wellBehaved,

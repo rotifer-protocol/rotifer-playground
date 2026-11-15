@@ -469,38 +469,52 @@ impl NetworkBehaviour for DenyDial {
     }
 }
 
-#[derive(NetworkBehaviour)]
-struct NodeBehaviour {
-    // The limits come first. libp2p offers a new connection to each behaviour
-    // in field order, and some (request-response, under AutoNAT) record it as
-    // soon as they are asked; a limit listed after them would refuse it too
-    // late and leave a stale entry that panics when the peer's other
-    // connection closes.
-    /// Caps total / per-peer / pending connections so a node can't be connected
-    /// into resource exhaustion — the scale-up guardrail (ADR-304 D2).
-    connection_limits: connection_limits::Behaviour,
-    /// Denies new connections under memory pressure (process RSS vs system RAM).
-    memory_connection_limits: memory_connection_limits::Behaviour,
-    /// Peers whose score is at or below the graylist threshold, whatever the
-    /// cause: refused and disconnected until the score rises again (A2 §8.2).
-    blocked: allow_block_list::Behaviour<allow_block_list::BlockedPeers>,
-    /// Test switch (design v5 §5.9.2, ①-向): refuse this node's own dials
-    /// to the listed peers. Empty, and so never built, outside tests.
-    deny_dial: Toggle<DenyDial>,
-    kademlia: kad::Behaviour<GeneStore>,
-    gossipsub: gossipsub::Behaviour,
-    identify: identify::Behaviour,
-    /// NAT traversal (ADR-304 D1): AutoNAT asks peers to dial it back to learn
-    /// whether it is reachable (and answers their probes); the relay client
-    /// holds reservations on configured relays so peers can reach it through
-    /// them; DCUtR then tries to replace a relayed connection with a direct one.
-    autonat: autonat::Behaviour,
-    relay_client: relay::client::Behaviour,
-    dcutr: dcutr::Behaviour,
-    /// LAN discovery (P2P RFC §5.1). Disabled unless the node listens on a
-    /// non-loopback interface — see [`mdns_should_run`].
-    mdns: Toggle<mdns::tokio::Behaviour>,
+// rustc 1.100 lints the dead arm the derive generates for fields whose
+// `ToSwarm` is uninhabited (`connection_limits`, `allow_block_list`, ...:
+// `Infallible`). The arm can never run. An `allow` on
+// the struct does not reach the generated impl, so the struct sits in a
+// module of its own and the `allow` covers only it and its derive.
+// Upstream: https://github.com/libp2p/rust-libp2p/issues/6600 (fix proposed
+// in #6602). Once #6602 is merged and released, update libp2p-swarm-derive and
+// delete this module.
+#[allow(unreachable_code)]
+mod behaviour {
+    use super::*;
+
+    #[derive(NetworkBehaviour)]
+    pub(super) struct NodeBehaviour {
+        // The limits come first. libp2p offers a new connection to each behaviour
+        // in field order, and some (request-response, under AutoNAT) record it as
+        // soon as they are asked; a limit listed after them would refuse it too
+        // late and leave a stale entry that panics when the peer's other
+        // connection closes.
+        /// Caps total / per-peer / pending connections so a node can't be connected
+        /// into resource exhaustion — the scale-up guardrail (ADR-304 D2).
+        pub(super) connection_limits: connection_limits::Behaviour,
+        /// Denies new connections under memory pressure (process RSS vs system RAM).
+        pub(super) memory_connection_limits: memory_connection_limits::Behaviour,
+        /// Peers whose score is at or below the graylist threshold, whatever the
+        /// cause: refused and disconnected until the score rises again (A2 §8.2).
+        pub(super) blocked: allow_block_list::Behaviour<allow_block_list::BlockedPeers>,
+        /// Test switch (design v5 §5.9.2, ①-向): refuse this node's own dials
+        /// to the listed peers. Empty, and so never built, outside tests.
+        pub(super) deny_dial: Toggle<DenyDial>,
+        pub(super) kademlia: kad::Behaviour<GeneStore>,
+        pub(super) gossipsub: gossipsub::Behaviour,
+        pub(super) identify: identify::Behaviour,
+        /// NAT traversal (ADR-304 D1): AutoNAT asks peers to dial it back to learn
+        /// whether it is reachable (and answers their probes); the relay client
+        /// holds reservations on configured relays so peers can reach it through
+        /// them; DCUtR then tries to replace a relayed connection with a direct one.
+        pub(super) autonat: autonat::Behaviour,
+        pub(super) relay_client: relay::client::Behaviour,
+        pub(super) dcutr: dcutr::Behaviour,
+        /// LAN discovery (P2P RFC §5.1). Disabled unless the node listens on a
+        /// non-loopback interface — see [`mdns_should_run`].
+        pub(super) mdns: Toggle<mdns::tokio::Behaviour>,
+    }
 }
+use behaviour::{NodeBehaviour, NodeBehaviourEvent};
 
 /// Whether mDNS should run for a node listening on `host`.
 ///

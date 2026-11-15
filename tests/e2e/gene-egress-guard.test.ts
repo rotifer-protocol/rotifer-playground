@@ -29,6 +29,7 @@ let tmp = "";
 let certFile = "";
 let server: Server;
 let url = "";
+let origin = "";
 let hits = 0;
 
 beforeAll(async () => {
@@ -43,12 +44,23 @@ beforeAll(async () => {
     { encoding: "utf-8" },
   );
   expect(made.status, `openssl: ${made.stderr}`).toBe(0);
-  server = createServer({ key: readFileSync(keyFile), cert: readFileSync(certFile) }, (_req, res) => {
-    hits++;
-    res.end("pong");
+  server = createServer({ key: readFileSync(keyFile), cert: readFileSync(certFile) }, (req, res) => {
+    if (req.url === "/ping") {
+      hits++;
+      res.end("pong");
+      return;
+    }
+    // Anything else is the CLI's own request to Rotifer Cloud (see the publish
+    // test): not the gene's, so not counted. It is answered slowly, so a
+    // request the gene let out has time to land before publish gives up.
+    setTimeout(() => {
+      res.statusCode = 503;
+      res.end();
+    }, 1500);
   });
   await new Promise<void>((r) => server.listen(0, "localhost", r));
-  url = `https://localhost:${(server.address() as AddressInfo).port}/ping`;
+  origin = `https://localhost:${(server.address() as AddressInfo).port}`;
+  url = `${origin}/ping`;
 });
 
 afterAll(async () => {
@@ -61,7 +73,7 @@ interface Result {
   out: string;
 }
 
-function cli(project: string, args: string[]): Promise<Result> {
+function cli(project: string, args: string[], extraEnv: Record<string, string> = {}): Promise<Result> {
   return new Promise((done) => {
     const child = execFile(
       process.execPath,
@@ -82,6 +94,7 @@ function cli(project: string, args: string[]): Promise<Result> {
           ROTIFER_CLOUD_ANON_KEY: "anon-test-key",
           NODE_EXTRA_CA_CERTS: certFile,
           EGRESS_URL: url,
+          ...extraEnv,
         },
       },
       (_err, stdout, stderr) => done({ code: child.exitCode, out: `${stdout}${stderr}` }),
@@ -258,6 +271,12 @@ describe.runIf(existsSync(CLI))("a gene's global fetch under the CLI", () => {
     async function withSuite(network: Network): Promise<string> {
       const project = await projectWith(GENE, network, "Wrapped", FIRE_AND_FORGET_SOURCE);
       writeFileSync(join(project, "genes", GENE, "testsuite.json"), JSON.stringify(PASSING_SUITE));
+      // `q` must be a string, so { q: 1 } is the suite's negative case — publish's gate needs one.
+      const phenotypePath = join(project, "genes", GENE, "phenotype.json");
+      const phenotype = JSON.parse(readFileSync(phenotypePath, "utf-8"));
+      phenotype.inputSchema = { type: "object", properties: { q: { type: "string" } } };
+      phenotype.description = "Egress probe";
+      writeFileSync(phenotypePath, JSON.stringify(phenotype, null, 2));
       return project;
     }
 
@@ -266,6 +285,26 @@ describe.runIf(existsSync(CLI))("a gene's global fetch under the CLI", () => {
       expect(r.out).toMatch(/T1 TestSuite/);
       expect(r.code, r.out).toBe(0);
       // the suite's two cases and its property runs, plus the plain test run: none got out
+      expect(hits).toBe(0);
+    }, 240_000);
+
+    it("holds them to it under rotifer publish too, which runs the suite before uploading", async () => {
+      const project = await withSuite(null);
+      // A made-up login that needs no refresh, so publish gets as far as the
+      // suite. The upload after it goes to the local server, which answers it
+      // slowly with a 503: time for anything the suite let out to land.
+      mkdirSync(join(project, ".home", ".rotifer"), { recursive: true });
+      writeFileSync(
+        join(project, ".home", ".rotifer", "credentials.json"),
+        JSON.stringify({
+          access_token: "t", refresh_token: "r", expires_at: Date.now() + 3_600_000, provider: "github",
+          user: { id: "u", username: "egress", avatar_url: null, provider_id: "" },
+        }),
+      );
+      const r = await cli(project, ["publish", GENE, "--skip-arena"], { ROTIFER_CLOUD_ENDPOINT: origin });
+      expect(r.out).toMatch(/T1 publishing gate: T1 satisfied/);
+      // the CLI's own request is not the gene's: it reaches the server
+      expect(r.out).toMatch(/Cloud API error \(503\)/);
       expect(hits).toBe(0);
     }, 240_000);
 

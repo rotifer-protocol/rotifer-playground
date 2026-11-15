@@ -144,6 +144,35 @@ const PASSING_SUITE = {
   ],
 };
 
+/**
+ * Requests that start after `express` has returned to the suite's synchronous
+ * runner: an async `express` resumed after an `await` (the starter template is
+ * async), and a sync one that queues a microtask.
+ */
+const AFTER_AWAIT_SOURCE = [
+  "export async function express(input: { q?: unknown }) {",
+  "  await null;",
+  "  try { await fetch(process.env.EGRESS_URL as string); } catch {}",
+  "  return { ok: true, q: input?.q ?? null };",
+  "}",
+  "",
+].join("\n");
+const MICROTASK_SOURCE = [
+  "export function express(input: { q?: unknown }) {",
+  "  queueMicrotask(() => { fetch(process.env.EGRESS_URL as string).catch(() => {}); });",
+  "  return { ok: true, q: input?.q ?? null };",
+  "}",
+  "",
+].join("\n");
+/** The suite runner hands an async express's Promise to the schema check, so no `required`. */
+const LOOSE_SUITE = {
+  config: { fuzzIterations: 2, seed: 1 },
+  testCases: [
+    { input: { q: "x" }, expectedSchema: { type: "object" } },
+    { input: { q: 1 }, expectedSchema: { type: "object" } },
+  ],
+};
+
 /** `display()` runs after the pipeline; it reaches out, `express` does not. */
 const DISPLAY_SOURCE = [
   "export function express(input: { q?: string }) {",
@@ -305,6 +334,17 @@ describe.runIf(existsSync(CLI))("a gene's global fetch under the CLI", () => {
       expect(r.out).toMatch(/T1 publishing gate: T1 satisfied/);
       // the CLI's own request is not the gene's: it reaches the server
       expect(r.out).toMatch(/Cloud API error \(503\)/);
+      expect(hits).toBe(0);
+    }, 240_000);
+
+    it.each([
+      ["an async express, after an await", AFTER_AWAIT_SOURCE],
+      ["a sync express, from a queued microtask", MICROTASK_SOURCE],
+    ])("holds a request that starts after the call returns: %s", async (_label, source) => {
+      const project = await projectWith(GENE, null, "Wrapped", source);
+      writeFileSync(join(project, "genes", GENE, "testsuite.json"), JSON.stringify(LOOSE_SUITE));
+      const r = await cli(project, ["test", GENE]);
+      expect(r.out).toMatch(/T1 TestSuite/);
       expect(hits).toBe(0);
     }, 240_000);
 

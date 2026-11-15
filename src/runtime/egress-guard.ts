@@ -91,16 +91,36 @@ export async function withGeneEgress<T>(egress: GeneEgress, fn: () => T | Promis
 /**
  * The same window for a synchronous call — a runner that cannot await, such as
  * the one `rotifer test` and `rotifer publish` run a gene's test suite with.
- * A request the gene starts during the call is checked when it starts; the
- * window closes when the call returns.
+ *
+ * The call returning does not mean the gene is done: an async `express` hands
+ * back a Promise and goes on after its first `await`, and a sync one can queue
+ * a microtask. So the window stays open until what the call returned has
+ * settled, and then until the next macrotask, after the microtasks the gene
+ * queued. Every request the gene starts in that time is checked; the context
+ * that names the gene follows its continuations, and the CLI's own requests
+ * carry none, so the longer window holds back nothing of the CLI's.
  */
 export function runInGeneEgress<T>(egress: GeneEgress, fn: () => T): T {
   install();
+  let result: T;
   try {
-    return running.run(egress, fn);
-  } finally {
-    uninstall();
+    result = running.run(egress, fn);
+  } catch (err) {
+    setImmediate(uninstall);
+    throw err;
   }
+  if (isThenable(result)) {
+    // `finally` leaves a rejection unhandled exactly as it was without it
+    Promise.resolve(result).finally(() => setImmediate(uninstall));
+  } else {
+    setImmediate(uninstall);
+  }
+  return result;
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (typeof value === "object" || typeof value === "function") && value !== null &&
+    typeof (value as { then?: unknown }).then === "function";
 }
 
 /** The gene's network rights, read from the phenotype.json beside its source. None if there is none. */

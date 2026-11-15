@@ -168,16 +168,47 @@ const ORIGINAL_FETCH = globalThis.fetch;
 const ORIGINAL_WEBSOCKET = globalThis.WebSocket;
 
 describe("a synchronous call (the runner a test suite is run with)", () => {
-  it("checks a request the gene starts during the call, and restores the globals when it returns", async () => {
+  const nextMacrotask = () => new Promise<void>((r) => setImmediate(r));
+
+  it("checks a request the gene starts during the call or in a microtask it queued, then restores the globals", async () => {
     let started!: Promise<Response>;
+    let queued!: Promise<Response>;
     const value = runInGeneEgress(geneEgress("probe", {}, LOOPBACK), () => {
       started = fetch(`${base}/sync`);
+      queueMicrotask(() => {
+        queued = fetch(`${base}/microtask`);
+      });
       return 7;
     });
     expect(value).toBe(7);
-    expect(globalThis.fetch).toBe(ORIGINAL_FETCH);
     await expect(started).rejects.toThrow(/Gene 'probe' declares no network access/);
+    await expect(queued).rejects.toThrow(/Gene 'probe' declares no network access/);
+    await nextMacrotask();
+    expect(globalThis.fetch).toBe(ORIGINAL_FETCH);
     expect(seen).toHaveLength(0);
+  });
+
+  it("keeps the window open until an async call has settled", async () => {
+    const result = runInGeneEgress(geneEgress("probe", {}, LOOPBACK), async () => {
+      await null;
+      await new Promise((r) => setTimeout(r, 20));
+      // resumed long after the call returned
+      return fetch(`${base}/late`).then(() => "sent", (e: Error) => e.message);
+    });
+    expect(await result).toMatch(/Gene 'probe' declares no network access/);
+    await nextMacrotask();
+    expect(globalThis.fetch).toBe(ORIGINAL_FETCH);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("restores the globals when the call throws", async () => {
+    expect(() =>
+      runInGeneEgress(geneEgress("probe", {}, LOOPBACK), () => {
+        throw new Error("gene broke");
+      }),
+    ).toThrow("gene broke");
+    await nextMacrotask();
+    expect(globalThis.fetch).toBe(ORIGINAL_FETCH);
   });
 
   it("loadNodeRunner holds the gene to the phenotype.json beside its source", async () => {

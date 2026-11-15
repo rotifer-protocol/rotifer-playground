@@ -28,6 +28,13 @@ import {
  * the native entry point and declares the MCP server where OpenClaw reads a
  * Claude bundle's MCP config.
  *
+ * The third real publish was admitted as 0.9.13, but ClawHub's Plugin
+ * Inspector, which scans a release after it is published, marked it "Needs
+ * review": "OpenClaw package entrypoint metadata is missing". package.json
+ * still carried an openclaw block (build, compat, environment, family,
+ * mcpServers) with no entry point in it. A bundle may not declare one, so the
+ * copy now has no openclaw block at all.
+ *
  * These tests run the publish job's own steps in order, in bash, with a fake
  * `npx` that records its arguments, and then check the folder the job hands
  * to ClawHub the way ClawHub's server does.
@@ -188,6 +195,35 @@ describe("scripts/stage-clawhub-plugin.mjs", () => {
     ]);
   });
 
+  // The copy the third real publish sent (run 43156523122, live as 0.9.13): the
+  // second copy without index.js, main and openclaw.extensions, with the MCP
+  // server in .claude-plugin/plugin.json. ClawHub admitted it; its Plugin
+  // Inspector flagged the openclaw block that was left with no entry point.
+  it("the copy the third publish sent is flagged for an openclaw block with no entry point", () => {
+    const third = join(dir, "third-staging");
+    cpSync(SOURCE_DIR, third, {
+      recursive: true,
+      filter: (src) => !relative(SOURCE_DIR, src).split(sep).join("/").startsWith(".cursor-plugin"),
+    });
+    rmSync(join(third, "index.js"));
+    const pkg = sourceJson("package.json");
+    delete pkg.main;
+    delete pkg.openclaw.extensions;
+    writeFileSync(join(third, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
+    const servers = pkg.openclaw.mcpServers;
+    writeFileSync(
+      join(third, ".claude-plugin/plugin.json"),
+      JSON.stringify({
+        ...sourceJson(".claude-plugin/plugin.json"),
+        mcpServers: { rotifer: { command: servers.rotifer.command, args: servers.rotifer.args } },
+      }),
+    );
+    expect(checkClawhubBundle(third, familyVersion)).toEqual([
+      "OpenClaw package entrypoint metadata is missing: package.json has an openclaw block but declares no " +
+        "extensions, runtimeExtensions, setupEntry or runtimeSetupEntry (Plugin Inspector package-openclaw-entry-missing)",
+    ]);
+  });
+
   it("the staged copy keeps one manifest, drops the native entry point, and declares the MCP server", () => {
     const out = join(dir, "staged");
     stageClawhubPlugin(out);
@@ -198,10 +234,9 @@ describe("scripts/stage-clawhub-plugin.mjs", () => {
 
     const sourcePkg = sourceJson("package.json");
     expect(sourcePkg.openclaw.extensions).toEqual(["./index.js"]);
-    const { main: _main, ...pkgWithoutMain } = sourcePkg;
-    const { extensions: _extensions, ...openclawWithoutExtensions } = sourcePkg.openclaw;
+    const { main: _main, openclaw: _openclaw, ...pkgWithoutOpenclaw } = sourcePkg;
     const stagedPkg = JSON.parse(readFileSync(join(out, "package.json"), "utf-8"));
-    expect(stagedPkg).toEqual({ ...pkgWithoutMain, openclaw: openclawWithoutExtensions });
+    expect(stagedPkg).toEqual(pkgWithoutOpenclaw);
 
     const servers = sourcePkg.openclaw.mcpServers;
     expect(Object.keys(servers)).toEqual(["rotifer"]);

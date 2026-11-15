@@ -15,8 +15,9 @@
  *    manifests ClawHub counts; root-plugin-v0.9.13 was rejected with
  *    "bundle-plugin requires exactly one supported bundle manifest".
  *
- * 2. No native entry point: package.json loses openclaw.extensions and main,
- *    and index.js is dropped. ClawHub refuses a bundle-plugin that declares
+ * 2. No native entry point and no openclaw block: package.json loses its
+ *    whole openclaw block and main, and index.js is dropped. ClawHub refuses
+ *    a bundle-plugin that declares
  *    openclaw.extensions ("Native package entrypoints require the
  *    code-plugin family"; the second publish of 0.9.13 failed on it), and the
  *    listing cannot become a code-plugin because ClawHub does not allow a
@@ -25,6 +26,16 @@
  *    in openclaw.plugin.json; without one, OpenClaw 2026.11.3 refuses to
  *    install it ("plugin manifest requires configSchema"). That is why the
  *    live 0.9.3 listing no longer installs.
+ *    The rest of the block goes too. ClawHub's Plugin Inspector flags any
+ *    package.json openclaw block that names no entry point ("OpenClaw package
+ *    entrypoint metadata is missing"); the third publish of 0.9.13 kept
+ *    build, compat, environment, family and mcpServers and was marked "Needs
+ *    review" for it. A bundle cannot both have an entry point and be admitted,
+ *    so it has no block. What that costs: ClawHub no longer shows the
+ *    pluginApi / builtWith compatibility it read from openclaw.compat and
+ *    openclaw.build. Installing from ClawHub, OpenClaw 2026.11.3 checks the
+ *    plugin API range only when the listing has one, and a local install
+ *    reports no compatibility for this bundle with or without the block.
  *
  * 3. The MCP server moves into .claude-plugin/plugin.json mcpServers.
  *    OpenClaw loads a Claude bundle's MCP servers only from that manifest's
@@ -35,43 +46,55 @@
  * Everything else, including .codebuddy-plugin/ which ClawHub does not count,
  * is copied unchanged. plugins/rotifer itself is not modified.
  *
- * The CLI's --dry-run never reaches the server and `clawhub package validate`
- * checks the folder as a native plugin, so neither catches these. This check
- * mirrors the server's rules instead.
+ * The CLI's --dry-run never reaches the server, so it catches none of these.
+ * This check mirrors the server's rules instead, plus the Plugin Inspector
+ * rule above.
  *
  * ClawHub's publish-time admission rules for a package, in the order
  * publishPackageImpl (convex/packages.ts) applies them, as read and run
- * locally against this script's output at openclaw/clawhub 23840e27
- * (2026-11-11). Compare against these when ClawHub changes:
+ * locally against this script's output at openclaw/clawhub 3b8454b1
+ * (2026-11-15; first read at 23840e27). Compare against these when ClawHub
+ * changes:
  *
  *   1. assertPackageVersion: semver required for code-plugin, not for a bundle.
- *      convex/lib/packageRegistry.ts:433 (called at convex/packages.ts:8253)
+ *      convex/lib/packageRegistry.ts:424 (called at convex/packages.ts:8068)
  *   2. Per-file and total size limits (10 MiB, 50 MiB).
- *      convex/lib/publishLimits.ts:21, :12 (convex/packages.ts:8420-8425)
- *   3. code-plugin needs source repo and commit. convex/packages.ts:8450
+ *      convex/lib/publishLimits.ts:21, :12 (convex/packages.ts:8233)
+ *   3. code-plugin needs source repo and commit. convex/packages.ts:8265
  *   4. selectPluginManifest: a bundle-plugin has exactly one of
  *      .codex-plugin/, .claude-plugin/, .cursor-plugin/ plugin.json, and it
  *      matches --bundle-format. packages/schema/src/pluginInput.ts:7
- *      (convex/packages.ts:8475)                         -> checked here
+ *      (convex/packages.ts:8290)                         -> checked here
  *   5. ensurePluginNameMatchesPackage: package.json name is the package name.
- *      convex/lib/packageRegistry.ts:660 (convex/packages.ts:8529) -> checked here
- *   6. code-plugin needs openclaw.plugin.json. convex/packages.ts:8531
+ *      convex/lib/packageRegistry.ts:651 (convex/packages.ts:8344) -> checked here
+ *   6. code-plugin needs openclaw.plugin.json. convex/packages.ts:8346
  *   7. validateOpenClawExternalCodePluginPackageContents, code-plugin only.
- *      packages/schema/src/openclawContract.ts (convex/packages.ts:8589)
+ *      packages/schema/src/openclawContract.ts:215 (convex/packages.ts:8404)
  *   8. extractBundlePluginArtifacts: runtime id from the bundle manifest name;
- *      no non-empty package.json openclaw.extensions (line 642).
- *      convex/lib/packageRegistry.ts:623 (convex/packages.ts:8608) -> checked here
+ *      no non-empty package.json openclaw.extensions (line 633).
+ *      convex/lib/packageRegistry.ts:614 (convex/packages.ts:8423) -> checked here
  *   9. extractCodePluginArtifacts, code-plugin only: openclaw.extensions,
- *      openclaw.plugin.json id, configSchema. convex/lib/packageRegistry.ts:579
- *      (convex/packages.ts:8626)
+ *      openclaw.plugin.json id, configSchema. convex/lib/packageRegistry.ts:570
+ *      (convex/packages.ts:8441)
  *  10. classifyPluginCategories: fails only on invalid declared categories in
  *      openclaw.plugin.json. convex/lib/pluginCategoryClassification.ts:108
- *      (convex/packages.ts:8661)
+ *      (convex/packages.ts:8476)
  *  11. An existing package may not change family (the listing is a
- *      bundle-plugin with runtime id rotifer). convex/packages.ts:11613
+ *      bundle-plugin with runtime id rotifer). convex/packages.ts:11383
  *
- * Server-side scans, the Plugin Inspector and publish-token checks also run,
- * but only a real publish exercises them.
+ * After a release is admitted, ClawHub runs the Plugin Inspector on it
+ * (@openclaw/plugin-inspector 0.4.6, pinned in ClawHub's package.json; it runs
+ * from GitHub Actions, never inside a publish, convex/lib/pluginInspectorReleaseScan.ts).
+ * Its findings make the listing "Needs review". One of its rules is checked here:
+ *
+ *  12. package-openclaw-entry-missing: a package.json openclaw block with no
+ *      extensions, runtimeExtensions, setupEntry or runtimeSetupEntry.
+ *      openclaw/plugin-inspector src/fixture-summary.js:353 (entry points
+ *      collected at :1102)                                -> checked here
+ *
+ * `npx clawhub@0.26.0 package validate <dir>` runs the same inspector locally;
+ * this script's output gives it no findings. Server-side scans and
+ * publish-token checks also run, but only a real publish exercises them.
  */
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -97,6 +120,21 @@ export const PUBLISHED_FORMAT = "claude";
 /** The ClawHub package name. */
 export const PACKAGE_NAME = "rotifer";
 
+/** The MCP servers plugins/rotifer declares, which OpenClaw must be able to see in the staged copy. */
+export function sourceMcpServers(source = SOURCE) {
+  return JSON.parse(readFileSync(join(source, "package.json"), "utf-8")).openclaw?.mcpServers ?? {};
+}
+
+/** The Plugin Inspector's collectOpenClawEntrypoints: entry points a package.json openclaw block names. */
+function openclawEntrypoints(openclaw) {
+  const strings = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string") : []);
+  return [
+    ...strings(openclaw.extensions),
+    ...strings(openclaw.runtimeExtensions),
+    ...[openclaw.setupEntry, openclaw.runtimeSetupEntry].filter((x) => typeof x === "string"),
+  ];
+}
+
 /** ClawHub's bundlePluginRuntimeId: the listing's runtime id comes from the manifest name. */
 export function runtimeIdFromName(name) {
   return String(name ?? "")
@@ -114,10 +152,11 @@ function filesUnder(dir) {
 }
 
 /**
- * Problems ClawHub would reject this folder for, as the bundle-plugin rotifer
- * at `version`, plus MCP servers OpenClaw would not see.
+ * Problems ClawHub would reject or flag this folder for, as the bundle-plugin
+ * rotifer at `version`, plus any of `mcpServers` (by default the ones
+ * plugins/rotifer declares) that OpenClaw would not see.
  */
-export function checkClawhubBundle(dir, version) {
+export function checkClawhubBundle(dir, version, mcpServers = sourceMcpServers()) {
   const problems = [];
   const read = (path) => JSON.parse(readFileSync(join(dir, path), "utf-8"));
   const present = CLAWHUB_BUNDLE_MANIFESTS.filter((m) => existsSync(join(dir, m.path)));
@@ -143,6 +182,12 @@ export function checkClawhubBundle(dir, version) {
     const extensions = pkg.openclaw?.extensions;
     if (Array.isArray(extensions) && extensions.length > 0) {
       problems.push("Native package entrypoints require the code-plugin family");
+    } else if (pkg.openclaw && openclawEntrypoints(pkg.openclaw).length === 0) {
+      // Rule 12 (Plugin Inspector, after publish).
+      problems.push(
+        "OpenClaw package entrypoint metadata is missing: package.json has an openclaw block but declares no " +
+          "extensions, runtimeExtensions, setupEntry or runtimeSetupEntry (Plugin Inspector package-openclaw-entry-missing)",
+      );
     }
   }
 
@@ -160,7 +205,7 @@ export function checkClawhubBundle(dir, version) {
     }
     // Not a ClawHub rule: OpenClaw only starts MCP servers a bundle declares in
     // its manifest's mcpServers or in .mcp.json.
-    const declared = Object.keys(pkg?.openclaw?.mcpServers ?? {});
+    const declared = Object.keys(mcpServers);
     const inManifest = Object.keys(manifest.mcpServers ?? {});
     const inDotMcp = existsSync(join(dir, ".mcp.json")) ? Object.keys(read(".mcp.json").mcpServers ?? {}) : [];
     for (const name of declared) {
@@ -185,7 +230,8 @@ export function checkClawhubBundle(dir, version) {
 
 /**
  * Copy `source` to `out` the way the listing ships: one bundle manifest, no
- * native entry point, and the MCP server declared in that manifest.
+ * native entry point or openclaw block, and the MCP server declared in that
+ * manifest.
  */
 export function stageClawhubPlugin(out, source = SOURCE) {
   const published = CLAWHUB_BUNDLE_MANIFESTS.find((m) => m.format === PUBLISHED_FORMAT);
@@ -203,7 +249,7 @@ export function stageClawhubPlugin(out, source = SOURCE) {
   const pkgPath = join(out, "package.json");
   const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
   const servers = pkg.openclaw?.mcpServers ?? {};
-  if (pkg.openclaw) delete pkg.openclaw.extensions;
+  delete pkg.openclaw;
   delete pkg.main;
   writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
   rmSync(join(out, "index.js"), { force: true });
@@ -223,7 +269,7 @@ function familyVersion() {
 }
 
 function fail(problems) {
-  for (const p of problems) console.error(`::error::ClawHub would reject this package: ${p}`);
+  for (const p of problems) console.error(`::error::ClawHub would reject or flag this package: ${p}`);
   process.exit(1);
 }
 
@@ -233,7 +279,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (args[0] === "--check" && args[1]) {
     const problems = checkClawhubBundle(resolve(args[1]), version);
     if (problems.length) fail(problems);
-    console.log(`${args[1]} passes ClawHub's bundle-plugin admission rules for rotifer ${version}.`);
+    console.log(`${args[1]} passes ClawHub's bundle-plugin admission rules and Plugin Inspector check for rotifer ${version}.`);
   } else if (args.length === 1 && !args[0].startsWith("-")) {
     const summary = stageClawhubPlugin(resolve(args[0]));
     const problems = checkClawhubBundle(summary.dir, version);

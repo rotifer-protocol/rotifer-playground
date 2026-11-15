@@ -27,10 +27,12 @@ function isLocalHost(hostname: string): boolean {
 }
 
 /**
- * The modes that cannot end up in plain text. "prefer" and "allow" fall back
- * to it, and the connection would carry the issuing role's password.
+ * The only mode accepted for a database that is not local. "prefer" and
+ * "allow" can fall back to plain text. "require" encrypts without checking the
+ * server's certificate, so whoever sits on the path can stand in for the
+ * database and see the issuing role log in.
  */
-const TLS_MODES = ["require", "verify-full"];
+const TLS_MODE = "verify-full";
 
 /**
  * Checks that a connection string logs in as the issuing role, over TLS unless
@@ -52,10 +54,27 @@ export function issuerUser(dbUrl: string): string {
   }
   // The driver takes the last value of a repeated parameter; get() returns the first.
   const sslmode = url.searchParams.getAll("sslmode").at(-1);
-  if (!isLocalHost(url.hostname) && !TLS_MODES.includes(sslmode ?? "")) {
-    throw new Error("POR_DB_URL must set sslmode=require or sslmode=verify-full for a database that is not local");
+  if (!isLocalHost(url.hostname) && sslmode !== TLS_MODE) {
+    throw new Error("POR_DB_URL must set sslmode=verify-full for a database that is not local");
   }
   return user;
+}
+
+/** Options for the driver: none, or a TLS setup that checks the server. */
+export type DatabaseTls = { ssl: { ca: string[]; rejectUnauthorized: true } } | Record<never, never>;
+
+/**
+ * TLS options for the driver. For a database that is not local, the server's
+ * certificate must chain to one of rootCas and name the URL's host: the driver
+ * sets the host as servername, and rejectUnauthorized turns on both checks.
+ * These options take precedence over the URL's sslmode in postgres@3.4.7. A
+ * local database keeps whatever its connection string says.
+ */
+export function databaseTls(dbUrl: string, rootCas: readonly string[]): DatabaseTls {
+  if (isLocalHost(new URL(dbUrl).hostname)) return {};
+  const pems = rootCas.filter((pem) => pem.trimStart().startsWith("-----BEGIN CERTIFICATE-----"));
+  if (pems.length === 0 || pems.length !== rootCas.length) throw new Error("no root CA to verify the database's certificate with");
+  return { ssl: { ca: [...pems], rejectUnauthorized: true } };
 }
 
 function hex(bytes: Bytes): string {

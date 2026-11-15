@@ -8,7 +8,7 @@ import { X509Certificate } from "node:crypto";
 import postgres from "npm:postgres@3.4.7";
 import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
 import { databaseTls, issuerUser } from "./store.ts";
-import { SUPABASE_ROOT_CAS } from "./supabase-root-ca.ts";
+import { SUPABASE_ROOT_CA_2021, SUPABASE_ROOT_CA_2025, SUPABASE_ROOT_CAS } from "./supabase-root-ca.ts";
 
 const POOLER = "postgres://por_issuer.abcdefghijklmnopqrst:pw@aws-1-us-west-1.pooler.supabase.com:6543/postgres";
 const DIRECT = "postgresql://por_issuer:pw@db.abcdefghijklmnopqrst.supabase.co:5432/postgres";
@@ -65,11 +65,12 @@ Deno.test("the built-in root CAs are the two published Supabase roots, by SHA-25
   }
 });
 
-Deno.test("each built-in root CA is more than 60 days from expiry: replace it before this fails", () => {
-  const sixtyDays = 60 * 24 * 3600 * 1000;
-  for (const pem of SUPABASE_ROOT_CAS) {
+const SIXTY_DAYS = 60 * 24 * 3600 * 1000;
+for (const [name, pem, expires] of [["2021", SUPABASE_ROOT_CA_2021, "2031-04-26"], ["2025", SUPABASE_ROOT_CA_2025, "2035-09-01"]]) {
+  Deno.test(`the ${name} root CA (expires ${expires}) is more than 60 days from expiry: replace it before this fails`, () => {
     const cert = new X509Certificate(pem);
+    assertEquals(new Date(cert.validTo).toISOString().slice(0, 10), expires);
     const left = new Date(cert.validTo).getTime() - Date.now();
-    assert(left > sixtyDays, `${cert.fingerprint256} expires ${cert.validTo}: under 60 days left, add the new root before it lapses`);
-  }
-});
+    assert(left > SIXTY_DAYS, `the ${name} root CA expires ${cert.validTo}: under 60 days left, add its replacement before it lapses`);
+  });
+}

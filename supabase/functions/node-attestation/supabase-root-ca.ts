@@ -12,12 +12,17 @@
  *       (the file the dashboard's SSL settings link to; same bytes as the CLI's prod-ca-2021.ts)
  *       SHA-256 80:70:25:AD:50:D4:ED:21:9D:2C:9C:7D:29:9C:00:4F:82:4E:B0:0C:F7:F6:5A:FE:F6:07:D0:7B:72:E6:CA:FA
  *       valid 2021-04-28 to 2031-04-26
- * 2025: supabase/cli apps/cli/src/command-internal/supabase-ca-templates/prod-ca-2025.ts
+ * 2025: https://github.com/supabase/cli/blob/948d4d4e7444dbc44d46870c09ba290926512831/apps/cli/src/command-internal/supabase-ca-templates/prod-ca-2025.ts
+ *       (not on the public download bucket; the dashboard link is the 2021 file)
  *       SHA-256 5F:9B:77:95:1A:7A:A1:30:3F:9B:58:EE:A9:BF:A8:9E:35:8C:FD:C1:5F:97:86:FF:10:D4:93:0A:72:2C:9A:E2
  *       valid 2025-09-03 to 2035-09-01
  *
- * db-tls.test.ts checks these fingerprints and fails 60 days before either
- * certificate expires.
+ * On 2026-11-15 (UTC) the pooler (aws-1-us-west-1.pooler.supabase.com:6543) chained
+ * to the 2021 root; the 2025 root alone did not verify it. The 2025 root is
+ * carried for when Supabase moves to it, as the CLI does.
+ *
+ * db-tls.test.ts checks these fingerprints, and fails 60 days before either
+ * certificate expires, each in its own test.
  */
 
 export const SUPABASE_ROOT_CA_2021 = `-----BEGIN CERTIFICATE-----

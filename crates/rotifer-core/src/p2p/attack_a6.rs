@@ -1594,14 +1594,21 @@ const GRIND_ATTACKERS: usize = 12;
 const GRIND_GROUND: usize = 5;
 const GRIND_BOOTSTRAPS: usize = 4;
 const GRIND_SAMPLE_AT: [u64; 7] = [30, 40, 50, 60, 70, 80, 90];
-const GRIND_ROUNDS: usize = 3;
+/// Nine rounds, not three (T-211). A round's top-up is 8 peers drawn once,
+/// so three rounds are 24 draws. CI's record (67 runs from 2026-11-05 to
+/// 11-15: 4 of 65 completed runs above the line) puts the attacker share at
+/// about 0.45 (95% interval 0.39–0.50), and at 0.45 three rounds read above
+/// 0.6 in 6.5% of runs. Nine rounds (72 draws) read above it in 0.4%, and
+/// miss a regression to 0.7 in 4% of runs instead of 15%: fewer false
+/// alarms and fewer misses, with the same line.
+const GRIND_ROUNDS: usize = 9;
 /// Let the network's own Kademlia queries finish before the victim comes
 /// up, so they do not dial it first (C5's lesson).
 const GRIND_SETTLE: Duration = Duration::from_secs(15);
 /// §5.9.3's line: above it, weight the draw by bucket capacity.
 const GRIND_LINE: f64 = 0.5;
 /// The assertion (CEO, T-156, option a; red team v5 N2: a margin over the
-/// line): the mean of the three rounds stays at or below this. There is no
+/// line): the mean of the rounds stays at or below this. There is no
 /// per-round assertion: a round's top-up is 8 peers drawn once and not
 /// redrawn while full, so one round's share moves in steps of 1/8 (six
 /// rounds read 0.50, 0.38, 0.25; 0.38, 0.38, 0.62). There is no control
@@ -1626,8 +1633,9 @@ fn grind(victim: &libp2p::PeerId, bucket: u32) -> Keypair {
 }
 
 /// One round with fresh PeerIds; returns the mean attacker share among
-/// top-up peers over its samples.
-fn run_grind_round(label: &str) -> f64 {
+/// top-up peers over its samples, or, when the network did not connect
+/// before the victim came up, how many peers the first bootstrap node had.
+fn run_grind_round(label: &str) -> Result<f64, usize> {
     const TAG: &str = "①-磨";
     let dir = tempfile::tempdir().expect("temp dir");
     let victim_key = Keypair::generate_ed25519();
@@ -1673,13 +1681,8 @@ fn run_grind_round(label: &str) -> f64 {
         .enumerate()
         .map(|(i, k)| spawn_as(&dir, &format!("attacker-{i}"), k, vec![boot_addrs[i % GRIND_BOOTSTRAPS].clone()], node))
         .collect();
-    let everyone = GRIND_BOOTSTRAPS + GRIND_HONEST + GRIND_ATTACKERS;
-    if !eventually(90, || boots[0].dht_peers().len() >= (everyone - 1) * 3 / 4) {
-        setup_invalid(format!(
-            "{TAG} round={label}: the network did not connect ({} of {} at the first bootstrap)",
-            boots[0].dht_peers().len(),
-            everyone - 1
-        ));
+    if !eventually(90, || boots[0].dht_peers().len() >= GRIND_CONNECTED_MIN) {
+        return Err(boots[0].dht_peers().len());
     }
     std::thread::sleep(GRIND_SETTLE);
 
@@ -1705,18 +1708,67 @@ fn run_grind_round(label: &str) -> f64 {
     let m = mean(&topup_shares);
     println!("A6 {TAG} round={label} mean_topup_attacker_share={m:.2}");
     drop((attackers, honest, boots));
-    m
+    Ok(m)
+}
+
+/// Tries per round before the setup is declared invalid.
+const GRIND_TRIES: usize = 3;
+/// Peers the first bootstrap node must have before the victim comes up.
+const GRIND_CONNECTED_MIN: usize = (GRIND_BOOTSTRAPS + GRIND_HONEST + GRIND_ATTACKERS - 1) * 3 / 4;
+
+/// `GRIND_ROUNDS` valid rounds. A round whose network did not connect is
+/// set up again with new PeerIds (CI: 2 of 67 runs, 37 and 36 of 51), at
+/// most `GRIND_TRIES` times; that happens before the victim exists, so it
+/// drops no draw. A round still not connected is `A6 SETUP INVALID`, never
+/// a pass. Each retry is written straight to stderr, past the test harness's
+/// capture, so a passing CI run shows it too.
+fn run_grind_rounds() -> Vec<f64> {
+    use std::io::Write as _;
+    let mut means = Vec::new();
+    let mut tried = 0;
+    while means.len() < GRIND_ROUNDS {
+        let round = means.len() + 1;
+        let mut connected = Vec::new();
+        loop {
+            tried += 1;
+            match run_grind_round(&format!("1.{tried}")) {
+                Ok(m) => {
+                    means.push(m);
+                    break;
+                }
+                Err(n) => {
+                    connected.push(n);
+                    let attempt = connected.len();
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "A6 ①-磨 retry: round {round} of {GRIND_ROUNDS}, attempt {attempt} of {GRIND_TRIES}: \
+                         the network did not connect ({n} of {} at the first bootstrap, {GRIND_CONNECTED_MIN} needed)",
+                        GRIND_BOOTSTRAPS + GRIND_HONEST + GRIND_ATTACKERS - 1
+                    );
+                    if attempt >= GRIND_TRIES {
+                        setup_invalid(format!(
+                            "①-磨 round {round}: the network did not connect in {GRIND_TRIES} tries \
+                             ({connected:?} of {} at the first bootstrap, {GRIND_CONNECTED_MIN} needed)",
+                            GRIND_BOOTSTRAPS + GRIND_HONEST + GRIND_ATTACKERS - 1
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    means
 }
 
 #[test]
 #[cfg_attr(not(feature = "p2p-integration"), ignore = "A6 ①-磨 — enable the p2p-integration feature or run with --ignored")]
 fn a6_topup_ground_keys_take_no_majority() {
-    let means: Vec<f64> = (1..=GRIND_ROUNDS).map(|i| run_grind_round(&format!("1.{i}"))).collect();
+    let means = run_grind_rounds();
     let all = mean(&means);
     println!(
-        "A6 ①-磨 summary rounds={} means={:?} mean_of_21_samples={all:.2} line={GRIND_LINE} over_line={}",
+        "A6 ①-磨 summary rounds={} means={:?} mean_of_{}_samples={all:.2} line={GRIND_LINE} over_line={}",
         means.len(),
         means.iter().map(|m| format!("{m:.2}")).collect::<Vec<_>>(),
+        means.len() * GRIND_SAMPLE_AT.len(),
         all > GRIND_LINE
     );
     assert!(

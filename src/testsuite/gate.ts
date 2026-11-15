@@ -1,4 +1,6 @@
 import { pathToFileURL } from "node:url";
+import { basename, dirname } from "node:path";
+import { geneEgressFromDir, runInGeneEgress, withGeneEgress } from "../runtime/egress-guard.js";
 import { loadTestSuite } from "./load.js";
 import { runT1 } from "./run.js";
 import type { GeneRunner, RunOutcome } from "./run.js";
@@ -190,6 +192,10 @@ export function readErrorEnvelope(output: unknown): string | null {
  * `ctx` is what express() gets as its second argument. ctx.memory is never
  * undefined: without an agent memory to hand over,
  * every memory call is MEMORY_ACCESS_DENIED "no agent context".
+ *
+ * The gene's import and every express() call answer to the `network` block of
+ * the phenotype.json beside its source, as under `rotifer test` and `run`:
+ * read here, so neither caller (test, publish) can leave it out.
  */
 export async function loadNodeRunner(
   absSourcePath: string,
@@ -200,9 +206,10 @@ export async function loadNodeRunner(
     return { refusal: `L0 gate blocked this gene: ${l0.detail ?? "no detail"}` };
   }
 
+  const egress = geneEgressFromDir(dirname(absSourcePath), basename(dirname(absSourcePath)));
   let expressFn: (input: unknown, context: { memory: GeneMemoryAccess }) => unknown;
   try {
-    const mod = await import(pathToFileURL(absSourcePath).href);
+    const mod = await withGeneEgress(egress, () => import(pathToFileURL(absSourcePath).href));
     if (typeof mod.express !== "function") {
       return { refusal: "gene does not export an express() function" };
     }
@@ -214,7 +221,7 @@ export async function loadNodeRunner(
   const runner: GeneRunner = (input) => {
     const started = Date.now();
     try {
-      const output = expressFn(input, ctx);
+      const output = runInGeneEgress(egress, () => expressFn(input, ctx));
 
       // ADR-334: the WASM sandbox turns a lone `__rotifer_error` key into
       // GeneResult::Error, and this path has to agree with it. It does not go

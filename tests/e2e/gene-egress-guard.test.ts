@@ -109,6 +109,39 @@ const TOP_LEVEL_SOURCE = [
   "",
 ].join("\n");
 
+/**
+ * A synchronous `express` that fires the request and does not wait for it —
+ * the shape `rotifer test`'s T1 suite runs (its runner is synchronous). A
+ * refusal is caught; a request that gets out is counted by the server.
+ */
+const FIRE_AND_FORGET_SOURCE = [
+  "export function express(input: { q?: unknown }) {",
+  "  fetch(process.env.EGRESS_URL as string).catch(() => {});",
+  "  return { ok: true, q: input?.q ?? null };",
+  "}",
+  "",
+].join("\n");
+
+/** A suite every case of which FIRE_AND_FORGET_SOURCE passes. */
+const PASSING_SUITE = {
+  config: { fuzzIterations: 2, seed: 1 },
+  testCases: [
+    { input: { q: "x" }, expectedSchema: { type: "object", required: ["ok"] } },
+    { input: { q: 1 }, expectedSchema: { type: "object", required: ["ok"] } },
+  ],
+};
+
+/** `display()` runs after the pipeline; it reaches out, `express` does not. */
+const DISPLAY_SOURCE = [
+  "export function express(input: { q?: string }) {",
+  "  return { q: input?.q ?? null };",
+  "}",
+  "export function display(_output: unknown) {",
+  "  fetch(process.env.EGRESS_URL as string).catch(() => {});",
+  "}",
+  "",
+].join("\n");
+
 type Network = { allowedDomains: string[] } | null;
 
 /**
@@ -221,7 +254,36 @@ describe.runIf(existsSync(CLI))("a gene's global fetch under the CLI", () => {
     expect(hits).toBe(0);
   }, 240_000);
 
+  describe("rotifer test's T1 suite (testsuite.json, run under Node)", () => {
+    async function withSuite(network: Network): Promise<string> {
+      const project = await projectWith(GENE, network, "Wrapped", FIRE_AND_FORGET_SOURCE);
+      writeFileSync(join(project, "genes", GENE, "testsuite.json"), JSON.stringify(PASSING_SUITE));
+      return project;
+    }
+
+    it("holds every case the suite runs to the gene's declaration", async () => {
+      const r = await cli(await withSuite(null), ["test", GENE]);
+      expect(r.out).toMatch(/T1 TestSuite/);
+      expect(r.code, r.out).toBe(0);
+      // the suite's two cases and its property runs, plus the plain test run: none got out
+      expect(hits).toBe(0);
+    }, 240_000);
+
+    it("lets them reach a host the gene allows", async () => {
+      const r = await cli(await withSuite({ allowedDomains: ["localhost"] }), ["test", GENE]);
+      expect(r.out).toMatch(/T1 TestSuite/);
+      expect(r.code, r.out).toBe(0);
+      expect(hits).toBeGreaterThan(1);
+    }, 240_000);
+  });
+
   describe("rotifer hello", () => {
+    it("holds the template gene's display() to the same declaration", async () => {
+      const r = await cli(await projectWith(HELLO_GENE, null, "Wrapped", DISPLAY_SOURCE), ["hello", "--template", "code-security"]);
+      expect(r.out).not.toMatch(/not in the allowed list/);
+      expect(hits).toBe(0);
+    }, 240_000);
+
     it("is refused when the template's gene declares no network", async () => {
       const r = await cli(await projectWith(HELLO_GENE, null), ["hello", "--template", "code-security"]);
       expect(r.out).toMatch(/declares no network access/);

@@ -10,8 +10,9 @@
  * calling the global `fetch` used to bypass it.
  *
  * How:
- * - `withGeneEgress(egress, fn)` runs `fn` (importing the gene, calling
- *   `express`) inside an AsyncLocalStorage context naming the gene. On entry
+ * - `withGeneEgress(egress, fn)` (or `runInGeneEgress` for a synchronous call)
+ *   runs `fn` (importing the gene, calling `express` or `display`) inside an
+ *   AsyncLocalStorage context naming the gene. On entry
  *   the first window puts guards in `globalThis.fetch` / `WebSocket` /
  *   `EventSource`; when the last window closes the original property
  *   descriptors go back, so the globals are the very objects they were.
@@ -32,6 +33,8 @@
  * WASM sandbox's job, where the only way out is `rotifer.net.fetch`.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   NetworkGateway,
   NetworkGatewayError,
@@ -83,6 +86,33 @@ export async function withGeneEgress<T>(egress: GeneEgress, fn: () => T | Promis
   } finally {
     uninstall();
   }
+}
+
+/**
+ * The same window for a synchronous call — a runner that cannot await, such as
+ * the one `rotifer test` and `rotifer publish` run a gene's test suite with.
+ * A request the gene starts during the call is checked when it starts; the
+ * window closes when the call returns.
+ */
+export function runInGeneEgress<T>(egress: GeneEgress, fn: () => T): T {
+  install();
+  try {
+    return running.run(egress, fn);
+  } finally {
+    uninstall();
+  }
+}
+
+/** The gene's network rights, read from the phenotype.json beside its source. None if there is none. */
+export function geneEgressFromDir(geneDir: string, fallbackName: string): GeneEgress {
+  let phenotype: { name?: unknown; network?: unknown } = {};
+  try {
+    phenotype = JSON.parse(readFileSync(join(geneDir, "phenotype.json"), "utf-8"));
+  } catch {
+    // no readable phenotype: the gene declares nothing, so it reaches nothing
+  }
+  const name = typeof phenotype.name === "string" ? phenotype.name : fallbackName;
+  return geneEgress(name, phenotype);
 }
 
 function install(): void {

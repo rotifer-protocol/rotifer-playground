@@ -15,7 +15,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { geneEgress, withGeneEgress } from "../../src/runtime/egress-guard.js";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { geneEgress, runInGeneEgress, withGeneEgress } from "../../src/runtime/egress-guard.js";
+import { loadNodeRunner } from "../../src/testsuite/gate.js";
 
 let server: Server;
 let base = "";
@@ -162,6 +166,67 @@ describe("a gene's global fetch while the CLI runs it", () => {
 
 const ORIGINAL_FETCH = globalThis.fetch;
 const ORIGINAL_WEBSOCKET = globalThis.WebSocket;
+
+describe("a synchronous call (the runner a test suite is run with)", () => {
+  it("checks a request the gene starts during the call, and restores the globals when it returns", async () => {
+    let started!: Promise<Response>;
+    const value = runInGeneEgress(geneEgress("probe", {}, LOOPBACK), () => {
+      started = fetch(`${base}/sync`);
+      return 7;
+    });
+    expect(value).toBe(7);
+    expect(globalThis.fetch).toBe(ORIGINAL_FETCH);
+    await expect(started).rejects.toThrow(/Gene 'probe' declares no network access/);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("loadNodeRunner holds the gene to the phenotype.json beside its source", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "egress-runner-"));
+    try {
+      writeFileSync(join(dir, "phenotype.json"), JSON.stringify({ name: "suite-probe", domain: "tools" }));
+      writeFileSync(
+        join(dir, "index.mjs"),
+        [
+          "export function express() {",
+          `  globalThis.__suiteProbe = fetch(${JSON.stringify(`${base}/suite`)}).then(() => "sent", (e) => e.message);`,
+          "  return { ok: true };",
+          "}",
+        ].join("\n"),
+      );
+      const loaded = await loadNodeRunner(join(dir, "index.mjs"), { kind: "ok" });
+      expect("runner" in loaded).toBe(true);
+      const outcome = (loaded as { runner: (i: unknown) => { success: boolean } }).runner({});
+      expect(outcome.success).toBe(true);
+      const g = globalThis as { __suiteProbe?: Promise<string> };
+      expect(await g.__suiteProbe).toMatch(/Gene 'suite-probe' declares no network access/);
+      expect(seen).toHaveLength(0);
+      delete g.__suiteProbe;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("loadNodeRunner holds the gene's top-level code (run on import, as under publish) to it too", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "egress-runner-"));
+    try {
+      writeFileSync(join(dir, "phenotype.json"), JSON.stringify({ name: "import-probe", domain: "tools" }));
+      writeFileSync(
+        join(dir, "index.mjs"),
+        [
+          `globalThis.__importProbe = fetch(${JSON.stringify(`${base}/import`)}).then(() => "sent", (e) => e.message);`,
+          "export function express() { return { ok: true }; }",
+        ].join("\n"),
+      );
+      await loadNodeRunner(join(dir, "index.mjs"), { kind: "ok" });
+      const g = globalThis as { __importProbe?: Promise<string> };
+      expect(await g.__importProbe).toMatch(/Gene 'import-probe' declares no network access/);
+      expect(seen).toHaveLength(0);
+      delete g.__importProbe;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("after the gene has run", () => {
   it("the global fetch and WebSocket are the very objects they were before", async () => {

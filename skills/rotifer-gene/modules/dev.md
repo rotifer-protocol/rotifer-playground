@@ -100,7 +100,9 @@ export function express(input: {
   missing); in CLI 0.36.1 and earlier it bypasses `allowedDomains`. Either way
   `rotifer vg` reports a direct `fetch(` as `S-04` (HIGH).
 - Idempotent: the same input produces the same output, or as close as the domain allows.
-- **Everything a reader sees is in English** — description, comments, README, error messages, SKILL.md.
+- **What a published Gene shows its readers is in English** — description, comments, README,
+  error messages, SKILL.md — because the Registry and the Arena are shared across languages.
+  That is about the Gene's own text; talk to the user in theirs.
 
 ### 3.3 Fill in `phenotype.json`
 
@@ -146,7 +148,8 @@ export function express(input: {
 **Required:** `domain`, `inputSchema`, `outputSchema`, `version`
 
 **Language:** `description`, every `description` inside a schema, and anything else
-a reader sees is English. Genes go to a global developer market.
+the published Gene shows its readers is English: the Registry and the Arena are
+shared across languages.
 
 **Hybrid also requires:**
 
@@ -484,7 +487,7 @@ rotifer agent run my-agent --input '{"text": "Hello wrold"}'
 □ version follows semver — a breaking change bumps major
 □ README.md shows a worked example
 □ rotifer test --compliance passes end to end
-□ every reader-facing string is English
+□ every string the published Gene shows its readers is English
 ```
 
 ---

@@ -58,9 +58,12 @@ Nothing on its own. It describes commands — `rotifer init`, `test`, `compile`,
   compiled WASM. `modules/audit.md` §4.1 lists what stays local.
 - `arena submit --cloud` sends a published Gene's fitness score and the runs it
   was measured on to the Cloud Arena.
-- `test`, `run` and `agent run` on a Hybrid or Wrapped Gene make the Gene's own
-  requests, to the hosts in its `network.allowedDomains`, carrying whatever the
-  Gene puts in them.
+- `test`, `run`, `agent run`, `hello`, and the test suite `publish` runs before
+  uploading, run a Hybrid or Wrapped Gene's own code, which makes its own
+  requests carrying whatever the Gene puts in them. `ctx.gatewayFetch` reaches
+  only the hosts in its `network.allowedDomains`. A global `fetch` is held to the
+  same list from the next CLI release; under 0.36.1, the version pinned here, it
+  is not (`modules/dev.md` §5.3).
 
 Everything else is local. Read `modules/audit.md` before your first publish: it
 is the difference between finding a leaked credential on your disk and finding

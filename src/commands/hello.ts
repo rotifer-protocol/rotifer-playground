@@ -578,12 +578,14 @@ async function tryGeneDisplay(
   if (displayL0.kind === "violation") return false;
   if (displayL0.kind === "unavailable" && isExternallySourced(geneDir)) return false;
 
+  // display() is the gene's code as much as express() is: same network rules.
+  const egress = geneEgress(geneName, phenotype);
   try {
     const absPath = resolve(geneDir, srcFile);
-    const mod = await import(pathToFileURL(absPath).href);
+    const mod = await withGeneEgress(egress, () => import(pathToFileURL(absPath).href));
 
     if (typeof mod.display === "function") {
-      mod.display(output, options);
+      await withGeneEgress(egress, () => mod.display(output, options));
       return true;
     }
   } catch {

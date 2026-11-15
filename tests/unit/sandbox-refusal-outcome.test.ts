@@ -14,14 +14,14 @@ import { runT1 } from "../../src/testsuite/run.js";
  * could not satisfy §47.5 T1 (found publishing tavily-web-search, T-98).
  */
 describe("outcomeFromSandbox", () => {
-  it("reads an INVALID_INPUT refusal as a refusal, not a crash", () => {
+  it("reads an INVALID_INPUT refusal as a refusal, not a crash", async () => {
     const o = outcomeFromSandbox({ success: false, errorMessage: "INVALID_INPUT: query is required: a non-empty string" });
     expect(o.success).toBe(false);
     expect(o.crashed).toBeFalsy();
     expect(o.errorMessage).toBe("INVALID_INPUT: query is required: a non-empty string");
   });
 
-  it("still reads anything else as a crash", () => {
+  it("still reads anything else as a crash", async () => {
     for (const errorMessage of [
       "execution failed: wasm trap: unreachable",
       "execution failed: gene returned error code: -5",
@@ -34,7 +34,7 @@ describe("outcomeFromSandbox", () => {
     expect(outcomeFromSandbox({ success: false }).crashed).toBe(true);
   });
 
-  it("passes success through", () => {
+  it("passes success through", async () => {
     expect(outcomeFromSandbox({ success: true, output: { ok: 1 }, durationMs: 3 })).toEqual({
       success: true,
       output: { ok: 1 },
@@ -42,7 +42,7 @@ describe("outcomeFromSandbox", () => {
     });
   });
 
-  it("lets a compiled Gene that refuses illegal input satisfy the negative requirement", () => {
+  it("lets a compiled Gene that refuses illegal input satisfy the negative requirement", async () => {
     const schema = {
       type: "object",
       properties: { query: { type: "string" } },
@@ -55,7 +55,7 @@ describe("outcomeFromSandbox", () => {
         ? { success: true, output: { echo: q } }
         : { success: false, errorMessage: "INVALID_INPUT: query is required" };
     };
-    const report = runT1(
+    const report = await runT1(
       {
         testCases: [
           { input: { query: "x" }, expectedSchema: { type: "object", required: ["echo"] } },

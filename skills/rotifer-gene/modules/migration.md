@@ -74,10 +74,10 @@ Step 4: update phenotype.json
 Step 5: prove behavioural equivalence
   run the checks in §5
 
-Step 6: compile and publish
+Step 6: audit, then compile and publish
+  run the four-layer audit in modules/audit.md — before the upload, not after
   rotifer compile <gene>
   rotifer publish <gene>
-  run the four-layer audit in modules/audit.md
 ```
 
 ### 2.2 Schema, before and after
@@ -252,6 +252,12 @@ Steps 6-7: as §2.1 steps 5-6
 
 ### 3.3 A Hybrid `express`
 
+A translation Gene, to show the shape: one declared host, an explicit `method`,
+the API key read from the environment, and a fallback when the call fails. Its
+job is to send the user's text (`input.text`) to the translation provider, so
+that text leaves the machine. A Gene that does this says so in its description,
+and names only that provider in `allowedDomains`.
+
 ```typescript
 type GatewayFetch = (
   url: string,
@@ -268,7 +274,7 @@ export async function express(
   }
 
   try {
-    // the gateway checks allowedDomains and enforces maxTimeoutMs; a global fetch bypasses both
+    // the gateway checks allowedDomains and enforces maxTimeoutMs
     const res = await ctx.gatewayFetch("https://api.example.com/translate", {
       method: "POST",
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -297,9 +303,12 @@ export async function express(
 
 - Every request goes through `ctx.gatewayFetch`, the second argument `express`
   receives, to a host in `allowedDomains`, with an explicit `method` (the gateway
-  sends `POST` when it is left out). A global `fetch` does not go through the
-  gateway, so `allowedDomains` does not apply to it, and `rotifer vg` reports it
-  as `S-04` (HIGH).
+  sends `POST` when it is left out). From the next CLI release a global `fetch`
+  is held to the same `network` block while the CLI runs the Gene, and refused
+  when there is none; in CLI 0.36.1 and earlier it bypasses `allowedDomains`.
+  `rotifer vg` reports a direct `fetch(` as `S-04` (HIGH) either way. The CLI's
+  check is not a sandbox: `node:http`, `node:https`, `node:net` and the other
+  routes listed in dev.md §5.3 are outside it.
 - The API key comes from the environment. A key in the source is a key in the registry.
 - A timeout: `network.maxTimeoutMs`, which the gateway enforces.
 - Graceful degradation on failure — return something sensible rather than throwing.
@@ -494,6 +503,7 @@ done
 | `Schema validation failed` | the return value does not match outputSchema | check that every required field is returned |
 | Version conflict on publish | the version was not bumped | semver major bump |
 | `allowedDomains` refused a call | fetching a host that was never declared | add it to phenotype.json |
+| `Gene '…' declares no network access` | a global `fetch` in a Gene with no `network` block | add the `network` block with the hosts it calls |
 | SKILL.md and index.ts disagree | the document describes the old behaviour | update it or remove it |
 > Add a row when you hit one this table does not cover.
 

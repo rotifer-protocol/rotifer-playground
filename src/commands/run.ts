@@ -218,7 +218,11 @@ export const runCommand = new Command("run")
           recordHeartbeat();
           // A file: URL, not the path: on Windows a raw C:\... path parses as a
           // URL with scheme "c:" and the ESM loader refuses it (T-112).
-          const mod = await import(pathToFileURL(sourcePath).href);
+          // The gene's top-level code and express() both answer to its
+          // network declaration (egress-guard.ts).
+          const { geneEgress, withGeneEgress } = await import("../runtime/egress-guard.js");
+          const egress = geneEgress(geneName, phenotype);
+          const mod = await withGeneEgress(egress, () => import(pathToFileURL(sourcePath).href));
           const fn = mod.express || mod.default || mod.main;
           if (typeof fn !== "function") {
             display.error("No exported express/default/main function found in index.ts");
@@ -236,16 +240,15 @@ export const runCommand = new Command("run")
           // No agent here: ctx.memory is present and refuses "no agent context".
           const { projectNoAgentMemory } = await import("../memory/host.js");
           const memory = projectNoAgentMemory(root, geneDir);
-          if (phenotype.fidelity === "Hybrid" && phenotype.network) {
-            const { createGatewayFetch } = await import("../runtime/network-gateway.js");
-            const { gatewayFetch, gateway } = createGatewayFetch(phenotype.network);
-            display.info(`Hybrid gene — gateway active (domains: ${phenotype.network.allowedDomains?.join(", ") || "none"})`);
-            output = await fn(input, { gatewayFetch, memory });
+          const { gateway, gatewayFetch } = egress;
+          if (gateway && gatewayFetch) {
+            display.info(`${phenotype.fidelity || "Wrapped"} gene — gateway active (domains: ${phenotype.network.allowedDomains?.join(", ") || "none"})`);
+            output = await withGeneEgress(egress, () => fn(input, { gatewayFetch, memory }));
             if (options.verbose) {
               display.info(`Gateway: ${gateway.stats.totalRequests} requests, ${gateway.stats.totalBytes} bytes`);
             }
           } else {
-            output = await fn(input, { memory });
+            output = await withGeneEgress(egress, () => fn(input, { memory }));
           }
           console.log();
           // A lone __rotifer_error is the gene refusing (ADR-334). The sandbox

@@ -95,10 +95,14 @@ export function express(input: {
 - Native: `express` is synchronous. Javy/QuickJS has no event loop, so `compile`
   refuses an `async` one (`E0025`). A Hybrid `express` may be `async`.
 - Hybrid: calls go only to hosts in `allowedDomains`, through `ctx.gatewayFetch` with an
-  explicit `method` (§5.3). A global `fetch` does not go through the gateway, so
-  `allowedDomains` does not apply to it, and `rotifer vg` reports it as `S-04` (HIGH).
+  explicit `method` (§5.3). From the next CLI release, a global `fetch` is held to
+  the same `network` block while the CLI runs the Gene (refused when the block is
+  missing); in CLI 0.36.1 and earlier it bypasses `allowedDomains`. Either way
+  `rotifer vg` reports a direct `fetch(` as `S-04` (HIGH).
 - Idempotent: the same input produces the same output, or as close as the domain allows.
-- **Everything a reader sees is in English** — description, comments, README, error messages, SKILL.md.
+- **What a published Gene shows its readers is in English** — description, comments, README,
+  error messages, SKILL.md — because the Registry and the Arena are shared across languages.
+  That is about the Gene's own text; talk to the user in theirs.
 
 ### 3.3 Fill in `phenotype.json`
 
@@ -144,7 +148,8 @@ export function express(input: {
 **Required:** `domain`, `inputSchema`, `outputSchema`, `version`
 
 **Language:** `description`, every `description` inside a schema, and anything else
-a reader sees is English. Genes go to a global developer market.
+the published Gene shows its readers is English: the Registry and the Arena are
+shared across languages.
 
 **Hybrid also requires:**
 
@@ -266,6 +271,10 @@ rotifer publish
   ↓ write .cloud-manifest.json (cloud_id, owner, version)
 ```
 
+Where it goes: Rotifer Cloud (`https://cloud.rotifer.dev` by default), and a
+published Gene is public. The uploaded fields are listed in `modules/audit.md`
+§4.1 — run that audit before this step, not after.
+
 ### 3.7 Compete in the Arena
 
 ```bash
@@ -382,7 +391,7 @@ mkdir -p genes/my-api-gene
 rotifer wrap my-api-gene --domain search.web --fidelity Hybrid
 # wrap adds a "network" block with an empty allowedDomains; in phenotype.json set
 #   "allowedDomains": ["example.com"], "maxTimeoutMs": 5000
-# and replace the empty schemas: input { "query": string }, output { "status": number }
+# and replace the empty schemas: input {} (no fields), output { "status": number }
 rotifer test my-api-gene
 rotifer compile my-api-gene
 ```
@@ -392,20 +401,46 @@ type Gateway = {
   gatewayFetch: (url: string, options?: { method?: string }) => Promise<{ status: number; body: string }>;
 };
 
-export async function express(input: { query: string }, ctx: Gateway): Promise<{ status: number }> {
+// Reports whether example.com answers. The request carries nothing from the input.
+export async function express(_input: Record<string, never>, ctx: Gateway): Promise<{ status: number }> {
   // the gateway sends POST unless method says otherwise
-  const res = await ctx.gatewayFetch(`https://example.com/?q=${encodeURIComponent(input.query)}`, { method: "GET" });
+  const res = await ctx.gatewayFetch("https://example.com/", { method: "GET" });
   return { status: res.status };
 }
 ```
 
-`allowedDomains` applies to `ctx.gatewayFetch`, the second argument that `test`, `run`
-and `agent run` pass a Hybrid Gene: a host that is not listed is refused
-(`Domain "…" is not in the allowed list`), and `maxTimeoutMs` and the rate limit
-hold. A global `fetch` does not go through the gateway, and `allowedDomains` does
-not apply to it; `rotifer vg` reports a direct `fetch(` as `S-04`, a HIGH finding.
-Pass `method` every time: the gateway sends `POST` when it is left out. The
-response has `status`, `headers` and `body` (a string), not `ok` or `json()`.
+Whatever a Gene puts in a request — URL, headers, body — goes to that host. A
+Gene that sends the user's input on (a search query, text to translate) says so
+in its description, and `allowedDomains` names only the hosts it needs.
+
+`allowedDomains` applies to `ctx.gatewayFetch`, the second argument that `test`, `run`,
+`agent run` and `hello` pass a Gene with a `network` block: a host that is not
+listed is refused (`Domain "…" is not in the allowed list`), and `maxTimeoutMs`
+and the rate limit hold. Pass `method` every time: the gateway sends `POST` when
+it is left out. The response has `status`, `headers` and `body` (a string), not
+`ok` or `json()`.
+
+A global `fetch` depends on the CLI version:
+
+- From the next CLI release: while the CLI runs a Gene under Node.js, its global
+  `fetch` goes through the same gateway (same allow-list, timeout, rate limit
+  and count). A Gene with no `network` block is refused (`Gene '…' declares no
+  network access`). It keeps fetch's own behaviour (`GET` by default, a real
+  `Response`), except that a response over `maxResponseBytes` fails instead of
+  being cut short. `WebSocket` and `EventSource` are refused.
+- CLI 0.36.1 and earlier: a global `fetch` does not go through the gateway, and
+  `allowedDomains` does not apply to it.
+
+Write `ctx.gatewayFetch` either way: `rotifer vg` reports a direct `fetch(` as
+`S-04`, a HIGH finding.
+
+The Node.js path is not a sandbox. A Gene run there has the host's full
+privileges, and the CLI's check does not reach `node:http`, `node:https`,
+`node:http2`, `node:net`, `node:tls` or `node:dgram`, a child process (`curl`),
+`worker_threads`, DNS lookups, a callback that runs outside the Gene's async
+context (a `process.on("exit")` listener), or a timer that fires after
+`express` has returned. Only the WASM sandbox confines a Gene; there the one way
+out is the host's checked fetch.
 
 `test` runs `express()` under Node.js and makes the real request; here the output
 is `{"status": 200}`. `compile` validates a Hybrid Gene and produces no WASM unless
@@ -452,7 +487,7 @@ rotifer agent run my-agent --input '{"text": "Hello wrold"}'
 □ version follows semver — a breaking change bumps major
 □ README.md shows a worked example
 □ rotifer test --compliance passes end to end
-□ every reader-facing string is English
+□ every string the published Gene shows its readers is English
 ```
 
 ---
@@ -509,6 +544,9 @@ rotifer agent run my-agent --input '{"text": "Hello wrold"}'
 ---
 
 ## 9. Extending This
+
+For contributors changing Rotifer itself — the CLI and `rotifer-core` — not for
+building a Gene: where each kind of addition has to land.
 
 ### A new fidelity level
 

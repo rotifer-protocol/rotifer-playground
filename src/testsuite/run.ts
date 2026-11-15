@@ -31,7 +31,13 @@ export interface RunOutcome {
   durationMs?: number;
 }
 
-export type GeneRunner = (input: unknown, timeoutMs?: number) => RunOutcome;
+/**
+ * Runs one input against the Gene. A runner over the WASM sandbox answers at
+ * once; one over a gene's source under Node answers when the gene's `express`
+ * has settled, since an async `express` returns a Promise. T1 awaits either,
+ * and judges what the gene resolved to, never the Promise.
+ */
+export type GeneRunner = (input: unknown, timeoutMs?: number) => RunOutcome | Promise<RunOutcome>;
 
 /**
  * Classify a case as positive or negative from the input alone.
@@ -129,15 +135,15 @@ function pass(testId: string, started: number, details: string): TestResult {
  * any output at all, including one that violates the Gene's own contract, and
  * the suite would look populated while asserting nothing.
  */
-export function runPositive(
+export async function runPositive(
   c: ClassifiedCase,
   run: GeneRunner,
   outputValidator: ValidateFunction | null,
   ajv: Ajv,
-): TestResult {
+): Promise<TestResult> {
   const started = Date.now();
   const id = `t1-positive-${c.index}`;
-  const outcome = run(c.testCase.input, c.testCase.timeout);
+  const outcome = await run(c.testCase.input, c.testCase.timeout);
 
   if (!outcome.success) {
     return fail(id, started, `Gene rejected a legal input: ${outcome.errorMessage ?? "no message"}`, c.reason);
@@ -208,14 +214,14 @@ export function runPositive(
  *      guess is the whole point, since guessing "pass" is what lets a
  *      source-linker through.
  */
-export function runNegative(
+export async function runNegative(
   c: ClassifiedCase,
   run: GeneRunner,
   ajv: Ajv,
-): TestResult {
+): Promise<TestResult> {
   const started = Date.now();
   const id = `t1-negative-${c.index}`;
-  const outcome = run(c.testCase.input, c.testCase.timeout);
+  const outcome = await run(c.testCase.input, c.testCase.timeout);
 
   if (outcome.crashed) {
     // ADR-333: a crash fails not because it is necessarily a bug, but because
@@ -282,13 +288,13 @@ export function runNegative(
  */
 const NETWORK_FAILURE = /gene returned error code: (-4|-5|-7)(?![0-9])/;
 
-export function runProperty(
+export async function runProperty(
   suite: TestSuite,
   inputSchema: Record<string, unknown> | null,
   run: GeneRunner,
   outputValidator: ValidateFunction | null,
   options: { retryNetworkFailures?: boolean } = {},
-): TestResult {
+): Promise<TestResult> {
   const started = Date.now();
   const id = "t1-property-schema-legality";
   const iterations = suite.config?.fuzzIterations ?? DEFAULT_FUZZ_ITERATIONS;
@@ -304,7 +310,7 @@ export function runProperty(
   const retries: string[] = [];
   for (let i = 0; i < iterations; i++) {
     const input = generateTestInput(inputSchema, seed + i);
-    let outcome = run(input);
+    let outcome = await run(input);
     // A Hybrid Gene's request can fail on the network alone, and a run with
     // no output says nothing about schema legality. Such an iteration gets
     // one more run with the same input; everything else is final.
@@ -313,7 +319,7 @@ export function runProperty(
       : null;
     if (network) {
       const first = outcome.errorMessage;
-      outcome = run(input);
+      outcome = await run(input);
       if (!outcome.success) {
         return fail(
           id,
@@ -359,7 +365,7 @@ export interface T1Report {
   gatePassed: boolean;
 }
 
-export function runT1(
+export async function runT1(
   suite: TestSuite,
   opts: {
     inputSchema: Record<string, unknown> | null;
@@ -369,7 +375,7 @@ export function runT1(
      * be retried once after a network failure (see runProperty). */
     fidelity?: string;
   },
-): T1Report {
+): Promise<T1Report> {
   const ajv = new Ajv({ allErrors: true, strict: false });
   let inputValidator: ValidateFunction | null = null;
   let outputValidator: ValidateFunction | null = null;
@@ -390,12 +396,12 @@ export function runT1(
   for (const c of classified) {
     results.push(
       c.kind === "positive"
-        ? runPositive(c, opts.run, outputValidator, ajv)
-        : runNegative(c, opts.run, ajv),
+        ? await runPositive(c, opts.run, outputValidator, ajv)
+        : await runNegative(c, opts.run, ajv),
     );
   }
 
-  const property = runProperty(suite, opts.inputSchema, opts.run, outputValidator, {
+  const property = await runProperty(suite, opts.inputSchema, opts.run, outputValidator, {
     retryNetworkFailures: opts.fidelity === "Hybrid",
   });
   results.push(property);

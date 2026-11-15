@@ -15,7 +15,7 @@ import {
   classifyRunFailure,
   constraintsForFuel,
 } from "../utils/run-fuel-ladder.js";
-import { geneEgress, withGeneEgress } from "../runtime/egress-guard.js";
+import { GeneNeverSettledError, geneEgress, withGeneEgress } from "../runtime/egress-guard.js";
 import { MemoryError } from "../memory/index.js";
 import { scratchGeneMemory } from "../memory/host.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
@@ -34,6 +34,9 @@ export const testCommand = new Command("test")
   .option("--scaffold", `generate a ${"testsuite.json"} skeleton from the phenotype and exit`, false)
   .option("--json", "print T1 results as JSON (spec §47.2 TestResult)", false)
   .action(async (geneName: string | undefined, options: { verbose: boolean; compliance: boolean; scaffold: boolean; json: boolean }) => {
+    // The root command has a --json of its own, and the parser hands it the flag
+    // wherever it is written: read it from there too, as `hello` does.
+    options.json = options.json || display.isJsonMode();
     const root = requireProjectRoot();
     const config = loadConfig(root);
 
@@ -337,8 +340,12 @@ export const testCommand = new Command("test")
         }
       } catch (err: any) {
         failed++;
-        const code = err instanceof MemoryError ? `${err.code}: ` : "";
-        display.error("  express() threw an error: " + code + err.message);
+        if (err instanceof GeneNeverSettledError) {
+          display.error("  " + err.message);
+        } else {
+          const code = err instanceof MemoryError ? `${err.code}: ` : "";
+          display.error("  express() threw an error: " + code + err.message);
+        }
       } finally {
         scratch?.dispose();
       }

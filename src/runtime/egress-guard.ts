@@ -12,9 +12,16 @@
  * How:
  * - `withGeneEgress(egress, fn)` runs `fn` (importing the gene, calling
  *   `express` or `display`) inside an AsyncLocalStorage context naming the
- *   gene, and waits for what it returns to settle. On entry the first window puts guards in `globalThis.fetch` / `WebSocket` /
- *   `EventSource`; when the last window closes the original property
- *   descriptors go back, so the globals are the very objects they were.
+ *   gene, and waits for what it returns to settle. On entry the first window
+ *   puts guards in `globalThis.fetch` / `WebSocket` / `EventSource`; when the
+ *   last window closes the original property descriptors go back, so the
+ *   globals are the very objects they were.
+ * - A gene that never settles: if Node's event loop empties while a call is
+ *   still waiting on the gene, nothing is left that could ever settle it, and
+ *   Node would exit there with code 0. The call fails instead with
+ *   `GeneNeverSettledError`, so the command reports it and exits non-zero.
+ *   Its window stays open: the gene's code could still run (a timer that does
+ *   not keep the process alive), and it is still held to its declaration.
  * - The fetch guard reads the context. No gene in it: the call is the CLI's
  *   own (an invocation report or heartbeat in flight), and goes straight to
  *   the original fetch. A gene with no `network`: refused. Otherwise: the
@@ -78,13 +85,76 @@ let openWindows = 0;
 let saved: Map<string, PropertyDescriptor | undefined> | null = null;
 
 /** Run `fn` as the gene `egress` names: its global fetch answers to its declaration. */
-export async function withGeneEgress<T>(egress: GeneEgress, fn: () => T | Promise<T>): Promise<T> {
+export function withGeneEgress<T>(egress: GeneEgress, fn: () => T | Promise<T>): Promise<T> {
   install();
+  let call: Promise<T>;
   try {
-    return await running.run(egress, fn);
-  } finally {
+    call = Promise.resolve(running.run(egress, fn));
+  } catch (err) {
     uninstall();
+    return Promise.reject(err);
   }
+  // The window closes when the gene is done, and not before, however long that takes.
+  call.then(uninstall, uninstall);
+  return untilSettled(call, egress.geneName);
+}
+
+/**
+ * A call into a gene that was still waiting when Node's event loop emptied:
+ * nothing was left that could settle it.
+ */
+export class GeneNeverSettledError extends Error {
+  constructor(geneName: string) {
+    super(
+      `Gene '${geneName}' never finished: it was still waiting on a Promise when nothing else was left to run, ` +
+        `so nothing could ever settle it`,
+    );
+    this.name = "GeneNeverSettledError";
+  }
+}
+
+/** One entry per call still waiting on a gene: what to do if it never settles. */
+const waiting = new Set<() => void>();
+let isWatching = false;
+
+/** `call`, or a GeneNeverSettledError once the event loop has emptied while it waits. */
+function untilSettled<T>(call: Promise<T>, geneName: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const giveUp = (): void => reject(new GeneNeverSettledError(geneName));
+    waiting.add(giveUp);
+    watchForEmptyLoop();
+    call.then(
+      (value) => {
+        waiting.delete(giveUp);
+        resolve(value);
+      },
+      (err: unknown) => {
+        waiting.delete(giveUp);
+        reject(err);
+      },
+    );
+  });
+}
+
+/**
+ * `beforeExit` fires when the loop empties. Each waiting call is failed once:
+ * the set is emptied before any is failed. Node fires it again only if the
+ * listener leaves the loop work to do — what the failed calls' callers do
+ * next runs as microtasks, which do not count — so it queues an empty
+ * macrotask: a command that goes on after a call fails (T1's next case) is
+ * watched the same way when the loop empties again. A long-running process (a
+ * server) never empties its loop, so this never fires there.
+ */
+function watchForEmptyLoop(): void {
+  if (isWatching) return;
+  isWatching = true;
+  process.on("beforeExit", () => {
+    const stuck = [...waiting];
+    if (stuck.length === 0) return;
+    waiting.clear();
+    for (const giveUp of stuck) giveUp();
+    setImmediate(() => {});
+  });
 }
 
 /** The gene's network rights, read from the phenotype.json beside its source. None if there is none. */

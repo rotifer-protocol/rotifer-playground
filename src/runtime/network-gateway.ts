@@ -9,7 +9,13 @@
  * `check_url` / `perform_fetch`, Hybrid Binding API §2.1): https only, no IP
  * literals, and redirects followed by hand, at most MAX_REDIRECT_HOPS, each
  * hop checked against the whitelist before it is requested.
+ *
+ * While the CLI runs a gene, the gene's global `fetch` is routed here too
+ * (egress-guard.ts). The gateway's own requests therefore go out through
+ * `hostFetch()`, the fetch the guard replaced, never through the guard.
  */
+
+import { hostFetch } from "./host-fetch.js";
 
 /** Same as rotifer-core `constants::MAX_REDIRECT_HOPS`. */
 export const MAX_REDIRECT_HOPS = 5;
@@ -31,6 +37,24 @@ export interface GatewayResponse {
   status: number;
   headers: Record<string, string>;
   body: string;
+  isTruncated: boolean;
+}
+
+/** A request as the egress guard hands it over: what a fetch() call carried. */
+export interface GatewayRawRequest {
+  method: string;
+  headers?: Record<string, string>;
+  /** A string keeps fetch's text/plain default content type, as gatewayFetch always had. */
+  body?: string | Uint8Array<ArrayBuffer>;
+  signal?: AbortSignal | null;
+}
+
+/** The response before it is decoded, for the egress guard to wrap in a Response. */
+export interface GatewayRawResponse {
+  status: number;
+  statusText: string;
+  headers: [string, string][];
+  bytes: Uint8Array<ArrayBuffer>;
   isTruncated: boolean;
 }
 
@@ -95,6 +119,31 @@ export class NetworkGateway {
   }
 
   async fetch(url: string, options?: GatewayFetchOptions): Promise<GatewayResponse> {
+    const raw = await this.send(url, {
+      method: options?.method || "POST",
+      headers: options?.headers,
+      body: options?.body,
+    });
+    const headers: Record<string, string> = {};
+    for (const [k, v] of raw.headers) headers[k] = v;
+    return {
+      status: raw.status,
+      headers,
+      body: new TextDecoder().decode(raw.bytes),
+      isTruncated: raw.isTruncated,
+    };
+  }
+
+  /**
+   * The same request, with fetch's own shape: the method as given (fetch
+   * defaults to GET, `fetch()` above to POST), a byte body, the caller's
+   * abort signal. Used by the egress guard; same checks, same counts.
+   */
+  async request(url: string, req: GatewayRawRequest): Promise<GatewayRawResponse> {
+    return this.send(url, req);
+  }
+
+  private async send(url: string, req: GatewayRawRequest): Promise<GatewayRawResponse> {
     this.validateUrl(url);
     this.enforceRateLimit();
 
@@ -103,6 +152,10 @@ export class NetworkGateway {
       () => controller.abort(),
       this.config.maxTimeoutMs,
     );
+    const callerSignal = req.signal ?? undefined;
+    const onCallerAbort = () => controller.abort(callerSignal?.reason);
+    if (callerSignal?.aborted) controller.abort(callerSignal.reason);
+    else callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
 
     try {
       // Redirects are followed here, not by fetch: fetch would follow a
@@ -117,13 +170,14 @@ export class NetworkGateway {
       //   X-Api-Key or apikey, and the next host is someone else even when
       //   it matches the same *.domain wildcard.
       let current = url;
-      let method = options?.method || "POST";
-      let requestHeaders: Record<string, string> | undefined = options?.headers;
-      let body: string | undefined = options?.body;
+      let method = req.method;
+      let requestHeaders: Record<string, string> | undefined = req.headers;
+      let body: string | Uint8Array<ArrayBuffer> | undefined = req.body;
       let response: Response | undefined;
+      const send = hostFetch();
       for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
         if (hop > 0) this.validateUrl(current);
-        response = await fetch(current, {
+        response = await send(current, {
           method,
           headers: requestHeaders,
           body,
@@ -151,24 +205,26 @@ export class NetworkGateway {
       }
       if (!response) throw new Error("no response");
 
-      const { text, isTruncated } = await this.readBodyCapped(response);
+      const { bytes, isTruncated } = await this.readBodyCapped(response);
 
       this.totalRequests++;
-      this.totalBytes += text.length;
+      this.totalBytes += bytes.length;
 
-      const headers: Record<string, string> = {};
+      const headers: [string, string][] = [];
       response.headers.forEach((v, k) => {
-        headers[k] = v;
+        headers.push([k, v]);
       });
 
       return {
         status: response.status,
+        statusText: response.statusText,
         headers,
-        body: text,
+        bytes,
         isTruncated,
       };
     } catch (err: any) {
       if (err instanceof NetworkGatewayError) throw err;
+      if (err.name === "AbortError" && callerSignal?.aborted) throw callerSignal.reason ?? err;
       if (err.name === "AbortError") {
         throw new NetworkGatewayError(
           "TIMEOUT",
@@ -181,6 +237,7 @@ export class NetworkGateway {
       );
     } finally {
       clearTimeout(timeout);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
     }
   }
 
@@ -253,10 +310,10 @@ export class NetworkGateway {
 
   private async readBodyCapped(
     response: Response,
-  ): Promise<{ text: string; isTruncated: boolean }> {
+  ): Promise<{ bytes: Uint8Array<ArrayBuffer>; isTruncated: boolean }> {
     const reader = response.body?.getReader();
     if (!reader) {
-      return { text: "", isTruncated: false };
+      return { bytes: new Uint8Array(0), isTruncated: false };
     }
 
     const chunks: Uint8Array[] = [];
@@ -281,10 +338,13 @@ export class NetworkGateway {
       totalSize += value.length;
     }
 
-    const decoder = new TextDecoder();
-    const text = chunks.map((c) => decoder.decode(c, { stream: true })).join("") +
-      decoder.decode();
-    return { text, isTruncated };
+    const bytes = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+    let at = 0;
+    for (const c of chunks) {
+      bytes.set(c, at);
+      at += c.length;
+    }
+    return { bytes, isTruncated };
   }
 }
 

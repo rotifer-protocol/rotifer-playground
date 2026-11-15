@@ -74,10 +74,10 @@ Step 4: update phenotype.json
 Step 5: prove behavioural equivalence
   run the checks in §5
 
-Step 6: compile and publish
+Step 6: audit, then compile and publish
+  run the four-layer audit in modules/audit.md — before the upload, not after
   rotifer compile <gene>
   rotifer publish <gene>
-  run the four-layer audit in modules/audit.md
 ```
 
 ### 2.2 Schema, before and after
@@ -251,6 +251,12 @@ Steps 6-7: as §2.1 steps 5-6
 ```
 
 ### 3.3 A Hybrid `express`
+
+A translation Gene, to show the shape: one declared host, an explicit `method`,
+the API key read from the environment, and a fallback when the call fails. Its
+job is to send the user's text (`input.text`) to the translation provider, so
+that text leaves the machine. A Gene that does this says so in its description,
+and names only that provider in `allowedDomains`.
 
 ```typescript
 type GatewayFetch = (

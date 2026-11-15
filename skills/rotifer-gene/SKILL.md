@@ -1,6 +1,6 @@
 ---
 name: rotifer-gene
-description: The Gene manual for Rotifer Protocol — write a Gene's express function and phenotype schema, run the four-layer security audit before publishing, and migrate a Gene's fidelity from Wrapped to Hybrid or Native. Invoke explicitly when building, auditing, or upgrading a Rotifer Gene. Do NOT use for general code review, dependency auditing, or framework migration — every procedure here operates on Rotifer Genes, their phenotype schemas, and the Rotifer CLI, and nothing else.
+description: The Gene manual for Rotifer Protocol — write a Gene's express function and phenotype schema, test it on its own and inside a small Agent, publish it to the Rotifer Gene Registry and enter the Arena; run the four-layer security audit that searches your own Gene files and published records for leaked credentials and fixes what it finds, such as an absolute path in a Gene manifest, before publishing; and migrate a Gene's fidelity from Wrapped to Hybrid or Native. Invoke explicitly when building, auditing, or upgrading a Rotifer Gene. Do NOT use for general code review, dependency auditing, or framework migration — every procedure here operates on Rotifer Genes, their phenotype schemas, and the Rotifer CLI. One closing section tells contributors to Rotifer itself where the code changes when a fidelity level, phenotype field, domain or CLI command is added.
 version: 1.0.8
 license: Apache-2.0
 compatibility: Requires the Rotifer CLI at a pinned version (npx --yes @rotifer/playground@0.36.1) for the commands shown. Publishing and Arena submission also need network access and an account.
@@ -41,14 +41,27 @@ long documents and loading the wrong one costs the reader more than a question d
   promise, not an optimization.
 - **F(g) is multiplicative.** Any factor at zero eliminates the Gene, so a
   failure mode cannot be averaged away by strength elsewhere.
-- **Everything a reader sees is English** — descriptions, schema fields, README,
-  error messages.
+- **What a published Gene shows its readers is English** — descriptions, schema
+  fields, README, error messages — because the Registry and the Arena are shared
+  across languages. That is about the Gene's own text; talk to the user in theirs.
 - **A published version is immutable.** Bump, do not overwrite.
 
 ## What this Skill does on your machine
 
 Nothing on its own. It describes commands — `rotifer init`, `test`, `compile`,
-`publish`, `arena submit` — and you run them. The ones that reach the network are
-`publish`, `arena submit --cloud` and `login`; the rest are local. Read
-`modules/audit.md` before your first publish: it is the difference between
-finding a leaked credential on your disk and finding it in a public registry.
+`publish`, `arena submit` — and you run them. Where data leaves your machine:
+
+- `login` signs in to Rotifer Cloud (`https://cloud.rotifer.dev`, unless
+  `ROTIFER_CLOUD_ENDPOINT` names another).
+- `publish` uploads the Gene to Rotifer Cloud, where it is public: name, domain,
+  version, fidelity, description, the whole `phenotype.json`, `README.md` and the
+  compiled WASM. `modules/audit.md` §4.1 lists what stays local.
+- `arena submit --cloud` sends a published Gene's fitness score and the runs it
+  was measured on to the Cloud Arena.
+- `test`, `run` and `agent run` on a Hybrid or Wrapped Gene make the Gene's own
+  requests, to the hosts in its `network.allowedDomains`, carrying whatever the
+  Gene puts in them.
+
+Everything else is local. Read `modules/audit.md` before your first publish: it
+is the difference between finding a leaked credential on your disk and finding
+it in a public registry.

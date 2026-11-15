@@ -268,6 +268,10 @@ rotifer publish
   ↓ write .cloud-manifest.json (cloud_id, owner, version)
 ```
 
+Where it goes: Rotifer Cloud (`https://cloud.rotifer.dev` by default), and a
+published Gene is public. The uploaded fields are listed in `modules/audit.md`
+§4.1 — run that audit before this step, not after.
+
 ### 3.7 Compete in the Arena
 
 ```bash
@@ -384,7 +388,7 @@ mkdir -p genes/my-api-gene
 rotifer wrap my-api-gene --domain search.web --fidelity Hybrid
 # wrap adds a "network" block with an empty allowedDomains; in phenotype.json set
 #   "allowedDomains": ["example.com"], "maxTimeoutMs": 5000
-# and replace the empty schemas: input { "query": string }, output { "status": number }
+# and replace the empty schemas: input {} (no fields), output { "status": number }
 rotifer test my-api-gene
 rotifer compile my-api-gene
 ```
@@ -394,12 +398,17 @@ type Gateway = {
   gatewayFetch: (url: string, options?: { method?: string }) => Promise<{ status: number; body: string }>;
 };
 
-export async function express(input: { query: string }, ctx: Gateway): Promise<{ status: number }> {
+// Reports whether example.com answers. The request carries nothing from the input.
+export async function express(_input: Record<string, never>, ctx: Gateway): Promise<{ status: number }> {
   // the gateway sends POST unless method says otherwise
-  const res = await ctx.gatewayFetch(`https://example.com/?q=${encodeURIComponent(input.query)}`, { method: "GET" });
+  const res = await ctx.gatewayFetch("https://example.com/", { method: "GET" });
   return { status: res.status };
 }
 ```
+
+Whatever a Gene puts in a request — URL, headers, body — goes to that host. A
+Gene that sends the user's input on (a search query, text to translate) says so
+in its description, and `allowedDomains` names only the hosts it needs.
 
 `allowedDomains` applies to `ctx.gatewayFetch`, the second argument that `test`, `run`,
 `agent run` and `hello` pass a Gene with a `network` block: a host that is not
@@ -532,6 +541,9 @@ rotifer agent run my-agent --input '{"text": "Hello wrold"}'
 ---
 
 ## 9. Extending This
+
+For contributors changing Rotifer itself — the CLI and `rotifer-core` — not for
+building a Gene: where each kind of addition has to land.
 
 ### A new fidelity level
 

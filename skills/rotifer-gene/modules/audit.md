@@ -42,6 +42,12 @@ A Gene directory may hold any of these. Scan all of them:
 
 ### 3.2 Sensitive patterns
 
+What these are for: finding values that should not be in your own Gene files or
+in what you published. Run them over `genes/` and the Cloud records in §5.1 —
+not over `~/.ssh`, `~/.aws` or any other credential store; this audit never
+opens those. A match is something to remove from the Gene and, if it is a real
+credential, to rotate; it is never copied anywhere.
+
 Run these as a full-text regex sweep. A match is a suspected leak until you have
 looked at it.
 
@@ -216,11 +222,14 @@ grep -q '.gene-manifest.json' <PROJECT_ROOT>/.gitignore && echo "OK" || echo "MI
 
 ### 6.2 The `fromSkill` path
 
-`fromSkill` in `.gene-manifest.json` has to be **relative**:
+`fromSkill` records which Skill a Gene was converted from; `wrap --from-skill`
+writes it, relative to the project root. `.gene-manifest.json` is not uploaded
+(§4.1), but an absolute path puts your username in a file that can end up
+committed. Older manifests may hold one, so `fromSkill` has to be **relative**:
 
 ```
-❌ "/Users/<USERNAME>/.cursor/skills/translator/SKILL.md"   absolute — leaks a username
-✅ "../.cursor/skills/translator/SKILL.md"                  relative
+❌ "/Users/<USERNAME>/projects/my-app/skills/translator/SKILL.md"   absolute — leaks a username
+✅ "skills/translator/SKILL.md"                                     relative to the project root
 ```
 
 ```bash
@@ -228,24 +237,33 @@ grep -r '/Users/' genes/*/.gene-manifest.json
 # expected: no output
 ```
 
-Rewrite them in bulk:
+To fix several at once, commit or back up `genes/` first, then run this from the
+project root. It changes only `fromSkill`, prints each change, and writes nothing
+until you pass `--write`; each file is written whole and then renamed into place.
 
 ```python
-import json, os
+import json, os, sys
 
-for root, dirs, files in os.walk("genes"):
-    manifest = os.path.join(root, ".gene-manifest.json")
+write = "--write" in sys.argv
+root = os.getcwd()
+for dirpath, _dirs, _files in os.walk("genes"):
+    manifest = os.path.join(dirpath, ".gene-manifest.json")
     if not os.path.exists(manifest):
         continue
     with open(manifest) as f:
         data = json.load(f)
-    if "fromSkill" in data and data["fromSkill"].startswith("/Users/"):
-        parts = data["fromSkill"].split("/.cursor/skills/")
-        if len(parts) == 2:
-            data["fromSkill"] = "../.cursor/skills/" + parts[1]
-            with open(manifest, "w") as f:
-                json.dump(data, f, indent=2)
-                f.write("\n")
+    old = data.get("fromSkill", "")
+    if not os.path.isabs(old):
+        continue
+    new = os.path.relpath(old, root)
+    print(f"{manifest}: {old} -> {new}")
+    if write:
+        data["fromSkill"] = new
+        tmp = manifest + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, manifest)
 ```
 
 ### 6.3 The domain allowlist

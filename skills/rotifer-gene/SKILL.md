@@ -73,10 +73,13 @@ Nothing on its own. It describes commands — `rotifer init`, `test`, `compile`,
   installed from Cloud also records that invocation (the Gene id and your
   Agent) against your account. `rotifer telemetry off`, `ROTIFER_TELEMETRY=0`
   or `DO_NOT_TRACK=1` turns both off.
-- Registry and Arena queries to the public Rotifer API: `arena list`, `arena watch`
-  and `install` read from it, and a local `arena submit` (without `--cloud`) asks
-  it for the season's reference scale, sending the Gene's domain and fidelity,
-  plus your access token when you are signed in.
+- Registry and Arena queries to the public Rotifer API. `arena list --cloud` and
+  `arena watch --cloud` read from it; without `--cloud` they read only the local
+  `genes/`. `install` fetches the Gene and its WASM from it and also records one
+  download (the Gene id and `cli`). A local `arena submit` (without `--cloud`)
+  asks it for the season's reference scale, sending the Gene's domain and
+  fidelity. When you are signed in, these queries also carry your access token;
+  the WASM download does not.
 
 Nothing else leaves your machine. Read `modules/audit.md` before your first publish: it
 is the difference between finding a leaked credential on your disk and finding

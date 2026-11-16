@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import net from "node:net";
 
 vi.mock("vscode", () => import("../__mocks__/vscode"));
 
@@ -17,8 +18,12 @@ import * as vscode from "vscode";
 
 // The page the browser shows after the callback is written before the code is exchanged
 // for a token, so it must not claim the sign-in succeeded: the exchange can still fail.
+//
+// The callback server is moved to a free port: this file is about the page, and other test
+// files hold the real login port while they run.
 
 let tokenServer: Server;
+let listenSpy: { mockRestore(): void } | undefined;
 let endpoint: string;
 let tokenStatus: number;
 
@@ -66,9 +71,16 @@ beforeEach(async () => {
   });
   await new Promise<void>((resolve) => tokenServer.listen(0, "127.0.0.1", resolve));
   endpoint = `http://127.0.0.1:${(tokenServer.address() as AddressInfo).port}`;
+  const listen = net.Server.prototype.listen;
+  listenSpy = vi.spyOn(net.Server.prototype, "listen").mockImplementation(function (this: net.Server, ...args: any[]) {
+    if (typeof args[0] === "number") args[0] = 0;
+    return listen.apply(this, args as any);
+  });
 });
 
 afterEach(async () => {
+  listenSpy?.mockRestore();
+  listenSpy = undefined;
   await new Promise((resolve) => tokenServer.close(resolve));
 });
 

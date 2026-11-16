@@ -73,6 +73,10 @@ Nothing on its own. It describes commands — `rotifer init`, `test`, `compile`,
   installed from Cloud also records that invocation (the Gene id and your
   Agent) against your account. `rotifer telemetry off`, `ROTIFER_TELEMETRY=0`
   or `DO_NOT_TRACK=1` turns both off.
+- Registry and Arena queries to the public Rotifer API: `arena list`, `arena watch`
+  and `install` read from it, and a local `arena submit` (without `--cloud`) asks
+  it for the season's reference scale, sending the Gene's domain and fidelity,
+  plus your access token when you are signed in.
 
 Nothing else leaves your machine. Read `modules/audit.md` before your first publish: it
 is the difference between finding a leaked credential on your disk and finding

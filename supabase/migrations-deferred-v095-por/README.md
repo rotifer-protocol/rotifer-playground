@@ -12,48 +12,16 @@ v0.9.5 A1「节点证明（PoR）」Cloud 侧的迁移，**主动延期**：参�
 
 | 文件 | 内容 | 解锁条件 |
 |---|---|---|
-| `20261102200000_node_attestation.sql` | `nodes`、只追加的签发记录 `node_attestation_issuances`、一次性挑战 `node_attestation_challenges`、撤销表 `node_attestation_revocations`；RLS；签发函数专用的数据库角色 `por_issuer`（只能执行发挑战、入账两个 SECURITY DEFINER 函数，不能直接读写任何表）；运维专用的 `por_operator`（只能执行撤销、导出 JWKS 撤销表两个函数） | v0.9.5 阶段二 B1 拿到用户关键词；部署前置见 `supabase/functions/node-attestation/README.md`「Before deploying」 |
 
-依据：ADR-300 修订二「锁定契约 v2」的「表」「发证挑战」与 D5。
-
----
-
-## 本地怎么测
-
-```bash
-supabase start
-psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -v ON_ERROR_STOP=1 \
-  -f supabase/migrations-deferred-v095-por/20261102200000_node_attestation.sql
-supabase test db                                     # 含 supabase/tests/node_attestation.sql
-DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres \
-  bash supabase/functions/node-attestation/race-check.sh
-```
-
-没灌这份迁移时，`supabase test db` 里 `node_attestation.sql` 只报一条 skip，不会红。CI 另有一步 `supabase/functions/node-attestation/pgtap-deferred.sh`：把这份迁移灌进 CI 的一次性库再单独跑这份 pgTAP，迁移没灌上、或跑出来是 skip、或少跑了断言，都算失败。
+（空。原来唯一的一份 `20261102200000_node_attestation.sql` 已于 2026-11-16 拿到 B1 关键词后移入 `supabase/migrations/`，版本号不变：它已晚于生产账本最新一条和 `20261030220000`。）
 
 ---
 
-## 部署时要多配的一项
+## 搬走以后
 
-签发函数以专用的 `por_issuer` 角色连数据库，这个角色只能执行两个入账用的函数（发挑战、入账），不能直接读写任何表，也不绕过 RLS。撤销证书、为 JWKS 导出撤销表这两个函数，签发函数的代码根本不调，所以不给 `por_issuer`，改给单独的运维角色 `por_operator`：它只供运维手动撤销、导出撤销表时使用，签发函数永远不用它——否则签发函数一旦被攻破，攻击者就能撤销任意证书。迁移只建这两个角色、都不给登录权限，B1 部署时由绑定层：
+- 本地：`supabase start` 会连同链上其他迁移一起应用这份迁移，不要再手动用 psql 灌一次，会报重复建表。`supabase test db` 会跑完 `supabase/tests/node_attestation.sql` 的全部断言；CI 另用 `supabase/functions/node-attestation/pgtap-deferred.sh --no-apply` 单独跑一遍，跑出来是 skip 或少跑了断言就算失败。
+- 上生产：不用 `supabase db push`，因为本地还有别的迁移不在生产账本里，推送会把它们一起带上（更不能加 `--include-all`）。迁移文件和它的迁移历史行放在同一个事务里应用，做法见 `supabase/functions/node-attestation/README.md`「Before deploying」。
+- 迁移文件开头那段「DEFERRED」注释没有改：登记迁移历史的那一行是照这份文件逐字生成的，改一个字两边就对不上。
+- 部署时要配的 `por_issuer`、`por_operator` 两个角色、连接串（现在必须是 `sslmode=verify-full`）、请求上限，都以函数 README 为准。
 
-1. 在部署环境里给 `por_issuer` 设密码（`ALTER ROLE por_issuer LOGIN PASSWORD …`）；
-2. 把连接串存成签发函数的密钥 `POR_DB_URL`（走 Supabase 连接池时用户名是 `por_issuer.<项目 ref>`，用 transaction 模式），连接串末尾必须带 `?sslmode=require` 或 `?sslmode=verify-full`，否则函数拒绝启动（本机地址除外）；
-3. 只在运维执行撤销的地方给 `por_operator` 开登录，它的连接串不放进签发函数的环境。
-
-本目录和本仓库都不配任何真实连接串。本地测试（`race-check.sh`、`e2e.ts`）用临时生成的密码，经标准输入传给 psql，不落盘，跑完收回登录权限。在 colima 里跑 `e2e.ts`，签发函数要按网络别名 `db:5432` 连数据库（容器名 `supabase_db_<项目 id>` 解析不到）；脚本默认就用它；`POR_DB_HOST` 只能改成函数认作本机的地址，其他地址没有 TLS 会被函数拒绝。
-
----
-
-## 解锁时怎么搬
-
-1. 拿到用户关键词（B1）。
-2. `git mv` 到 `supabase/migrations/`，文件名的时间戳改成搬的那天（必须晚于账本里最新一条，也要晚于 `20261030220000`），本目录的清单表同步删掉这一行。
-3. 跑 `supabase migration list --linked`，逐条核对待推清单：只能有这一条。多出别的就停下来问，不许用 `--include-all`。
-4. 按项目的迁移推送流程（只加不删不改，`supabase db push --linked`）推送。
-
-这条迁移带上线后的两个参数，用户拍板时要知道：每个账号**每小时 60 次**请求（两个接口合计），同一账号同一 PeerId 24 小时内不能重复签发（证书只剩不到 48 小时时除外）。想改数字，推之前改迁移文件。
-
-**撤销时 `not_after` 怎么填**：封禁账号、节点私钥泄露，传很远的未来（例如 `253402300799`，这也是允许的最大值）；只有节点自己换钥才用默认值（当前时刻）——用默认值的话，同一个 PeerId 一秒后又能签新证书。
-
-**Last updated**: 2026-11-08
+**Last updated**: 2026-11-16

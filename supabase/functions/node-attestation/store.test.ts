@@ -152,7 +152,7 @@ Deno.test("POR_DB_URL outside this machine must require TLS", () => {
 });
 
 Deno.test("the function holds no service_role key", async () => {
-  // The issuing role replaces it (deferred migration, "The issuing role").
+  // The issuing role replaces it (migration 20261102200000, "The issuing role").
   for (const file of ["index.ts", "store.ts", "handler.ts"]) {
     const src = await Deno.readTextFile(new URL(file, import.meta.url));
     const code = src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");

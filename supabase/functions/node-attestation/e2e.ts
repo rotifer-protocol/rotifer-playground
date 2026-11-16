@@ -1,14 +1,15 @@
 /**
  * End to end against a real local stack: the real function served by the
  * Supabase CLI, real auth (the function's own token check, then getUser), the
- * real database with the deferred migration applied. No mocks.
+ * real database with the node-attestation migration applied. No mocks.
  *
  * The stack's Auth must sign with ES256, the only algorithm the function
  * accepts: set [auth] signing_keys_path in a throwaway copy of config.toml
  * (SUPABASE_WORKDIR), with a key from `supabase gen signing-key`.
  *
- *   supabase start                              (gotrue, kong, postgrest, edge-runtime needed)
- *   psql "$DB_URL" -f supabase/migrations-deferred-v095-por/20261102200000_node_attestation.sql
+ *   supabase start                              (gotrue, kong, postgrest, edge-runtime needed;
+ *                                                applies the supabase/migrations/ of the directory
+ *                                                it starts in; this repository's includes this one)
  *   SUPABASE_URL=http://127.0.0.1:54321 ANON_KEY=<supabase status> \
  *   DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres [SUPABASE_WORKDIR=<dir>] \
  *     deno run --allow-net --allow-env --allow-run supabase/functions/node-attestation/e2e.ts

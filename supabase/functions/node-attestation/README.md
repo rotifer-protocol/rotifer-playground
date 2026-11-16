@@ -8,9 +8,9 @@ binding that PeerId to an opaque account pseudonym. Nodes put the token in
 (rotifer-core).
 
 Tables, RLS and the recording transaction live in
-`supabase/migrations-deferred-v095-por/20261102200000_node_attestation.sql`.
-That migration is deferred: it is kept out of `supabase/migrations/`, and
-that directory's README says why.
+`supabase/migrations/20261102200000_node_attestation.sql`. Its header still
+calls it deferred: it was written outside the chain, and its text is kept as
+it is so it matches the checksum its migration-history row was made from.
 
 ## API
 
@@ -76,7 +76,7 @@ not passed and no revocation with `not_after ≥ iat` covers it.
 | `user-token.ts` | The caller's token, checked in the function before Auth is asked: ES256 only, against the project's published keys |
 | `index.ts` | `Deno.serve`, environment, `auth.getUser`, the Postgres connection |
 | `*.test.ts` | Deno tests: `deno test --allow-read --allow-write --allow-run --allow-env supabase/functions/node-attestation/` |
-| `pgtap-deferred.sh` | Applies the deferred migration to a throwaway database and runs its pgTAP, failing on a skip (CI runs it) |
+| `pgtap-deferred.sh` | Runs the migration's pgTAP against a throwaway database, failing on a skip or a missing migration (CI runs it with `--no-apply`, since the chain has applied the migration) |
 | `race-check.sh` | Multi-session checks against a local database (exits 1 on failure) |
 | `tls-check.sh` | The driver against a throwaway TLS server: gets in only with the right root CA and host name (exits 1 on failure; needs Postgres binaries and openssl on `PATH`) |
 | `e2e.ts` | End to end against a local stack, with keys created in memory and never written to disk (see its header). The function reaches the database at `db:5432`, the database's alias on the stack's network; `POR_DB_HOST` overrides it, but only with another name the function treats as local, since it refuses any other host without TLS (under colima the container name does not resolve, the alias does) |
@@ -106,13 +106,18 @@ needed; none was in the repository before.
 Nothing here is deployed. Deploying is binding-layer work and needs these,
 in order:
 
-1. The user's keyword for v0.9.5 stage 2 B1. Then move the migration into
-   `supabase/migrations/`, renaming it with a timestamp later than the newest
-   entry in the production ledger and later than `20261030220000`. Run
-   `supabase migration list --linked` and check the pending list entry by
-   entry: it must hold this migration and nothing else. If anything else is
-   pending, stop and ask; never use `--include-all`. Then push it, following
-   the migration rule.
+1. The user's keyword for v0.9.5 stage 2 B1, then the migration applied to
+   production. It is in `supabase/migrations/` under its own version,
+   `20261102200000`, which is later than the newest entry in the production
+   ledger and later than `20261030220000`. Do not apply it with
+   `supabase db push`: other local migrations are not in the production
+   ledger yet, and a push would carry them along (`--include-all` all the
+   more). Before applying, read the ledger and compare it with
+   `supabase/migrations/`; if anything is missing other than the migrations
+   already known to be pending, stop and ask. Apply the file and its
+   migration-history row (the row `supabase migration repair 20261102200000
+   --status applied` writes) in one transaction, so either both land or
+   neither does; the file contains nothing that cannot run in a transaction.
 2. The signing key and K_pseudo, made in the deployment environment and
    stored only as its secrets (`POR_SIGNING_KEY`, `POR_PSEUDONYM_KEY`;
    `index.ts`). Making or saving the real keys needs the user's approval.

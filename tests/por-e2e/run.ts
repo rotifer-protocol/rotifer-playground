@@ -6,8 +6,9 @@
  *
  * Stack setup is the one supabase/functions/node-attestation/e2e.ts describes:
  *
- *   supabase start                              (gotrue, kong, postgrest, edge-runtime needed)
- *   psql "$DB_URL" -f supabase/migrations-deferred-v095-por/20261102200000_node_attestation.sql
+ *   supabase start                              (gotrue, kong, postgrest, edge-runtime needed;
+ *                                                applies the supabase/migrations/ of the directory
+ *                                                it starts in; this repository's includes this one)
  *   (cd crates/rotifer-napi && npx napi build --release --platform) && npm run build
  *   node scripts/use-checkout-napi.mjs          (the CLI must load this checkout's addon;
  *                                                in a worktree, point POR_CLI at a copy that does)

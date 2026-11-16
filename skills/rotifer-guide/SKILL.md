@@ -20,7 +20,7 @@ description: >-
 Before using this Skill, ensure the Rotifer CLI is available:
 
 ```bash
-npx --yes @rotifer/playground@0.36.1 --version
+npx --yes @rotifer/playground@0.37.0 --version
 ```
 
 If you prefer MCP integration instead of CLI, add this to your MCP config:
@@ -43,7 +43,7 @@ step, not per file. Stronger than pinning the `npx` call: install the CLI into t
 the local binary.
 
 ```bash
-npm install --save-dev --save-exact @rotifer/playground@0.36.1
+npm install --save-dev --save-exact @rotifer/playground@0.37.0
 npm exec -- rotifer --version
 ```
 
@@ -94,7 +94,7 @@ Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.36.1`. If it is not installed, `npx` fetches that exact version into npm's cache, `npm i -g` puts it in npm's global prefix, and `npm install --save-dev` keeps it inside the project. |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.37.0`. If it is not installed, `npx` fetches that exact version into npm's cache, `npm i -g` puts it in npm's global prefix, and `npm install --save-dev` keeps it inside the project. |
 | **Reads** | Genes and Agent definitions in the current project workspace. |
 | **Writes in the project** | Genes into `genes/` (with their compiled output and score caches), and Agent definitions into `.rotifer/agents/`. |
 | **Writes outside the project** | The CLI's own state in your home directory: `~/.rotifer/` (a local database, an audit log, a run log, the telemetry setting, and your session token if you run `rotifer login`) and `~/.config/rotifer/` (a daily update-check cache), plus the WASM runtime's compile cache in your user cache folder. Installing the CLI writes to npm's cache, or to npm's global prefix with `npm i -g`. |
@@ -111,14 +111,14 @@ first, never run silently.
 ### Phase 1: Environment Check
 
 ```bash
-npx --yes @rotifer/playground@0.36.1 --version
+npx --yes @rotifer/playground@0.37.0 --version
 rotifer doctor
 rotifer list
 ```
 
 If the CLI is missing, propose an install and wait for approval. `npm install
---save-dev --save-exact @rotifer/playground@0.36.1` keeps it in the project (run it
-as `npm exec -- rotifer`); `npm i -g @rotifer/playground@0.36.1` installs the
+--save-dev --save-exact @rotifer/playground@0.37.0` keeps it in the project (run it
+as `npm exec -- rotifer`); `npm i -g @rotifer/playground@0.37.0` installs the
 `rotifer` binary at that exact version into npm's global prefix, outside the project.
 
 `rotifer doctor` checks the TypeScript→WASM toolchain (esbuild / javy). Run it

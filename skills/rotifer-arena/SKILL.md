@@ -18,7 +18,7 @@ description: >-
 This Skill requires the Rotifer CLI:
 
 ```bash
-npx --yes @rotifer/playground@0.36.1 --version
+npx --yes @rotifer/playground@0.37.0 --version
 ```
 
 Or use the MCP Server for IDE integration:
@@ -203,7 +203,7 @@ Skill execution:
 ## Checklist Before Running
 
 - Project has a `rotifer.json` (if not, guide `rotifer init`)
-- CLI is installed: `npm i -g @rotifer/playground@0.36.1`, or invoke it as `npx --yes @rotifer/playground@0.36.1`
+- CLI is installed: `npm i -g @rotifer/playground@0.37.0`, or invoke it as `npx --yes @rotifer/playground@0.37.0`
 - `rotifer doctor` passes — compiling to Native WASM needs esbuild and javy, and
   without them `rotifer compile` fails in a way that reads like a code error
 - ClawHub imports require network connectivity

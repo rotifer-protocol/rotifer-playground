@@ -95,7 +95,7 @@ export function express(input: {
 - Native: `express` is synchronous. Javy/QuickJS has no event loop, so `compile`
   refuses an `async` one (`E0025`). A Hybrid `express` may be `async`.
 - Hybrid: calls go only to hosts in `allowedDomains`, through `ctx.gatewayFetch` with an
-  explicit `method` (§5.3). From the next CLI release, a global `fetch` is held to
+  explicit `method` (§5.3). From CLI 0.37.0, a global `fetch` is held to
   the same `network` block while the CLI runs the Gene (refused when the block is
   missing); in CLI 0.36.1 and earlier it bypasses `allowedDomains`. Either way
   `rotifer vg` reports a direct `fetch(` as `S-04` (HIGH).
@@ -422,7 +422,7 @@ it is left out. The response has `status`, `headers` and `body` (a string), not
 
 A global `fetch` depends on the CLI version:
 
-- From the next CLI release: while the CLI runs a Gene under Node.js, its global
+- From CLI 0.37.0: while the CLI runs a Gene under Node.js, its global
   `fetch` goes through the same gateway (same allow-list, timeout, rate limit
   and count). A Gene with no `network` block is refused (`Gene '…' declares no
   network access`). It keeps fetch's own behaviour (`GET` by default, a real

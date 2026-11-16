@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.37.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.36.1...v0.37.0) (2026-11-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **runtime:** T1 (rotifer test, rotifer publish's gate) now awaits an async express and judges what it resolves to. A suite that passed because a Promise object satisfied a loose expectedSchema may now fail, and one that failed on the Promise may now pass. None of the built-in genes with a testsuite.json changes result.
+
+### Bug Fixes
+
+* **node-attestation:** check the database's certificate, not just encrypt ([#597](https://github.com/rotifer-protocol/rotifer-playground/issues/597)) ([1b37b4e](https://github.com/rotifer-protocol/rotifer-playground/commit/1b37b4e17e43c8e54a44ead0e4479e69da94878e))
+* **p2p:** keep rustc 1.100's unreachable_code off the NetworkBehaviour derive (T-211) ([#596](https://github.com/rotifer-protocol/rotifer-playground/issues/596)) ([f35486b](https://github.com/rotifer-protocol/rotifer-playground/commit/f35486bf16d20e8b243dfdbae3fc4983ce68658a))
+* **plugin:** make the root plugin's arena watch and Seq examples run, root family 0.9.13 ([#588](https://github.com/rotifer-protocol/rotifer-playground/issues/588)) ([0f9c836](https://github.com/rotifer-protocol/rotifer-playground/commit/0f9c8363d18da79e5b5da071bedc07d280a8d95f))
+* **plugin:** publish a single-manifest copy so ClawHub accepts the bundle ([#590](https://github.com/rotifer-protocol/rotifer-playground/issues/590)) ([b316e70](https://github.com/rotifer-protocol/rotifer-playground/commit/b316e708c0c9fa6fd95ad2a66d8deda27240e306))
+* **plugin:** stage the ClawHub bundle without a native entry point ([#592](https://github.com/rotifer-protocol/rotifer-playground/issues/592)) ([16fe1af](https://github.com/rotifer-protocol/rotifer-playground/commit/16fe1af4bc897b259849893a8423123abd610203))
+* **plugin:** stage the ClawHub bundle without an openclaw block ([#595](https://github.com/rotifer-protocol/rotifer-playground/issues/595)) ([6cd93e2](https://github.com/rotifer-protocol/rotifer-playground/commit/6cd93e2feda1a7b89f2f27342950e39b52253ef0))
+* **runtime:** fail a gene call that never settles instead of exiting 0 ([#598](https://github.com/rotifer-protocol/rotifer-playground/issues/598)) ([622c3b5](https://github.com/rotifer-protocol/rotifer-playground/commit/622c3b55376a708c5518d9dd152d3cc69793a985))
+* **runtime:** hold a gene's global fetch to its network declaration ([#594](https://github.com/rotifer-protocol/rotifer-playground/issues/594)) ([a695dc0](https://github.com/rotifer-protocol/rotifer-playground/commit/a695dc02388a8d1b218eb5bb11e434cb140fcbb2))
+
 ## [0.36.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.36.0...v0.36.1) (2026-11-10)
 
 

@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, statSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, statSync } from "node:fs";
+import { builtinModules } from "node:module";
+import { tmpdir } from "node:os";
+import { join, dirname, resolve } from "node:path";
 import * as display from "./display.js";
 
 /** Gene source declares an async/Promise-returning express() — incompatible with Javy/QuickJS (#57). */
@@ -12,6 +14,20 @@ export class AsyncExpressError extends Error {
 /** TS→WASM toolchain (esbuild / javy) unavailable; message carries the full diagnosis (#58). */
 export class ToolchainError extends Error {
   override name = "ToolchainError";
+}
+
+/**
+ * Gene source loads Node built-in modules, which Javy/QuickJS does not have —
+ * so it cannot become Native WASM. Not a toolchain problem: the toolchain ran.
+ */
+export class NodeBuiltinError extends Error {
+  override name = "NodeBuiltinError";
+  constructor(readonly modules: string[]) {
+    super(
+      `the source imports Node built-in modules (${modules.join(", ")}), ` +
+      "and the Javy/QuickJS sandbox has no Node runtime.",
+    );
+  }
 }
 
 // High-confidence shapes only — the runtime guard in WASI_SHIM_FOOTER backstops
@@ -33,7 +49,7 @@ export function detectAsyncExpress(source: string): string | null {
   return null;
 }
 
-type Command = string[];
+export type Command = string[];
 
 // Bare binaries first: a PATH lookup is instant (covers global installs and
 // node_modules/.bin when invoked via npm scripts). `npx --no-install` is the
@@ -66,6 +82,64 @@ function resolveCommand(candidates: Command[]): Command | null {
 export interface ToolchainStatus {
   esbuild: Command | null;
   javy: Command | null;
+}
+
+/** Resolve esbuild alone, the way `preflightToolchain` does. */
+export function resolveEsbuild(): Command | null {
+  return resolveCommand(ESBUILD_CANDIDATES);
+}
+
+/** A module the Javy sandbox does not have: any Node built-in, with or without `node:`. */
+export function isNodeBuiltin(specifier: string): boolean {
+  return specifier.startsWith("node:") || builtinModules.includes(specifier);
+}
+
+export type NodeBuiltinScan =
+  /** `builtins`: Node built-ins the source loads, in first-seen order. `files`: every source file the bundle reached. */
+  | { status: "ok"; builtins: string[]; files: string[] }
+  /** esbuild could not bundle the source at all (an unresolvable import, a syntax error). */
+  | { status: "failed"; message: string };
+
+/**
+ * Which Node built-ins a gene's source loads, read by esbuild — the same parser
+ * that bundles it for Javy — rather than by pattern-matching the text. Bundling
+ * for `platform=node` leaves built-ins external, and the metafile lists every
+ * import: static and re-exported imports, `require()` and `import()` with a
+ * literal, across every file the bundle reaches (so `./helper.js` naming
+ * `helper.ts` is followed exactly as the real build follows it).
+ *
+ * Not visible here, because they are not imports: `globalThis.require(...)`,
+ * and `require(x)` / `import(x)` with a computed `x`. Those fail only when the
+ * gene runs.
+ */
+export function scanNodeBuiltins(entry: string, esbuild: Command): NodeBuiltinScan {
+  const workDir = mkdtempSync(join(tmpdir(), "rotifer-builtin-scan-"));
+  const metaPath = join(workDir, "meta.json");
+  const cwd = dirname(resolve(entry));
+  try {
+    try {
+      execFileSync(esbuild[0], [
+        ...esbuild.slice(1), resolve(entry),
+        "--bundle", "--platform=node", "--format=esm",
+        `--metafile=${metaPath}`, `--outfile=${join(workDir, "out.js")}`, "--log-level=error",
+      ], { cwd, stdio: "pipe", timeout: 30_000 });
+    } catch (err: any) {
+      const stderr = String(err?.stderr ?? "").trim();
+      return { status: "failed", message: stderr || String(err?.message ?? err) };
+    }
+    const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as {
+      inputs: Record<string, { imports?: Array<{ path: string; external?: boolean }> }>;
+    };
+    const builtins: string[] = [];
+    for (const input of Object.values(meta.inputs)) {
+      for (const imp of input.imports ?? []) {
+        if (imp.external && isNodeBuiltin(imp.path) && !builtins.includes(imp.path)) builtins.push(imp.path);
+      }
+    }
+    return { status: "ok", builtins, files: Object.keys(meta.inputs).map((f) => resolve(cwd, f)) };
+  } finally {
+    rmSync(workDir, { recursive: true, force: true });
+  }
 }
 
 /** Resolve the TS→WASM toolchain without ever hitting the network. */
@@ -248,6 +322,14 @@ export function compileTypeScriptToWasm(
   const toolchain = preflightToolchain();
   if (!toolchain.esbuild || !toolchain.javy) {
     throw new ToolchainError(buildToolchainErrorMessage(toolchain));
+  }
+
+  // Ask before bundling for Javy, where a built-in surfaces only as esbuild's
+  // "Could not resolve" and reads like a broken toolchain. A source esbuild
+  // cannot read at all falls through: the build step below reports it.
+  const scan = scanNodeBuiltins(geneSrcPath, toolchain.esbuild);
+  if (scan.status === "ok" && scan.builtins.length > 0) {
+    throw new NodeBuiltinError(scan.builtins);
   }
 
   const tmpDir = join(dirname(outputWasmPath), ".rotifer-build");

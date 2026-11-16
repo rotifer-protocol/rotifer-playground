@@ -78,7 +78,7 @@ Deno.test("consume calls the rate-limit function with the account and maps its a
 });
 
 Deno.test("POR_DB_URL must log in as por_issuer", () => {
-  assertEquals(issuerUser("postgresql://por_issuer:pw@db.example:5432/postgres?sslmode=require"), "por_issuer");
+  assertEquals(issuerUser("postgresql://por_issuer:pw@db.example:5432/postgres?sslmode=verify-full"), "por_issuer");
   assertEquals(issuerUser("postgres://por_issuer.abcdefgh:pw@pooler.example:6543/postgres?sslmode=verify-full"), "por_issuer.abcdefgh");
   for (const url of [
     "postgresql://postgres:pw@db.example:5432/postgres",
@@ -121,12 +121,22 @@ Deno.test("POR_DB_URL outside this machine must require TLS", () => {
   // prefer and allow fall back to plain text; disable never starts TLS. The
   // driver reads the last value of a repeated parameter.
   for (
-    const query of ["", "?sslmode=disable", "?sslmode=prefer", "?sslmode=allow", "?ssl=require", "?sslmode=require&sslmode=disable", "?sslmode=REQUIRE"]
+    const query of [
+      "",
+      "?sslmode=disable",
+      "?sslmode=prefer",
+      "?sslmode=allow",
+      "?ssl=require",
+      "?sslmode=require&sslmode=disable",
+      "?sslmode=REQUIRE",
+      "?sslmode=require",
+      "?sslmode=disable&sslmode=require",
+    ]
   ) {
     assertThrows(() => issuerUser(url("db.abcdefghijklmnopqrst.supabase.co:5432", query)), Error, "sslmode", query);
   }
 
-  for (const query of ["?sslmode=require", "?sslmode=verify-full", "?sslmode=disable&sslmode=require"]) {
+  for (const query of ["?sslmode=verify-full", "?sslmode=require&sslmode=verify-full"]) {
     assertEquals(issuerUser(url("db.abcdefghijklmnopqrst.supabase.co:5432", query)), "por_issuer", query);
   }
 

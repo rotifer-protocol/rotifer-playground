@@ -74,10 +74,10 @@ Step 4: update phenotype.json
 Step 5: prove behavioural equivalence
   run the checks in §5
 
-Step 6: compile and publish
+Step 6: audit, then compile and publish
+  run the four-layer audit in modules/audit.md — before the upload, not after
   rotifer compile <gene>
   rotifer publish <gene>
-  run the four-layer audit in modules/audit.md
 ```
 
 ### 2.2 Schema, before and after
@@ -153,15 +153,15 @@ export async function express(input: { prompt: string }): Promise<{ result: stri
   return { result: "AI generated response" };
 }
 
-// ✅ the Native shape — the logic is here
-export async function express(input: {
+// ✅ the Native shape — the logic is here, and express is synchronous
+export function express(input: {
   text: string;
   strict?: boolean;
-}): Promise<{
+}): {
   issues: Array<{ rule: string; message: string; position: number; suggestion: string }>;
   score: number;
   summary: string;
-}> {
+} {
   const issues = [];
 
   // real detection: regex, a state machine, an AST walk — whatever the domain needs
@@ -192,6 +192,7 @@ export async function express(input: {
 - `fetch`, `XMLHttpRequest`, any network call
 - `fs`, `path`, any filesystem access
 - `process`, `os`, any system call
+- an `async` express: Javy/QuickJS has no event loop, so `compile` refuses it (`E0025`)
 
 What is left — computation, string handling, regex, arithmetic, data structures —
 is enough for more capabilities than it first appears.
@@ -213,7 +214,7 @@ Step 4: declare the network allowlist
   set a timeout and a rate limit you would be comfortable defending
 
 Step 5: implement the call
-  fetch only allowlisted hosts
+  call only allowlisted hosts, through ctx.gatewayFetch
   authenticate from the runtime environment
   handle timeout and retry
 
@@ -251,54 +252,65 @@ Steps 6-7: as §2.1 steps 5-6
 
 ### 3.3 A Hybrid `express`
 
+A translation Gene, to show the shape: one declared host, an explicit `method`,
+the API key read from the environment, and a fallback when the call fails. Its
+job is to send the user's text (`input.text`) to the translation provider, so
+that text leaves the machine. A Gene that does this says so in its description,
+and names only that provider in `allowedDomains`.
+
 ```typescript
-export async function express(input: {
-  text: string;
-  targetLang: string;
-}): Promise<{
-  translated: string;
-  sourceLang: string;
-  confidence: number;
-}> {
+type GatewayFetch = (
+  url: string,
+  options?: { method?: string; headers?: Record<string, string>; body?: string },
+) => Promise<{ status: number; headers: Record<string, string>; body: string; isTruncated: boolean }>;
+
+export async function express(
+  input: { text: string; targetLang: string },
+  ctx: { gatewayFetch: GatewayFetch },
+): Promise<{ translated: string; sourceLang: string; confidence: number }> {
   const apiKey = process.env.TRANSLATION_API_KEY;
   if (!apiKey) {
     return { translated: input.text, sourceLang: "unknown", confidence: 0 };
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
-
   try {
-    const res = await fetch("https://api.example.com/translate", {
+    // the gateway checks allowedDomains and enforces maxTimeoutMs
+    const res = await ctx.gatewayFetch("https://api.example.com/translate", {
       method: "POST",
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({ text: input.text, target: input.targetLang }),
-      signal: controller.signal,
     });
 
-    if (!res.ok) {
+    // the response has status, headers and a string body, not ok or json()
+    if (res.status < 200 || res.status >= 300) {
       return { translated: input.text, sourceLang: "unknown", confidence: 0 };
     }
 
-    const data = await res.json();
+    const data = JSON.parse(res.body);
     return {
       translated: data.translated_text,
       sourceLang: data.detected_source,
       confidence: data.confidence ?? 1.0,
     };
   } catch {
+    // a refused host, a timeout, the rate limit, or a body that is not JSON
     return { translated: input.text, sourceLang: "unknown", confidence: 0 };
-  } finally {
-    clearTimeout(timeout);
   }
 }
 ```
 
 **What Hybrid requires:**
 
-- Every `fetch` target appears in `allowedDomains`.
+- Every request goes through `ctx.gatewayFetch`, the second argument `express`
+  receives, to a host in `allowedDomains`, with an explicit `method` (the gateway
+  sends `POST` when it is left out). From CLI 0.37.0 a global `fetch`
+  is held to the same `network` block while the CLI runs the Gene, and refused
+  when there is none; in CLI 0.36.1 and earlier it bypasses `allowedDomains`.
+  `rotifer vg` reports a direct `fetch(` as `S-04` (HIGH) either way. The CLI's
+  check is not a sandbox: `node:http`, `node:https`, `node:net` and the other
+  routes listed in dev.md §5.3 are outside it.
 - The API key comes from the environment. A key in the source is a key in the registry.
-- A timeout, via `AbortController`.
+- A timeout: `network.maxTimeoutMs`, which the gateway enforces.
 - Graceful degradation on failure — return something sensible rather than throwing.
   A Gene that throws scores zero on robustness, and F(g) is multiplicative.
 
@@ -491,6 +503,7 @@ done
 | `Schema validation failed` | the return value does not match outputSchema | check that every required field is returned |
 | Version conflict on publish | the version was not bumped | semver major bump |
 | `allowedDomains` refused a call | fetching a host that was never declared | add it to phenotype.json |
+| `Gene '…' declares no network access` | a global `fetch` in a Gene with no `network` block | add the `network` block with the hosts it calls |
 | SKILL.md and index.ts disagree | the document describes the old behaviour | update it or remove it |
 > Add a row when you hit one this table does not cover.
 

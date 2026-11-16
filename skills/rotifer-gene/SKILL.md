@@ -1,12 +1,12 @@
 ---
 name: rotifer-gene
 description: The Gene manual for Rotifer Protocol — write a Gene's express function and phenotype schema, test it on its own and inside a small Agent, publish it to the Rotifer Gene Registry and enter the Arena; run the four-layer security audit that searches your own Gene files and published records for leaked credentials and fixes what it finds, such as an absolute path in a Gene manifest, before publishing; and migrate a Gene's fidelity from Wrapped to Hybrid or Native. Invoke explicitly when building, auditing, or upgrading a Rotifer Gene. Do NOT use for general code review, dependency auditing, or framework migration — every procedure here operates on Rotifer Genes, their phenotype schemas, and the Rotifer CLI. One closing section tells contributors to Rotifer itself where the code changes when a fidelity level, phenotype field, domain or CLI command is added.
-version: 1.0.9
+version: 1.0.10
 license: Apache-2.0
-compatibility: Requires the Rotifer CLI at a pinned version (npx --yes @rotifer/playground@0.37.0) for the commands shown. Publishing and Arena submission also need network access and an account.
+compatibility: Requires the Rotifer CLI at a pinned version (@rotifer/playground@0.37.0) for the commands shown, installed with npm i -g @rotifer/playground@0.37.0 or run per command as npx --yes @rotifer/playground@0.37.0, either of which downloads it from npm. Publishing and Arena submission also need network access and an account.
 metadata:
   author: rotifer-protocol
-  version: "1.0.9"
+  version: "1.0.10"
 ---
 
 # Working on a Gene
@@ -48,23 +48,56 @@ long documents and loading the wrong one costs the reader more than a question d
 
 ## What this Skill does on your machine
 
-Nothing on its own. It describes commands — `rotifer init`, `test`, `compile`,
-`publish`, `arena submit` — and you run them. Where data leaves your machine:
+Nothing on its own. It describes commands and you run them. What each of those
+commands sends, read from the CLI source at the version pinned here:
 
-- `login` signs in to Rotifer Cloud (`https://cloud.rotifer.dev`, unless
-  `ROTIFER_CLOUD_ENDPOINT` names another).
-- `publish` uploads the Gene to Rotifer Cloud, where it is public: name, domain,
-  version, fidelity, description, the whole `phenotype.json`, `README.md` and the
-  compiled WASM. `modules/audit.md` §4.1 lists what stays local.
-- `arena submit --cloud` sends a published Gene's fitness score and the runs it
-  was measured on to the Cloud Arena.
-- `test`, `run`, `agent run`, `hello`, and the test suite `publish` runs before
+- **Every command**, from an installed CLI: one version check per day to
+  `registry.npmjs.org`. It is skipped under `npx`, in CI, or with
+  `ROTIFER_NO_UPDATE_CHECK` set. Installing the CLI, or running it through
+  `npx`, downloads it from npm.
+- **`wrap`** sends nothing itself. But when it runs in a terminal, you are
+  signed in and the new Gene is ready to publish, it ends by asking
+  `Publish '<name>' to Rotifer Cloud? [Y/n]`; Enter means yes, and the Gene is
+  then published exactly as by `publish`. `rotifer config set default-publish
+  false` stops the question.
+- **`login`** signs in to Rotifer Cloud (`https://cloud.rotifer.dev`, unless
+  `ROTIFER_CLOUD_ENDPOINT` names another) through your browser, with a callback
+  to `localhost:9876`. `publish` and `arena submit --cloud` renew that sign-in
+  with Rotifer Cloud first when it has expired.
+- **`publish`** uploads the Gene to Rotifer Cloud, where it is public: name,
+  domain, version, fidelity, description, the whole `phenotype.json`,
+  `README.md`, the changelog you give, a content hash and the compiled WASM. `modules/audit.md` §4.1 lists what stays
+  local. It also fetches the list of domains, and reads your developer
+  reputation unless you pass `--skip-arena`. Only with `ROTIFER_BADGE_TOKEN`
+  set does it upload the V(g) result to `badge.rotifer.dev`.
+- **`arena submit`** asks Rotifer Cloud for the season's reference scale,
+  sending the Gene's domain and fidelity. With `--cloud` it also sends the
+  published Gene's fitness score and the runs it was measured on to the Cloud
+  Arena.
+- **`arena list`** and **`arena watch`** read only the local `genes/`. With
+  `--cloud` they read the Cloud Arena's rankings instead.
+- **`install`** fetches the Gene's record and its WASM, records one download
+  (the Gene id and `cli`), and fetches the list of domains.
+- **`hello`** looks a template's Gene up in Rotifer Cloud when the workspace
+  does not have it.
+- **`run`** and **`agent run`** send an anonymous heartbeat each time they run a
+  Gene: a random machine id, the channel it ran from and the CLI version,
+  nothing about the Gene or your files. When you are signed in, running a Gene
+  installed from Cloud also records that invocation (the Gene id and your
+  Agent) against your account. `rotifer telemetry off`, `ROTIFER_TELEMETRY=0`
+  or `DO_NOT_TRACK=1` turns both off.
+- **`test`, `run`, `agent run`, `hello`**, and the tests `publish` runs before
   uploading, run a Hybrid or Wrapped Gene's own code, which makes its own
   requests carrying whatever the Gene puts in them. `ctx.gatewayFetch` reaches
   only the hosts in its `network.allowedDomains`. A global `fetch` is held to the
   same list from CLI 0.37.0, the version pinned here; in 0.36.1 and earlier it
-  is not (`modules/dev.md` §5.3).
+  is not (`modules/dev.md` §5.3). A Native Gene makes no requests.
+- **`init`, `scan`, `vg`, `compile`, `agent create`** and **`telemetry`** send
+  nothing beyond the version check.
 
-Everything else is local. Read `modules/audit.md` before your first publish: it
+Requests to Rotifer Cloud carry your access token when you are signed in,
+except the heartbeat, the WASM download and the list of domains.
+
+Nothing else leaves your machine. Read `modules/audit.md` before your first publish: it
 is the difference between finding a leaked credential on your disk and finding
 it in a public registry.

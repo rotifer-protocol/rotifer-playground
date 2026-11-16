@@ -54,7 +54,7 @@ Right-click any `SKILL.md` file → **Rotifer: Publish as Gene** → wrapped and
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `rotifer.cloudEndpoint` | Rotifer Cloud URL | Supabase endpoint for Gene Registry |
-| `rotifer.anonKey` | *(empty)* | Supabase anonymous key for API access |
+| `rotifer.anonKey` | the public Rotifer Cloud key (`sb_publishable_…`, the same one the CLI ships) | Supabase publishable key for API access. Legacy `eyJ…` keys are rejected by Rotifer Cloud |
 
 ## Works With
 

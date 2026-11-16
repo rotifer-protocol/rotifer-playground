@@ -16,19 +16,24 @@ Three manuals, loaded on demand rather than all at once:
 ## Quick Start
 
 ```bash
+# install the CLI once, at the pinned version; this downloads it from npm
+npm i -g @rotifer/playground@0.37.0
 # an Agent workspace: genesis Genes plus an example hello-world Gene
-npx --yes @rotifer/playground@0.37.0 init my-workspace
+rotifer init my-workspace
 cd my-workspace
 mkdir -p genes/my-gene
 # write express() in genes/my-gene/index.ts
-npx --yes @rotifer/playground@0.37.0 wrap my-gene --domain content.grammar --fidelity Native
+rotifer wrap my-gene --domain content.grammar --fidelity Native
 # replace the empty inputSchema and outputSchema that wrap wrote to genes/my-gene/phenotype.json
-npx --yes @rotifer/playground@0.37.0 test my-gene --verbose
-npx --yes @rotifer/playground@0.37.0 compile my-gene
-npx --yes @rotifer/playground@0.37.0 test my-gene --compliance
+rotifer test my-gene --verbose
+rotifer compile my-gene
+rotifer test my-gene --compliance
 ```
 
-Every command names an exact CLI version on purpose: an unversioned `npx` resolves to whatever the
+Without installing, each `rotifer` command also runs as `npx --yes @rotifer/playground@0.37.0 <command>`,
+which downloads the package into npm's cache on first use; `--yes` only skips npx's own prompt.
+
+The install names an exact CLI version on purpose: an unversioned install resolves to whatever the
 registry serves at that moment, so what you run would not be what was reviewed. Stronger still,
 install the CLI into the project and run the local binary:
 
@@ -64,13 +69,13 @@ permissions are for: the CLI acting, not this Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.37.0`; fetched from npm at that exact version if it is not already installed. |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.37.0`. You install it from npm at that exact version (Quick Start), or `npx` fetches it into npm's cache if you run it that way. |
 | **Reads** | Genes in the current project — source, `phenotype.json`, and the local manifests. |
-| **Writes** | Genes into the project's `genes/`, compiled IR beside them. Nothing outside the project. |
+| **Writes** | Genes into the project's `genes/`, compiled IR beside them. Outside the project: the CLI's own state in your home directory (`~/.rotifer/`, `~/.config/rotifer/`); when `rotifer compile` runs, the javy toolchain it calls writes its own caches in your user cache folder; and npm's cache or global prefix when the CLI is installed. |
 | **Sends** | Nothing, until you publish. `publish`, `arena submit --cloud` and `login` reach the network; `init`, `test` and `compile` are local. |
 
-Commands that publish or overwrite are proposed for your approval first, never
-run silently.
+Commands that install, publish or overwrite are proposed for your approval first,
+never run silently.
 
 ## Related Skills
 

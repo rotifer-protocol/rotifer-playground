@@ -1,6 +1,6 @@
 ---
 name: rotifer-hello
-version: 0.9.15
+version: 0.9.16
 description: Interactive agent creation — choose from curated templates covering quality diagnosis, security scanning, content analysis, Web3 auditing, and document Q&A
 author: rotifer-protocol
 ---

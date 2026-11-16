@@ -1,6 +1,6 @@
 ---
 name: rotifer-assistant
-version: 0.9.15
+version: 0.9.16
 description: Unified entry point for Rotifer Protocol — guide, architect, and challenge your agents
 author: rotifer-protocol
 ---

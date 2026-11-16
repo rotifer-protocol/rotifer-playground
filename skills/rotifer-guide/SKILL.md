@@ -48,6 +48,12 @@ If you prefer MCP integration instead of CLI, add this to your MCP config:
 }
 ```
 
+Your MCP host runs this `npx` command when it starts the server, and nothing asks
+first: npx does not prompt when its input is not a terminal, so the first start
+downloads `@rotifer/mcp-server@0.20.1` from npm and runs it. To review it before it ever
+runs, install that version with `npm i -g @rotifer/mcp-server@0.20.1` and use
+`rotifer-mcp-server` as the command, with no `args`.
+
 The install commands and the MCP config name an exact version on purpose. An unversioned `npx` resolves to whatever the
 registry serves at that moment, so the code you run would not be the code that was reviewed. The
 `@rotifer/mcp-server` pin is the one this repository agrees on everywhere; move it in one deliberate
@@ -109,7 +115,7 @@ Skill.
 | **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.37.0`. If it is not installed, an install is proposed and waits for your approval: `npx` fetches that exact version into npm's cache, `npm i -g` puts it in npm's global prefix, and `npm install --save-dev` keeps it inside the project. |
 | **Reads** | Genes and Agent definitions in the current project workspace. |
 | **Writes in the project** | Genes into `genes/` (with their compiled output and score caches), and Agent definitions into `.rotifer/agents/`. |
-| **Writes outside the project** | The CLI's own state in your home directory: `~/.rotifer/` (a local database, an audit log, a run log, the telemetry setting, and your session token if you run `rotifer login`) and `~/.config/rotifer/` (a daily update-check cache), plus the WASM runtime's compile cache in your user cache folder. Installing the CLI writes to npm's cache, or to npm's global prefix with `npm i -g`. |
+| **Writes outside the project** | The CLI's own state in your home directory: `~/.rotifer/` (a local database, an audit log, a run log, the telemetry setting, and your session token if you run `rotifer login`) and `~/.config/rotifer/` (a daily update-check cache), plus, when `rotifer compile` runs, the caches the javy toolchain it calls writes in your user cache folder. Installing the CLI writes to npm's cache, or to npm's global prefix with `npm i -g`. |
 | **Sends** | Registry and Arena queries to the public Rotifer API, one version check per day to `registry.npmjs.org` (skipped under `npx`, in CI, or with `ROTIFER_NO_UPDATE_CHECK` set), and a package download from ClawHub for `rotifer wrap --from-clawhub`. When you are signed in, running a Gene installed from Cloud also records that invocation (the Gene id and your Agent) against your account. The CLI also sends an anonymous heartbeat each time it runs a Gene: a random machine id, the channel it ran from and the CLI version, nothing about the Gene or your files. `rotifer telemetry off`, `ROTIFER_TELEMETRY=0` or `DO_NOT_TRACK=1` turns it off, and each of the three also stops the signed-in record. Three steps send your work, and each runs only when the user asks for it: the Web Studio scaffold path sends the description and the generated source to rotifer.ai (§2, Path A); `rotifer publish` uploads a Gene's source to the Rotifer Cloud Registry and makes it public; `rotifer arena submit --cloud` sends a published Gene's scores, and the measurements from each run, to the Cloud Arena's public record. Without those, your code stays on this machine. |
 
 Commands that install software, send work off the machine (Path A, `rotifer publish`,
@@ -179,7 +185,7 @@ rotifer init hello-world --domain content.greeting   # a workspace with an examp
 cd hello-world
 rotifer test hello-world
 rotifer compile hello-world
-rotifer arena submit hello-world                     # scored on this machine; nothing is uploaded
+rotifer arena submit hello-world                     # scored on this machine; your code and results stay here
 rotifer arena list --domain content.greeting
 ```
 
@@ -442,7 +448,7 @@ After confirming the migration plan, route to the `rotifer-gene` Skill (its migr
 rotifer test <name>
 rotifer vg <path-to-gene>
 rotifer compile <name>
-rotifer arena submit <name>        # scored on this machine; nothing is uploaded
+rotifer arena submit <name>        # scored on this machine; your code and results stay here
 rotifer arena watch <domain>
 ```
 

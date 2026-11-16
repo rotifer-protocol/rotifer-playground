@@ -51,7 +51,9 @@ export interface NativeBinding {
     phenotypeJson: string,
     constraintsJson?: string,
     /** v0.9.4 AgentMemory: {"agentId","geneId"}; omitted → the gene has no agent memory. */
-    memoryContextJson?: string
+    memoryContextJson?: string,
+    /** #508: {"NAME":["host"]}, for an external gene; omitted → no limit. Call through utils/env-grant-consent. */
+    credentialScopeJson?: string
   ): ExecutionResultView;
   l0Check(
     phenotypeJson: string,
@@ -64,7 +66,9 @@ export interface NativeBinding {
     inputJson: string,
     constraintsJson?: string,
     /** v0.9.4 AgentMemory: {"agentId"}; each gene runs as its entry's v2Id. */
-    memoryContextJson?: string
+    memoryContextJson?: string,
+    /** #508: {"<gene key>":{"NAME":["host"]}}, per gene; a gene with no entry has no limit. */
+    credentialScopeJson?: string
   ): AlgebraResultView;
 }
 

@@ -72,6 +72,7 @@ fn loopback_config() -> HybridConfig {
         net: Some(loopback_policy()),
         env_plain: HashMap::new(),
         env_secret: HashMap::new(),
+        credential_scope: None,
         allow_insecure_loopback: true,
         host_millis_cap: None,
     }
@@ -1449,4 +1450,139 @@ fn a_redirect_within_the_same_origin_keeps_the_headers() {
     let landed = a.landed();
     assert!(landed.head.contains("Bearer key-sentinel"), "{}", landed.head);
     assert_eq!(landed.method, "POST");
+}
+
+// ── which host a credential may reach (#508) ──────────────────────────
+// A scope says, per credential, the hosts a gene's grant covers. Real
+// wasmtime and a real loopback server: what matters is what left the sandbox.
+
+fn scope(hosts: &[&str]) -> Option<super::hybrid::CredentialScope> {
+    Some(HashMap::from([(
+        "SECRET".to_string(),
+        hosts.iter().map(|h| h.to_string()).collect(),
+    )]))
+}
+
+fn keyed_config(scope: Option<super::hybrid::CredentialScope>) -> HybridConfig {
+    let mut config = loopback_config();
+    config.env_secret.insert("SECRET".into(), "key-sentinel".into());
+    config.credential_scope = scope;
+    config
+}
+
+fn bearer_envelope(url: &str) -> String {
+    format!(r#"{{"method":"GET","url":"{url}","headers":{{"Authorization":"Bearer ${{env:SECRET}}"}}}}"#)
+}
+
+#[test]
+fn a_credential_reaches_the_host_it_was_granted_for() {
+    let server = Recorder::spawn(200, None);
+    let wasm = build_fetch_gene(&bearer_envelope(&format!("http://127.0.0.1:{}/x", server.port)));
+    let (data, _) = expect_success(run(&sandbox(), &wasm, keyed_config(scope(&["127.0.0.1"]))));
+    assert_eq!(data["status"], 200);
+    assert!(server.seen.lock().unwrap()[0].head.contains("Bearer key-sentinel"));
+}
+
+#[test]
+fn a_credential_is_refused_at_a_whitelisted_host_it_was_not_granted_for() {
+    // 127.0.0.1 passes the whitelist and the dependency check; only the grant
+    // stands between the gene and sending the key there.
+    let server = Recorder::spawn(200, None);
+    let wasm = build_fetch_gene(&bearer_envelope(&format!("http://127.0.0.1:{}/x", server.port)));
+    expect_error_code(
+        run(&sandbox(), &wasm, keyed_config(scope(&["api.example.com"]))),
+        errors::ERR_PERMISSION_DENIED,
+    );
+    assert!(server.seen.lock().unwrap().is_empty(), "nothing may be sent");
+}
+
+#[test]
+fn an_empty_scope_refuses_the_credential() {
+    let server = Recorder::spawn(200, None);
+    let wasm = build_fetch_gene(&bearer_envelope(&format!("http://127.0.0.1:{}/x", server.port)));
+    expect_error_code(
+        run(&sandbox(), &wasm, keyed_config(Some(HashMap::new()))),
+        errors::ERR_PERMISSION_DENIED,
+    );
+    assert!(server.seen.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_gene_with_no_scope_behaves_as_before() {
+    let server = Recorder::spawn(200, None);
+    let wasm = build_fetch_gene(&bearer_envelope(&format!("http://127.0.0.1:{}/x", server.port)));
+    expect_success(run(&sandbox(), &wasm, keyed_config(None)));
+    assert!(server.seen.lock().unwrap()[0].head.contains("Bearer key-sentinel"));
+}
+
+#[test]
+fn a_scoped_key_does_not_follow_a_redirect_to_another_host() {
+    let b = Recorder::spawn(200, None);
+    let a = Recorder::spawn(302, Some(format!("http://127.0.0.1:{}/landed", b.port)));
+    let wasm = build_fetch_gene(&bearer_envelope(&format!("http://localhost:{}/start", a.port)));
+    let mut config = keyed_config(scope(&["localhost"]));
+    config.net = Some(two_host_policy());
+
+    let (data, _) = expect_success(run(&sandbox(), &wasm, config));
+    assert_eq!(data["status"], 200);
+    assert!(a.seen.lock().unwrap()[0].head.contains("Bearer key-sentinel"));
+    let landed = b.landed();
+    assert!(!carries_key(&landed), "the key followed the redirect:\n{}", landed.head);
+}
+
+#[test]
+fn a_placeholder_is_filled_in_headers_only() {
+    // Scoping the header substitution is enough only while nothing else is
+    // substituted. The URL and body must leave exactly as the gene wrote them.
+    use base64::Engine as _;
+    let server = Recorder::spawn(200, None);
+    let body = base64::engine::general_purpose::STANDARD.encode("body ${env:SECRET}");
+    let envelope = format!(
+        r#"{{"method":"POST","url":"http://127.0.0.1:{}/x?q=${{env:SECRET}}","bodyBase64":"{body}"}}"#,
+        server.port
+    );
+    let wasm = build_fetch_gene(&envelope);
+    expect_success(run(&sandbox(), &wasm, keyed_config(None)));
+    let seen = server.seen.lock().unwrap()[0].clone();
+    assert_eq!(seen.body, "body ${env:SECRET}");
+    assert!(!seen.head.contains("key-sentinel"), "{}", seen.head);
+}
+
+#[test]
+fn in_a_composition_one_genes_grant_is_not_anothers() {
+    use crate::algebra::{AlgebraExecutor, AlgebraExpr};
+    use crate::types::gene::Gene;
+
+    let server = Recorder::spawn(200, None);
+    let wasm = build_fetch_gene(&bearer_envelope(&format!("http://127.0.0.1:{}/x", server.port)));
+    let mut phenotype = hybrid_phenotype(Fidelity::Hybrid);
+    phenotype.external_dependencies.as_mut().unwrap()[0].credentials = Some(vec!["SECRET".into()]);
+    let granted: [u8; 32] = [1; 32];
+    let refused: [u8; 32] = [2; 32];
+    let gene = |id| Gene { id, phenotype: phenotype.clone(), wasm_bytes: Some(wasm.clone()), source_code: None };
+    let store = HashMap::from([(granted, gene(granted)), (refused, gene(refused))]);
+
+    let mut sb = sandbox();
+    sb.set_insecure_loopback(true);
+    sb.set_hybrid_env(HashMap::new(), HashMap::from([("SECRET".to_string(), "key-sentinel".to_string())]));
+    let executor = AlgebraExecutor::new(&sb, &store)
+        .with_credential_scopes(HashMap::from([
+            (granted, scope(&["127.0.0.1"]).unwrap()),
+            (refused, HashMap::new()),
+        ]))
+        .with_declared_permissions();
+
+    let result = executor
+        .execute(
+            &AlgebraExpr::Seq(vec![AlgebraExpr::Gene(granted), AlgebraExpr::Gene(refused)]),
+            &ctx(true),
+            serde_json::json!({}),
+        );
+    assert!(
+        !matches!(result, Ok(GeneResult::Success { .. })),
+        "the second gene must not get the first gene's key: {result:?}"
+    );
+    let seen = server.seen.lock().unwrap();
+    assert_eq!(seen.len(), 1, "only the granted gene's request may go out");
+    assert!(seen[0].head.contains("Bearer key-sentinel"));
 }

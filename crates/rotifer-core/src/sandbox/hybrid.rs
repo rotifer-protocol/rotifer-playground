@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::types::gene::{Phenotype, NetworkConfig};
-use crate::types::PermissionSet;
+use crate::types::{Context, PermissionSet};
 
 /// Unified error codes shared by all three modules (ADR-327 D2).
 /// Part of the ABI: guests may branch on them (e.g. run their declared
@@ -66,6 +66,10 @@ pub struct HybridConfig {
     /// Secret values usable ONLY through `${env:NAME}` host-side header
     /// substitution — never readable from guest memory (ADR-327 D3).
     pub env_secret: HashMap<String, String>,
+    /// Which hosts each secret may be sent to. `None`: no limit from the
+    /// binding. `Some`: a secret is substituted only into a request whose
+    /// host its entry names; everywhere else it is unresolvable (-2).
+    pub credential_scope: Option<CredentialScope>,
     /// Binding-internal test hook: permit plain-http requests to loopback
     /// addresses (and skip the IP-literal rejection for them). Never derived
     /// from a phenotype and never reachable from the CLI.
@@ -114,6 +118,7 @@ impl HybridConfig {
             net,
             env_plain: HashMap::new(),
             env_secret: HashMap::new(),
+            credential_scope: None,
             allow_insecure_loopback: false,
             host_millis_cap: None,
         }
@@ -416,6 +421,40 @@ pub fn declared_credentials(phenotype: &Phenotype) -> Vec<String> {
     names
 }
 
+/// Credential name to the hosts it may be sent to, as granted for one gene.
+pub type CredentialScope = HashMap<String, Vec<String>>;
+
+/// The scope the binding set for this gene. One that cannot be read grants
+/// nothing: this only ever narrows what a gene gets.
+pub fn credential_scope_of(context: &Context) -> Option<CredentialScope> {
+    let value = context
+        .binding_extensions
+        .as_ref()?
+        .get(super::CREDENTIAL_SCOPE_EXTENSION)?;
+    Some(serde_json::from_value(value.clone()).unwrap_or_default())
+}
+
+/// The secrets a request to `host` may use. Exact host match, ignoring case:
+/// a grant for `api.example.com` does not cover a subdomain of it.
+pub fn secrets_for_host(
+    secret: &HashMap<String, String>,
+    scope: Option<&CredentialScope>,
+    host: &str,
+) -> HashMap<String, String> {
+    let Some(scope) = scope else {
+        return secret.clone();
+    };
+    secret
+        .iter()
+        .filter(|(name, _)| {
+            scope
+                .get(*name)
+                .is_some_and(|hosts| hosts.iter().any(|h| h.eq_ignore_ascii_case(host)))
+        })
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect()
+}
+
 /// Look up every credential `phenotype` declares through `lookup` (the
 /// binding's source: the CLI reads the environment variable of the same
 /// name). `Err` lists each declared name with no value or an empty one, so
@@ -425,9 +464,22 @@ pub fn resolve_credentials(
     phenotype: &Phenotype,
     lookup: &dyn Fn(&str) -> Option<String>,
 ) -> Result<HashMap<String, String>, Vec<String>> {
+    resolve_credentials_in_scope(phenotype, None, lookup)
+}
+
+/// [`resolve_credentials`] limited to the names `scope` grants: a name outside
+/// it is neither read nor reported as missing.
+pub fn resolve_credentials_in_scope(
+    phenotype: &Phenotype,
+    scope: Option<&CredentialScope>,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> Result<HashMap<String, String>, Vec<String>> {
     let mut found = HashMap::new();
     let mut missing = Vec::new();
     for name in declared_credentials(phenotype) {
+        if scope.is_some_and(|s| !s.contains_key(&name)) {
+            continue;
+        }
         match lookup(&name) {
             Some(v) if !v.is_empty() => {
                 found.insert(name, v);
@@ -841,6 +893,68 @@ mod tests {
                 .collect(),
         );
         p
+    }
+
+    fn secrets() -> HashMap<String, String> {
+        HashMap::from([("KEY".to_string(), "value".to_string())])
+    }
+
+    fn scope_of(hosts: &[&str]) -> CredentialScope {
+        HashMap::from([("KEY".to_string(), hosts.iter().map(|h| h.to_string()).collect())])
+    }
+
+    #[test]
+    fn no_scope_leaves_the_secrets_alone() {
+        assert_eq!(secrets_for_host(&secrets(), None, "anywhere.example"), secrets());
+    }
+
+    #[test]
+    fn a_scope_matches_the_exact_host_ignoring_case() {
+        let scope = scope_of(&["API.Example.com"]);
+        assert_eq!(secrets_for_host(&secrets(), Some(&scope), "api.example.com"), secrets());
+    }
+
+    #[test]
+    fn a_scope_does_not_reach_subdomains_parents_or_lookalikes() {
+        let scope = scope_of(&["api.example.com"]);
+        for host in ["evil.api.example.com", "example.com", "api.example.com.evil.test", "xapi.example.com", ""] {
+            assert!(secrets_for_host(&secrets(), Some(&scope), host).is_empty(), "{host}");
+        }
+    }
+
+    #[test]
+    fn a_name_the_scope_does_not_list_is_not_usable() {
+        assert!(secrets_for_host(&secrets(), Some(&HashMap::new()), "api.example.com").is_empty());
+    }
+
+    #[test]
+    fn a_scope_that_cannot_be_read_grants_nothing() {
+        let mut extensions = HashMap::new();
+        extensions.insert(
+            crate::sandbox::CREDENTIAL_SCOPE_EXTENSION.to_string(),
+            serde_json::json!("not a map"),
+        );
+        let context = Context {
+            agent_id: "t".into(),
+            timestamp: 0,
+            permissions: PermissionSet::default(),
+            trace_id: None,
+            binding_extensions: Some(extensions),
+        };
+        assert_eq!(credential_scope_of(&context), Some(HashMap::new()));
+    }
+
+    #[test]
+    fn resolve_in_scope_reads_only_granted_names() {
+        let p = with_credentials(&[&["GRANTED", "OTHER"]]);
+        let scope = HashMap::from([("GRANTED".to_string(), vec!["a.example".to_string()])]);
+        let asked = std::cell::RefCell::new(Vec::new());
+        let got = resolve_credentials_in_scope(&p, Some(&scope), &|n| {
+            asked.borrow_mut().push(n.to_string());
+            None
+        });
+        assert_eq!(got.unwrap_err(), vec!["GRANTED"]);
+        assert_eq!(*asked.borrow(), vec!["GRANTED"]);
     }
 
     #[test]

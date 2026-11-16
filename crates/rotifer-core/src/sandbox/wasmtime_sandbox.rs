@@ -838,12 +838,13 @@ impl WasmtimeSandbox {
             caller.data_mut().hybrid.retained = None;
         }
 
-        let (policy, plain, secret, loopback) = {
+        let (policy, plain, secret, scope, loopback) = {
             let cfg = &caller.data().hybrid.config;
             (
                 cfg.net.clone(),
                 cfg.env_plain.clone(),
                 cfg.env_secret.clone(),
+                cfg.credential_scope.clone(),
                 cfg.allow_insecure_loopback,
             )
         };
@@ -855,13 +856,15 @@ impl WasmtimeSandbox {
             Ok(r) => r,
             Err(code) => return code,
         };
-        if let Err(code) = hybrid::check_url(&policy, &req.url, loopback) {
-            return code;
-        }
+        let target = match hybrid::check_url(&policy, &req.url, loopback) {
+            Ok(url) => url,
+            Err(code) => return code,
+        };
         if caller.data().hybrid.requests_made >= policy.max_requests {
             return ERR_RATE_LIMITED;
         }
-        let resolved_headers = match hybrid::substitute_headers(&req.headers, &plain, &secret) {
+        let usable = hybrid::secrets_for_host(&secret, scope.as_ref(), target.host_str().unwrap_or_default());
+        let resolved_headers = match hybrid::substitute_headers(&req.headers, &plain, &usable) {
             Ok(h) => h,
             Err(code) => return code,
         };
@@ -1430,6 +1433,7 @@ impl Sandbox for WasmtimeSandbox {
             .filter(|(name, _)| declared.contains(name))
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
+        config.credential_scope = hybrid::credential_scope_of(context);
         config.allow_insecure_loopback = self.insecure_loopback;
         let memory = self.memory_link(context, phenotype);
         self.execute_inner(wasm_bytes, context, input, config, memory)

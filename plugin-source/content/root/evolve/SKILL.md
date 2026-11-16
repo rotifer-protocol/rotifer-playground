@@ -14,7 +14,7 @@ Your Agent gets stronger by competing, not by configuring. Scan capabilities, be
 This plugin declares the Rotifer MCP server for you:
 
 ```bash
-npx -y @rotifer/mcp-server@0.19.7 --tools=evolve
+npx -y @rotifer/mcp-server@0.20.1 --tools=evolve
 ```
 
 `--tools=evolve` is not decoration. Left undeclared, the server offers 31 tools
@@ -28,6 +28,19 @@ restriction with an unlisted way around it is not a restriction.
 
 The launch line also omits `--allow`, so the sandbox escapes (`no_sandbox`,
 `trust_unsigned`) are refused.
+
+Your MCP host runs this line when it starts the server, and nothing in it asks
+first: `-y` answers npx's own install prompt, so the first start downloads the
+package from npm and runs it. The approval this Skill asks for (`/evolve upgrade`)
+covers what it does once the server is running, not this download. To review the
+server before it ever runs, install that exact version yourself and point your
+MCP configuration at the installed binary, with the same `--tools=evolve`, in place
+of the entry this plugin declares; then nothing is fetched at start-up:
+
+```bash
+npm i -g @rotifer/mcp-server@0.20.1
+rotifer-mcp-server --tools=evolve
+```
 
 ## Quick Start
 
@@ -93,9 +106,11 @@ No voting, no human preference — pure runtime performance metrics determine wh
 ## Security & Transparency
 
 ### Runtime dependency
-The MCP server is fetched from npm on first use and cached. That is a standard
+The MCP server is fetched from npm on first use and cached, by your MCP host when
+it starts the server, with no prompt (`-y`); installing it yourself first, as under
+Runtime Integration, means it is never fetched at start-up. That is a standard
 pattern, but it means you are trusting remote code — review the source, or check
-`npm view @rotifer/mcp-server@0.19.7 dist.integrity`, before use.
+`npm view @rotifer/mcp-server@0.20.1 dist.integrity`, before use.
 
 - **Source**: [github.com/rotifer-protocol/rotifer-mcp-server](https://github.com/rotifer-protocol/rotifer-mcp-server)
 

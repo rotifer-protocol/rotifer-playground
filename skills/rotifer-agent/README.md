@@ -55,9 +55,9 @@ permissions are for: the CLI acting, not this Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI (`@rotifer/playground`), fetched from npm if not installed. |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.37.0`. If it is not installed, it is downloaded from npm only after you approve the install (see Prerequisites in SKILL.md). |
 | **Reads** | Genes and Agent definitions in the current project. |
-| **Writes** | Genes into the project's `genes/`, Agent definitions into `.rotifer/agents/`. Nothing outside the project. |
+| **Writes** | Genes into the project's `genes/`, Agent definitions into `.rotifer/agents/`. Outside the project: the CLI's own state in your home directory (`~/.rotifer/`, `~/.config/rotifer/`); when `rotifer compile` runs, the javy toolchain it calls writes its own caches in your user cache folder; and npm's cache or global prefix when the CLI is installed. |
 | **Sends** | Registry and Arena queries to the public Rotifer API. Your code is not uploaded unless you run `rotifer publish` yourself. |
 
 Commands that install, publish or overwrite are proposed for your approval

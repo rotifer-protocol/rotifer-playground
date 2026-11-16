@@ -30,13 +30,13 @@ describe("loadNodeRunner and ctx.memory", () => {
     } as unknown as GeneMemoryAccess;
     const loaded = await loadNodeRunner(gene, { kind: "ok" }, { memory });
     expect("runner" in loaded).toBe(true);
-    const outcome = (loaded as { runner: (input: unknown) => { success: boolean; output?: unknown } }).runner({ key: "k" });
+    const outcome = await (loaded as { runner: (input: unknown) => Promise<{ success: boolean; output?: unknown }> }).runner({ key: "k" });
     expect(outcome).toMatchObject({ success: true, output: { value: "stored" } });
   });
 
   it("without one, the gene meets 'no agent context', not a TypeError", async () => {
     const loaded = await loadNodeRunner(gene, { kind: "ok" });
-    const outcome = (loaded as { runner: (input: unknown) => { success: boolean; errorMessage?: string } }).runner({ key: "k" });
+    const outcome = await (loaded as { runner: (input: unknown) => Promise<{ success: boolean; errorMessage?: string }> }).runner({ key: "k" });
     expect(outcome.success).toBe(false);
     expect(outcome.errorMessage).toContain("no agent context");
     expect(outcome.errorMessage).not.toContain("TypeError");

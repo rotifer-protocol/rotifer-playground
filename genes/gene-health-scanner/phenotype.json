@@ -1,8 +1,8 @@
 {
   "name": "gene-health-scanner",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "domain": "meta.diagnostics",
-  "fidelity": "Native",
+  "fidelity": "Wrapped",
   "description": "Seven-dimensional gene library health scanner — diagnoses capability distribution, protocol compliance, security, quality, evolution paths, runtime health, and dependency chains",
   "author": "Rotifer Protocol Contributors",
   "license": "Apache-2.0",

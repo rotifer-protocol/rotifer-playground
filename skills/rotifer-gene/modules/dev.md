@@ -37,9 +37,17 @@ as you go.
 
 ### 3.1 Start one
 
+Genes live in an Agent workspace. `rotifer init <workspace>` creates one, with the
+genesis Genes and an example `hello-world` Gene; it does not create a Gene named
+after its argument.
+
 ```bash
-# a new Gene
-rotifer init my-gene --domain content.grammar --fidelity Native
+rotifer init my-workspace
+cd my-workspace
+
+# a new Gene: make its directory, write genes/my-gene/index.ts (§3.2), then
+mkdir -p genes/my-gene
+rotifer wrap my-gene --domain content.grammar --fidelity Native
 
 # or convert a SKILL.md
 rotifer scan --skills --skills-path ./my-skills
@@ -50,25 +58,30 @@ What you get:
 
 ```
 genes/my-gene/
-├── phenotype.json    # Gene metadata (required)
-├── index.ts          # entry point (exports express)
+├── phenotype.json    # Gene metadata (required); wrap writes it with empty schemas
+├── index.ts          # entry point (exports express); you write it
 ├── SKILL.md          # optional: capability description
 └── README.md         # optional: shown when published
 ```
+
+`wrap` refuses a directory that does not exist. Its `inputSchema` and
+`outputSchema` are empty, so replace them with the real ones (§3.3) before
+testing. A SKILL.md conversion gets `phenotype.json`, `SKILL.md` and
+`.gene-manifest.json`, and no `index.ts`: it is a Wrapped Gene (§5.2).
 
 ### 3.2 Write `express`
 
 A Gene is an `express(input) → output` function:
 
 ```typescript
-export async function express(input: {
+export function express(input: {
   text: string;
   strict?: boolean;
-}): Promise<{
+}): {
   issues: Array<{ line: number; message: string; severity: string }>;
   score: number;
   summary: string;
-}> {
+} {
   // Gene logic
   return { issues: [], score: 100, summary: "No issues found" };
 }
@@ -79,9 +92,17 @@ export async function express(input: {
 - The function is named `express` and is exported.
 - Its parameter and return types match the schemas in `phenotype.json`.
 - Native: no `fetch`, no `fs`, no `net` — no I/O at all.
-- Hybrid: calls go only to hosts in `allowedDomains`.
+- Native: `express` is synchronous. Javy/QuickJS has no event loop, so `compile`
+  refuses an `async` one (`E0025`). A Hybrid `express` may be `async`.
+- Hybrid: calls go only to hosts in `allowedDomains`, through `ctx.gatewayFetch` with an
+  explicit `method` (§5.3). From CLI 0.37.0, a global `fetch` is held to
+  the same `network` block while the CLI runs the Gene (refused when the block is
+  missing); in CLI 0.36.1 and earlier it bypasses `allowedDomains`. Either way
+  `rotifer vg` reports a direct `fetch(` as `S-04` (HIGH).
 - Idempotent: the same input produces the same output, or as close as the domain allows.
-- **Everything a reader sees is in English** — description, comments, README, error messages, SKILL.md.
+- **What a published Gene shows its readers is in English** — description, comments, README,
+  error messages, SKILL.md — because the Registry and the Arena are shared across languages.
+  That is about the Gene's own text; talk to the user in theirs.
 
 ### 3.3 Fill in `phenotype.json`
 
@@ -127,7 +148,8 @@ export async function express(input: {
 **Required:** `domain`, `inputSchema`, `outputSchema`, `version`
 
 **Language:** `description`, every `description` inside a schema, and anything else
-a reader sees is English. Genes go to a global developer market.
+the published Gene shows its readers is English: the Registry and the Arena are
+shared across languages.
 
 **Hybrid also requires:**
 
@@ -249,6 +271,10 @@ rotifer publish
   ↓ write .cloud-manifest.json (cloud_id, owner, version)
 ```
 
+Where it goes: Rotifer Cloud (`https://cloud.rotifer.dev` by default), and a
+published Gene is public. The uploaded fields are listed in `modules/audit.md`
+§4.1 — run that audit before this step, not after.
+
 ### 3.7 Compete in the Arena
 
 ```bash
@@ -326,9 +352,12 @@ Arena bracket — Genes in the same domain compete directly.
 ### 5.1 A Native Gene from scratch
 
 ```bash
-rotifer init my-gene --domain content.format --fidelity Native
-# edit genes/my-gene/index.ts
-# edit genes/my-gene/phenotype.json
+rotifer init my-workspace
+cd my-workspace
+mkdir -p genes/my-gene
+# write genes/my-gene/index.ts
+rotifer wrap my-gene --domain content.format --fidelity Native
+# replace the empty schemas in genes/my-gene/phenotype.json
 rotifer test my-gene --verbose
 rotifer compile my-gene
 rotifer test my-gene --compliance
@@ -341,30 +370,90 @@ rotifer arena submit my-gene --cloud
 ```bash
 rotifer scan --skills --skills-path ./path/to/skills
 rotifer wrap my-skill --domain content.grammar --from-skill ./SKILL.md
-# review the generated phenotype.json and index.ts
-rotifer test my-skill
+# review the generated genes/my-skill/phenotype.json
 rotifer compile my-skill
+rotifer vg genes/my-skill
 ```
+
+`wrap --from-skill` writes `phenotype.json`, `SKILL.md` and `.gene-manifest.json`,
+and no `index.ts`. The result is a Wrapped Gene: `compile` validates its phenotype
+and produces no WASM, and `rotifer test` fails on it with `No gene source file
+found`. To make it run, write `index.ts` — the Wrapped → Native path in
+[`migration.md`](migration.md).
 
 ### 5.3 A Hybrid Gene
 
+Inside a workspace:
+
 ```bash
-rotifer init my-api-gene --domain search.web --fidelity Hybrid
-# add to phenotype.json:
-#   "network": { "allowedDomains": ["api.example.com"], "maxTimeoutMs": 5000 }
-# edit index.ts and fetch only from the allowed host
+mkdir -p genes/my-api-gene
+# write genes/my-api-gene/index.ts (below)
+rotifer wrap my-api-gene --domain search.web --fidelity Hybrid
+# wrap adds a "network" block with an empty allowedDomains; in phenotype.json set
+#   "allowedDomains": ["example.com"], "maxTimeoutMs": 5000
+# and replace the empty schemas: input {} (no fields), output { "status": number }
 rotifer test my-api-gene
 rotifer compile my-api-gene
 ```
 
+```typescript
+type Gateway = {
+  gatewayFetch: (url: string, options?: { method?: string }) => Promise<{ status: number; body: string }>;
+};
+
+// Reports whether example.com answers. The request carries nothing from the input.
+export async function express(_input: Record<string, never>, ctx: Gateway): Promise<{ status: number }> {
+  // the gateway sends POST unless method says otherwise
+  const res = await ctx.gatewayFetch("https://example.com/", { method: "GET" });
+  return { status: res.status };
+}
+```
+
+Whatever a Gene puts in a request — URL, headers, body — goes to that host. A
+Gene that sends the user's input on (a search query, text to translate) says so
+in its description, and `allowedDomains` names only the hosts it needs.
+
+`allowedDomains` applies to `ctx.gatewayFetch`, the second argument that `test`, `run`,
+`agent run` and `hello` pass a Gene with a `network` block: a host that is not
+listed is refused (`Domain "…" is not in the allowed list`), and `maxTimeoutMs`
+and the rate limit hold. Pass `method` every time: the gateway sends `POST` when
+it is left out. The response has `status`, `headers` and `body` (a string), not
+`ok` or `json()`.
+
+A global `fetch` depends on the CLI version:
+
+- From CLI 0.37.0: while the CLI runs a Gene under Node.js, its global
+  `fetch` goes through the same gateway (same allow-list, timeout, rate limit
+  and count). A Gene with no `network` block is refused (`Gene '…' declares no
+  network access`). It keeps fetch's own behaviour (`GET` by default, a real
+  `Response`), except that a response over `maxResponseBytes` fails instead of
+  being cut short. `WebSocket` and `EventSource` are refused.
+- CLI 0.36.1 and earlier: a global `fetch` does not go through the gateway, and
+  `allowedDomains` does not apply to it.
+
+Write `ctx.gatewayFetch` either way: `rotifer vg` reports a direct `fetch(` as
+`S-04`, a HIGH finding.
+
+The Node.js path is not a sandbox. A Gene run there has the host's full
+privileges, and the CLI's check does not reach `node:http`, `node:https`,
+`node:http2`, `node:net`, `node:tls` or `node:dgram`, a child process (`curl`),
+`worker_threads`, DNS lookups, a callback that runs outside the Gene's async
+context (a `process.on("exit")` listener), or a timer that fires after
+`express` has returned. Only the WASM sandbox confines a Gene; there the one way
+out is the host's checked fetch.
+
+`test` runs `express()` under Node.js and makes the real request; here the output
+is `{"status": 200}`. `compile` validates a Hybrid Gene and produces no WASM unless
+you pass `--wasm`.
+
 ### 5.4 Compose an Agent
 
 ```bash
-# from named Genes
-rotifer agent create my-agent --genes gene-a,gene-b --composition Seq
+# from named Genes, separated by spaces
+rotifer agent create my-agent --genes my-gene genesis-code-format --composition Seq
 
-# or let the Arena ranking choose
-rotifer agent create smart-agent --domain content.grammar,content.format --top 1
+# or let the ranking choose: the top Genes of one domain, from this workspace
+rotifer agent create smart-agent --domain content.format --top 1
 
 rotifer agent run my-agent --input '{"text": "Hello wrold"}'
 ```
@@ -378,7 +467,8 @@ rotifer agent run my-agent --input '{"text": "Hello wrold"}'
 | Error | Cause | Fix |
 |-------|-------|-----|
 | `Missing required field: domain` | phenotype.json is incomplete | fill in the required fields |
-| `No express function exported` | index.ts does not export it | `export async function express(...)` |
+| `No express function exported` | index.ts does not export it | `export function express(...)` |
+| `E0025` … `must export a synchronous express(input)` | a Native Gene's `express` is `async` | drop `async` and return the value, or make it a Hybrid Gene |
 | `WASM compilation failed` | Javy could not compile it | check the syntax, and that no Node-only API is used |
 | `Hybrid gene missing allowedDomains` | no network allowlist | add the `network` block to phenotype.json |
 | `localhost in allowedDomains` | a Hybrid Gene pointing at a local address | use the production host |
@@ -397,7 +487,7 @@ rotifer agent run my-agent --input '{"text": "Hello wrold"}'
 □ version follows semver — a breaking change bumps major
 □ README.md shows a worked example
 □ rotifer test --compliance passes end to end
-□ every reader-facing string is English
+□ every string the published Gene shows its readers is English
 ```
 
 ---
@@ -454,6 +544,9 @@ rotifer agent run my-agent --input '{"text": "Hello wrold"}'
 ---
 
 ## 9. Extending This
+
+For contributors changing Rotifer itself — the CLI and `rotifer-core` — not for
+building a Gene: where each kind of addition has to land.
 
 ### A new fidelity level
 

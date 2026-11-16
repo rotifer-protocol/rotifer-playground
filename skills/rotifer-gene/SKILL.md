@@ -64,7 +64,16 @@ Nothing on its own. It describes commands — `rotifer init`, `test`, `compile`,
   only the hosts in its `network.allowedDomains`. A global `fetch` is held to the
   same list from CLI 0.37.0, the version pinned here; in 0.36.1 and earlier it
   is not (`modules/dev.md` §5.3).
+- The installed CLI makes one version check per day to `registry.npmjs.org`,
+  whatever the command. It is skipped under `npx`, in CI, or with
+  `ROTIFER_NO_UPDATE_CHECK` set.
+- `run` and `agent run` send an anonymous heartbeat each time they run a Gene:
+  a random machine id, the channel it ran from and the CLI version, nothing
+  about the Gene or your files. When you are signed in, running a Gene
+  installed from Cloud also records that invocation (the Gene id and your
+  Agent) against your account. `rotifer telemetry off`, `ROTIFER_TELEMETRY=0`
+  or `DO_NOT_TRACK=1` turns both off.
 
-Everything else is local. Read `modules/audit.md` before your first publish: it
+Nothing else leaves your machine. Read `modules/audit.md` before your first publish: it
 is the difference between finding a leaked credential on your disk and finding
 it in a public registry.

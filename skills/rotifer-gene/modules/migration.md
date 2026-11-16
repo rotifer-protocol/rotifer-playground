@@ -303,7 +303,7 @@ export async function express(
 
 - Every request goes through `ctx.gatewayFetch`, the second argument `express`
   receives, to a host in `allowedDomains`, with an explicit `method` (the gateway
-  sends `POST` when it is left out). From the next CLI release a global `fetch`
+  sends `POST` when it is left out). From CLI 0.37.0 a global `fetch`
   is held to the same `network` block while the CLI runs the Gene, and refused
   when there is none; in CLI 0.36.1 and earlier it bypasses `allowedDomains`.
   `rotifer vg` reports a direct `fetch(` as `S-04` (HIGH) either way. The CLI's

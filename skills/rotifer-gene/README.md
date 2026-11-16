@@ -17,15 +17,15 @@ Three manuals, loaded on demand rather than all at once:
 
 ```bash
 # an Agent workspace: genesis Genes plus an example hello-world Gene
-npx --yes @rotifer/playground@0.36.1 init my-workspace
+npx --yes @rotifer/playground@0.37.0 init my-workspace
 cd my-workspace
 mkdir -p genes/my-gene
 # write express() in genes/my-gene/index.ts
-npx --yes @rotifer/playground@0.36.1 wrap my-gene --domain content.grammar --fidelity Native
+npx --yes @rotifer/playground@0.37.0 wrap my-gene --domain content.grammar --fidelity Native
 # replace the empty inputSchema and outputSchema that wrap wrote to genes/my-gene/phenotype.json
-npx --yes @rotifer/playground@0.36.1 test my-gene --verbose
-npx --yes @rotifer/playground@0.36.1 compile my-gene
-npx --yes @rotifer/playground@0.36.1 test my-gene --compliance
+npx --yes @rotifer/playground@0.37.0 test my-gene --verbose
+npx --yes @rotifer/playground@0.37.0 compile my-gene
+npx --yes @rotifer/playground@0.37.0 test my-gene --compliance
 ```
 
 Every command names an exact CLI version on purpose: an unversioned `npx` resolves to whatever the
@@ -33,7 +33,7 @@ registry serves at that moment, so what you run would not be what was reviewed. 
 install the CLI into the project and run the local binary:
 
 ```bash
-npm install --save-dev --save-exact @rotifer/playground@0.36.1
+npm install --save-dev --save-exact @rotifer/playground@0.37.0
 npm exec -- rotifer test my-gene --verbose
 ```
 
@@ -64,7 +64,7 @@ permissions are for: the CLI acting, not this Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.36.1`; fetched from npm at that exact version if it is not already installed. |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.37.0`; fetched from npm at that exact version if it is not already installed. |
 | **Reads** | Genes in the current project — source, `phenotype.json`, and the local manifests. |
 | **Writes** | Genes into the project's `genes/`, compiled IR beside them. Nothing outside the project. |
 | **Sends** | Nothing, until you publish. `publish`, `arena submit --cloud` and `login` reach the network; `init`, `test` and `compile` are local. |

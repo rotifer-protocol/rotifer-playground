@@ -53,9 +53,9 @@ permissions are for: the CLI acting, not this Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI (`@rotifer/playground`), fetched from npm if not installed. |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.37.0`. If it is not installed, it is downloaded from npm only after you approve the install (see Prerequisites in SKILL.md). |
 | **Reads** | Genes and Agent definitions in the current project. |
-| **Writes** | Compiled Gene artifacts in the project, and — only when you reply "save" — an evaluation report under `arena-reports/`. Nothing outside the project. |
+| **Writes** | Compiled Gene artifacts in the project, and — only when you reply "save" — an evaluation report under `arena-reports/`. Outside the project: the CLI's own state in your home directory (`~/.rotifer/`, `~/.config/rotifer/`, and the WASM runtime's compile cache in your user cache folder), and npm's cache or global prefix when the CLI is installed. |
 | **Sends** | Arena submissions and registry queries to the public Rotifer API. Your Gene's source is not uploaded unless you run `rotifer publish` yourself. |
 
 Full detail in [SKILL.md](SKILL.md).

@@ -15,11 +15,23 @@ description: >-
 
 ## Prerequisites
 
-This Skill requires the Rotifer CLI:
+This Skill requires the Rotifer CLI. Check for an installed one first; this
+downloads nothing:
 
 ```bash
-npx --yes @rotifer/playground@0.37.0 --version
+rotifer --version
 ```
+
+If `rotifer` is not found, propose an install and wait for the user's approval
+before running it. Each option downloads `@rotifer/playground@0.37.0` from npm:
+`npm i -g @rotifer/playground@0.37.0` puts the `rotifer` binary in npm's global
+prefix, `npm install --save-dev --save-exact @rotifer/playground@0.37.0` keeps it
+in the project (run it as `npm exec -- rotifer`), and
+`npx --yes @rotifer/playground@0.37.0 <command>` runs it from npm's cache without
+installing it. `--yes` only skips npx's own "Ok to proceed?" prompt, which npx
+also skips by itself when its input is not a terminal, as in most assistant
+shells. It is not the approval: the user's approval is the reply to your
+proposal, and it comes before the command runs.
 
 Or use the MCP Server for IDE integration:
 
@@ -203,7 +215,8 @@ Skill execution:
 ## Checklist Before Running
 
 - Project has a `rotifer.json` (if not, guide `rotifer init`)
-- CLI is installed: `npm i -g @rotifer/playground@0.37.0`, or invoke it as `npx --yes @rotifer/playground@0.37.0`
+- CLI is installed (`rotifer --version`); if not, propose one of the installs under
+  Prerequisites and wait for the user's approval
 - `rotifer doctor` passes — compiling to Native WASM needs esbuild and javy, and
   without them `rotifer compile` fails in a way that reads like a code error
 - ClawHub imports require network connectivity
@@ -219,9 +232,9 @@ Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI (`@rotifer/playground`), fetched from npm if not installed. |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.37.0`. If it is not installed, it is downloaded from npm only after you approve the install (see Prerequisites). |
 | **Reads** | Genes and Agent definitions in the current project workspace. |
-| **Writes** | Only what the commands below write — Genes into the project's `genes/`, Agent definitions into `.rotifer/agents/`. Nothing outside the project. |
+| **Writes** | Only what the commands below write — Genes into the project's `genes/`, Agent definitions into `.rotifer/agents/`. Outside the project: the CLI's own state in your home directory (`~/.rotifer/`, `~/.config/rotifer/`, and the WASM runtime's compile cache in your user cache folder), and npm's cache or global prefix when the CLI is installed. |
 | **Sends** | Cloud registry and Arena queries, to the public Rotifer API. Your code is not uploaded unless you run `rotifer publish` yourself. |
 
 Commands that install, publish or overwrite are proposed for your approval

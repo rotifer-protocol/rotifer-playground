@@ -17,11 +17,23 @@ description: >-
 
 ## Prerequisites
 
-Before using this Skill, ensure the Rotifer CLI is available:
+Before using this Skill, check that the Rotifer CLI is installed; this downloads
+nothing:
 
 ```bash
-npx --yes @rotifer/playground@0.37.0 --version
+rotifer --version
 ```
+
+If `rotifer` is not found, propose an install and wait for the user's approval
+before running it. Each option downloads `@rotifer/playground@0.37.0` from npm:
+`npm i -g @rotifer/playground@0.37.0` puts the `rotifer` binary in npm's global
+prefix, `npm install --save-dev --save-exact @rotifer/playground@0.37.0` keeps it
+in the project (run it as `npm exec -- rotifer`), and
+`npx --yes @rotifer/playground@0.37.0 <command>` runs it from npm's cache without
+installing it. `--yes` only skips npx's own "Ok to proceed?" prompt, which npx
+also skips by itself when its input is not a terminal, as in most assistant
+shells. It is not the approval: the user's approval is the reply to your
+proposal, and it comes before the command runs.
 
 If you prefer MCP integration instead of CLI, add this to your MCP config:
 
@@ -36,7 +48,7 @@ If you prefer MCP integration instead of CLI, add this to your MCP config:
 }
 ```
 
-Both commands name an exact version on purpose. An unversioned `npx` resolves to whatever the
+The install commands and the MCP config name an exact version on purpose. An unversioned `npx` resolves to whatever the
 registry serves at that moment, so the code you run would not be the code that was reviewed. The
 `@rotifer/mcp-server` pin is the one this repository agrees on everywhere; move it in one deliberate
 step, not per file. Stronger than pinning the `npx` call: install the CLI into the project and run
@@ -94,7 +106,7 @@ Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.37.0`. If it is not installed, `npx` fetches that exact version into npm's cache, `npm i -g` puts it in npm's global prefix, and `npm install --save-dev` keeps it inside the project. |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.37.0`. If it is not installed, an install is proposed and waits for your approval: `npx` fetches that exact version into npm's cache, `npm i -g` puts it in npm's global prefix, and `npm install --save-dev` keeps it inside the project. |
 | **Reads** | Genes and Agent definitions in the current project workspace. |
 | **Writes in the project** | Genes into `genes/` (with their compiled output and score caches), and Agent definitions into `.rotifer/agents/`. |
 | **Writes outside the project** | The CLI's own state in your home directory: `~/.rotifer/` (a local database, an audit log, a run log, the telemetry setting, and your session token if you run `rotifer login`) and `~/.config/rotifer/` (a daily update-check cache), plus the WASM runtime's compile cache in your user cache folder. Installing the CLI writes to npm's cache, or to npm's global prefix with `npm i -g`. |
@@ -111,7 +123,7 @@ first, never run silently.
 ### Phase 1: Environment Check
 
 ```bash
-npx --yes @rotifer/playground@0.37.0 --version
+rotifer --version
 rotifer doctor
 rotifer list
 ```
@@ -119,7 +131,9 @@ rotifer list
 If the CLI is missing, propose an install and wait for approval. `npm install
 --save-dev --save-exact @rotifer/playground@0.37.0` keeps it in the project (run it
 as `npm exec -- rotifer`); `npm i -g @rotifer/playground@0.37.0` installs the
-`rotifer` binary at that exact version into npm's global prefix, outside the project.
+`rotifer` binary at that exact version into npm's global prefix, outside the project;
+`npx --yes @rotifer/playground@0.37.0 <command>` runs it from npm's cache without
+installing it. Whichever the user picks, it runs only after they approve it.
 
 `rotifer doctor` checks the TypeScript→WASM toolchain (esbuild / javy). Run it
 first: without that toolchain `rotifer compile` fails at the WASM step, and the
@@ -428,7 +442,7 @@ After confirming the migration plan, route to the `rotifer-gene` Skill (its migr
 rotifer test <name>
 rotifer vg <path-to-gene>
 rotifer compile <name>
-rotifer arena submit <name>
+rotifer arena submit <name>        # scored on this machine; nothing is uploaded
 rotifer arena watch <domain>
 ```
 

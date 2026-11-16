@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Requires network access and Node.js. Launches `npx -y @rotifer/mcp-server@0.20.1 --tools=evolve` for Arena rankings and Gene metadata.
 metadata:
   author: rotifer-protocol
-  version: "2.4.16"
+  version: "2.4.17"
   command: /evolve
   mcp-package: "@rotifer/mcp-server@0.20.1"
 ---
@@ -30,6 +30,19 @@ publish on your behalf or log you in.
 The launch line also omits `--allow`, so the sandbox escapes (`no_sandbox`,
 `trust_unsigned`) are refused. Ten tools with an escape hatch in one of them
 would not be ten tools.
+
+Your MCP host runs this line when it starts the server, and nothing in it asks
+first: `-y` answers npx's own install prompt, so the first start downloads the
+package from npm and runs it. The approvals this Skill asks for (`/evolve upgrade`,
+`/evolve create-agent`) cover what it does once the server is running, not this
+download. To review the server before it ever runs, install that exact version
+yourself and point the MCP config at the installed binary, with the same
+`--tools=evolve`; then nothing is fetched at start-up:
+
+```bash
+npm i -g @rotifer/mcp-server@0.20.1
+rotifer-mcp-server --tools=evolve
+```
 
 ## Quick Start
 
@@ -155,7 +168,7 @@ No Gene is replaced without your confirmation.
 ## Security & Transparency
 
 ### Runtime dependency
-This Skill runs [`@rotifer/mcp-server@0.20.1`](https://www.npmjs.com/package/@rotifer/mcp-server/v/0.20.1) at runtime, launched as `npx -y @rotifer/mcp-server@0.20.1`. The package is **fetched from npm on first use** and cached locally. This is a standard MCP Skill pattern but means you are trusting remote code — review the source before use.
+This Skill runs [`@rotifer/mcp-server@0.20.1`](https://www.npmjs.com/package/@rotifer/mcp-server/v/0.20.1) at runtime, launched as `npx -y @rotifer/mcp-server@0.20.1`. The package is **fetched from npm on first use** and cached locally — by your MCP host when it starts the server, with no prompt (`-y`). Installing it yourself first, as under Runtime Integration, means it is never fetched at start-up. This is a standard MCP Skill pattern but means you are trusting remote code — review the source before use.
 
 `/evolve run-agent` is a second such path: it invokes the `rotifer` CLI, and when that is not on `PATH` it falls back to `npx -y @rotifer/playground@0.37.0`. That fallback lives in the server rather than here; server versions before 0.19.3 left it unpinned. This Skill requires 0.19.5: it reports usage with your sign-in (calls from servers older than 0.19.4 are no longer counted), and it stops reporting when you run `rotifer telemetry off`, reading the same `~/.rotifer/telemetry.json` as the CLI. Installing the CLI at a version you have reviewed (`npm i -g @rotifer/playground@0.37.0`) means `run-agent` never fetches anything.
 

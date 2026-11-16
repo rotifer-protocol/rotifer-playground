@@ -1,15 +1,14 @@
 -- ============================================================
 -- pgTAP tests for node attestation (PoR), v0.9.5 A1 Cloud side
--- Migration: supabase/migrations-deferred-v095-por/20261102200000_node_attestation.sql
+-- Migration: supabase/migrations/20261102200000_node_attestation.sql
 -- File: supabase/tests/node_attestation.sql
 -- ============================================================
 --
--- The migration is deferred (not in supabase/migrations/), so a plain
--- `supabase test db` has no nodes table and this file reports one skip.
--- To run it, apply the deferred file to the local database first:
---
---   psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations-deferred-v095-por/20261102200000_node_attestation.sql
---   supabase test db
+-- `supabase start` applies the migration with the rest of the chain, so
+-- `supabase test db` runs every assertion here. Without the nodes table this
+-- file reports one skip, which `supabase test db` shows as green; CI also
+-- runs it through supabase/functions/node-attestation/pgtap-deferred.sh,
+-- which fails on that skip.
 --
 -- A row-level policy that matches nothing returns zero rows without an
 -- error, so isolation is asserted by counting rows (is(count, 0)), not by
@@ -558,7 +557,7 @@ ROLLBACK;
 \else
 
 SELECT plan(1);
-SELECT skip('node attestation migration is deferred (supabase/migrations-deferred-v095-por/); apply it locally to run these tests', 1);
+SELECT skip('node attestation migration is not applied (supabase/migrations/20261102200000_node_attestation.sql); run supabase db reset to run these tests', 1);
 SELECT * FROM finish();
 
 \endif

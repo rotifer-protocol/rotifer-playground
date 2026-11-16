@@ -700,17 +700,19 @@ jobs:
           supabase test db
 
       - name: Run the deferred node-attestation pgTAP
-        # The node-attestation migration is deferred
-        # (supabase/migrations-deferred-v095-por/, not in the chain replayed
-        # above), so in the step above node_attestation.sql only skips. Apply
-        # it to this throwaway database and run that file on its own. The
-        # script fails if the migration is not there, or if the file skips or
-        # runs fewer assertions than it declares, so a green step means every
+        # The node-attestation migration (20261102200000) is in the chain
+        # replayed above, so it is not applied again here (--no-apply):
+        # applying it twice fails on tables that already exist. The step
+        # name is kept from when the migration was deferred. node_attestation.sql
+        # skips when the nodes table is missing, which `supabase test db`
+        # would report as green; this script runs that file on its own and
+        # fails if the migration is not there, or if the file skips or runs
+        # fewer assertions than it declares, so a green step means every
         # assertion ran.
-        run: bash supabase/functions/node-attestation/pgtap-deferred.sh
+        run: bash supabase/functions/node-attestation/pgtap-deferred.sh --no-apply
 
       - name: Run the node-attestation concurrency checks
-        # Needs the deferred migration from the step above. Several Postgres
+        # Needs the node-attestation migration from the chain. Several Postgres
         # sessions redeem at once against the per-account limit, one nonce
         # and one PeerId, logged in as por_issuer like the edge function (a
         # throwaway password, removed at the end). Exits 1 on a wrong result.

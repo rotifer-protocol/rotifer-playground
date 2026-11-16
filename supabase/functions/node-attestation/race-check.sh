@@ -1,5 +1,5 @@
 #!/bin/bash
-# Concurrency checks for node_attestation_issue (deferred migration
+# Concurrency checks for node_attestation_issue (migration
 # 20261102200000). Single-session pgTAP cannot exercise these: each needs two
 # or more sessions redeeming at the same time.
 #
@@ -19,7 +19,8 @@
 # function's do; the password is made here, never written down, and the role
 # goes back to NOLOGIN at the end.
 # Exits 1 on the first wrong result. Local stack only; the database must have
-# the deferred migration applied (see supabase/tests/node_attestation.sql).
+# the migration applied (`supabase start` applies it with the rest of
+# supabase/migrations/).
 set -u
 DB="${DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}"
 # A shell profile can export DB_URL for a hosted project: refuse any host
@@ -69,7 +70,7 @@ live() {
        AND NOT EXISTS (SELECT 1 FROM node_attestation_revocations r WHERE r.peer_id = i.peer_id AND i.iat <= r.not_after);"
 }
 
-[ "$(q "SELECT to_regclass('public.nodes') IS NOT NULL")" = t ] || { echo "the deferred migration is not applied" >&2; exit 2; }
+[ "$(q "SELECT to_regclass('public.nodes') IS NOT NULL")" = t ] || { echo "the node-attestation migration is not applied" >&2; exit 2; }
 cleanup
 printf "ALTER ROLE por_issuer LOGIN PASSWORD '%s';\n" "$PW" | psql "$DB" -X -q -v ON_ERROR_STOP=1 >/dev/null
 [ "$(iq "SELECT current_user")" = por_issuer ] || fail "cannot log in as por_issuer"

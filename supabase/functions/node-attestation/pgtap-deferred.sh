@@ -1,16 +1,19 @@
 #!/bin/bash
-# Applies the deferred PoR migration (20261102200000) to a throwaway database
-# and runs supabase/tests/node_attestation.sql against it, refusing to pass
-# on a skip. That pgTAP file skips when the nodes table is missing, which
-# keeps the regular `supabase test db` green while the migration is deferred;
-# here the migration has just been applied, so a skip means the assertions
-# never ran, and that fails.
+# Runs supabase/tests/node_attestation.sql against a throwaway database with
+# the PoR migration (20261102200000) in it, refusing to pass on a skip. That
+# pgTAP file skips when the nodes table is missing, which a plain
+# `supabase test db` reports as green; here a skip means the assertions never
+# ran, and that fails.
 #
 #   DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres \
 #     bash supabase/functions/node-attestation/pgtap-deferred.sh [--no-apply]
 #
-# --no-apply leaves the migration out, to check that the guard below fails
-# without it. Used by CI (supabase-migrations job). Local stack only.
+# The migration is in supabase/migrations/, so `supabase start` (db reset)
+# has already applied it: CI passes --no-apply, and applying it again would
+# fail on tables that already exist. Without --no-apply the script applies
+# the file first, for a database that does not have it. The name is kept from
+# when the migration was deferred. Used by CI (supabase-migrations job).
+# Local stack only.
 set -euo pipefail
 DB="${DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}"
 # A shell profile can export DB_URL for a hosted project: refuse any host
@@ -18,7 +21,7 @@ DB="${DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}"
 H="${DB#*://}"; H="${H##*@}"; H="${H%%/*}"; case "$H" in \[*) H="${H%%]*}]" ;; *) H="${H%%:*}" ;; esac
 case "$H" in 127.0.0.1|localhost|"[::1]") ;; *) echo "DB_URL points at $H; local stack only (127.0.0.1)" >&2; exit 2 ;; esac
 
-MIGRATION=supabase/migrations-deferred-v095-por/20261102200000_node_attestation.sql
+MIGRATION=supabase/migrations/20261102200000_node_attestation.sql
 TESTS=supabase/tests/node_attestation.sql
 
 if [ "${1:-}" != --no-apply ]; then
@@ -31,7 +34,7 @@ fi
 present=$(psql "$DB" -X -t -A -v ON_ERROR_STOP=1 \
   -c "SELECT to_regclass('public.nodes') IS NOT NULL AND (SELECT count(*) FROM pg_roles WHERE rolname IN ('por_issuer', 'por_operator')) = 2")
 if [ "$present" != t ]; then
-  echo "::error::the deferred migration is not in this database (no nodes table, or no por_issuer or por_operator role); node_attestation.sql would only skip" >&2
+  echo "::error::the node-attestation migration is not in this database (no nodes table, or no por_issuer or por_operator role); node_attestation.sql would only skip" >&2
   exit 1
 fi
 

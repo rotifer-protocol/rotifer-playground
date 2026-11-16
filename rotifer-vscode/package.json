@@ -350,7 +350,7 @@
         },
         "rotifer.anonKey": {
           "type": "string",
-          "default": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpaGJtcHVxbGFtaHhibWFoY2plIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4MjUxMTQsImV4cCI6MjA4NzQwMTExNH0.t77n7TZ2jV04lya2sWuv4AYAcXnsc49jcfVIJr0heYQ",
+          "default": "sb_publishable_6aCznk-jn2QIQcN3QZobKg_3r9C-wzk",
           "description": "Supabase anon key for the Rotifer Cloud (public key, safe to share)"
         }
       }

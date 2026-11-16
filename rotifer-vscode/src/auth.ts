@@ -225,7 +225,7 @@ export class AuthManager {
           const refreshToken = url.searchParams.get("refresh_token");
 
           res.writeHead(200, { "Content-Type": "text/html" });
-          res.end("<html><body><h2>Login successful! You can close this tab.</h2><script>window.close()</script></body></html>");
+          res.end("<html><body><h2>Sign-in response received. Return to your editor to see whether you are signed in. You can close this tab.</h2><script>window.close()</script></body></html>");
 
           clearTimeout(timeout);
           server.close();

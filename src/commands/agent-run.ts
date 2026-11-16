@@ -10,7 +10,8 @@ import { requireProjectRoot } from "../utils/project-root.js";
 import { geneIdV2, tryLoadBinding, type NativeBinding } from "../utils/binding.js";
 import { evaluateL0, isExternallySourced, nodeRefusalMessage } from "../utils/l0-gate.js";
 import { ALLOW_CREDENTIALS_OPTION, compiledGenes, executeAlgebra, executeGene, requireCredentialConsent } from "../utils/env-grant-consent.js";
-import { createGatewayFetch, type GatewayFetchOptions, type GatewayResponse } from "../runtime/network-gateway.js";
+import type { GatewayFetchOptions, GatewayResponse } from "../runtime/network-gateway.js";
+import { geneEgress, withGeneEgress } from "../runtime/egress-guard.js";
 import type { GeneMemoryAccess } from "../memory/index.js";
 import { openAgentMemory, type AgentMemoryHandle, type WasmMemory } from "../memory/host.js";
 import { DomainFailoverEngine, type GeneExecutionResult } from "../runtime/domain-failover.js";
@@ -341,7 +342,9 @@ export const agentRunCommand = new Command("run")
           }
 
           const absPath = resolve(geneDir, srcFile);
-          const mod = await import(pathToFileURL(absPath).href);
+          // Top-level code and express() answer to the gene's network declaration.
+          const egress = geneEgress(geneName, phenotypeData);
+          const mod = await withGeneEgress(egress, () => import(pathToFileURL(absPath).href));
 
           if (typeof mod.express !== "function") {
             pipelineLog.push({
@@ -360,16 +363,16 @@ export const agentRunCommand = new Command("run")
           // The agent's memory (spec §38.2; ctx.memory), bound to this gene.
           const memory = agentMemory.forGene(geneName, phenotypeData);
 
-          if (phenotypeData.fidelity === "Hybrid" && phenotypeData.network) {
-            const { gatewayFetch, gateway } = createGatewayFetch(phenotypeData.network);
-            display.info(`  ${geneName} is Hybrid — gateway active (domains: ${phenotypeData.network.allowedDomains?.join(", ") || "none"})`);
-            result = await mod.express(current, { gatewayFetch, memory });
+          const { gateway, gatewayFetch } = egress;
+          if (gateway && gatewayFetch) {
+            display.info(`  ${geneName} is ${phenotypeData.fidelity || "Wrapped"} — gateway active (domains: ${phenotypeData.network.allowedDomains?.join(", ") || "none"})`);
+            result = await withGeneEgress(egress, () => mod.express(current, { gatewayFetch, memory }));
             if (options.verbose) {
               const stats = gateway.stats;
               display.info(`  Gateway stats: ${stats.totalRequests} requests, ${stats.totalBytes} bytes`);
             }
           } else {
-            result = await mod.express(current, { memory });
+            result = await withGeneEgress(egress, () => mod.express(current, { memory }));
           }
 
           const stepElapsed = performance.now() - stepStart;
@@ -711,7 +714,9 @@ export async function buildGeneExecutor(
   }
 
   const absPath = resolve(geneDir, srcFile);
-  const mod = await import(pathToFileURL(absPath).href);
+  // One gateway per executor: the gene's rate limit holds across its calls.
+  const egress = geneEgress(geneName, phenotype);
+  const mod = await withGeneEgress(egress, () => import(pathToFileURL(absPath).href));
 
   if (typeof mod.express !== "function") {
     return async (): Promise<GeneExecutionResult> => ({
@@ -722,17 +727,16 @@ export async function buildGeneExecutor(
     });
   }
 
-  const isHybrid = phenotype.fidelity === "Hybrid" && phenotype.network;
+  const { gatewayFetch } = egress;
 
   return async (input: unknown): Promise<GeneExecutionResult> => {
     const start = performance.now();
     try {
       let result: unknown;
-      if (isHybrid) {
-        const { gatewayFetch } = createGatewayFetch(phenotype.network as any);
-        result = await mod.express(input, { gatewayFetch, memory });
+      if (gatewayFetch) {
+        result = await withGeneEgress(egress, () => mod.express(input, { gatewayFetch, memory }));
       } else {
-        result = await mod.express(input, { memory });
+        result = await withGeneEgress(egress, () => mod.express(input, { memory }));
       }
       const elapsed = performance.now() - start;
       logGeneExecution({ geneDir,
@@ -743,7 +747,7 @@ export async function buildGeneExecutor(
       return {
         success: true,
         output: result,
-        engine: isHybrid ? "node+gateway" : "node",
+        engine: gatewayFetch ? "node+gateway" : "node",
         durationMs: elapsed,
       };
     } catch (err: any) {

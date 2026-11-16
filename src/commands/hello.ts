@@ -12,7 +12,7 @@ import { buildGeneExecutor, findAgent, printProtocolInsights } from "./agent-run
 import { tryLoadBinding } from "../utils/binding.js";
 import { ALLOW_CREDENTIALS_OPTION, compiledGenes, requireCredentialConsent } from "../utils/env-grant-consent.js";
 import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
-import { createGatewayFetch } from "../runtime/network-gateway.js";
+import { geneEgress, withGeneEgress } from "../runtime/egress-guard.js";
 import { readErrorEnvelope } from "../testsuite/gate.js";
 import { diagnoseLocalGene, diagnoseRegistryGene, type GeneDiagnosis } from "../cloud/gene-availability.js";
 
@@ -582,12 +582,14 @@ async function tryGeneDisplay(
   if (displayL0.kind === "violation") return false;
   if (displayL0.kind === "unavailable" && isExternallySourced(geneDir)) return false;
 
+  // display() is the gene's code as much as express() is: same network rules.
+  const egress = geneEgress(geneName, phenotype);
   try {
     const absPath = resolve(geneDir, srcFile);
-    const mod = await import(pathToFileURL(absPath).href);
+    const mod = await withGeneEgress(egress, () => import(pathToFileURL(absPath).href));
 
     if (typeof mod.display === "function") {
-      mod.display(output, options);
+      await withGeneEgress(egress, () => mod.display(output, options));
       return true;
     }
   } catch {
@@ -962,7 +964,9 @@ export async function executeGenomePipeline(
 
     try {
       const absPath = resolve(geneDir, srcFile);
-      const mod = await import(pathToFileURL(absPath).href);
+      // Top-level code and express() answer to the gene's network declaration.
+      const egress = geneEgress(geneName, phenotype);
+      const mod = await withGeneEgress(egress, () => import(pathToFileURL(absPath).href));
 
       if (typeof mod.express !== "function") {
         hasFailed = true;
@@ -972,14 +976,15 @@ export async function executeGenomePipeline(
         break;
       }
 
-      // A Hybrid gene reaches the network only through the gateway on its
-      // second argument, as `run`, `test` and `agent run` give it (#444).
+      // A gene that declares network gets the gateway on its second
+      // argument, as `run`, `test` and `agent run` give it (#444); its
+      // global fetch goes through the same gateway.
       let output: unknown;
-      if (phenotype.fidelity === "Hybrid" && phenotype.network) {
-        const { gatewayFetch } = createGatewayFetch(phenotype.network);
-        output = await mod.express(current, { gatewayFetch });
+      const { gatewayFetch } = egress;
+      if (gatewayFetch) {
+        output = await withGeneEgress(egress, () => mod.express(current, { gatewayFetch }));
       } else {
-        output = await mod.express(current);
+        output = await withGeneEgress(egress, () => mod.express(current));
       }
 
       // A lone __rotifer_error is the gene refusing (ADR-334). The sandbox

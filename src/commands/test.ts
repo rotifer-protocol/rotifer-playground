@@ -16,7 +16,7 @@ import {
   classifyRunFailure,
   constraintsForFuel,
 } from "../utils/run-fuel-ladder.js";
-import { createGatewayFetch } from "../runtime/network-gateway.js";
+import { GeneNeverSettledError, geneEgress, withGeneEgress } from "../runtime/egress-guard.js";
 import { MemoryError } from "../memory/index.js";
 import { scratchGeneMemory } from "../memory/host.js";
 import { validateGeneName } from "../utils/validate-gene-name.js";
@@ -36,6 +36,9 @@ export const testCommand = new Command("test")
   .option("--json", "print T1 results as JSON (spec §47.2 TestResult)", false)
   .option(...ALLOW_CREDENTIALS_OPTION)
   .action(async (geneName: string | undefined, options: { verbose: boolean; compliance: boolean; scaffold: boolean; json: boolean }) => {
+    // The root command has a --json of its own, and the parser hands it the flag
+    // wherever it is written: read it from there too, as `hello` does.
+    options.json = options.json || display.isJsonMode();
     const root = requireProjectRoot();
     const config = loadConfig(root);
 
@@ -108,7 +111,7 @@ export const testCommand = new Command("test")
     let skipped = 0;
     // Shared by both T1 paths — WASM sandbox and Node — so the two cannot drift
     // into reporting the same run differently.
-    const reportT1 = (report: ReturnType<typeof runT1>): void => {
+    const reportT1 = (report: Awaited<ReturnType<typeof runT1>>): void => {
       for (const r of report.results) {
         if (r.passed) {
           passed++;
@@ -286,25 +289,27 @@ export const testCommand = new Command("test")
       let scratch: ReturnType<typeof scratchGeneMemory> | null = null;
       try {
         const absPath = resolve(geneDir, srcFile);
-        const mod = await import(pathToFileURL(absPath).href);
+        // Importing runs the gene's top-level code: it answers to the
+        // gene's network declaration too (egress-guard.ts).
+        const egress = geneEgress(geneName, phenotype);
+        const mod = await withGeneEgress(egress, () => import(pathToFileURL(absPath).href));
         if (typeof mod.express !== "function") {
           failed++;
           display.error("  Gene does not export an 'express' function");
         } else {
-          const isHybrid = phenotype.fidelity === "Hybrid" && phenotype.network;
+          const { gateway, gatewayFetch } = egress;
           let result: unknown;
           let gatewayStats: { totalRequests: number; totalBytes: number } | null = null;
 
           scratch = scratchGeneMemory({ genesRoot: join(root, config.genes_dir), geneName, phenotype });
           const { memory } = scratch;
           const start = performance.now();
-          if (isHybrid) {
-            const { gatewayFetch, gateway } = createGatewayFetch(phenotype.network);
-            display.info(`  Hybrid Gene — gateway active (domains: ${phenotype.network.allowedDomains?.join(", ") || "none"})`);
-            result = await mod.express(testInput, { gatewayFetch, memory });
+          if (gateway && gatewayFetch) {
+            display.info(`  ${phenotype.fidelity || "Wrapped"} Gene — gateway active (domains: ${phenotype.network.allowedDomains?.join(", ") || "none"})`);
+            result = await withGeneEgress(egress, () => mod.express(testInput, { gatewayFetch, memory }));
             gatewayStats = gateway.stats;
           } else {
-            result = await mod.express(testInput, { memory });
+            result = await withGeneEgress(egress, () => mod.express(testInput, { memory }));
           }
           const elapsed = performance.now() - start;
 
@@ -343,8 +348,12 @@ export const testCommand = new Command("test")
         }
       } catch (err: any) {
         failed++;
-        const code = err instanceof MemoryError ? `${err.code}: ` : "";
-        display.error("  express() threw an error: " + code + err.message);
+        if (err instanceof GeneNeverSettledError) {
+          display.error("  " + err.message);
+        } else {
+          const code = err instanceof MemoryError ? `${err.code}: ` : "";
+          display.error("  express() threw an error: " + code + err.message);
+        }
       } finally {
         scratch?.dispose();
       }
@@ -551,7 +560,7 @@ export const testCommand = new Command("test")
           display.error("  could not run the gene: " + loaded.refusal);
         } else {
           reportT1(
-            runT1(suiteLoad.suite, {
+            await runT1(suiteLoad.suite, {
               inputSchema: (phenotype.inputSchema as Record<string, unknown>) ?? null,
               outputSchema: (phenotype.outputSchema as Record<string, unknown>) ?? null,
               run: loaded.runner,
@@ -592,9 +601,9 @@ export const testCommand = new Command("test")
         }
       };
 
-      let report: ReturnType<typeof runT1>;
+      let report: Awaited<ReturnType<typeof runT1>>;
       try {
-        report = runT1(suiteLoad.suite, {
+        report = await runT1(suiteLoad.suite, {
           inputSchema: (phenotype.inputSchema as Record<string, unknown>) ?? null,
           outputSchema: (phenotype.outputSchema as Record<string, unknown>) ?? null,
           run: runOne,

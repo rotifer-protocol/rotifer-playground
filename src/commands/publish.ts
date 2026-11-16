@@ -164,7 +164,7 @@ export async function publishSingleGene(
       }
     }
 
-    const verdict = evaluatePublishGate({
+    const verdict = await evaluatePublishGate({
       geneDir,
       fidelity,
       phenotype,

@@ -56,67 +56,67 @@ const GOOD_SUITE = {
 };
 
 describe("§47.5 T1 publishing gate", () => {
-  it("passes a Gene whose suite satisfies all three requirements", () => {
+  it("passes a Gene whose suite satisfies all three requirements", async () => {
     writeSuite(GOOD_SUITE);
-    const v = evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: refuses });
+    const v = await evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: refuses });
     expect(v.status).toBe("passed");
   });
 
-  it("blocks a Gene with no testsuite.json", () => {
-    const v = evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: refuses });
+  it("blocks a Gene with no testsuite.json", async () => {
+    const v = await evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: refuses });
     expect(v.status).toBe("blocked");
     expect((v as { reason: string }).reason).toMatch(/no testsuite\.json/);
   });
 
-  it("blocks a Gene whose suite is malformed, naming the field", () => {
+  it("blocks a Gene whose suite is malformed, naming the field", async () => {
     writeSuite({ testCases: [{ input: { text: "hi" }, expectedOutputs: 1 }] });
-    const v = evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: refuses });
+    const v = await evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: refuses });
     expect(v.status).toBe("blocked");
     expect((v as { guidance: string[] }).guidance.join(" ")).toMatch(/expectedOutputs/);
   });
 
-  it("blocks when the suite exists but nothing could run it", () => {
+  it("blocks when the suite exists but nothing could run it", async () => {
     // "We could not check" is not "it passed". The alternative publishes on the
     // strength of a file nobody executed.
     writeSuite(GOOD_SUITE);
-    const v = evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: null });
+    const v = await evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: null });
     expect(v.status).toBe("blocked");
     expect((v as { guidance: string[] }).guidance.join(" ")).toMatch(/not been run is not evidence/);
   });
 
-  it("gates Wrapped genes too — §47.5's MUST is not conditional on fidelity", () => {
+  it("gates Wrapped genes too — §47.5's MUST is not conditional on fidelity", async () => {
     // This was an exemption until 2026-09-07, and 35 published Wrapped records
     // went out under it. It surfaced while deciding genesis-file-read's
     // fidelity: it imports node:fs so it can never be Native, and relabelling
     // it Wrapped while Wrapped was exempt would have moved a gene through the
     // gap rather than through the gate.
     writeSuite(GOOD_SUITE);
-    const passing = evaluatePublishGate({ geneDir: dir, fidelity: "Wrapped", phenotype: PHENOTYPE, run: refuses });
+    const passing = await evaluatePublishGate({ geneDir: dir, fidelity: "Wrapped", phenotype: PHENOTYPE, run: refuses });
     expect(passing.status).toBe("passed");
 
-    const noSuite = evaluatePublishGate({ geneDir: `${dir}-absent`, fidelity: "Wrapped", phenotype: PHENOTYPE, run: refuses });
+    const noSuite = await evaluatePublishGate({ geneDir: `${dir}-absent`, fidelity: "Wrapped", phenotype: PHENOTYPE, run: refuses });
     expect(noSuite.status).toBe("blocked");
   });
 
-  it("blocks a Wrapped gene that fails T1, exactly as a Native one", () => {
+  it("blocks a Wrapped gene that fails T1, exactly as a Native one", async () => {
     writeSuite(GOOD_SUITE);
     const accepts: GeneRunner = () => ({ success: true, output: { score: 1 } });
-    const v = evaluatePublishGate({ geneDir: dir, fidelity: "Wrapped", phenotype: PHENOTYPE, run: accepts });
+    const v = await evaluatePublishGate({ geneDir: dir, fidelity: "Wrapped", phenotype: PHENOTYPE, run: accepts });
     expect(v.status).toBe("blocked");
   });
 
-  it("blocks the ADR-333 case the criterion exists for: silent acceptance", () => {
+  it("blocks the ADR-333 case the criterion exists for: silent acceptance", async () => {
     // A Gene that answers illegal input as if it were fine, with no declaration
     // saying that answer is intended. source-linker echoing an illegal value
     // back is the real instance.
     writeSuite(GOOD_SUITE);
     const accepts: GeneRunner = () => ({ success: true, output: { score: 1 } });
-    const v = evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: accepts });
+    const v = await evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: accepts });
     expect(v.status).toBe("blocked");
     expect((v as { reason: string }).reason).toMatch(/negative/);
   });
 
-  it("passes a Gene that answers illegal input, once the author declares it", () => {
+  it("passes a Gene that answers illegal input, once the author declares it", async () => {
     // The json-validator shape. ADR-333 rejects option B precisely so this can
     // pass: returning { valid: false } is correct handling, not acceptance.
     writeSuite({
@@ -130,7 +130,7 @@ describe("§47.5 T1 publishing gate", () => {
       typeof (input as Record<string, unknown>).text === "string"
         ? { success: true, output: { score: 1 } }
         : { success: true, output: { score: 0 } };
-    const v = evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: validatorLike });
+    const v = await evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: validatorLike });
     expect(v.status).toBe("passed");
   });
 });
@@ -144,35 +144,35 @@ describe("the gate always says what to do next", () => {
    */
   const runnableCommand = /rotifer (test|compile)/;
 
-  it("points at --scaffold when the suite is missing", () => {
-    const v = evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: refuses });
+  it("points at --scaffold when the suite is missing", async () => {
+    const v = await evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: refuses });
     const guidance = (v as { guidance: string[] }).guidance.join("\n");
     expect(guidance).toMatch(/--scaffold/);
     expect(guidance).toMatch(runnableCommand);
   });
 
-  it("points at compile when the Gene could not be executed", () => {
+  it("points at compile when the Gene could not be executed", async () => {
     writeSuite(GOOD_SUITE);
-    const v = evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: null });
+    const v = await evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: null });
     expect((v as { guidance: string[] }).guidance.join("\n")).toMatch(/rotifer compile/);
   });
 
-  it("names each failing check and how to declare intended handling", () => {
+  it("names each failing check and how to declare intended handling", async () => {
     writeSuite(GOOD_SUITE);
     const accepts: GeneRunner = () => ({ success: true, output: { score: 1 } });
-    const v = evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: accepts });
+    const v = await evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: accepts });
     const guidance = (v as { guidance: string[] }).guidance.join("\n");
     expect(guidance).toMatch(/t1-negative-1/);
     expect(guidance).toMatch(/expectedOutput or expectedSchema/);
     expect(guidance).toMatch(runnableCommand);
   });
 
-  it("never blocks without guidance", () => {
+  it("never blocks without guidance", async () => {
     // The invariant behind all three cases above, stated once so a new blocking
     // branch cannot be added without one.
     const blocked = [
-      evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: refuses }),
-      evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: null }),
+      await evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: refuses }),
+      await evaluatePublishGate({ geneDir: dir, fidelity: "Native", phenotype: PHENOTYPE, run: null }),
     ];
     for (const v of blocked) {
       expect(v.status).toBe("blocked");
@@ -226,7 +226,7 @@ describe("publish actually reaches the gate", () => {
     expect(result.error).toMatch(/no testsuite\.json/);
   });
 
-  it("refuses a Wrapped gene with no TestSuite, through the same seam", () => {
+  it("refuses a Wrapped gene with no TestSuite, through the same seam", async () => {
     // The Native case above passed while Wrapped was exempt, so it could not
     // have caught the hole. This is the case that would have stayed green while
     // 35 Wrapped records published unchecked.

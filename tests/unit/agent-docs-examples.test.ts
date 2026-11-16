@@ -24,6 +24,9 @@ const DOCS = [
   "docs/getting-started.zh.md",
   "skills/rotifer-agent/SKILL.md",
   "skills/rotifer-agent/README.md",
+  // The OpenClaw / Cursor / CodeBuddy plugin ships these from plugin-source/.
+  "plugin-source/content/root/rotifer-overview.md",
+  "plugin-source/content/root/assistant/SKILL.md",
 ];
 
 /** The tutorial's own gene (getting-started step 3); it is not in genes/. */

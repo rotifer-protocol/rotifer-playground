@@ -9,7 +9,11 @@
  *                                         por_issuer (store.ts); that role can
  *                                         execute the two issuing database
  *                                         functions and nothing else; no
- *                                         broader key is read.
+ *                                         broader key is read. Outside this
+ *                                         machine it must say
+ *                                         sslmode=verify-full; the server's
+ *                                         certificate is checked against
+ *                                         supabase-root-ca.ts.
  *   POR_SIGNING_KEY                       private OKP / Ed25519 JWK with kid; its
  *                                         public half must already be in the JWKS
  *   POR_PSEUDONYM_KEY                     K_pseudo, base64url, >= 32 bytes; a
@@ -25,7 +29,8 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 import postgres from "npm:postgres@3.4.7";
 import { type Deps, errorResponse, handle, PorError } from "./handler.ts";
 import { fromB64url, importPseudonymKey, importSigningJwk, parseSigningKey } from "./por.ts";
-import { issuerUser, postgresStore } from "./store.ts";
+import { databaseTls, issuerUser, postgresStore } from "./store.ts";
+import { SUPABASE_ROOT_CAS } from "./supabase-root-ca.ts";
 import { authenticator, fetchProjectJwks, userTokenCheck } from "./user-token.ts";
 
 function required(name: string): string {
@@ -39,6 +44,7 @@ async function configure(): Promise<Deps> {
   const anonKey = required("SUPABASE_ANON_KEY");
   const dbUrl = required("POR_DB_URL");
   issuerUser(dbUrl);
+  const tls = databaseTls(dbUrl, SUPABASE_ROOT_CAS);
   const aud = required("NODE_ATTESTATION_AUD");
   const signer = await importSigningJwk(parseSigningKey(required("POR_SIGNING_KEY")));
   const rawPseudo = fromB64url(required("POR_PSEUDONYM_KEY"));
@@ -49,8 +55,9 @@ async function configure(): Promise<Deps> {
   const auth = createClient(url, anonKey, options);
   // One connection per instance is enough: each request is two short
   // statements. prepare: false keeps it usable through the transaction-mode
-  // pooler; the database functions take only transaction-scoped locks.
-  const sql = postgres(dbUrl, { max: 1, prepare: false, idle_timeout: 20, connect_timeout: 10 });
+  // pooler; the database functions take only transaction-scoped locks. tls
+  // checks a remote server's certificate against Supabase's root CAs.
+  const sql = postgres(dbUrl, { max: 1, prepare: false, idle_timeout: 20, connect_timeout: 10, ...tls });
   return {
     authenticate: authenticator(
       userTokenCheck(fetchProjectJwks(url), () => Math.floor(Date.now() / 1000)),

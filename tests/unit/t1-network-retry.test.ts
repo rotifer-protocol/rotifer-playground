@@ -56,15 +56,15 @@ function runner(at: number, failures: string[]) {
   return { run, callsAt: (n: number) => calls.get(iterationInput(n)) ?? 0 };
 }
 
-const property = (fidelity: string, run: (input: unknown) => RunOutcome) => {
-  const report = runT1(suite, { inputSchema, outputSchema, run, fidelity });
+const property = async (fidelity: string, run: (input: unknown) => RunOutcome) => {
+  const report = await runT1(suite, { inputSchema, outputSchema, run, fidelity });
   return { report, result: report.results.find((r) => r.testId === "t1-property-schema-legality")! };
 };
 
 describe("T1 property test: one retry for a Hybrid gene's network failure", () => {
-  it("passes when the retry succeeds, and says which iteration was retried and why", () => {
+  it("passes when the retry succeeds, and says which iteration was retried and why", async () => {
     const r = runner(7, [net(-5)]);
-    const { report, result } = property("Hybrid", r.run);
+    const { report, result } = await property("Hybrid", r.run);
     expect(result.passed, result.failureReason).toBe(true);
     expect(report.gatePassed).toBe(true);
     expect(r.callsAt(7)).toBe(2);
@@ -72,18 +72,18 @@ describe("T1 property test: one retry for a Hybrid gene's network failure", () =
     expect(result.details).toContain("TLS error (api.example.com)");
   });
 
-  it("retries -4 and -7 the same way", () => {
+  it("retries -4 and -7 the same way", async () => {
     for (const code of [-4, -7]) {
       const r = runner(3, [`execution failed: gene returned error code: ${code}`]);
-      const { result } = property("Hybrid", r.run);
+      const { result } = await property("Hybrid", r.run);
       expect(result.passed, `${code}: ${result.failureReason}`).toBe(true);
       expect(result.details).toContain(`iteration 3 was retried once after ${code}`);
     }
   });
 
-  it("fails when the retry fails too, and reports both attempts", () => {
+  it("fails when the retry fails too, and reports both attempts", async () => {
     const r = runner(7, [net(-5), net(-5, "connection failed (api.example.com)")]);
-    const { report, result } = property("Hybrid", r.run);
+    const { report, result } = await property("Hybrid", r.run);
     expect(result.passed).toBe(false);
     expect(report.gatePassed).toBe(false);
     expect(r.callsAt(7)).toBe(2);
@@ -92,7 +92,7 @@ describe("T1 property test: one retry for a Hybrid gene's network failure", () =
     expect(result.failureReason).toContain("connection failed (api.example.com)");
   });
 
-  it("does not retry a failure that is not a host network code", () => {
+  it("does not retry a failure that is not a host network code", async () => {
     for (const message of [
       "execution failed: gene returned error code: -3",
       "execution failed: gene returned error code: -50",
@@ -100,25 +100,25 @@ describe("T1 property test: one retry for a Hybrid gene's network failure", () =
       "execution failed: wasm trap: unreachable",
     ]) {
       const r = runner(2, [message]);
-      const { result } = property("Hybrid", r.run);
+      const { result } = await property("Hybrid", r.run);
       expect(result.passed, message).toBe(false);
       expect(r.callsAt(2), message).toBe(1);
       expect(result.failureReason).not.toContain("retry");
     }
   });
 
-  it("does not retry a gene that is not Hybrid", () => {
+  it("does not retry a gene that is not Hybrid", async () => {
     for (const fidelity of ["Native", "Wrapped"]) {
       const r = runner(7, [net(-5)]);
-      const { result } = property(fidelity, r.run);
+      const { result } = await property(fidelity, r.run);
       expect(result.passed, fidelity).toBe(false);
       expect(r.callsAt(7), fidelity).toBe(1);
     }
   });
 
-  it("reports nothing about retries when none happened", () => {
+  it("reports nothing about retries when none happened", async () => {
     const r = runner(7, []);
-    const { result } = property("Hybrid", r.run);
+    const { result } = await property("Hybrid", r.run);
     expect(result.passed).toBe(true);
     expect(result.details).not.toContain("retried");
   });

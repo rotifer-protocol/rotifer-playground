@@ -1,8 +1,8 @@
 {
   "name": "security-scanner",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "domain": "security",
-  "fidelity": "Native",
+  "fidelity": "Wrapped",
   "description": "Code security scanner with JS/TS pattern matching and cross-language credential prefix detection — covers XSS, SQL injection, command injection, path traversal, ReDoS, and 20+ secret patterns",
   "author": "Rotifer Protocol Contributors",
   "license": "Apache-2.0",

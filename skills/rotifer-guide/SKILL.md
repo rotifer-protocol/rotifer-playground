@@ -58,7 +58,7 @@ The install commands and the MCP config name an exact version on purpose. An unv
 registry serves at that moment, so the code you run would not be the code that was reviewed. The
 `@rotifer/mcp-server` pin is the one this repository agrees on everywhere; move it in one deliberate
 step, not per file. Stronger than pinning the `npx` call: install the CLI into the project and run
-the local binary.
+the local binary. That is an install too: propose it and run it only after the user approves.
 
 ```bash
 npm install --save-dev --save-exact @rotifer/playground@0.37.0
@@ -116,7 +116,7 @@ Skill.
 | **Reads** | Genes and Agent definitions in the current project workspace. |
 | **Writes in the project** | Genes into `genes/` (with their compiled output and score caches), and Agent definitions into `.rotifer/agents/`. |
 | **Writes outside the project** | The CLI's own state in your home directory: `~/.rotifer/` (a local database, an audit log, a run log, the telemetry setting, and your session token if you run `rotifer login`) and `~/.config/rotifer/` (a daily update-check cache), plus, when `rotifer compile` runs, the caches the javy toolchain it calls writes in your user cache folder. Installing the CLI writes to npm's cache, or to npm's global prefix with `npm i -g`. |
-| **Sends** | Registry and Arena queries to the public Rotifer API, one version check per day to `registry.npmjs.org` (skipped under `npx`, in CI, or with `ROTIFER_NO_UPDATE_CHECK` set), and a package download from ClawHub for `rotifer wrap --from-clawhub`. When you are signed in, running a Gene installed from Cloud also records that invocation (the Gene id and your Agent) against your account. The CLI also sends an anonymous heartbeat each time it runs a Gene: a random machine id, the channel it ran from and the CLI version, nothing about the Gene or your files. `rotifer telemetry off`, `ROTIFER_TELEMETRY=0` or `DO_NOT_TRACK=1` turns it off, and each of the three also stops the signed-in record. Three steps send your work, and each runs only when the user asks for it: the Web Studio scaffold path sends the description and the generated source to rotifer.ai (§2, Path A); `rotifer publish` uploads a Gene's source to the Rotifer Cloud Registry and makes it public; `rotifer arena submit --cloud` sends a published Gene's scores, and the measurements from each run, to the Cloud Arena's public record. Without those, your code stays on this machine. |
+| **Sends** | Registry and Arena queries to the public Rotifer API, one version check per day to `registry.npmjs.org` (skipped under `npx`, in CI, or with `ROTIFER_NO_UPDATE_CHECK` set), and a package download from ClawHub for `rotifer wrap --from-clawhub`. When you are signed in, running a Gene installed from Cloud also records that invocation (the Gene id and your Agent) against your account. The CLI also sends an anonymous heartbeat each time it runs a Gene: a random machine id, the channel it ran from and the CLI version, nothing about the Gene or your files. `rotifer telemetry off`, `ROTIFER_TELEMETRY=0` or `DO_NOT_TRACK=1` turns it off, and each of the three also stops the signed-in record. Three steps send your work, and each runs only when the user asks for it: the Web Studio scaffold path sends the description and the generated source to rotifer.ai (§2, Path A); `rotifer publish` uploads a Gene's metadata, `phenotype.json`, `README.md`, changelog, content hash and compiled WASM (not its TypeScript source) to the Rotifer Cloud Registry and makes them public; `rotifer arena submit --cloud` sends a published Gene's scores, and the measurements from each run, to the Cloud Arena's public record. Without those, your code stays on this machine. |
 
 Commands that install software, send work off the machine (Path A, `rotifer publish`,
 `rotifer arena submit --cloud`) or overwrite files are proposed for your approval
@@ -257,7 +257,9 @@ rotifer wrap <name> --domain <domain> --fidelity <fidelity>
 ```
 
 `wrap` writes `phenotype.json` with empty schemas; fill in the real
-`inputSchema` and `outputSchema` before Phase 4.
+`inputSchema` and `outputSchema` before Phase 4. If `genes/<name>/phenotype.json`
+already exists, `wrap` rewrites it (setting the domain), and `--from-skill` or
+`--from-clawhub` replaces it: say so and wait for the user's approval first.
 
 **From an existing SKILL.md:**
 
@@ -267,6 +269,10 @@ rotifer wrap <name> --from-skill <path>
 ```
 
 **From ClawHub:**
+
+This downloads the package from ClawHub and writes its files into
+`genes/<name>`, so it is an install: propose it and run it only after the user
+approves.
 
 ```bash
 rotifer wrap <name> --from-clawhub <slug>
@@ -286,10 +292,13 @@ for it instead.
 
 After compilation passes, offer the next step and wait for the user's choice:
 `rotifer arena submit <name>` scores the Gene on this machine; `rotifer publish
-<name>` uploads its source to the Rotifer Cloud Registry and makes it public.
+<name>` uploads its metadata, `phenotype.json`, `README.md` and compiled WASM
+(not its TypeScript source) to the Rotifer Cloud Registry and makes them public.
 
-`rotifer publish` defaults to uploading to the Rotifer Cloud Registry.
-Disable with `rotifer config set default-publish false` or `ROTIFER_AUTO_PUBLISH=false`.
+Run in a terminal while the user is signed in, `rotifer wrap` can end by asking
+`Publish '<name>' to Rotifer Cloud? [Y/n]`, and Enter means yes. It does not ask
+when its input is not a terminal. `rotifer config set default-publish false` or
+`ROTIFER_AUTO_PUBLISH=false` turns the question off.
 
 ### Offline Fallback
 
@@ -414,7 +423,9 @@ Display search results in a table:
 
 ### Phase 4: Recommendation
 
-- Found a matching Gene → suggest install: `rotifer install <name>`
+- Found a matching Gene → propose `rotifer install <name>` and run it only after
+  the user approves: it downloads the Gene and its WASM from the Cloud registry
+  into this project and records one download
 - Found a partial match → suggest fork and modify, or submit an Arena challenge (route to the `rotifer-arena` Skill)
 - Nothing found → suggest creating a new Gene (route to scaffold)
 

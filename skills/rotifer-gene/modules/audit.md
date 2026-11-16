@@ -168,9 +168,12 @@ information into a custom section alongside the phenotype data.
 
 ### 5.1 Read back what was published
 
+The audit is about your own Genes, so read back only those. `rotifer whoami`
+prints your User ID; put it in `ROTIFER_USER_ID`.
+
 ```bash
-# every published Gene, with the fields worth scanning
-curl -s "${SUPABASE_URL}/rest/v1/genes?published=eq.true&select=id,name,phenotype,description,readme" \
+# your published Genes, with the fields worth scanning
+curl -s "${SUPABASE_URL}/rest/v1/genes?owner_id=eq.${ROTIFER_USER_ID}&published=eq.true&select=id,name,phenotype,description,readme" \
   -H "apikey: ${SUPABASE_ANON_KEY}" \
   -H "Authorization: Bearer ${SUPABASE_ANON_KEY}"
 ```
@@ -187,9 +190,9 @@ curl -s "${SUPABASE_URL}/rest/v1/genes?published=eq.true&select=id,name,phenotyp
 
 ```
 Genes with a local .cloud-manifest.json = N
-Cloud records with published=true       = M
+Your Cloud records with published=true  = M
 
-Expected: N ≤ M (Cloud also holds other people's Genes)
+Expected: N ≤ M (you may also have published from another workspace)
 Suspicious: N > M → something is marked published locally but is not on Cloud,
                     which usually means it was unpublished
 ```

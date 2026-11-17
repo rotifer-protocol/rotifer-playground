@@ -10,3 +10,5 @@ skills/**
 .codebuddy-plugin/**
 package-lock.json
 *.map
+tests/**
+vitest.config.ts

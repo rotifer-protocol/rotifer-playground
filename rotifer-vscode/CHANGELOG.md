@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.5 — 2026-11-17
+
+A fix release for signing in to Rotifer Cloud. It does not correspond to the `v0.9.5` Rotifer release line.
+
+- **Signing in works again.** In 0.9.4 a sign-in from the extension could not complete:
+  - The default `rotifer.anonKey` was a legacy key, which Rotifer Cloud no longer accepts. The default is now the publishable key the CLI ships. If you set `rotifer.anonKey` yourself to a legacy key (one starting with `eyJ`), clear the setting.
+  - The sign-in callback listened on a random port, which is not on the allow-list, so the browser landed on the website instead. It now listens on `127.0.0.1:9876` and sends `http://localhost:9876/callback`, as the CLI and MCP server do. If port 9876 is already in use, the extension says so and does not open the browser.
+- **The callback page no longer says the sign-in succeeded before it has.** It now asks you to return to your editor, which shows whether you are signed in.
+- The extension package no longer includes the extension's own test files.
+
 ## 0.9.4 — 2026-11-01
 
 Version aligned with the `v0.9.4` Rotifer release line (npm `@rotifer/playground` 0.33.0). The extension's code and bundled content are unchanged from 0.9.3. It runs the CLI as `npx -y @rotifer/playground`, which resolves to the latest published CLI, so 0.33.0 behaviour (Agent Memory for genes run locally, and the `rotifer agent memory list` / `delete` deployer commands) already applies without an extension update.

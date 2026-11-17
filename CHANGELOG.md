@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.38.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.37.0...v0.38.0) (2026-11-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **security:** external genes (ClawHub-wrapped or Cloud-installed) no longer run from source on Node.js without --trust-unsigned. `rotifer publish` of an uncompiled external gene that has a testsuite.json is now blocked at the T1 gate; `rotifer hello` refuses an external gene with no compiled artifact; and `rotifer test` fails T1 for such a gene. Compile it first (`rotifer compile <gene>`), or pass `--trust-unsigned` to hello or publish to keep the previous behaviour.
+
+### Features
+
+* **node-attestation:** move the PoR migration into the migration chain ([#608](https://github.com/rotifer-protocol/rotifer-playground/issues/608)) ([7b77759](https://github.com/rotifer-protocol/rotifer-playground/commit/7b777596edd1b1560c9e23243417a3ba36b97a91))
+
+
+### Bug Fixes
+
+* **security:** ask before an external gene uses your credentials, and hold each to its host ([#508](https://github.com/rotifer-protocol/rotifer-playground/issues/508)) ([#569](https://github.com/rotifer-protocol/rotifer-playground/issues/569)) ([9e071f3](https://github.com/rotifer-protocol/rotifer-playground/commit/9e071f3536a2aca16ca763a8faf472a4cbdef8eb))
+* **security:** refuse external genes on unsandboxed Node.js in hello, test and publish ([#613](https://github.com/rotifer-protocol/rotifer-playground/issues/613)) ([a2d0265](https://github.com/rotifer-protocol/rotifer-playground/commit/a2d02658e1f7d5e73966db94cb5214c092cc975b))
+
 ## [0.37.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.36.1...v0.37.0) (2026-11-16)
 
 

@@ -5409,6 +5409,15 @@ mod tests {
             "the bucket's 3 tokens admit all three (stats: {:?})",
             relay.node.relay_server_stats()
         );
+        // Each client listens on its circuit address through the relay.
+        let on_circuit = |c: &Node| {
+            c.listen_addrs().iter().any(|a| a.contains("/p2p-circuit") && a.contains(&relay.peer_id))
+        };
+        assert!(
+            wait_until(5, || clients.iter().all(on_circuit)),
+            "precondition: every client lists its relay circuit address ({:?})",
+            clients.iter().map(|c| c.listen_addrs()).collect::<Vec<_>>()
+        );
         // Two renewal rounds (6 s apart) plus the refused one timing out (8 s).
         assert!(
             wait_until(30, || {
@@ -5427,6 +5436,14 @@ mod tests {
         assert_eq!(s.reservations_denied, s.reservations_denied_per_ip, "and for no other cause: {s:?}");
         let holding = clients.iter().filter(|c| reserved(c, &relay)).count();
         assert_eq!(holding, 2, "two clients still hold a reservation");
+        // The refused one no longer lists the circuit address it lost.
+        let refused = clients.iter().find(|c| !reserved(c, &relay)).expect("one client was refused");
+        assert!(
+            !on_circuit(refused),
+            "a lost reservation's circuit address must leave listen_addrs: {:?}",
+            refused.listen_addrs()
+        );
+        assert!(clients.iter().filter(|c| reserved(c, &relay)).all(on_circuit), "the holders keep theirs");
     }
 
     /// Test 6: two nodes reach each other through the product relay server

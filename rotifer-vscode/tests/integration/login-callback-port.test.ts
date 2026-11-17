@@ -93,7 +93,7 @@ afterEach(async () => {
 
 describe("login callback port", () => {
   it("opens the browser with the port it is really listening on", async () => {
-    const auth = new AuthManager(makeClient(), makeContext());
+    const auth = new AuthManager(makeClient(), makeContext(), 0);
     const outcome = settle(auth.login());
 
     const authorize = await openedAuthorizeUrl();
@@ -101,8 +101,7 @@ describe("login callback port", () => {
     expect(authorize.pathname).toBe("/auth/v1/authorize");
     expect(await accepts(Number(redirect.port))).toBe(true);
 
-    const state = authorize.searchParams.get("state")!;
-    const callback = await fetch(`${redirect.href}?code=code-1&state=${state}`);
+    const callback = await fetch(`${redirect.href}?code=code-1`);
 
     expect(callback.status).toBe(200);
     expect(await outcome).toBe("resolved");
@@ -113,13 +112,12 @@ describe("login callback port", () => {
   });
 
   it("stops listening once the callback has arrived", async () => {
-    const auth = new AuthManager(makeClient(), makeContext());
+    const auth = new AuthManager(makeClient(), makeContext(), 0);
     const outcome = settle(auth.login());
 
     const authorize = await openedAuthorizeUrl();
     const redirect = new URL(authorize.searchParams.get("redirect_to")!);
-    const state = authorize.searchParams.get("state")!;
-    await fetch(`${redirect.href}?code=code-1&state=${state}`);
+    await fetch(`${redirect.href}?code=code-1`);
     await outcome;
 
     expect(await accepts(Number(redirect.port))).toBe(false);
@@ -131,7 +129,7 @@ describe("login callback port", () => {
       return this;
     });
 
-    const auth = new AuthManager(makeClient(), makeContext());
+    const auth = new AuthManager(makeClient(), makeContext(), 0);
 
     expect(await settle(auth.login())).toBe("resolved");
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(

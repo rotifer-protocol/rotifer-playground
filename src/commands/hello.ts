@@ -157,7 +157,8 @@ export const helloCommand = new Command("hello")
   .option("--verbose", "show detailed output (L2)", false)
   .option("--json", "write only JSON to stdout: the output, or {ok:false,code,...} on failure; progress goes to stderr", false)
   .option(...ALLOW_CREDENTIALS_OPTION)
-  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed or ClawHub-wrapped genes", false)
+  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed or ClawHub-wrapped genes. " +
+      "On Node.js no credential is asked for: the gene can read all your environment variables", false)
   .option("--list-templates", "list templates and whether each can run in this workspace, then exit")
   .addHelpText(
     "after",

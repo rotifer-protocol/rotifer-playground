@@ -544,6 +544,13 @@ export const testCommand = new Command("test")
       // yet and moving every existing Gene's verdict is itself a gate.
       display.warn("T1 TestSuite: no testsuite.json — §47.5 publishing gate not evaluated");
       display.hint("spec §47.5 requires ≥1 positive case, ≥1 negative case and a schema-legality property test before publishing");
+    } else if (!hasIrWasm && srcFile && isExternallySourced(geneDir)) {
+      // The Node path below runs the module unsandboxed, as Test 6 would, and
+      // Test 6 refuses an external gene: so does T1. Compiling it moves the
+      // suite into the sandbox branch further down.
+      failed++;
+      display.error("T1 TestSuite: " + nodeRefusalMessage(geneDir));
+      display.info("  Compile the gene first: rotifer compile " + geneName);
     } else if (!hasIrWasm && srcFile) {
       // No IR, but there is source: this is how a Wrapped gene is actually run,
       // so run it that way. Skipping here while the publish gate checks Wrapped

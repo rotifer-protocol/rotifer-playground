@@ -25,7 +25,7 @@ import { decideBadgeAction, uploadSafetyBadge } from "../cloud/badge.js";
 import type { ScanResult } from "../scanner/types.js";
 import { SCANNER_VERSION } from "../scanner/rules.js";
 import { evaluatePublishGate, outcomeFromSandbox, loadNodeRunner } from "../testsuite/gate.js";
-import { evaluateL0 } from "../utils/l0-gate.js";
+import { evaluateL0, isExternallySourced, nodeRefusalMessage } from "../utils/l0-gate.js";
 import { tryLoadBinding } from "../utils/binding.js";
 import { FUEL_LADDER, constraintsForFuel } from "../utils/run-fuel-ladder.js";
 import { toRustPhenotype } from "../utils/rust-phenotype.js";
@@ -39,6 +39,7 @@ interface PublishOptions {
   skipVg?: boolean;
   all?: boolean;
   lang?: string;
+  trustUnsigned?: boolean;
 }
 
 interface PublishResult {
@@ -156,10 +157,18 @@ export async function publishSingleGene(
     // A Wrapped gene has no IR, so T1 runs it the way it is actually used:
     // under Node. Skipping it was a hole — §47.5's MUST is not conditional on
     // fidelity, and 35 published Wrapped records went out under that exemption.
+    //
+    // Under Node it runs unsandboxed, so an external gene (installed from
+    // Cloud, or wrapped from ClawHub) is not loaded there unless the user
+    // passed --trust-unsigned, as under `rotifer run`. The gate then blocks
+    // with that reason rather than run someone else's code to check it.
     let nodeRunner: Awaited<ReturnType<typeof loadNodeRunner>> | null = null;
+    let untrusted: string | undefined;
     if (!wasmBytes) {
       const srcName = ["index.ts", "index.js", "index.mjs"].find((f) => existsSync(join(geneDir, f)));
-      if (srcName) {
+      if (srcName && !options.trustUnsigned && isExternallySourced(geneDir)) {
+        untrusted = nodeRefusalMessage(geneDir);
+      } else if (srcName) {
         nodeRunner = await loadNodeRunner(resolve(geneDir, srcName), evaluateL0(gateBinding, phenotype));
       }
     }
@@ -168,6 +177,7 @@ export async function publishSingleGene(
       geneDir,
       fidelity,
       phenotype,
+      untrusted,
       run:
         nodeRunner && "runner" in nodeRunner
           ? nodeRunner.runner
@@ -364,6 +374,7 @@ export const publishCommand = new Command("publish")
     "--lang <lang>",
     "explicitly declare source language (typescript|rust|assemblyscript|go|c|external)",
   )
+  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed or ClawHub-wrapped genes", false)
   .action(async (geneName: string | undefined, options: PublishOptions) => {
     if (!geneName && !options.all) {
       display.error("Provide a gene name or use --all to publish all genes.");

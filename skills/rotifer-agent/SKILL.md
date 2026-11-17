@@ -46,7 +46,7 @@ Or use the MCP Server for IDE integration:
   "mcpServers": {
     "rotifer": {
       "command": "npx",
-      "args": ["@rotifer/mcp-server@0.20.1"]
+      "args": ["@rotifer/mcp-server@0.20.2"]
     }
   }
 }
@@ -54,8 +54,8 @@ Or use the MCP Server for IDE integration:
 
 Your MCP host runs this `npx` command when it starts the server, and nothing asks
 first: npx does not prompt when its input is not a terminal, so the first start
-downloads `@rotifer/mcp-server@0.20.1` from npm and runs it. To review it before it ever
-runs, install that version with `npm i -g @rotifer/mcp-server@0.20.1` and use
+downloads `@rotifer/mcp-server@0.20.2` from npm and runs it. To review it before it ever
+runs, install that version with `npm i -g @rotifer/mcp-server@0.20.2` and use
 `rotifer-mcp-server` as the command, with no `args`.
 
 ---

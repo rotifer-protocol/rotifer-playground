@@ -1,6 +1,6 @@
 ---
 name: rotifer-evolve
-version: 0.9.16
+version: 0.9.17
 description: Rank an Agent's Rotifer Genes against the Arena and swap in stronger ones. Invoked explicitly via /evolve — scan local capabilities, compare Genes, inspect fitness scores, and replace weak ones with user approval. Not for capabilities outside Rotifer.
 author: rotifer-protocol
 ---
@@ -14,7 +14,7 @@ Your Agent gets stronger by competing, not by configuring. Scan capabilities, be
 This plugin declares the Rotifer MCP server for you:
 
 ```bash
-npx -y @rotifer/mcp-server@0.20.1 --tools=evolve
+npx -y @rotifer/mcp-server@0.20.2 --tools=evolve
 ```
 
 `--tools=evolve` is not decoration. Left undeclared, the server offers 31 tools
@@ -38,7 +38,7 @@ MCP configuration at the installed binary, with the same `--tools=evolve`, in pl
 of the entry this plugin declares; then nothing is fetched at start-up:
 
 ```bash
-npm i -g @rotifer/mcp-server@0.20.1
+npm i -g @rotifer/mcp-server@0.20.2
 rotifer-mcp-server --tools=evolve
 ```
 
@@ -110,7 +110,7 @@ The MCP server is fetched from npm on first use and cached, by your MCP host whe
 it starts the server, with no prompt (`-y`); installing it yourself first, as under
 Runtime Integration, means it is never fetched at start-up. That is a standard
 pattern, but it means you are trusting remote code — review the source, or check
-`npm view @rotifer/mcp-server@0.20.1 dist.integrity`, before use.
+`npm view @rotifer/mcp-server@0.20.2 dist.integrity`, before use.
 
 - **Source**: [github.com/rotifer-protocol/rotifer-mcp-server](https://github.com/rotifer-protocol/rotifer-mcp-server)
 

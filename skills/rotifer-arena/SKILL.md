@@ -23,11 +23,11 @@ rotifer --version
 ```
 
 If `rotifer` is not found, propose an install and wait for the user's approval
-before running it. Each option downloads `@rotifer/playground@0.37.0` from npm:
-`npm i -g @rotifer/playground@0.37.0` puts the `rotifer` binary in npm's global
-prefix, `npm install --save-dev --save-exact @rotifer/playground@0.37.0` keeps it
+before running it. Each option downloads `@rotifer/playground@0.38.0` from npm:
+`npm i -g @rotifer/playground@0.38.0` puts the `rotifer` binary in npm's global
+prefix, `npm install --save-dev --save-exact @rotifer/playground@0.38.0` keeps it
 in the project (run it as `npm exec -- rotifer`), and
-`npx --yes @rotifer/playground@0.37.0 <command>` runs it from npm's cache without
+`npx --yes @rotifer/playground@0.38.0 <command>` runs it from npm's cache without
 installing it. `--yes` only skips npx's own "Ok to proceed?" prompt, which npx
 also skips by itself when its input is not a terminal, as in most assistant
 shells. It is not the approval: the user's approval is the reply to your
@@ -40,7 +40,7 @@ Or use the MCP Server for IDE integration:
   "mcpServers": {
     "rotifer": {
       "command": "npx",
-      "args": ["@rotifer/mcp-server@0.20.1"]
+      "args": ["@rotifer/mcp-server@0.20.2"]
     }
   }
 }
@@ -48,8 +48,8 @@ Or use the MCP Server for IDE integration:
 
 Your MCP host runs this `npx` command when it starts the server, and nothing asks
 first: npx does not prompt when its input is not a terminal, so the first start
-downloads `@rotifer/mcp-server@0.20.1` from npm and runs it. To review it before it ever
-runs, install that version with `npm i -g @rotifer/mcp-server@0.20.1` and use
+downloads `@rotifer/mcp-server@0.20.2` from npm and runs it. To review it before it ever
+runs, install that version with `npm i -g @rotifer/mcp-server@0.20.2` and use
 `rotifer-mcp-server` as the command, with no `args`.
 
 ---
@@ -238,7 +238,7 @@ Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.37.0`. If it is not installed, it is downloaded from npm only after you approve the install (see Prerequisites). |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.38.0`. If it is not installed, it is downloaded from npm only after you approve the install (see Prerequisites). |
 | **Reads** | Genes and Agent definitions in the current project workspace. |
 | **Writes** | Only what the commands below write — Genes into the project's `genes/`, Agent definitions into `.rotifer/agents/`. Outside the project: the CLI's own state in your home directory (`~/.rotifer/`, `~/.config/rotifer/`); when `rotifer compile` runs, the javy toolchain it calls writes its own caches in your user cache folder; and npm's cache or global prefix when the CLI is installed. |
 | **Sends** | Cloud registry and Arena queries, to the public Rotifer API. Your code is not uploaded unless you run `rotifer publish` yourself. |

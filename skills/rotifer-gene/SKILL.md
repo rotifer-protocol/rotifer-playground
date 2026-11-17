@@ -1,12 +1,12 @@
 ---
 name: rotifer-gene
 description: The Gene manual for Rotifer Protocol — write a Gene's express function and phenotype schema, test it on its own and inside a small Agent, publish it to the Rotifer Gene Registry and enter the Arena; run the four-layer security audit that searches your own Gene files and published records for leaked credentials and fixes what it finds, such as an absolute path in a Gene manifest, before publishing; and migrate a Gene's fidelity from Wrapped to Hybrid or Native. Invoke explicitly when building, auditing, or upgrading a Rotifer Gene. Do NOT use for general code review, dependency auditing, or framework migration — every procedure here operates on Rotifer Genes, their phenotype schemas, and the Rotifer CLI. One closing section tells contributors to Rotifer itself where the code changes when a fidelity level, phenotype field, domain or CLI command is added.
-version: 1.0.11
+version: 1.0.12
 license: Apache-2.0
-compatibility: Requires the Rotifer CLI at a pinned version (@rotifer/playground@0.37.0) for the commands shown, installed with npm i -g @rotifer/playground@0.37.0 or run per command as npx --yes @rotifer/playground@0.37.0, either of which downloads it from npm. Publishing and Arena submission also need network access and an account.
+compatibility: Requires the Rotifer CLI at a pinned version (@rotifer/playground@0.38.0) for the commands shown, installed with npm i -g @rotifer/playground@0.38.0 or run per command as npx --yes @rotifer/playground@0.38.0, either of which downloads it from npm. Publishing and Arena submission also need network access and an account.
 metadata:
   author: rotifer-protocol
-  version: "1.0.11"
+  version: "1.0.12"
 ---
 
 # Working on a Gene
@@ -90,7 +90,7 @@ commands sends, read from the CLI source at the version pinned here:
   uploading, run a Hybrid or Wrapped Gene's own code, which makes its own
   requests carrying whatever the Gene puts in them. `ctx.gatewayFetch` reaches
   only the hosts in its `network.allowedDomains`. A global `fetch` is held to the
-  same list from CLI 0.37.0, the version pinned here; in 0.36.1 and earlier it
+  same list from CLI 0.37.0, so also in 0.38.0, the version pinned here; in 0.36.1 and earlier it
   is not (`modules/dev.md` §5.3). A Native Gene makes no requests.
 - **`init`, `scan`, `vg`, `compile`, `agent create`** and **`telemetry`** send
   nothing beyond the version check.

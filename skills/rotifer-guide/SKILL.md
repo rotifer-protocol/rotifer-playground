@@ -25,11 +25,11 @@ rotifer --version
 ```
 
 If `rotifer` is not found, propose an install and wait for the user's approval
-before running it. Each option downloads `@rotifer/playground@0.37.0` from npm:
-`npm i -g @rotifer/playground@0.37.0` puts the `rotifer` binary in npm's global
-prefix, `npm install --save-dev --save-exact @rotifer/playground@0.37.0` keeps it
+before running it. Each option downloads `@rotifer/playground@0.38.0` from npm:
+`npm i -g @rotifer/playground@0.38.0` puts the `rotifer` binary in npm's global
+prefix, `npm install --save-dev --save-exact @rotifer/playground@0.38.0` keeps it
 in the project (run it as `npm exec -- rotifer`), and
-`npx --yes @rotifer/playground@0.37.0 <command>` runs it from npm's cache without
+`npx --yes @rotifer/playground@0.38.0 <command>` runs it from npm's cache without
 installing it. `--yes` only skips npx's own "Ok to proceed?" prompt, which npx
 also skips by itself when its input is not a terminal, as in most assistant
 shells. It is not the approval: the user's approval is the reply to your
@@ -42,7 +42,7 @@ If you prefer MCP integration instead of CLI, add this to your MCP config:
   "mcpServers": {
     "rotifer": {
       "command": "npx",
-      "args": ["@rotifer/mcp-server@0.20.1"]
+      "args": ["@rotifer/mcp-server@0.20.2"]
     }
   }
 }
@@ -50,8 +50,8 @@ If you prefer MCP integration instead of CLI, add this to your MCP config:
 
 Your MCP host runs this `npx` command when it starts the server, and nothing asks
 first: npx does not prompt when its input is not a terminal, so the first start
-downloads `@rotifer/mcp-server@0.20.1` from npm and runs it. To review it before it ever
-runs, install that version with `npm i -g @rotifer/mcp-server@0.20.1` and use
+downloads `@rotifer/mcp-server@0.20.2` from npm and runs it. To review it before it ever
+runs, install that version with `npm i -g @rotifer/mcp-server@0.20.2` and use
 `rotifer-mcp-server` as the command, with no `args`.
 
 The install commands and the MCP config name an exact version on purpose. An unversioned `npx` resolves to whatever the
@@ -61,7 +61,7 @@ step, not per file. Stronger than pinning the `npx` call: install the CLI into t
 the local binary. That is an install too: propose it and run it only after the user approves.
 
 ```bash
-npm install --save-dev --save-exact @rotifer/playground@0.37.0
+npm install --save-dev --save-exact @rotifer/playground@0.38.0
 npm exec -- rotifer --version
 ```
 
@@ -112,7 +112,7 @@ Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.37.0`. If it is not installed, an install is proposed and waits for your approval: `npx` fetches that exact version into npm's cache, `npm i -g` puts it in npm's global prefix, and `npm install --save-dev` keeps it inside the project. |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.38.0`. If it is not installed, an install is proposed and waits for your approval: `npx` fetches that exact version into npm's cache, `npm i -g` puts it in npm's global prefix, and `npm install --save-dev` keeps it inside the project. |
 | **Reads** | Genes and Agent definitions in the current project workspace. |
 | **Writes in the project** | Genes into `genes/` (with their compiled output and score caches), and Agent definitions into `.rotifer/agents/`. |
 | **Writes outside the project** | The CLI's own state in your home directory: `~/.rotifer/` (a local database, an audit log, a run log, the telemetry setting, and your session token if you run `rotifer login`) and `~/.config/rotifer/` (a daily update-check cache), plus, when `rotifer compile` runs, the caches the javy toolchain it calls writes in your user cache folder. Installing the CLI writes to npm's cache, or to npm's global prefix with `npm i -g`. |
@@ -135,10 +135,10 @@ rotifer list
 ```
 
 If the CLI is missing, propose an install and wait for approval. `npm install
---save-dev --save-exact @rotifer/playground@0.37.0` keeps it in the project (run it
-as `npm exec -- rotifer`); `npm i -g @rotifer/playground@0.37.0` installs the
+--save-dev --save-exact @rotifer/playground@0.38.0` keeps it in the project (run it
+as `npm exec -- rotifer`); `npm i -g @rotifer/playground@0.38.0` installs the
 `rotifer` binary at that exact version into npm's global prefix, outside the project;
-`npx --yes @rotifer/playground@0.37.0 <command>` runs it from npm's cache without
+`npx --yes @rotifer/playground@0.38.0 <command>` runs it from npm's cache without
 installing it. Whichever the user picks, it runs only after they approve it.
 
 `rotifer doctor` checks the TypeScript→WASM toolchain (esbuild / javy). Run it

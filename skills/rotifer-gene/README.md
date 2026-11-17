@@ -17,7 +17,7 @@ Three manuals, loaded on demand rather than all at once:
 
 ```bash
 # install the CLI once, at the pinned version; this downloads it from npm
-npm i -g @rotifer/playground@0.37.0
+npm i -g @rotifer/playground@0.38.0
 # an Agent workspace: genesis Genes plus an example hello-world Gene
 rotifer init my-workspace
 cd my-workspace
@@ -30,7 +30,7 @@ rotifer compile my-gene
 rotifer test my-gene --compliance
 ```
 
-Without installing, each `rotifer` command also runs as `npx --yes @rotifer/playground@0.37.0 <command>`,
+Without installing, each `rotifer` command also runs as `npx --yes @rotifer/playground@0.38.0 <command>`,
 which downloads the package into npm's cache on first use; `--yes` only skips npx's own prompt.
 
 The install names an exact CLI version on purpose: an unversioned install resolves to whatever the
@@ -38,7 +38,7 @@ registry serves at that moment, so what you run would not be what was reviewed. 
 install the CLI into the project and run the local binary:
 
 ```bash
-npm install --save-dev --save-exact @rotifer/playground@0.37.0
+npm install --save-dev --save-exact @rotifer/playground@0.38.0
 npm exec -- rotifer test my-gene --verbose
 ```
 
@@ -69,7 +69,7 @@ permissions are for: the CLI acting, not this Skill.
 
 | | |
 |---|---|
-| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.37.0`. You install it from npm at that exact version (Quick Start), or `npx` fetches it into npm's cache if you run it that way. |
+| **Runs** | The `rotifer` CLI, pinned to `@rotifer/playground@0.38.0`. You install it from npm at that exact version (Quick Start), or `npx` fetches it into npm's cache if you run it that way. |
 | **Reads** | Genes in the current project — source, `phenotype.json`, and the local manifests. |
 | **Writes** | Genes into the project's `genes/`, compiled IR beside them. Outside the project: the CLI's own state in your home directory (`~/.rotifer/`, `~/.config/rotifer/`); when `rotifer compile` runs, the javy toolchain it calls writes its own caches in your user cache folder; and npm's cache or global prefix when the CLI is installed. |
 | **Sends** | Per command, from the CLI source at the pinned version. **Every command** (installed CLI): one version check per day to `registry.npmjs.org`, skipped under `npx`, in CI, or with `ROTIFER_NO_UPDATE_CHECK` set. **`wrap`**: nothing, but in a terminal, when you are signed in and the Gene is ready to publish, it asks `Publish '<name>' to Rotifer Cloud? [Y/n]` and Enter publishes (`rotifer config set default-publish false` stops the question). **`login`**: signs in to Rotifer Cloud through your browser. **`publish`**: the Gene's metadata, `phenotype.json`, `README.md`, changelog, content hash and compiled WASM, made public; it also fetches the list of domains and, unless `--skip-arena`, reads your developer reputation. **`arena submit`**: asks for the season's reference scale (domain and fidelity); with `--cloud`, also the scores and runs. **`arena list`**, **`arena watch`**: only with `--cloud`, the Arena rankings. **`install`**: fetches the Gene and its WASM and records one download. **`hello`**: looks a template's Gene up when the workspace lacks it. **`run`**, **`agent run`**: an anonymous heartbeat (random machine id, channel, CLI version) and, signed in, an invocation record for a Gene installed from Cloud; `rotifer telemetry off`, `ROTIFER_TELEMETRY=0` or `DO_NOT_TRACK=1` turns both off. **`test`, `run`, `agent run`, `hello`** and `publish`'s pre-upload tests run a Hybrid or Wrapped Gene's own code, whose requests are held to its `network.allowedDomains`. **`init`, `scan`, `vg`, `compile`, `agent create`, `telemetry`**: nothing beyond the version check. Rotifer Cloud requests carry your access token when you are signed in, except the heartbeat, the WASM download and the list of domains. Nothing else is sent. |

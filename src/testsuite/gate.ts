@@ -47,6 +47,9 @@ export interface GateInput {
   /** Runs one input against the compiled Gene. Null when no runtime is
    * available — see the not-applicable branch. */
   run: GeneRunner | null;
+  /** Why the Gene was not run although it could have been: it is external
+   * code and running it on Node.js needs the user's --trust-unsigned. */
+  untrusted?: string;
 }
 
 export async function evaluatePublishGate(input: GateInput): Promise<GateVerdict> {
@@ -75,10 +78,17 @@ export async function evaluatePublishGate(input: GateInput): Promise<GateVerdict
     return {
       status: "blocked",
       reason: "testsuite.json exists but the Gene could not be executed to run it",
-      guidance: [
-        "Compile first so the suite can run:  rotifer compile <gene>",
-        "A suite that has not been run is not evidence.",
-      ],
+      guidance: input.untrusted
+        ? [
+            input.untrusted,
+            "Compile first so the suite runs in the sandbox:  rotifer compile <gene>",
+            "Or allow it to run on Node.js:                  rotifer publish <gene> --trust-unsigned",
+            "A suite that has not been run is not evidence.",
+          ]
+        : [
+            "Compile first so the suite can run:  rotifer compile <gene>",
+            "A suite that has not been run is not evidence.",
+          ],
     };
   }
 

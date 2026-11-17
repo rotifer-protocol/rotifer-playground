@@ -595,7 +595,7 @@ async function executeTryPool(
   await flushHeartbeat();
 }
 
-const TRUST_UNSIGNED_HINT = "Use --trust-unsigned to explicitly allow unsandboxed execution.";
+export const TRUST_UNSIGNED_HINT = "Use --trust-unsigned to explicitly allow unsandboxed execution.";
 
 /**
  * The same consent `rotifer run` asks for. A Cloud-installed gene is someone

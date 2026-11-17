@@ -8,10 +8,10 @@ import { c } from "../utils/palette.js";
 import { getProjectRoot, loadConfig } from "../utils/config.js";
 import { requireProjectRoot } from "../utils/project-root.js";
 import { createAgentCore } from "./agent-create.js";
-import { buildGeneExecutor, findAgent, printProtocolInsights } from "./agent-run.js";
+import { TRUST_UNSIGNED_HINT, buildGeneExecutor, findAgent, printProtocolInsights } from "./agent-run.js";
 import { tryLoadBinding } from "../utils/binding.js";
 import { ALLOW_CREDENTIALS_OPTION, compiledGenes, requireCredentialConsent } from "../utils/env-grant-consent.js";
-import { evaluateL0, isExternallySourced } from "../utils/l0-gate.js";
+import { evaluateL0, isExternallySourced, nodeRefusalMessage } from "../utils/l0-gate.js";
 import { geneEgress, withGeneEgress } from "../runtime/egress-guard.js";
 import { readErrorEnvelope } from "../testsuite/gate.js";
 import { diagnoseLocalGene, diagnoseRegistryGene, type GeneDiagnosis } from "../cloud/gene-availability.js";
@@ -131,6 +131,7 @@ interface HelloOptions {
   json: boolean;
   allowCredentials?: string;
   listTemplates?: boolean;
+  trustUnsigned?: boolean;
 }
 
 interface PipelineExecutionResult {
@@ -156,6 +157,7 @@ export const helloCommand = new Command("hello")
   .option("--verbose", "show detailed output (L2)", false)
   .option("--json", "write only JSON to stdout: the output, or {ok:false,code,...} on failure; progress goes to stderr", false)
   .option(...ALLOW_CREDENTIALS_OPTION)
+  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed or ClawHub-wrapped genes", false)
   .option("--list-templates", "list templates and whether each can run in this workspace, then exit")
   .addHelpText(
     "after",
@@ -265,7 +267,7 @@ export const helloCommand = new Command("hello")
 
     const startTime = performance.now();
     await requireCredentialConsent(compiledGenes(genesDir, availableGenes), options);
-    const pipeline = await executeGenomePipeline(availableGenes, genesDir, input);
+    const pipeline = await executeGenomePipeline(availableGenes, genesDir, input, { trustUnsigned: options.trustUnsigned });
     const elapsed = performance.now() - startTime;
 
     console.log();
@@ -556,22 +558,29 @@ async function renderOutput(
   }
 
   const lastGene = genome[genome.length - 1];
-  const didRender = await tryGeneDisplay(lastGene, genesDir, result, { verbose: options.verbose });
+  const didRender = await tryGeneDisplay(lastGene, genesDir, result, {
+    verbose: options.verbose,
+    trustUnsigned: options.trustUnsigned,
+  });
   if (!didRender) {
     display.info("Output:");
     console.log(JSON.stringify(result, null, 2));
   }
 }
 
-async function tryGeneDisplay(
+export async function tryGeneDisplay(
   geneName: string,
   genesDir: string,
   output: unknown,
-  options: { verbose: boolean },
+  options: { verbose: boolean; trustUnsigned?: boolean },
 ): Promise<boolean> {
   const geneDir = join(genesDir, geneName);
   const srcFile = findGeneSource(geneDir);
   if (!srcFile) return false;
+  // Loading the module for display() runs it on Node.js, unsandboxed, as much
+  // as loading it for express() does: an external gene needs the same consent.
+  // Without it the output is printed as JSON instead.
+  if (!options.trustUnsigned && isExternallySourced(geneDir)) return false;
 
   // 这里只想拿 display()，但 import 依然会执行该模块的顶层代码，所以同样过门控。
   const phenotypePath = join(geneDir, "phenotype.json");
@@ -883,6 +892,7 @@ export async function executeGenomePipeline(
   genome: string[],
   genesDir: string,
   input: unknown,
+  options: { trustUnsigned?: boolean } = {},
 ): Promise<PipelineExecutionResult> {
   let current: unknown = input;
   let hasFailed = false;
@@ -938,9 +948,27 @@ export async function executeGenomePipeline(
       break;
     }
 
+    // An external gene (installed from Cloud, or wrapped from ClawHub) is
+    // someone else's code. As under `rotifer run`: with a compiled artifact and
+    // the sandbox, it runs in the sandbox; otherwise it does not reach Node.js
+    // unless the user said so. Checked before import(), which already runs the
+    // module's top-level code.
+    const isExternal = isExternallySourced(geneDir);
+    const isSandboxed = !srcFile || (isExternal && existsSync(irWasmPath) && binding !== null);
+    if (!isSandboxed && isExternal && !options.trustUnsigned) {
+      const refusal = nodeRefusalMessage(geneDir);
+      hasFailed = true;
+      failedGene = geneName;
+      error = `${refusal} ${TRUST_UNSIGNED_HINT}`;
+      display.error(`${step} ${refusal}`);
+      display.hint(TRUST_UNSIGNED_HINT);
+      display.hint(`Or compile the gene first: rotifer compile ${geneName}`);
+      break;
+    }
+
     // An installed Native gene is WASM with no source. It runs the way
     // `agent run` runs it: the same executor, the phenotype's own declarations.
-    if (!srcFile) {
+    if (isSandboxed) {
       if (!binding) {
         hasFailed = true;
         failedGene = geneName;

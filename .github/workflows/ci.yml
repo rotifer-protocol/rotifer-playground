@@ -466,8 +466,30 @@ jobs:
           # since it is the Gene isolation boundary.
           cargo audit
 
+      # 2026-11-17: GHSA-fc5q-39xc-vjpf (picomatch <=4.0.7, ReDoS) was raised
+      # to high with no fixed release. picomatch is a dev dependency here
+      # (vitest, vite, typescript-eslint) and is not in what users install.
+      # scripts/audit-gate.mjs keeps the high threshold and fails on every
+      # advisory at or above it, except ids listed in
+      # .github/audit-allowlist.json. An entry stops applying on its own on its
+      # expiry date or as soon as GitHub lists a patched version, whichever
+      # comes first, and each run prints the ids it let through.
       - name: npm dependency audit
-        run: npm audit --audit-level=high
+        env:
+          # Read-only lookups of public advisories (first_patched_version).
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            node scripts/audit-gate.mjs && exit 0
+            rc=$?
+            # 1 = a real finding: do not retry. 2 = npm audit could not run.
+            if [ "$rc" -ne 2 ]; then exit "$rc"; fi
+            echo "::warning::Attempt ${attempt}: could not reach the npm audit service. Retrying."
+            sleep 15
+          done
+          echo "::error::npm audit could not reach the registry after 3 attempts. This is not a clean result - the dependency tree was never checked."
+          exit 1
 
       - name: WASM sandbox security tests
         run: cargo test -p rotifer-core --test wasm_security

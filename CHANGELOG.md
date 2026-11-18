@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.38.1](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.38.0...v0.38.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **deps:** upgrade vitest to 4.1.12 and qs to 6.17.1 ([#617](https://github.com/rotifer-protocol/rotifer-playground/issues/617)) ([c45e126](https://github.com/rotifer-protocol/rotifer-playground/commit/c45e1266e7644815100119e6c5114b11c5116ff3))
+
 ## [0.38.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.37.0...v0.38.0) (2026-11-17)
 
 

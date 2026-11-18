@@ -23,6 +23,7 @@ pub mod node;
 pub mod outbound;
 pub mod peerstore;
 pub mod por;
+pub mod relay_server;
 pub mod security;
 
 // Exploratory two-node connectivity spike (test-only).
@@ -137,6 +138,22 @@ pub struct NetworkConfig {
     /// addresses of both ends of every circuit through it (§8.7).
     #[serde(default)]
     pub relays: Vec<String>,
+    /// Serve as a Circuit Relay v2 relay for other nodes, with these limits
+    /// (ADR-304 D3; T-231 B2 design §2.2). `None`, the default, is off: a
+    /// relay sees both ends' IP addresses (§8.7) and spends outbound traffic,
+    /// so only an operator who chose to run one turns it on. It serves only
+    /// while the node has an `announce` address (libp2p offers the relay
+    /// protocol only with a confirmed external address). Absent in older
+    /// configs, which read as off.
+    #[serde(default)]
+    pub relay_server: Option<relay_server::RelayServerLimits>,
+    /// This node's public addresses, as its operator declares them (design
+    /// §2.3): each exactly `/ip4/<public IPv4>/tcp/<port>`; DNS names, private
+    /// and loopback addresses fail `start`. They are taken as confirmed
+    /// external addresses: peers learn them through Identify, and a relay
+    /// server hands them to the nodes that reserve on it. Empty by default.
+    #[serde(default)]
+    pub announce: Vec<String>,
     /// Issuers whose proof-of-registration tokens this node checks in other
     /// nodes' heartbeats, each with the address of its published keys
     /// (ADR-300 locked contract v2, "信任锚"). Defaults to
@@ -193,6 +210,8 @@ impl Default for NetworkConfig {
             max_outbound_connections: DEFAULT_MAX_OUTBOUND_CONNECTIONS,
             max_pending_connections: DEFAULT_MAX_PENDING_CONNECTIONS,
             relays: Vec::new(),
+            relay_server: None,
+            announce: Vec::new(),
             trust_anchors: por::default_trust_anchors(),
         }
     }
@@ -453,6 +472,28 @@ mod tests {
         let back: NetworkConfig = serde_json::from_str(&serde_json::to_string(&set).unwrap()).unwrap();
         assert_eq!((back.max_inbound_connections, back.max_outbound_connections, back.max_pending_connections), (3, 4, 5));
         assert_eq!(back.relays, set.relays);
+    }
+
+    // T-231 PR-①: the relay server and announced addresses are off by
+    // default, configs written before they existed read as off, and set
+    // values survive a round trip.
+    #[test]
+    fn relay_server_and_announce_are_off_by_default() {
+        let d = NetworkConfig::default();
+        assert!(d.relay_server.is_none(), "no node relays for others unless its operator says so");
+        assert!(d.announce.is_empty());
+        let legacy = r#"{"node_id":"n","listen_host":"127.0.0.1","listen_port":9878,"bootstrap_peers":[],"enabled":true}"#;
+        let old: NetworkConfig = serde_json::from_str(legacy).unwrap();
+        assert!(old.relay_server.is_none());
+        assert!(old.announce.is_empty());
+        let set = NetworkConfig {
+            relay_server: Some(relay_server::RelayServerLimits { max_reservations: 2, ..Default::default() }),
+            announce: vec!["/ip4/8.8.8.8/tcp/9878".into()],
+            ..NetworkConfig::default()
+        };
+        let back: NetworkConfig = serde_json::from_str(&serde_json::to_string(&set).unwrap()).unwrap();
+        assert_eq!(back.relay_server, set.relay_server);
+        assert_eq!(back.announce, set.announce);
     }
 
     #[test]

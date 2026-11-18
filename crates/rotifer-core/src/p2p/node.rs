@@ -51,6 +51,7 @@ use super::outbound::{
 use super::outbound::FirstConnection;
 use super::peerstore;
 use super::por::{self, Decision, FetchJob, Fetched, HeartbeatDesk, HeartbeatStats, KeyStore, PeerAttestation};
+use super::relay_server::{self, RelayServerLimits, RelayServerStats, SharedRelayStats};
 use super::{NetworkConfig, NetworkError, PeerId};
 
 /// PEM armor label for the persisted node identity.
@@ -499,6 +500,10 @@ mod behaviour {
         /// Test switch (design v5 §5.9.2, ①-向): refuse this node's own dials
         /// to the listed peers. Empty, and so never built, outside tests.
         pub(super) deny_dial: Toggle<DenyDial>,
+        /// Circuit Relay v2 server (ADR-304 D3; T-231 B2 design §2.2): off
+        /// unless `NetworkConfig::relay_server` turns it on. After the limits,
+        /// so a refused connection never reaches it.
+        pub(super) relay_server: Toggle<relay::Behaviour>,
         pub(super) kademlia: kad::Behaviour<GeneStore>,
         pub(super) gossipsub: gossipsub::Behaviour,
         pub(super) identify: identify::Behaviour,
@@ -587,6 +592,11 @@ type PendingReadBack = (oneshot::Sender<usize>, Vec<u8>, u64, HashSet<Libp2pPeer
 pub struct ConnectionDenials {
     /// Inbound connections over a cap (inbound, pending or per peer).
     pub inbound_limit: u64,
+    /// Of `inbound_limit`, those refused because `max_pending_connections`
+    /// handshakes were already under way (design T-231 §4.2): a rise means
+    /// half-open connections are crowding new peers out. Told apart by the
+    /// text of libp2p's refusal, whose kind is private; a test pins the text.
+    pub pending_inbound_limit: u64,
     /// Outbound dials over a cap (outbound, pending or per peer).
     pub outbound_limit: u64,
     /// Connections in either direction refused under memory pressure.
@@ -728,6 +738,8 @@ struct NodeShared {
     denials: Arc<Mutex<ConnectionDenials>>,
     /// NAT traversal state (ADR-304 D1).
     nat: Arc<Mutex<NatTraversal>>,
+    /// Relay server counters.
+    relay: SharedRelayStats,
     /// Peers currently announced over mDNS (RFC §5.1).
     mdns_peers: MdnsPeers,
     /// Whether mDNS actually started (false when disabled, loopback-only, or
@@ -789,6 +801,11 @@ pub struct Node {
     denials: Arc<Mutex<ConnectionDenials>>,
     /// NAT traversal state (ADR-304 D1).
     nat: Arc<Mutex<NatTraversal>>,
+    /// What the relay server did since the last start (all zero when off).
+    relay: SharedRelayStats,
+    /// Accept loopback `announce` addresses (tests: one machine has no public
+    /// address). Off in production.
+    announce_loopback: bool,
     /// Peers currently announced over mDNS (RFC §5.1).
     mdns_peers: MdnsPeers,
     /// Whether mDNS is running (set on `start`).
@@ -902,6 +919,8 @@ impl Node {
             unregistered: Arc::new(Mutex::new(0)),
             denials: Arc::new(Mutex::new(ConnectionDenials::default())),
             nat: Arc::new(Mutex::new(NatTraversal::default())),
+            relay: Arc::new(Mutex::new(RelayServerStats::default())),
+            announce_loopback: false,
             mdns_peers: Arc::new(Mutex::new(HashMap::new())),
             mdns_active: Arc::new(Mutex::new(false)),
             foreign: Arc::new(Mutex::new(0)),
@@ -1018,6 +1037,21 @@ impl Node {
     /// connections and hole punches (ADR-304 D1).
     pub fn nat_traversal(&self) -> NatTraversal {
         self.nat.lock().map(|n| n.clone()).unwrap_or_default()
+    }
+
+    /// What the relay server did since the last start (T-231 B2 design §4.2;
+    /// each count's meaning is on [`RelayServerStats`]). All zero when
+    /// `NetworkConfig::relay_server` is off.
+    pub fn relay_server_stats(&self) -> RelayServerStats {
+        self.relay.lock().map(|r| *r).unwrap_or_default()
+    }
+
+    /// Accept loopback addresses in `NetworkConfig::announce` (tests only:
+    /// one machine has no public address). Must be called before `start`.
+    #[cfg(test)]
+    fn with_announce_loopback(mut self) -> Self {
+        self.announce_loopback = true;
+        self
     }
 
     /// Whether mDNS is running (`NetworkConfig::mdns_enabled` asks for it).
@@ -1575,6 +1609,9 @@ impl Node {
         let port = self.config.listen_port;
         let bootstrap = self.config.bootstrap_peers.clone();
         let limits = self.swarm_options()?;
+        if let Ok(mut r) = self.relay.lock() {
+            *r = RelayServerStats::default();
+        }
         let shared = NodeShared {
             listen_addrs: Arc::clone(&self.listen_addrs),
             discovered: Arc::clone(&self.discovered),
@@ -1586,6 +1623,7 @@ impl Node {
             unregistered: Arc::clone(&self.unregistered),
             denials: Arc::clone(&self.denials),
             nat: Arc::clone(&self.nat),
+            relay: Arc::clone(&self.relay),
             mdns_peers: Arc::clone(&self.mdns_peers),
             mdns_active: Arc::clone(&self.mdns_active),
             foreign: Arc::clone(&self.foreign),
@@ -1841,6 +1879,15 @@ impl Node {
             max_pending: self.config.max_pending_connections,
             mdns: mdns_should_run(self.config.mdns_enabled, &self.config.listen_host),
             relays: parse_relays(&self.config.relays)?,
+            announce: relay_server::parse_announce(&self.config.announce, self.announce_loopback)?,
+            relay_server: match &self.config.relay_server {
+                Some(limits) => {
+                    limits.validate()?;
+                    Some(limits.clone())
+                }
+                None => None,
+            },
+            relay_stats: Arc::clone(&self.relay),
             autonat_on_loopback: self.autonat_on_loopback,
             heartbeat_interval: self.heartbeat_interval,
             score_refresh_interval: self.score_refresh_interval,
@@ -1862,6 +1909,12 @@ struct SwarmOptions {
     mdns: bool,
     /// Relays to hold a reservation on, each ending in `/p2p/<PeerId>`.
     relays: Vec<(Multiaddr, Libp2pPeerId)>,
+    /// This node's declared public addresses (already checked).
+    announce: Vec<Multiaddr>,
+    /// Serve as a relay with these limits (already checked); `None` = off.
+    relay_server: Option<RelayServerLimits>,
+    /// Where the relay server's rate limiters count their refusals.
+    relay_stats: SharedRelayStats,
     /// See `Node::autonat_on_loopback`.
     autonat_on_loopback: bool,
     /// See `Node::heartbeat_interval`.
@@ -1992,6 +2045,12 @@ fn build_swarm(keypair: Keypair, options: &SwarmOptions) -> Result<Swarm<NodeBeh
                 deny_dial: Toggle::from(
                     (!options.deny_dial.is_empty()).then(|| DenyDial { peers: options.deny_dial.iter().copied().collect() }),
                 ),
+                relay_server: Toggle::from(
+                    options
+                        .relay_server
+                        .as_ref()
+                        .map(|limits| relay::Behaviour::new(peer_id, limits.relay_config(&options.relay_stats))),
+                ),
                 kademlia,
                 gossipsub,
                 identify,
@@ -2026,11 +2085,99 @@ fn record_denial(denials: &Mutex<ConnectionDenials>, inbound: bool, cause: &Conn
     if let Ok(mut d) = denials.lock() {
         match (memory, inbound) {
             (true, _) => d.memory += 1,
-            (false, true) => d.inbound_limit += 1,
+            (false, true) => {
+                d.inbound_limit += 1;
+                if is_pending_refusal(cause) {
+                    d.pending_inbound_limit += 1;
+                }
+            }
             (false, false) => d.outbound_limit += 1,
         }
     }
     tracing::debug!(inbound, "connection refused by local limit: {cause}");
+}
+
+/// Publish `RelayServerStats::reservations_active` from the per-peer tally.
+fn set_reservations_active(stats: &SharedRelayStats, holders: &HashMap<Libp2pPeerId, u64>) {
+    if let Ok(mut s) = stats.lock() {
+        s.reservations_active = holders.values().sum();
+    }
+}
+
+/// Count a relay server event (T-231 B2 design §4.2; review X12) and, for a
+/// reservation libp2p granted but could not deliver, close the peer's
+/// connections: libp2p marks the slot taken before the acceptance is written
+/// and does not give it back when the write fails, so the slot would stay
+/// taken for as long as the peer keeps the connection open (review X5).
+#[allow(deprecated)] // the *Failed variants: still emitted by libp2p-relay 0.22
+fn on_relay_server_event(
+    event: relay::Event,
+    swarm: &mut Swarm<NodeBehaviour>,
+    stats: &SharedRelayStats,
+    holders: &mut HashMap<Libp2pPeerId, u64>,
+) {
+    let Ok(mut s) = stats.lock() else { return };
+    match event {
+        relay::Event::StatusChanged { status } => {
+            s.advertising = matches!(status, relay::Status::Enable);
+            tracing::info!(advertising = s.advertising, "relay server status changed");
+        }
+        relay::Event::ReservationReqAccepted { src_peer_id, renewed } => {
+            if renewed {
+                s.reservations_renewed += 1;
+            } else {
+                s.reservations_accepted += 1;
+                *holders.entry(src_peer_id).or_default() += 1;
+                s.reservations_active = holders.values().sum();
+            }
+        }
+        relay::Event::ReservationReqAcceptFailed { src_peer_id, error } => {
+            s.reservations_accept_failed += 1;
+            drop(s);
+            tracing::debug!(%src_peer_id, "relay reservation granted but not delivered, disconnecting: {error}");
+            let _ = swarm.disconnect_peer_id(src_peer_id);
+        }
+        relay::Event::ReservationReqDenied { .. } => s.reservations_denied += 1,
+        relay::Event::ReservationTimedOut { src_peer_id } => {
+            if let Some(n) = holders.get_mut(&src_peer_id) {
+                *n = n.saturating_sub(1);
+                if *n == 0 {
+                    holders.remove(&src_peer_id);
+                }
+            }
+            s.reservations_active = holders.values().sum();
+        }
+        relay::Event::CircuitReqAccepted { .. } => {
+            s.circuits_accepted += 1;
+            s.circuits_active += 1;
+        }
+        relay::Event::CircuitClosed { error, .. } => {
+            s.circuits_active = s.circuits_active.saturating_sub(1);
+            // libp2p-relay 0.22 `copy_future.rs`: the byte cap ends a circuit
+            // with this message, the time cap with `TimedOut`.
+            match error {
+                Some(e) if e.kind() == std::io::ErrorKind::TimedOut => s.circuits_closed_over_time += 1,
+                Some(e) if e.to_string().contains("Max circuit bytes") => s.circuits_closed_over_bytes += 1,
+                _ => {}
+            }
+        }
+        relay::Event::CircuitReqDenied { status, .. } => {
+            s.circuits_denied += 1;
+            if matches!(status, relay::StatusCode::NoReservation) {
+                s.circuits_denied_no_reservation += 1;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether a connection-limits refusal is over the pending (handshaking)
+/// cap. libp2p keeps the limit's kind private; its message names it
+/// ("... pending incoming connections ..."), and the half-open test pins it.
+fn is_pending_refusal(cause: &ConnectionDenied) -> bool {
+    cause
+        .downcast_ref::<connection_limits::Exceeded>()
+        .is_some_and(|e| e.to_string().contains("pending incoming connections"))
 }
 
 /// AutoNAT's verdict as the node reports it.
@@ -2087,6 +2234,7 @@ async fn run_event_loop(
         unregistered,
         denials,
         nat,
+        relay: relay_stats,
         mdns_peers,
         mdns_active,
         foreign,
@@ -2127,6 +2275,18 @@ async fn run_event_loop(
         let _ = ready_tx.send(Err(NetworkError::Transport(format!("listen: {e}"))));
         return;
     }
+    // The operator's declared public addresses (design §2.3), taken as
+    // confirmed: Identify reports them, and the relay server needs one to
+    // offer the relay protocol at all.
+    for addr in &options.announce {
+        swarm.add_external_address(addr.clone());
+    }
+    if options.relay_server.is_some() && options.announce.is_empty() {
+        tracing::warn!("relay server on but no announce address: it will refuse every reservation");
+    }
+    // Reservations each peer holds on this relay server, for
+    // `RelayServerStats::reservations_active`.
+    let mut relay_holders: HashMap<Libp2pPeerId, u64> = HashMap::new();
 
     // Dial configured bootstrap peers plus everyone we met in earlier sessions.
     // Remembered peers are what makes bootstrap infrastructure non-critical: a
@@ -2409,7 +2569,18 @@ async fn run_event_loop(
                         let _ = tx.send(Err(NetworkError::Transport("listener error".into())));
                     }
                 }
-                SwarmEvent::ListenerClosed { reason, .. } => {
+                SwarmEvent::ListenerClosed { reason, addresses, .. } => {
+                    // A relay listener closes when its reservation is lost
+                    // (refused on renewal, relay gone). libp2p reports the
+                    // addresses it held here, not as `ExpiredListenAddr`.
+                    if let Ok(mut addrs) = listen_addrs.lock() {
+                        addrs.retain(|a| !addresses.iter().any(|gone| gone.to_string() == *a));
+                    }
+                    for relay_peer in addresses.iter().filter_map(circuit_relay) {
+                        if let Ok(mut n) = nat.lock() {
+                            n.relay_reservations.retain(|r| r != &relay_peer);
+                        }
+                    }
                     if let Some(tx) = ready_tx.take() {
                         let msg = match reason {
                             Ok(()) => "listener closed before binding".to_string(),
@@ -2480,6 +2651,10 @@ async fn run_event_loop(
                 SwarmEvent::ConnectionClosed { peer_id, connection_id, num_established, .. } => {
                     if num_established == 0 {
                         unconfirmed_dials.remove(&peer_id);
+                        // A reservation lives on its connection: none left.
+                        if relay_holders.remove(&peer_id).is_some() {
+                            set_reservations_active(&relay_stats, &relay_holders);
+                        }
                     }
                     colocated.closed(connection_id);
                     if score_gate.poke(Instant::now()) {
@@ -2509,6 +2684,9 @@ async fn run_event_loop(
                     if let Ok(mut n) = nat.lock() {
                         n.reachability = reachability;
                     }
+                }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::RelayServer(event)) => {
+                    on_relay_server_event(event, &mut swarm, &relay_stats, &mut relay_holders);
                 }
                 SwarmEvent::Behaviour(NodeBehaviourEvent::RelayClient(event)) => {
                     let Ok(mut n) = nat.lock() else { continue };
@@ -5061,6 +5239,514 @@ mod tests {
                 other => panic!("relay {bad:?} must fail start, got {other:?}"),
             }
         }
+    }
+
+    // -----------------------------------------------------------------
+    // T-231 PR-① — the relay server role (B2 design §2.2–§2.3, §8.1)
+    // -----------------------------------------------------------------
+
+    /// A free loopback TCP port. Tests run one at a time, so nothing takes it
+    /// between this probe and the node binding it.
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0").expect("probe").local_addr().expect("addr").port()
+    }
+
+    /// A started node with the relay server set to `limits` (`None` = the
+    /// default, off) and, if `announce`, its loopback address declared.
+    struct RelayUnderTest {
+        node: Node,
+        /// `/ip4/127.0.0.1/tcp/<port>/p2p/<PeerId>`
+        addr: String,
+        peer_id: String,
+    }
+
+    fn relay_node(dir: &tempfile::TempDir, name: &str, limits: Option<RelayServerLimits>, announce: bool) -> RelayUnderTest {
+        let port = free_port();
+        let c = NetworkConfig {
+            relay_server: limits,
+            announce: if announce { vec![format!("/ip4/127.0.0.1/tcp/{port}")] } else { Vec::new() },
+            ..cfg(port)
+        };
+        let mut node = Node::with_paths(c, dir.path().join(format!("{name}.id")), dir.path().join(format!("{name}-peers.json")))
+            .expect("build")
+            .with_announce_loopback();
+        node.start().expect("start");
+        let peer_id = node.local_peer_id().0;
+        RelayUnderTest { addr: format!("/ip4/127.0.0.1/tcp/{port}/p2p/{peer_id}"), node, peer_id }
+    }
+
+    /// A node built from `c` with its own files in `dir`, not started.
+    fn test_node(dir: &tempfile::TempDir, name: &str, c: NetworkConfig) -> Node {
+        Node::with_paths(c, dir.path().join(format!("{name}.id")), dir.path().join(format!("{name}-peers.json")))
+            .expect("build")
+    }
+
+    /// A started node that asks `relay` for a reservation.
+    fn relay_client(dir: &tempfile::TempDir, name: &str, relay: &str) -> Node {
+        let mut node = test_node(dir, name, NetworkConfig { relays: vec![relay.to_string()], ..cfg(0) });
+        node.start().expect("start");
+        node
+    }
+
+    fn reserved(client: &Node, relay: &RelayUnderTest) -> bool {
+        client.nat_traversal().relay_reservations.contains(&relay.peer_id)
+    }
+
+    /// Test 1: a node built with the default config relays for nobody.
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "integration: relay server on real loopback nodes")]
+    fn relay_server_is_off_by_default() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        // Everything a relay needs except the switch: an announced address.
+        let relay = relay_node(&dir, "relay", NetworkConfig::default().relay_server, true);
+        let client = relay_client(&dir, "client", &relay.addr);
+        assert!(
+            wait_until(5, || client.identified_peers().contains(&relay.peer_id)),
+            "precondition: the client reaches the node"
+        );
+        assert!(!wait_until(5, || reserved(&client, &relay)), "a default node must refuse reservations");
+        assert_eq!(relay.node.relay_server_stats(), RelayServerStats::default(), "nothing to count");
+    }
+
+    /// Test 2: the relay serves only once it has an announced address.
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "integration: relay server on real loopback nodes")]
+    fn relay_server_serves_only_with_an_announced_address() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let silent = relay_node(&dir, "silent", Some(RelayServerLimits::default()), false);
+        let c1 = relay_client(&dir, "c1", &silent.addr);
+        assert!(wait_until(5, || c1.identified_peers().contains(&silent.peer_id)), "precondition: connected");
+        assert!(!wait_until(5, || reserved(&c1, &silent)), "no announced address: no reservation");
+        assert!(!silent.node.relay_server_stats().advertising);
+
+        let relay = relay_node(&dir, "relay", Some(RelayServerLimits::default()), true);
+        assert!(wait_until(5, || relay.node.relay_server_stats().advertising), "an announced address turns it on");
+        let c2 = relay_client(&dir, "c2", &relay.addr);
+        assert!(
+            wait_until(15, || reserved(&c2, &relay)),
+            "the relay must accept a reservation (stats: {:?})",
+            relay.node.relay_server_stats()
+        );
+        let s = relay.node.relay_server_stats();
+        assert_eq!((s.reservations_accepted, s.reservations_active, s.reservations_denied), (1, 1, 0), "{s:?}");
+    }
+
+    /// Test 3: `max_reservations` caps reservations held at once.
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "integration: relay server on real loopback nodes")]
+    fn relay_server_refuses_reservations_over_the_cap() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let limits = RelayServerLimits { max_reservations: 2, ..RelayServerLimits::default() };
+        let relay = relay_node(&dir, "relay", Some(limits), true);
+        let c1 = relay_client(&dir, "c1", &relay.addr);
+        assert!(wait_until(15, || reserved(&c1, &relay)));
+        let c2 = relay_client(&dir, "c2", &relay.addr);
+        assert!(wait_until(15, || reserved(&c2, &relay)));
+        let c3 = relay_client(&dir, "c3", &relay.addr);
+        assert!(
+            wait_until(10, || relay.node.relay_server_stats().reservations_denied == 1),
+            "the third reservation must be refused (stats: {:?})",
+            relay.node.relay_server_stats()
+        );
+        assert!(!reserved(&c3, &relay));
+        let s = relay.node.relay_server_stats();
+        assert_eq!((s.reservations_accepted, s.reservations_active, s.reservations_denied_per_ip), (2, 2, 0), "{s:?}");
+    }
+
+    /// Test 4: the global circuit bucket caps circuits, whoever asks.
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "integration: relay server on real loopback nodes")]
+    fn global_circuit_bucket_caps_circuits() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let limits = RelayServerLimits {
+            circuits_global: relay_server::TokenBucket { capacity: 2, refill_secs: 3600 },
+            // Loopback is one IP: keep the per-IP bucket out of the way.
+            circuits_per_ip: relay_server::TokenBucket { capacity: 1000, refill_secs: 1 },
+            ..RelayServerLimits::default()
+        };
+        let relay = relay_node(&dir, "relay", Some(limits), true);
+        let behind = relay_client(&dir, "behind", &relay.addr);
+        assert!(wait_until(15, || reserved(&behind, &relay)));
+        let circuit = format!("{}/p2p-circuit/p2p/{}", relay.addr, behind.local_peer_id().0);
+        let mut dialers = Vec::new();
+        for i in 0..3u64 {
+            let mut d = test_node(&dir, &format!("d{i}"), NetworkConfig { bootstrap_peers: vec![circuit.clone()], ..cfg(0) });
+            d.start().expect("start");
+            wait_until(10, || {
+                let s = relay.node.relay_server_stats();
+                s.circuits_accepted + s.circuits_denied > i
+            });
+            dialers.push(d);
+        }
+        assert!(
+            wait_until(10, || relay.node.relay_server_stats().circuits_denied_global >= 1),
+            "a circuit past the global bucket must be refused (stats: {:?})",
+            relay.node.relay_server_stats()
+        );
+        let s = relay.node.relay_server_stats();
+        assert_eq!(s.circuits_accepted, 2, "the bucket held 2 tokens: {s:?}");
+        assert_eq!(s.circuits_denied_global_sources, 1, "all from loopback: {s:?}");
+    }
+
+    /// Test 5 (review R2): renewals take per-IP tokens too, so one IP keeps
+    /// `refill rate ÷ renewal rate` reservations. Reservations last 8 s and
+    /// are renewed after 6 s; the bucket gives one token back every 3 s: two
+    /// reservations. Three are granted at first (the bucket holds 3); after
+    /// two renewal rounds two remain, and the third was refused on renewal.
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "integration: relay server on real loopback nodes")]
+    fn per_ip_bucket_counts_renewals() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let limits = RelayServerLimits {
+            reservation_duration_secs: 8,
+            reservations_per_ip: relay_server::TokenBucket { capacity: 3, refill_secs: 3 },
+            ..RelayServerLimits::default()
+        };
+        let relay = relay_node(&dir, "relay", Some(limits), true);
+        let clients: Vec<Node> = (0..3).map(|i| relay_client(&dir, &format!("c{i}"), &relay.addr)).collect();
+        assert!(
+            wait_until(15, || relay.node.relay_server_stats().reservations_accepted == 3),
+            "the bucket's 3 tokens admit all three (stats: {:?})",
+            relay.node.relay_server_stats()
+        );
+        // Each client listens on its circuit address through the relay.
+        let on_circuit = |c: &Node| {
+            c.listen_addrs().iter().any(|a| a.contains("/p2p-circuit") && a.contains(&relay.peer_id))
+        };
+        assert!(
+            wait_until(5, || clients.iter().all(on_circuit)),
+            "precondition: every client lists its relay circuit address ({:?})",
+            clients.iter().map(|c| c.listen_addrs()).collect::<Vec<_>>()
+        );
+        // Two renewal rounds (6 s apart) plus the refused one timing out (8 s).
+        assert!(
+            wait_until(30, || {
+                let s = relay.node.relay_server_stats();
+                s.reservations_renewed >= 4 && s.reservations_active == 2
+            }),
+            "after two renewal rounds two reservations remain (stats: {:?})",
+            relay.node.relay_server_stats()
+        );
+        // And stay two through another round.
+        std::thread::sleep(Duration::from_secs(7));
+        let s = relay.node.relay_server_stats();
+        assert_eq!(s.reservations_active, 2, "steady state: {s:?}");
+        assert_eq!(s.reservations_accepted, 3, "the refused client does not come back: {s:?}");
+        assert!(s.reservations_denied_per_ip >= 1, "the third renewal was refused per IP: {s:?}");
+        assert_eq!(s.reservations_denied, s.reservations_denied_per_ip, "and for no other cause: {s:?}");
+        let holding = clients.iter().filter(|c| reserved(c, &relay)).count();
+        assert_eq!(holding, 2, "two clients still hold a reservation");
+        // The refused one no longer lists the circuit address it lost.
+        let refused = clients.iter().find(|c| !reserved(c, &relay)).expect("one client was refused");
+        assert!(
+            !on_circuit(refused),
+            "a lost reservation's circuit address must leave listen_addrs: {:?}",
+            refused.listen_addrs()
+        );
+        assert!(clients.iter().filter(|c| reserved(c, &relay)).all(on_circuit), "the holders keep theirs");
+    }
+
+    /// Test 6: two nodes reach each other through the product relay server
+    /// with its default limits (2 min, 128 KiB per circuit) while Identify,
+    /// Kademlia and GossipSub run on the circuit, and hole punching then
+    /// connects them directly.
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "integration: relay server on real loopback nodes")]
+    fn hole_punch_through_the_product_relay_server() {
+        use super::super::messages::ANNOUNCEMENTS_TOPIC;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let relay = relay_node(&dir, "relay", Some(RelayServerLimits::default()), true);
+        let behind = relay_client(&dir, "behind", &relay.addr);
+        behind.subscribe(ANNOUNCEMENTS_TOPIC).expect("subscribe");
+        assert!(wait_until(15, || reserved(&behind, &relay)));
+        let behind_id = behind.local_peer_id().0;
+        let circuit = format!("{}/p2p-circuit/p2p/{behind_id}", relay.addr);
+        let mut dialer = test_node(&dir, "dialer", NetworkConfig { bootstrap_peers: vec![circuit], ..cfg(0) });
+        dialer.start().expect("start");
+        dialer.subscribe(ANNOUNCEMENTS_TOPIC).expect("subscribe");
+        assert!(
+            wait_until(15, || dialer.identified_peers().contains(&behind_id)),
+            "the dialler must reach and identify the node through the relay"
+        );
+        assert!(behind.nat_traversal().relayed_inbound >= 1, "it arrived as a circuit: {:?}", behind.nat_traversal());
+        assert!(relay.node.relay_server_stats().circuits_accepted >= 1);
+        assert!(
+            wait_until(15, || behind.nat_traversal().hole_punch_succeeded + dialer.nat_traversal().hole_punch_succeeded >= 1),
+            "hole punching must succeed within the circuit limits (behind: {:?}, dialer: {:?}, relay: {:?})",
+            behind.nat_traversal(),
+            dialer.nat_traversal(),
+            relay.node.relay_server_stats()
+        );
+    }
+
+    /// Test 7: a circuit is cut once `max_circuit_bytes` crossed it (here
+    /// 4 KiB; Identify, Kademlia and GossipSub start-up alone exceed it).
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "integration: relay server on real loopback nodes")]
+    fn relay_server_cuts_a_circuit_at_its_byte_limit() {
+        use super::super::messages::ANNOUNCEMENTS_TOPIC;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let limits = RelayServerLimits { max_circuit_bytes: 4 * 1024, ..RelayServerLimits::default() };
+        let relay = relay_node(&dir, "relay", Some(limits), true);
+        let behind = relay_client(&dir, "behind", &relay.addr);
+        behind.subscribe(ANNOUNCEMENTS_TOPIC).expect("subscribe");
+        assert!(wait_until(15, || reserved(&behind, &relay)));
+        let circuit = format!("{}/p2p-circuit/p2p/{}", relay.addr, behind.local_peer_id().0);
+        let mut dialer = test_node(&dir, "dialer", NetworkConfig { bootstrap_peers: vec![circuit], ..cfg(0) });
+        dialer.start().expect("start");
+        dialer.subscribe(ANNOUNCEMENTS_TOPIC).expect("subscribe");
+        assert!(
+            wait_until(15, || relay.node.relay_server_stats().circuits_closed_over_bytes >= 1),
+            "the circuit must be cut at 4 KiB (stats: {:?})",
+            relay.node.relay_server_stats()
+        );
+        let s = relay.node.relay_server_stats();
+        assert!(s.circuits_accepted >= 1, "{s:?}");
+    }
+
+    /// Test 9 (review R1): with 128 handshake slots, 20 half-open
+    /// connections from one IP leave room for a real peer; with the default
+    /// 20 they crowd it out, and the refusal is counted as a pending one.
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "integration: relay server on real loopback nodes")]
+    fn half_open_connections_do_not_fill_128_handshake_slots() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let run = |name: &str, max_pending: u32| -> (bool, ConnectionDenials) {
+            let mut target = test_node(&dir, name, NetworkConfig { max_pending_connections: max_pending, ..cfg(0) });
+            target.start().expect("start");
+            let addr = target.listen_addrs().into_iter().next().expect("listen addr");
+            let port: u16 = addr.rsplit('/').next().expect("port").parse().expect("port number");
+            // TCP connections that never start the handshake.
+            let half_open: Vec<std::net::TcpStream> =
+                (0..20).map(|_| std::net::TcpStream::connect(("127.0.0.1", port)).expect("tcp connect")).collect();
+            std::thread::sleep(Duration::from_millis(500));
+            let target_id = target.local_peer_id().0;
+            let mut peer = test_node(
+                &dir,
+                &format!("{name}-peer"),
+                NetworkConfig { bootstrap_peers: vec![format!("{addr}/p2p/{target_id}")], ..cfg(0) },
+            );
+            peer.start().expect("start");
+            // Well inside the handshake timeout, while the 20 still hang.
+            let connected = wait_until(4, || peer.identified_peers().contains(&target_id));
+            let denials = target.connection_denials();
+            drop(half_open);
+            (connected, denials)
+        };
+
+        let (connected, d) = run("roomy", 128);
+        assert!(connected, "a real peer must get a handshake slot ({d:?})");
+        assert_eq!(d.pending_inbound_limit, 0, "{d:?}");
+
+        let (connected, d) = run("tight", 20);
+        assert!(!connected, "20 half-open connections fill 20 slots ({d:?})");
+        assert!(d.pending_inbound_limit >= 1, "the refusal counts as a pending one: {d:?}");
+        assert_eq!(d.inbound_limit, d.pending_inbound_limit, "every refusal here was a pending one: {d:?}");
+    }
+
+    /// A peer that asks a relay for a reservation, then resets the stream
+    /// before the answer can be written (review X5).
+    mod raw_hop {
+        use std::convert::Infallible;
+        use std::future::Future;
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+
+        use libp2p::core::upgrade::{DeniedUpgrade, ReadyUpgrade};
+        use libp2p::futures::AsyncWriteExt;
+        use libp2p::swarm::handler::{ConnectionEvent, FullyNegotiatedOutbound};
+        use libp2p::swarm::{
+            ConnectionDenied, ConnectionHandler, ConnectionHandlerEvent, ConnectionId, FromSwarm, NetworkBehaviour,
+            SubstreamProtocol, THandler, THandlerInEvent, THandlerOutEvent, ToSwarm,
+        };
+        use libp2p::{Multiaddr, PeerId, StreamProtocol, relay};
+
+        pub(super) struct Behaviour;
+
+        pub(super) struct Handler {
+            requested: bool,
+            send: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+        }
+
+        impl ConnectionHandler for Handler {
+            type FromBehaviour = Infallible;
+            type ToBehaviour = Infallible;
+            type InboundProtocol = DeniedUpgrade;
+            type OutboundProtocol = ReadyUpgrade<StreamProtocol>;
+            type InboundOpenInfo = ();
+            type OutboundOpenInfo = ();
+
+            fn listen_protocol(&self) -> SubstreamProtocol<DeniedUpgrade, ()> {
+                SubstreamProtocol::new(DeniedUpgrade, ())
+            }
+
+            // Keep the connection open, as a peer holding the slot would.
+            fn connection_keep_alive(&self) -> bool {
+                true
+            }
+
+            fn poll(&mut self, cx: &mut Context<'_>) -> Poll<ConnectionHandlerEvent<Self::OutboundProtocol, (), Infallible>> {
+                if !self.requested {
+                    self.requested = true;
+                    return Poll::Ready(ConnectionHandlerEvent::OutboundSubstreamRequest {
+                        protocol: SubstreamProtocol::new(ReadyUpgrade::new(relay::HOP_PROTOCOL_NAME), ()),
+                    });
+                }
+                if let Some(send) = self.send.as_mut()
+                    && send.as_mut().poll(cx).is_ready()
+                {
+                    self.send = None;
+                }
+                Poll::Pending
+            }
+
+            fn on_behaviour_event(&mut self, event: Infallible) {
+                match event {}
+            }
+
+            fn on_connection_event(&mut self, event: ConnectionEvent<DeniedUpgrade, ReadyUpgrade<StreamProtocol>, (), ()>) {
+                if let ConnectionEvent::FullyNegotiatedOutbound(FullyNegotiatedOutbound { protocol: mut stream, .. }) = event {
+                    self.send = Some(Box::pin(async move {
+                        // HopMessage { type: RESERVE }, length-prefixed.
+                        let _ = stream.write_all(&[0x02, 0x08, 0x00]).await;
+                        let _ = stream.flush().await;
+                        // Dropped without closing: yamux resets the stream.
+                        drop(stream);
+                    }));
+                }
+            }
+        }
+
+        impl NetworkBehaviour for Behaviour {
+            type ConnectionHandler = Handler;
+            type ToSwarm = Infallible;
+
+            fn handle_established_inbound_connection(
+                &mut self,
+                _: ConnectionId,
+                _: PeerId,
+                _: &Multiaddr,
+                _: &Multiaddr,
+            ) -> Result<THandler<Self>, ConnectionDenied> {
+                Ok(Handler { requested: true, send: None })
+            }
+
+            fn handle_established_outbound_connection(
+                &mut self,
+                _: ConnectionId,
+                _: PeerId,
+                _: &Multiaddr,
+                _: libp2p::core::Endpoint,
+                _: libp2p::core::transport::PortUse,
+            ) -> Result<THandler<Self>, ConnectionDenied> {
+                Ok(Handler { requested: false, send: None })
+            }
+
+            fn on_swarm_event(&mut self, _: FromSwarm) {}
+
+            fn on_connection_handler_event(&mut self, _: PeerId, _: ConnectionId, event: THandlerOutEvent<Self>) {
+                match event {}
+            }
+
+            fn poll(&mut self, _: &mut Context<'_>) -> Poll<ToSwarm<Infallible, THandlerInEvent<Self>>> {
+                Poll::Pending
+            }
+        }
+    }
+
+    /// A raw-hop peer on its own thread; `closed` turns true when its
+    /// connection to the relay is gone.
+    struct GhostPeer {
+        closed: Arc<std::sync::atomic::AtomicBool>,
+        stop: Arc<std::sync::atomic::AtomicBool>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl GhostPeer {
+        fn spawn(relay: &str) -> Self {
+            use libp2p::swarm::NetworkBehaviour;
+
+            #[derive(NetworkBehaviour)]
+            struct Ghost {
+                hop: raw_hop::Behaviour,
+                // Identifies as a Rotifer node so the relay keeps it.
+                identify: identify::Behaviour,
+            }
+
+            let relay: Multiaddr = relay.parse().expect("relay addr");
+            let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let (closed_t, stop_t) = (Arc::clone(&closed), Arc::clone(&stop));
+            let thread = std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().expect("runtime");
+                rt.block_on(async move {
+                    let mut swarm = libp2p::SwarmBuilder::with_new_identity()
+                        .with_tokio()
+                        .with_tcp(libp2p::tcp::Config::default(), libp2p::noise::Config::new, libp2p::yamux::Config::default)
+                        .expect("tcp")
+                        .with_behaviour(|key| Ghost {
+                            hop: raw_hop::Behaviour,
+                            identify: identify::Behaviour::new(identify::Config::new(
+                                IDENTIFY_PROTOCOL_VERSION.into(),
+                                key.public(),
+                            )),
+                        })
+                        .expect("behaviour")
+                        .build();
+                    swarm.dial(relay).expect("dial");
+                    let mut tick = tokio::time::interval(Duration::from_millis(100));
+                    while !stop_t.load(Ordering::Relaxed) {
+                        tokio::select! {
+                            _ = tick.tick() => {}
+                            event = swarm.select_next_some() => {
+                                if let SwarmEvent::ConnectionClosed { num_established: 0, .. } = event {
+                                    closed_t.store(true, Ordering::Relaxed);
+                                }
+                            }
+                        }
+                    }
+                });
+            });
+            Self { closed, stop, thread: Some(thread) }
+        }
+    }
+
+    impl Drop for GhostPeer {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            if let Some(t) = self.thread.take() {
+                let _ = t.join();
+            }
+        }
+    }
+
+    /// Review X5: libp2p marks a reservation slot taken before writing the
+    /// acceptance and does not free it when the write fails, so a peer that
+    /// resets the stream and keeps its connection would hold the slot. The
+    /// relay closes that peer's connection, freeing the slot at once: with a
+    /// single slot, an honest node reserves right after.
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "integration: relay server on real loopback nodes")]
+    fn reservation_left_by_a_reset_stream_is_freed() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let limits = RelayServerLimits { max_reservations: 1, ..RelayServerLimits::default() };
+        let relay = relay_node(&dir, "relay", Some(limits), true);
+        assert!(wait_until(5, || relay.node.relay_server_stats().advertising));
+        let ghost = GhostPeer::spawn(&relay.addr);
+        assert!(
+            wait_until(10, || relay.node.relay_server_stats().reservations_accept_failed >= 1),
+            "precondition: the reset leaves a reservation granted but not delivered (stats: {:?})",
+            relay.node.relay_server_stats()
+        );
+        assert!(wait_until(3, || ghost.closed.load(Ordering::Relaxed)), "the relay must close the ghost's connection at once");
+        let honest = relay_client(&dir, "honest", &relay.addr);
+        assert!(
+            wait_until(5, || reserved(&honest, &relay)),
+            "the slot must be free for an honest node (stats: {:?})",
+            relay.node.relay_server_stats()
+        );
     }
 
     // A3-1: AutoNAT asks a connected peer to dial it back, and a node the

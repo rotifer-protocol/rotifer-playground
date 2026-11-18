@@ -374,7 +374,8 @@ export const publishCommand = new Command("publish")
     "--lang <lang>",
     "explicitly declare source language (typescript|rust|assemblyscript|go|c|external)",
   )
-  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed or ClawHub-wrapped genes", false)
+  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed or ClawHub-wrapped genes. " +
+      "On Node.js no credential is asked for: the gene can read all your environment variables", false)
   .action(async (geneName: string | undefined, options: PublishOptions) => {
     if (!geneName && !options.all) {
       display.error("Provide a gene name or use --all to publish all genes.");

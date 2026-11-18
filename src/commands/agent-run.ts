@@ -44,7 +44,8 @@ export const agentRunCommand = new Command("run")
   .option("--input <json>", "input JSON for the pipeline", '{"name":"world"}')
   .option("--verbose", "show intermediate results", false)
   .option("--no-sandbox", "force Node.js execution (skip WASM sandbox)")
-  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed or ClawHub-wrapped genes", false)
+  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed or ClawHub-wrapped genes. " +
+      "On Node.js no credential is asked for: the gene can read all your environment variables", false)
   .option(...ALLOW_CREDENTIALS_OPTION)
   .action(async (agentName: string, options: { input: string; verbose: boolean; sandbox: boolean; trustUnsigned: boolean; allowCredentials?: string }) => {
     const root = requireProjectRoot();

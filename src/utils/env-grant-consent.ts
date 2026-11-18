@@ -17,7 +17,8 @@ import { isExternallySourced } from "./l0-gate.js";
 
 export const ALLOW_CREDENTIALS_OPTION = [
   "--allow-credentials <list>",
-  "let external genes use these credentials, each only at its host: KEY@api.example.com,KEY2@other.example.com",
+  "let external genes use these credentials, each only at its host: KEY@api.example.com,KEY2@other.example.com. " +
+    "Asked for only when a gene runs in the sandbox",
 ] as const;
 
 export interface GeneRef {

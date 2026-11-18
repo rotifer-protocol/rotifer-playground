@@ -199,7 +199,7 @@ Run `rotifer --help` for the grouped command list. The commands below cover the 
 
 ### External genes and your credentials
 
-A gene you installed or wrapped can declare that it needs a credential from your environment and which hosts it may send it to. `rotifer run`, `agent run`, `test` and `hello` ask you before such a gene runs:
+A gene you installed or wrapped can declare that it needs a credential from your environment and which hosts it may send it to. `rotifer run`, `agent run`, `test` and `hello` ask you before such a gene runs in the sandbox:
 
 ```
 These external genes want to use credentials from your environment:

@@ -20,7 +20,8 @@ export const runCommand = new Command("run")
   .option("--input <json>", "input JSON string", '{"name":"world"}')
   .option("--verbose", "show detailed execution output", false)
   .option("--no-sandbox", "run without WASM sandbox (Node.js only)")
-  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed or ClawHub-wrapped genes", false)
+  .option("--trust-unsigned", "allow Node.js execution for Cloud-installed or ClawHub-wrapped genes. " +
+      "On Node.js no credential is asked for: the gene can read all your environment variables", false)
   .option("--no-validate", "skip checking the input and output against the gene's inputSchema / outputSchema")
   .option(...ALLOW_CREDENTIALS_OPTION)
   .action(

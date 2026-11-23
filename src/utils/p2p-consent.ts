@@ -133,8 +133,8 @@ export function removeConsent(home: string = rotiferHome()): boolean {
 }
 
 /** Ask only on a terminal both ways, and never under --json (design §3). */
-export function canAsk(json: boolean): boolean {
-  return Boolean(process.stdin.isTTY && process.stdout.isTTY) && !json;
+export function canAsk(isJson: boolean): boolean {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY) && !isJson;
 }
 
 /** Distinct remembered peers in `~/.rotifer/peers.json` (capped like the store, 64). */

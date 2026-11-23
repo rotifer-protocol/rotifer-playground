@@ -497,11 +497,11 @@ function recordConsent(identity: NodeIdentityHandle, source: ConsentSource): voi
  * and set the exit code. Asks only on a terminal, never under --json, and
  * never reads stdin otherwise.
  */
-async function startConsent(bootstrapPeers: number, acceptFlag: boolean): Promise<boolean> {
+async function startConsent(bootstrapPeers: number, isAccepted: boolean): Promise<boolean> {
   if (readConsent()) return true;
-  const json = display.isJsonMode();
-  if (!acceptFlag && !canAsk(json)) {
-    if (json) console.log(JSON.stringify(CONSENT_REQUIRED_JSON));
+  const isJson = display.isJsonMode();
+  if (!isAccepted && !canAsk(isJson)) {
+    if (isJson) console.log(JSON.stringify(CONSENT_REQUIRED_JSON));
     else display.error(CONSENT_REQUIRED_TITLE, CONSENT_REQUIRED_HINT);
     process.exitCode = 1;
     return false;
@@ -509,7 +509,7 @@ async function startConsent(bootstrapPeers: number, acceptFlag: boolean): Promis
   const identity = identityForNotice();
   if (!identity) return false;
   const notice = renderNotice({ bootstrapPeers, rememberedPeers: rememberedPeerCount(), peerId: identity.peerId });
-  if (acceptFlag) {
+  if (isAccepted) {
     // Leave in the log what was agreed to.
     process.stderr.write(`${notice}\n\n`);
     recordConsent(identity, "flag");
@@ -550,7 +550,7 @@ const consentCommand = new Command("consent")
       process.exitCode = 1;
       return;
     }
-    const json = display.isJsonMode();
+    const isJson = display.isJsonMode();
     const bootstrapPeers = loadNetworkConfig().bootstrap_peers.length;
     switch (chosen[0]) {
       case "show": {
@@ -570,30 +570,30 @@ const consentCommand = new Command("consent")
           `${renderNotice({ bootstrapPeers, rememberedPeers: rememberedPeerCount(), peerId: identity.peerId })}\n\n`,
         );
         recordConsent(identity, "command");
-        if (json) console.log(JSON.stringify({ ok: true, action: "consent", consented: true, noticeVersion: NOTICE_VERSION }));
+        if (isJson) console.log(JSON.stringify({ ok: true, action: "consent", consented: true, noticeVersion: NOTICE_VERSION }));
         else display.success("P2P consent recorded for this account.");
         return;
       }
       case "revoke": {
-        const removed = removeConsent();
-        const stopped = (await controlRequest("POST", "/stop")) !== null;
-        if (stopped) {
+        const didRemove = removeConsent();
+        const didStop = (await controlRequest("POST", "/stop")) !== null;
+        if (didStop) {
           const config = loadNetworkConfig();
           config.enabled = false;
           saveNetworkConfig(config);
         }
-        if (json) {
-          console.log(JSON.stringify({ ok: true, action: "consent", consented: false, removed, stopped }));
+        if (isJson) {
+          console.log(JSON.stringify({ ok: true, action: "consent", consented: false, removed: didRemove, stopped: didStop }));
           return;
         }
-        display.success(removed ? "P2P consent withdrawn." : "No P2P consent was recorded.");
-        if (stopped) display.info("The running P2P node was stopped.");
+        display.success(didRemove ? "P2P consent withdrawn." : "No P2P consent was recorded.");
+        if (didStop) display.info("The running P2P node was stopped.");
         display.hint("The node key (~/.rotifer/identity.pem) and remembered peers are kept.");
         return;
       }
       case "status": {
         const record = readConsent();
-        if (json) {
+        if (isJson) {
           console.log(
             JSON.stringify({
               consented: record !== null,

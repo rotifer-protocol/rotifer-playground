@@ -5,6 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
+import { grantP2pConsent } from "../helpers/p2p-consent.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { porStatePath, removePorState, writePorState } from "../../src/utils/por-keeper.js";
@@ -64,6 +65,7 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "por-daemon-"));
   carried = [];
   vi.stubEnv("HOME", home);
+  grantP2pConsent(home); // T-237: the daemon needs a consent record
   vi.resetModules();
   vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
 });

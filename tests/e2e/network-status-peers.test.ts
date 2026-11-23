@@ -20,6 +20,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { grantP2pConsent } from "../helpers/p2p-consent.js";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -101,6 +102,9 @@ const homeB = join(ROOT, "b");
 
 describe("network /status peer counts on real daemons", () => {
   beforeAll(() => {
+    // T-237: both daemons need a consent record.
+    grantP2pConsent(homeA);
+    grantP2pConsent(homeB);
     if (HAS_DHT_PEERS) cli(homeA, "network", "start", "--port", "0", "--no-mdns");
   }, 30_000);
 

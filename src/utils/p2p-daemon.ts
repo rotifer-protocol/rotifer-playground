@@ -15,7 +15,7 @@ import { existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { ensurePrivateDir, tightenPrivateFile } from "./private-fs.js";
-import { loadP2pNode } from "./binding.js";
+import { loadP2pNode, supportsNodeOptions, type P2pNodeOptions } from "./binding.js";
 import { Republisher, announcedTablePath, type WithdrawMatch } from "./announce-table.js";
 import { isPorCapable, obtainCertificate } from "./por-client.js";
 import { PorKeeper, porStatePath } from "./por-keeper.js";
@@ -54,10 +54,15 @@ export interface DaemonState {
   startedAt: number;
 }
 
-export function readDaemonState(): DaemonState | null {
-  if (!existsSync(DAEMON_STATE)) return null;
+/**
+ * The running daemon's state, from `~/.rotifer/daemon.json` or from
+ * `stateFile` when given (an operator reading a service's daemon, design
+ * T-231 §4.1). Only reads.
+ */
+export function readDaemonState(stateFile: string = DAEMON_STATE): DaemonState | null {
+  if (!existsSync(stateFile)) return null;
   try {
-    return JSON.parse(readFileSync(DAEMON_STATE, "utf-8")) as DaemonState;
+    return JSON.parse(readFileSync(stateFile, "utf-8")) as DaemonState;
   } catch {
     return null;
   }
@@ -101,8 +106,9 @@ export function controlRequest(
   path: string,
   body?: unknown,
   timeoutMs = ROUTE_TIMEOUT_MS[path] ?? 5000,
+  stateFile?: string,
 ): Promise<ControlResult | null> {
-  const state = readDaemonState();
+  const state = readDaemonState(stateFile);
   if (!state) return Promise.resolve(null);
 
   const payload = body === undefined ? undefined : JSON.stringify(body);
@@ -154,25 +160,74 @@ export async function isDaemonRunning(): Promise<boolean> {
   return result?.ok ?? false;
 }
 
+/** Test-only: end the native event loop this many ms after start (design T-231 §8.1 PR-② item 5). */
+export const END_EVENT_LOOP_ENV = "ROTIFER_TEST_END_EVENT_LOOP_AFTER_MS";
+/** Test-only: accept loopback `--announce` addresses (one machine has no public address). */
+export const LOOPBACK_ANNOUNCE_ENV = "ROTIFER_TEST_ALLOW_LOOPBACK_ANNOUNCE";
+/** How often a foreground daemon checks that the native event loop still runs. */
+const EVENT_LOOP_CHECK_MS = 1000;
+
+export interface DaemonOptions {
+  /** Relay and connection settings (`--relay`, `--relay-server`, `--announce`, `--max-*`). */
+  node?: P2pNodeOptions;
+  /**
+   * Run under a supervisor such as systemd (`--foreground`): exit non-zero
+   * when the native event loop ends, so the supervisor restarts the node
+   * instead of keeping a process that no longer serves (design §5.3, X10).
+   */
+  foreground?: boolean;
+}
+
+function hasNodeOptions(o: P2pNodeOptions): boolean {
+  return Boolean(
+    o.relays?.length || o.relayServer || o.announce?.length || o.maxInbound !== undefined || o.maxPending !== undefined,
+  );
+}
+
+function cliVersion(): string | undefined {
+  try {
+    return (JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf-8")) as { version?: string }).version;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Run the daemon: start the libp2p node, expose a token-gated loopback control
  * server, record the state file, and stay alive until stopped. Called from the
- * hidden `network __daemon` subcommand in a detached process.
+ * hidden `network __daemon` subcommand in a detached process, or in the
+ * calling process for `network start --foreground`.
  */
 export async function runDaemon(
   listenHost: string,
   listenPort: number,
   bootstrapPeers: string[],
   shouldUseMdns: boolean,
+  options: DaemonOptions = {},
 ): Promise<void> {
-  const maybeNode = loadP2pNode(listenHost, listenPort, bootstrapPeers, shouldUseMdns);
+  const nodeOptions: P2pNodeOptions = {
+    ...options.node,
+    ...(process.env[LOOPBACK_ANNOUNCE_ENV] === "1" ? { allowLoopbackAnnounce: true } : {}),
+  };
+  const maybeNode = loadP2pNode(listenHost, listenPort, bootstrapPeers, shouldUseMdns, nodeOptions);
   if (!maybeNode) {
     process.stderr.write("native P2P node unavailable; daemon cannot start\n");
     process.exit(1);
   }
   const node = maybeNode; // non-null below (incl. inside the control-server closure)
-  node.start();
+  // An older addon would drop these settings silently; refuse instead.
+  if (hasNodeOptions(nodeOptions) && !supportsNodeOptions(node)) {
+    process.stderr.write("this native addon predates --relay, --relay-server, --announce and --max-*; update the CLI\n");
+    process.exit(1);
+  }
+  try {
+    node.start();
+  } catch (err) {
+    process.stderr.write(`${(err as Error).message}\n`);
+    process.exit(1);
+  }
   const { colocationStats } = node as typeof node & ColocationReader;
+  const version = cliVersion();
 
   const token = randomBytes(24).toString("hex");
   const startedAt = Date.now();
@@ -227,6 +282,10 @@ export async function runDaemon(
         // Absent when this addon cannot hold a certificate.
         ...(keeper ? { attestation: keeper.view() } : {}),
         startedAt,
+        // Design T-231 §4.2 (added only; nothing above changes). Absent
+        // when the addon predates them.
+        ...(version ? { version } : {}),
+        ...(node.networkStats ? node.networkStats() : {}),
       });
       return;
     }
@@ -365,6 +424,31 @@ export async function runDaemon(
   }
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+
+  if (options.foreground && node.eventLoopRunning) {
+    const isRunning = node.eventLoopRunning.bind(node);
+    const watch = setInterval(() => {
+      if (isShuttingDown || isRunning()) return;
+      clearInterval(watch);
+      isShuttingDown = true;
+      process.stderr.write("P2P event loop ended; exiting so the supervisor can restart the node\n");
+      republisher?.stop();
+      keeper?.stop();
+      try {
+        node.stop(); // still saves the peer store
+      } catch {
+        /* best effort */
+      }
+      server.close();
+      clearDaemonState();
+      process.exit(1);
+    }, EVENT_LOOP_CHECK_MS);
+  }
+  const endAfter = Number(process.env[END_EVENT_LOOP_ENV]);
+  if (endAfter > 0 && node.endEventLoopForTest) {
+    const end = node.endEventLoopForTest.bind(node);
+    setTimeout(end, endAfter);
+  }
 
   await new Promise<void>((resolve, reject) => {
     server.listen(0, CONTROL_HOST, () => {

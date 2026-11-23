@@ -9,6 +9,7 @@ import { ensurePrivateDir, tightenPrivateFile } from "../utils/private-fs.js";
 import {
   geneIdV2,
   loadP2pNode,
+  type P2pNodeOptions,
   type NetworkAnnounceReport,
   type NetworkSearchHit,
   type NetworkSearchResult,
@@ -39,6 +40,8 @@ const ROTIFER_HOME = join(
   ".rotifer"
 );
 const NETWORK_CONFIG = join(ROTIFER_HOME, "network.json");
+/** The node key the native node creates on first start (rotifer-core `default_identity_path`). */
+const NODE_KEY_FILE = "identity.pem";
 
 interface NetworkConfig {
   node_id: string;
@@ -316,13 +319,83 @@ export function daemonArgs(
   port: number,
   bootstrapPeers: string[],
   shouldUseMdns: boolean,
+  node: P2pNodeOptions = {},
 ): string[] {
   const args = ["network", "__daemon", "--host", host, "--port", String(port)];
   for (const peer of bootstrapPeers) {
     args.push("--bootstrap", peer);
   }
   if (!shouldUseMdns) args.push("--no-mdns");
+  for (const relay of node.relays ?? []) args.push("--relay", relay);
+  if (node.relayServer) args.push("--relay-server");
+  for (const addr of node.announce ?? []) args.push("--announce", addr);
+  if (node.maxInbound !== undefined) args.push("--max-inbound", String(node.maxInbound));
+  if (node.maxPending !== undefined) args.push("--max-pending", String(node.maxPending));
   return args;
+}
+
+/** The relay and connection-limit flags `start` and `__daemon` share (T-231 B2 design §8 PR-②). */
+interface NodeFlags {
+  relay?: string[];
+  relayServer?: boolean;
+  announce?: string[];
+  maxInbound?: string;
+  maxPending?: string;
+}
+
+function withNodeFlags(cmd: Command): Command {
+  return cmd
+    .option("--relay <addr...>", "hold a reservation on this relay (multiaddr ending in /p2p/<PeerId>), so NATed peers can reach this node")
+    .option("--relay-server", "serve as a relay for other nodes (needs --announce)")
+    .option("--announce <addr...>", "this node's public address, /ip4/<public IPv4>/tcp/<port> only")
+    .option("--max-inbound <n>", "most established inbound connections (default 50)")
+    .option("--max-pending <n>", "most connections in their handshake, both directions (default 20)");
+}
+
+/** `flags` as node options, or what is wrong with them. Unset flags stay unset. */
+export function nodeOptionsFrom(flags: NodeFlags): P2pNodeOptions | { error: string } {
+  const count = (v: string | undefined, name: string): number | undefined | string => {
+    if (v === undefined) return undefined;
+    return /^[1-9][0-9]*$/.test(v) && Number(v) <= 0xffffffff ? Number(v) : `${name} must be a whole number of 1 or more, got "${v}"`;
+  };
+  const maxInbound = count(flags.maxInbound, "--max-inbound");
+  const maxPending = count(flags.maxPending, "--max-pending");
+  for (const v of [maxInbound, maxPending]) if (typeof v === "string") return { error: v };
+  return {
+    ...(flags.relay?.length ? { relays: flags.relay } : {}),
+    ...(flags.relayServer ? { relayServer: true } : {}),
+    ...(flags.announce?.length ? { announce: flags.announce } : {}),
+    ...(maxInbound !== undefined ? { maxInbound: maxInbound as number } : {}),
+    ...(maxPending !== undefined ? { maxPending: maxPending as number } : {}),
+  };
+}
+
+/**
+ * The fields `network status --json` prints: design T-231 §4.2's, no more.
+ * The other `/status` fields (own PeerId, listen addresses) stay out, so the
+ * JSON holds no address but the announced ones, no PeerId and no score.
+ */
+export const STATUS_JSON_FIELDS = [
+  "version",
+  "roles",
+  "announcedAddrs",
+  "eventLoop",
+  "connections",
+  "limits",
+  "denials",
+  "foreignPeersDropped",
+  "colocation",
+  "nat",
+  "relay",
+  "gossip",
+  "dht",
+] as const;
+
+/** `/status` cut down to `STATUS_JSON_FIELDS`; a field the daemon does not report is left out. */
+export function statusJson(body: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { running: true };
+  for (const field of STATUS_JSON_FIELDS) if (field in body) out[field] = body[field];
+  return out;
 }
 
 /** mDNS only runs off loopback: it announces a node at its LAN address (RFC §5.1). */
@@ -331,10 +404,16 @@ function isLoopbackHost(host: string): boolean {
 }
 
 /** Spawn the daemon as a detached background process, logging to ~/.rotifer/daemon.log. */
-function spawnDaemon(host: string, port: number, bootstrapPeers: string[], shouldUseMdns: boolean): void {
+function spawnDaemon(
+  host: string,
+  port: number,
+  bootstrapPeers: string[],
+  shouldUseMdns: boolean,
+  node: P2pNodeOptions,
+): void {
   ensurePrivateDir(ROTIFER_HOME);
   const logFd = openSync(join(ROTIFER_HOME, "daemon.log"), "a");
-  const args = [process.argv[1], ...daemonArgs(host, port, bootstrapPeers, shouldUseMdns)];
+  const args = [process.argv[1], ...daemonArgs(host, port, bootstrapPeers, shouldUseMdns, node)];
   const child = spawn(process.execPath, args, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
@@ -355,11 +434,25 @@ export const networkCommand = new Command("network")
   .description("P2P gene network commands")
   .addCommand(
     new Command("status")
-      .description("Show P2P daemon status")
-      .action(async () => {
+      .description(
+        "Show P2P daemon status (reads only; writes no file). With the global --json, print the node's counters as JSON: no peer addresses, PeerIds or scores",
+      )
+      .option("--state-file <path>", "read the daemon's port and token from this file, not ~/.rotifer/daemon.json")
+      .action(async (options: { stateFile?: string }, cmd: Command) => {
+        const status = options.stateFile
+          ? await controlRequest("GET", "/status", undefined, undefined, options.stateFile)
+          : await controlRequest("GET", "/status");
+        // `--json` is the CLI's global option (src/index.ts), so read it from there.
+        if (cmd.optsWithGlobals().json === true) {
+          if (!status?.ok) {
+            console.log(JSON.stringify({ running: false }));
+            process.exitCode = 1;
+            return;
+          }
+          console.log(JSON.stringify(statusJson(status.body as Record<string, unknown>), null, 2));
+          return;
+        }
         const config = loadNetworkConfig();
-        saveNetworkConfig(config);
-        const status = await controlRequest("GET", "/status");
 
         display.header("P2P Network Status");
         console.log();
@@ -383,6 +476,11 @@ export const networkCommand = new Command("network")
           if (s.attestation) printAttestation(s.attestation);
         } else {
           display.kv("Status", c.muted("○ Not running"));
+          // No node key yet: this machine has no node id to show. Say so
+          // rather than make one up (status writes nothing).
+          if (!existsSync(join(ROTIFER_HOME, NODE_KEY_FILE))) {
+            display.kv("Node", "not initialised: run 'rotifer network start' first");
+          }
           display.kv("Listen Port", String(config.listen_port));
           display.kv("Bootstrap Peers", String(config.bootstrap_peers.length));
           printAttestation(viewOf(readPorState(porStatePath(ROTIFER_HOME)), null, Math.floor(Date.now() / 1000)));
@@ -393,8 +491,8 @@ export const networkCommand = new Command("network")
       })
   )
   .addCommand(
-    new Command("start")
-      .description("Start the P2P node as a background daemon")
+    withNodeFlags(new Command("start"))
+      .description("Start the P2P node as a background daemon (or in this process with --foreground)")
       .option("-p, --port <port>", "listen port", "9878")
       .option(
         "-H, --host <addr>",
@@ -406,8 +504,15 @@ export const networkCommand = new Command("network")
         "--no-mdns",
         "don't discover or announce on the local network (use on untrusted Wi-Fi); mDNS only runs with a non-loopback --host",
       )
-      .action(async (options: { port: string; host: string; bootstrap?: string[]; mdns: boolean }) => {
+      .option("--foreground", "run in this process instead of the background, for a service manager such as systemd; exits non-zero if the node stops working")
+      .action(async (options: { port: string; host: string; bootstrap?: string[]; mdns: boolean; foreground?: boolean } & NodeFlags) => {
         display.header("Starting P2P Daemon");
+        const node = nodeOptionsFrom(options);
+        if ("error" in node) {
+          display.error(node.error);
+          process.exitCode = 1;
+          return;
+        }
 
         if (await isDaemonRunning()) {
           display.warn("P2P daemon is already running.");
@@ -432,7 +537,15 @@ export const networkCommand = new Command("network")
             ? options.bootstrap
             : config.bootstrap_peers;
 
-        spawnDaemon(host, port, bootstrap, options.mdns);
+        if (options.foreground) {
+          config.enabled = true;
+          saveNetworkConfig(config);
+          display.info("Running in the foreground; stop with Ctrl-C or SIGTERM.");
+          await runDaemon(host, port, bootstrap, options.mdns, { node, foreground: true });
+          return;
+        }
+
+        spawnDaemon(host, port, bootstrap, options.mdns, node);
         const isReady = await waitForDaemon(15_000);
         if (!isReady) {
           display.error(
@@ -467,14 +580,22 @@ export const networkCommand = new Command("network")
   )
   // Hidden: the long-running daemon process spawned by `start`.
   .addCommand(
-    new Command("__daemon")
+    withNodeFlags(new Command("__daemon"))
       .description("(internal) run the P2P daemon")
       .option("-H, --host <addr>", "listen interface", "127.0.0.1")
       .option("-p, --port <port>", "listen port", "9878")
       .option("--bootstrap <addr...>", "bootstrap multiaddr(s)")
       .option("--no-mdns", "disable mDNS LAN discovery")
-      .action(async (options: { host: string; port: string; bootstrap?: string[]; mdns: boolean }) => {
-        await runDaemon(options.host, parseInt(options.port, 10), options.bootstrap ?? [], options.mdns);
+      .action(async (options: { host: string; port: string; bootstrap?: string[]; mdns: boolean } & NodeFlags) => {
+        const node = nodeOptionsFrom(options);
+        if ("error" in node) {
+          process.stderr.write(`${node.error}\n`);
+          process.exit(1);
+        }
+        const args = [options.host, parseInt(options.port, 10), options.bootstrap ?? [], options.mdns] as const;
+        // Without the new flags the daemon is started exactly as before.
+        if (Object.keys(node).length === 0) await runDaemon(...args);
+        else await runDaemon(...args, { node });
       }),
     { hidden: true }
   )

@@ -209,6 +209,51 @@ export interface PorChallengeSignature {
   signature: string;
 }
 
+/** Relay and connection settings for a new node (T-231 B2 design §8 PR-②); each left out keeps the default. */
+export interface P2pNodeOptions {
+  /** Relays to hold a reservation on (multiaddrs with `/p2p/<PeerId>`). */
+  relays?: string[];
+  /** Most established inbound connections. */
+  maxInbound?: number;
+  /** Most connections in their handshake, both directions together. */
+  maxPending?: number;
+  /** Serve as a relay (design §2.2 limits). */
+  relayServer?: boolean;
+  /** This node's public addresses, `/ip4/<public IPv4>/tcp/<port>` only. */
+  announce?: string[];
+  /** Accept loopback `announce` addresses (tests only). */
+  allowLoopbackAnnounce?: boolean;
+}
+
+/** The node's counters `/status` reports (design §4.2); no peer's address, PeerId or score. */
+export interface P2pNetworkStats {
+  roles: { relayServer: boolean };
+  announcedAddrs: string[];
+  /** `lastTickAt` is Unix ms, stamped each second while the loop runs; null before start. */
+  eventLoop: { lastTickAt: number | null; running: boolean };
+  /** Null once the event loop has ended. */
+  connections: { inbound: number; outbound: number } | null;
+  limits: { inbound: number; outbound: number; pending: number };
+  denials: {
+    inboundLimit: number;
+    pendingInboundLimit: number;
+    outboundLimit: number;
+    memory: number;
+    blocked: number;
+  };
+  foreignPeersDropped: number;
+  nat: {
+    reachability: "unknown" | "public" | "private";
+    relayReservations: number;
+    relayedInbound: number;
+    holePunchSucceeded: number;
+    holePunchFailed: number;
+  };
+  relay: Record<string, number | boolean> & { advertising: boolean };
+  gossip: { invalid: number; rateLimited: number; unregisteredTopic: number };
+  dht: Record<string, number>;
+}
+
 export interface P2pNodeHandle {
   start(): void;
   peerId(): string;
@@ -235,6 +280,12 @@ export interface P2pNodeHandle {
   signPorChallenge?(aud: string, userId: string, nonce: string, challengeExp: number): PorChallengeSignature;
   /** Carry this certificate in heartbeats, or none (absent likewise). */
   setAttestation?(token: string | null): void;
+  /** Counters for `/status` (absent before T-231 PR-②). */
+  networkStats?(): P2pNetworkStats;
+  /** Whether the event loop is running (absent likewise). */
+  eventLoopRunning?(): boolean;
+  /** End the event loop as a crash would; tests only (absent likewise). */
+  endEventLoopForTest?(): void;
   stop(): void;
 }
 
@@ -249,15 +300,30 @@ export function loadP2pNode(
   listenPort: number,
   bootstrapPeers: string[],
   shouldUseMdns = false,
+  options?: P2pNodeOptions,
 ): P2pNodeHandle | null {
   const mod = loadRawModule();
   // napi renders the Rust `P2pNode` as `P2PNode` (it uppercases the "p2p"
   // acronym); accept either spelling so both the raw addon and any JS wrapper work.
   const Ctor = (mod?.P2PNode ?? mod?.P2pNode) as
-    | (new (host: string, port: number, peers: string[], shouldUseMdns?: boolean) => P2pNodeHandle)
+    | (new (
+        host: string,
+        port: number,
+        peers: string[],
+        shouldUseMdns?: boolean,
+        trustAnchors?: undefined,
+        options?: P2pNodeOptions,
+      ) => P2pNodeHandle)
     | undefined;
   if (typeof Ctor !== "function") return null;
-  return new Ctor(listenHost, listenPort, bootstrapPeers, shouldUseMdns);
+  // An addon before T-231 PR-② ignores the sixth argument; callers that pass
+  // options check for `networkStats` to tell (see `supportsNodeOptions`).
+  return new Ctor(listenHost, listenPort, bootstrapPeers, shouldUseMdns, undefined, options);
+}
+
+/** Whether this addon takes `P2pNodeOptions`: it came with `networkStats` (T-231 PR-②). */
+export function supportsNodeOptions(node: P2pNodeHandle): boolean {
+  return typeof node.networkStats === "function";
 }
 
 /** Outcome of computing a gene's v2 ID: the ID, or why it has none. */

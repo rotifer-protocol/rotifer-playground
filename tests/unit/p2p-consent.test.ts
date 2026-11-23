@@ -3,11 +3,26 @@
  * (design §4, T8), and the paths through `network start` and
  * `network consent` with the native module and the daemon replaced.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+/**
+ * network.ts fixes `~/.rotifer` from HOME when it is imported, so HOME must
+ * point at a temporary directory before any import below, or these tests
+ * would write the developer's real `~/.rotifer` (they did: network.json and,
+ * in a mutation run, the node key). Every test uses this one HOME.
+ */
+const { HOME } = await vi.hoisted(async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rotifer-consent-"));
+  process.env.HOME = dir;
+  return { HOME: dir };
+});
 
 vi.mock("../../src/utils/display.js", () => ({
   header: vi.fn(),
@@ -78,7 +93,7 @@ async function run(...args: string[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  home = mkdtempSync(join(tmpdir(), "rotifer-consent-"));
+  home = HOME;
   rotifer = join(home, ".rotifer");
   vi.stubEnv("HOME", home);
   stderr = [];
@@ -92,8 +107,22 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  rmSync(home, { recursive: true, force: true });
+  rmSync(rotifer, { recursive: true, force: true });
   process.exitCode = 0;
+});
+
+afterAll(() => {
+  rmSync(HOME, { recursive: true, force: true });
+});
+
+describe("test isolation", () => {
+  it("network.ts writes under the temporary HOME, never the real one", async () => {
+    expect(HOME.startsWith(tmpdir())).toBe(true);
+    vi.mocked(controlRequest).mockResolvedValue({ ok: true, status: 200, body: {} });
+    await run("consent", "--revoke");
+    // `--revoke` after stopping a daemon rewrites network.json, in the HOME network.ts was loaded with.
+    expect(existsSync(join(HOME, ".rotifer", "network.json"))).toBe(true);
+  });
 });
 
 describe("the notice (T8)", () => {

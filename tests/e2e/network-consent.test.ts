@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -156,12 +156,17 @@ const quote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
  * then is stdin closed, which lets `cat` and `sh` end.
  */
 async function onTerminal(home: string, args: string[], answer: string): Promise<{ code: number | null | "running"; out: string }> {
+  return onTerminalRun(home, ["node", CLI, ...args], answer);
+}
+
+/** `onTerminal` for any command line (`argv[0]` is the program). */
+async function onTerminalRun(home: string, argv: string[], answer: string): Promise<{ code: number | null | "running"; out: string }> {
   const run =
     process.platform === "darwin"
       ? 'script -q /dev/null "$@"'
       : 'script -q -e -c "$(printf "%s " "$@")" /dev/null';
   const wrapper = `cat | { ${run}; echo "__EXIT:$?" >&2; } | cat`;
-  const command = process.platform === "darwin" ? ["node", CLI, ...args] : ["node", CLI, ...args].map(quote);
+  const command = process.platform === "darwin" ? argv : argv.map(quote);
   const child = spawn("sh", ["-c", wrapper, "sh", ...command], {
     env: { ...BASE_ENV, HOME: home },
     stdio: ["pipe", "pipe", "pipe"],
@@ -234,7 +239,26 @@ beforeAll(async () => {
   fake = await listener();
 });
 
+/**
+ * Stop any daemon a test home still has, so a failing run (a mutation that
+ * lets the node start) leaves no orphan node behind.
+ */
+function stopLeftoverDaemons(): void {
+  if (!existsSync(ROOT)) return;
+  for (const name of readdirSync(ROOT)) {
+    const state = join(ROOT, name, ".rotifer", "daemon.json");
+    if (!existsSync(state)) continue;
+    try {
+      const { pid } = JSON.parse(readFileSync(state, "utf-8")) as { pid?: unknown };
+      if (typeof pid === "number" && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {
+      // gone already, or the file is not a daemon state
+    }
+  }
+}
+
 afterAll(async () => {
+  stopLeftoverDaemons();
   await fake?.close();
   rmSync(ROOT, { recursive: true, force: true });
 }, 30_000);
@@ -311,6 +335,20 @@ describe("without consent nothing dials out", () => {
       assertNothingWritten(home);
     }, 60_000);
   }
+  it("X4: stdout a terminal but stdin a pipe giving y: no question, exits 1, saves nothing, no connection", async () => {
+    const home = newHome("x4");
+    const before = fake.accepted();
+    // On the pseudo-terminal, `sh` pipes "y" into the CLI's stdin, so only its
+    // stdout and stderr are the terminal (`yes | rotifer network start`).
+    const piped = 'printf "y\\ny\\n" | exec node "$0" "$@"';
+    const r = await onTerminalRun(home, ["sh", "-c", piped, CLI, "network", "start", "-b", fake.addr], "");
+    expect(r.out).not.toContain(QUESTION);
+    expect(r.out).toContain("P2P networking needs your consent first");
+    expect(r.code, r.out).toBe(1);
+    await sleep(5_000);
+    expect(fake.accepted() - before).toBe(0);
+    assertNothingWritten(home);
+  }, 60_000);
 });
 
 describe.skipIf(!HAS_IDENTITY)("with consent the node starts, and revoking stops it", () => {

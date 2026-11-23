@@ -194,6 +194,33 @@ describe("the consent record (§4)", () => {
   it("never asks under --json", () => {
     expect(canAsk(true)).toBe(false);
   });
+
+  // Design §3: ask only when both stdin and stdout are terminals. With stdout a
+  // terminal and stdin a pipe (`yes | rotifer network start`), a prompt would
+  // read the pipe's "y" as consent (ADR-313 D5).
+  it("asks only when stdin and stdout are both terminals", () => {
+    const stdinTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    const stdoutTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    const set = (stdin: boolean | undefined, stdout: boolean | undefined): void => {
+      Object.defineProperty(process.stdin, "isTTY", { value: stdin, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: stdout, configurable: true });
+    };
+    try {
+      set(true, true);
+      expect(canAsk(false)).toBe(true);
+      set(undefined, true);
+      expect(canAsk(false)).toBe(false);
+      set(true, undefined);
+      expect(canAsk(false)).toBe(false);
+      set(undefined, undefined);
+      expect(canAsk(false)).toBe(false);
+    } finally {
+      for (const [stream, d] of [[process.stdin, stdinTTY], [process.stdout, stdoutTTY]] as const) {
+        if (d) Object.defineProperty(stream, "isTTY", d);
+        else delete (stream as { isTTY?: boolean }).isTTY;
+      }
+    }
+  });
 });
 
 describe("network start without consent, not on a terminal (G1)", () => {

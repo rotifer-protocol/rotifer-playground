@@ -19,6 +19,8 @@ walkthrough assumes macOS, but the only OS-specific note is the firewall prompt.
 >
 > P2P is also **off by default** (`enabled: false`): the CLI never joins a
 > network unless you ask it to.
+> From the next release, the first `network start` on an account also asks
+> before it connects (see **Consent** under Notes).
 
 There are two ways to run this:
 
@@ -350,5 +352,15 @@ These daemons listen on loopback, where mDNS stays off. Start both with
   denials) for scripts, without peer addresses, PeerIds or scores;
   `--state-file <path>` points it at another user's daemon, such as a service's.
   On a machine that never started a node it says so.
+- **Consent** (from the next release): the first `network start` on an account
+  prints what the node connects to and what peers can see, then asks
+  `Allow P2P networking for this account? [y/N]`; Enter alone means no, and a
+  no saves nothing, not even a node key. The answer is kept in
+  `~/.rotifer/p2p/consent.json`. Scripts, CI and other runs without a terminal,
+  and `--json`, are never asked: they exit 1 without connecting until you pass
+  `--accept-p2p` once, or run `rotifer network consent --accept`. Read the text
+  first with `rotifer network consent --show`; `--status` says whether consent
+  is recorded. `rotifer network consent --revoke` withdraws it and stops a
+  running node; the node key (`~/.rotifer/identity.pem`) and remembered peers stay.
 - `network start --foreground` runs the node in that process, for a service
   manager such as systemd; it exits non-zero if the node stops working.

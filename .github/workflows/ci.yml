@@ -372,7 +372,8 @@ jobs:
             tests/e2e/agent-memory-list.test.ts \
             tests/e2e/rotifer-test-memory.test.ts \
             tests/e2e/memory-subpath-export.test.ts \
-            tests/e2e/network-relay-cli.test.ts
+            tests/e2e/network-relay-cli.test.ts \
+            tests/e2e/network-consent.test.ts
 
       - name: Cargo clippy (all crates)
         run: cargo clippy --workspace -- -D warnings

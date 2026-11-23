@@ -14,6 +14,12 @@
  *
  * `fetch` follows 301/302/307/308. The download endpoint answers 307, which
  * an earlier hand-written client did not follow (2026-08-31).
+ *
+ * A slug can belong to more than one publisher. ClawHub then answers 409 and
+ * wants the publisher named (`ownerHandle`); people write it `@owner/slug`,
+ * the form ClawHub's own `ref` field and CLI use. Which publisher to install
+ * is the user's choice, so an ambiguous slug is an error that lists the
+ * publishers, never a pick.
  */
 
 export const CLAWHUB_API = "https://clawhub.ai/api/skill";
@@ -28,7 +34,7 @@ export interface ClawHubSkillInfo {
   version: string;
 }
 
-export type ClawHubFailureKind = "not_found" | "http" | "not_json" | "timeout" | "network";
+export type ClawHubFailureKind = "not_found" | "ambiguous" | "http" | "not_json" | "timeout" | "network";
 
 export class ClawHubError extends Error {
   constructor(
@@ -37,6 +43,8 @@ export class ClawHubError extends Error {
     readonly attempts: number,
     readonly status: number | undefined,
     readonly detail: string,
+    /** For "ambiguous": the publishers' `@owner/slug` refs, when ClawHub listed them. */
+    readonly candidates: string[] = [],
   ) {
     super(describeFailure(kind, attempts, status, detail));
     this.name = "ClawHubError";
@@ -53,6 +61,8 @@ function describeFailure(
   switch (kind) {
     case "not_found":
       return `not found (HTTP ${status ?? 404})`;
+    case "ambiguous":
+      return `is used by more than one publisher (HTTP ${status ?? 409})`;
     case "http":
       return `HTTP ${status}${detail ? ` — ${detail}` : ""} (${tries})`;
     case "not_json":
@@ -156,6 +166,7 @@ async function request(url: string, options: ClawHubRequestOptions): Promise<Ans
       }
       const detail = errorDetail(body.toString("utf-8"));
       if (res.status === 404) throw new ClawHubError("not_found", url, attempt, 404, detail);
+      if (res.status === 409) throw new ClawHubError("ambiguous", url, attempt, 409, detail);
       failure = new ClawHubError("http", url, attempt, res.status, detail);
       if (!isTransientStatus(res.status)) throw failure;
     } catch (e) {
@@ -181,12 +192,82 @@ async function request(url: string, options: ClawHubRequestOptions): Promise<Ans
   throw last!;
 }
 
-export async function fetchClawHubInfo(
+export interface ClawHubSkillRef {
+  slug: string;
+  /** The publisher, when named: `@owner/slug`. */
+  ownerHandle?: string;
+}
+
+export class InvalidSkillRef extends Error {}
+
+const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** `slug` or `@owner/slug`. Anything else is refused rather than guessed at. */
+export function parseSkillRef(ref: string): ClawHubSkillRef {
+  const owned = /^@([^/]+)\/([^/]+)$/.exec(ref);
+  if (owned && NAME.test(owned[1]) && NAME.test(owned[2])) return { slug: owned[2], ownerHandle: owned[1] };
+  if (NAME.test(ref)) return { slug: ref };
+  throw new InvalidSkillRef(
+    `'${ref}' is not a ClawHub skill: give its slug, or @owner/slug to name the publisher (for example @owner/my-skill)`,
+  );
+}
+
+function withRef(endpoint: string, slug: string, ownerHandle: string | undefined): string {
+  const owner = ownerHandle ? `&ownerHandle=${encodeURIComponent(ownerHandle)}` : "";
+  return `${endpoint}?slug=${encodeURIComponent(slug)}${owner}`;
+}
+
+/**
+ * The publishers of an ambiguous slug, as `@owner/slug`. Only ClawHub's v1
+ * skill endpoint lists them (in its 409 answer); the metadata endpoint says
+ * only that there is more than one. One attempt, and any failure is an empty
+ * list: this only improves an error message.
+ */
+export async function fetchClawHubCandidates(
   slug: string,
   options: ClawHubRequestOptions & { api?: string } = {},
+): Promise<string[]> {
+  const api = options.api ?? clawHubEndpoints().api;
+  if (!api.endsWith("/api/skill")) return [];
+  const url = `${api.slice(0, -"/api/skill".length)}/api/v1/skills/${encodeURIComponent(slug)}`;
+  try {
+    const res = await (options.fetchImpl ?? fetch)(url, {
+      redirect: "follow",
+      signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULTS.timeoutMs),
+    });
+    const data = (await res.json()) as { matches?: unknown };
+    if (!Array.isArray(data.matches)) return [];
+    const refs = data.matches
+      .map((m) => (m as { ref?: unknown })?.ref)
+      .filter((r): r is string => typeof r === "string")
+      .filter((r) => {
+        try {
+          const parsed = parseSkillRef(r);
+          return parsed.slug === slug && parsed.ownerHandle !== undefined;
+        } catch {
+          return false;
+        }
+      });
+    return [...new Set(refs)];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchClawHubInfo(
+  slug: string,
+  options: ClawHubRequestOptions & { api?: string; ownerHandle?: string } = {},
 ): Promise<ClawHubSkillInfo> {
-  const url = `${options.api ?? clawHubEndpoints().api}?slug=${encodeURIComponent(slug)}`;
-  const answer = await request(url, options);
+  const url = withRef(options.api ?? clawHubEndpoints().api, slug, options.ownerHandle);
+  let answer: Answer;
+  try {
+    answer = await request(url, options);
+  } catch (e) {
+    if (e instanceof ClawHubError && e.kind === "ambiguous") {
+      throw new ClawHubError(e.kind, e.url, e.attempts, e.status, e.detail, await fetchClawHubCandidates(slug, options));
+    }
+    throw e;
+  }
   let data: {
     skill?: { slug: string; displayName: string; summary: string; stats: ClawHubSkillInfo["stats"] };
     owner?: { handle?: string; displayName?: string };
@@ -211,8 +292,8 @@ export async function fetchClawHubInfo(
 /** The skill package (a zip). */
 export async function fetchClawHubPackage(
   slug: string,
-  options: ClawHubRequestOptions & { download?: string } = {},
+  options: ClawHubRequestOptions & { download?: string; ownerHandle?: string } = {},
 ): Promise<Buffer> {
-  const url = `${options.download ?? clawHubEndpoints().download}?slug=${encodeURIComponent(slug)}`;
+  const url = withRef(options.download ?? clawHubEndpoints().download, slug, options.ownerHandle);
   return (await request(url, options)).body;
 }

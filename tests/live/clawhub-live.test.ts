@@ -15,7 +15,10 @@ import { announceSimulation, simulatedService, type SimulatedService } from "./s
  * failures and prints the real status, so a failure here says what ClawHub
  * answered.
  *
- * "grilling" (@wufei-png) is a small, stable, real listing.
+ * "grilling" (@wufei-png) is a small, stable, real listing. More than one
+ * publisher uses the slug, so it is named with its publisher (#625). If that
+ * publisher deletes or renames it, this case turns red: switch to another
+ * publisher of "grilling" that still exists.
  */
 
 const CLI = join(__dirname, "../../dist/index.js");
@@ -61,9 +64,9 @@ describe("live ClawHub", () => {
     expect(output, output).toContain("not found (HTTP 404)");
   });
 
-  it("wrap --from-clawhub grilling downloads, unpacks and writes the gene", async () => {
+  it("wrap --from-clawhub @wufei-png/grilling downloads, unpacks and writes the gene", async () => {
     const geneDir = join(TMP, "genes", "clawhub-real-gene");
-    const output = await run(["wrap", "clawhub-real-gene", "--from-clawhub", "grilling"]);
+    const output = await run(["wrap", "clawhub-real-gene", "--from-clawhub", "@wufei-png/grilling"]);
     expect(output, output).toContain("Grilling");
     expect(existsSync(join(geneDir, "phenotype.json")), output).toBe(true);
     const phenotype = JSON.parse(readFileSync(join(geneDir, "phenotype.json"), "utf-8"));

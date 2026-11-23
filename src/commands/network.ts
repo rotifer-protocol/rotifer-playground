@@ -5,10 +5,13 @@ import { existsSync, readFileSync, writeFileSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 import { ensurePrivateDir, tightenPrivateFile } from "../utils/private-fs.js";
 import {
   geneIdV2,
+  loadNodeIdentity,
   loadP2pNode,
+  type NodeIdentityHandle,
   type P2pNodeOptions,
   type NetworkAnnounceReport,
   type NetworkSearchHit,
@@ -26,11 +29,29 @@ import {
 } from "../utils/announce-table.js";
 import type { CloudGene } from "../cloud/types.js";
 import {
+  cliVersion,
   controlRequest,
   isDaemonRunning,
   readDaemonState,
   runDaemon,
 } from "../utils/p2p-daemon.js";
+import {
+  CONSENT_REQUIRED_HINT,
+  CONSENT_REQUIRED_JSON,
+  CONSENT_REQUIRED_TITLE,
+  DECLINED,
+  NOTICE_QUESTION,
+  NOTICE_VERSION,
+  PEER_ID_NOT_YET,
+  canAsk,
+  isYes,
+  readConsent,
+  rememberedPeerCount,
+  removeConsent,
+  renderNotice,
+  writeConsent,
+  type ConsentSource,
+} from "../utils/p2p-consent.js";
 import { attestCommand, printAttestation } from "./network-attest.js";
 import { KEY_CHANGE_NOTICE } from "../utils/por-client.js";
 import { porStatePath, readPorState, viewOf, type PorView } from "../utils/por-keeper.js";
@@ -430,8 +451,176 @@ async function waitForDaemon(timeoutMs: number): Promise<boolean> {
   return false;
 }
 
+// ── First-run P2P consent (T-237) ─────────────────────────────
+
+/** Says why a native module without `NodeIdentity` cannot ask, and how to fix it. */
+function outdatedNativeModule(): void {
+  const version = cliVersion() ?? "the current version";
+  display.error(
+    "The native P2P module is older than this CLI",
+    `It cannot show this node's ID for the consent prompt; it needs upgrading to @rotifer/playground ${version} (reinstall the CLI). Nothing was started.`,
+  );
+  process.exitCode = 1;
+}
+
+/**
+ * The node identity for the notice, or `null` after reporting why there is
+ * none (native module missing or too old: nothing is started then).
+ */
+function identityForNotice(): NodeIdentityHandle | null {
+  const identity = loadNodeIdentity();
+  if (identity === "outdated") {
+    outdatedNativeModule();
+    return null;
+  }
+  if (!identity) {
+    display.warn("Native P2P node is unavailable in this build.");
+    display.hint("This CLI was built without the compiled libp2p addon.");
+    return null;
+  }
+  return identity;
+}
+
+/** Write the node key the notice showed, then the record. */
+function recordConsent(identity: NodeIdentityHandle, source: ConsentSource): void {
+  const shown = identity.peerId;
+  const written = identity.persist();
+  writeConsent(source, cliVersion());
+  if (written !== shown) {
+    display.warn(`A node key was created meanwhile; this node's ID is ${written}, not ${shown}.`);
+  }
+}
+
+/**
+ * G1 (design §1.3): before `start` probes the native module or spawns
+ * anything. Returns whether the node may start; otherwise it has said why
+ * and set the exit code. Asks only on a terminal, never under --json, and
+ * never reads stdin otherwise.
+ */
+async function startConsent(bootstrapPeers: number, acceptFlag: boolean): Promise<boolean> {
+  if (readConsent()) return true;
+  const json = display.isJsonMode();
+  if (!acceptFlag && !canAsk(json)) {
+    if (json) console.log(JSON.stringify(CONSENT_REQUIRED_JSON));
+    else display.error(CONSENT_REQUIRED_TITLE, CONSENT_REQUIRED_HINT);
+    process.exitCode = 1;
+    return false;
+  }
+  const identity = identityForNotice();
+  if (!identity) return false;
+  const notice = renderNotice({ bootstrapPeers, rememberedPeers: rememberedPeerCount(), peerId: identity.peerId });
+  if (acceptFlag) {
+    // Leave in the log what was agreed to.
+    process.stderr.write(`${notice}\n\n`);
+    recordConsent(identity, "flag");
+    return true;
+  }
+  console.log();
+  console.log(notice);
+  console.log();
+  if (!isYes(await askOnTerminal(NOTICE_QUESTION))) {
+    display.info(DECLINED);
+    return false;
+  }
+  recordConsent(identity, "prompt");
+  return true;
+}
+
+function askOnTerminal(question: string): Promise<string> {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    rl.once("close", () => resolve(""));
+    rl.question(question, (answer) => {
+      resolve(answer);
+      rl.close();
+    });
+  });
+}
+
+const consentCommand = new Command("consent")
+  .description("Show, give or withdraw consent to P2P networking for this account")
+  .option("--show", "print what the node connects to and what peers can see")
+  .option("--accept", "record consent without starting the node (prints the text it agrees to)")
+  .option("--revoke", "withdraw consent and stop a running node; the node key and remembered peers stay")
+  .option("--status", "whether consent is recorded, for which notice, since when")
+  .action(async (options: { show?: boolean; accept?: boolean; revoke?: boolean; status?: boolean }) => {
+    const chosen = (["show", "accept", "revoke", "status"] as const).filter((k) => options[k]);
+    if (chosen.length !== 1) {
+      display.error("Pass exactly one of --show, --accept, --revoke, --status");
+      process.exitCode = 1;
+      return;
+    }
+    const json = display.isJsonMode();
+    const bootstrapPeers = loadNetworkConfig().bootstrap_peers.length;
+    switch (chosen[0]) {
+      case "show": {
+        // Reads only: a node key that does not exist yet is not made here.
+        const identity = loadNodeIdentity();
+        const peerId = identity && identity !== "outdated" && identity.onDisk ? identity.peerId : PEER_ID_NOT_YET;
+        console.log(renderNotice({ bootstrapPeers, rememberedPeers: rememberedPeerCount(), peerId }));
+        return;
+      }
+      case "accept": {
+        const identity = identityForNotice();
+        if (!identity) {
+          if (process.exitCode !== 1) process.exitCode = 1;
+          return;
+        }
+        process.stderr.write(
+          `${renderNotice({ bootstrapPeers, rememberedPeers: rememberedPeerCount(), peerId: identity.peerId })}\n\n`,
+        );
+        recordConsent(identity, "command");
+        if (json) console.log(JSON.stringify({ ok: true, action: "consent", consented: true, noticeVersion: NOTICE_VERSION }));
+        else display.success("P2P consent recorded for this account.");
+        return;
+      }
+      case "revoke": {
+        const removed = removeConsent();
+        const stopped = (await controlRequest("POST", "/stop")) !== null;
+        if (stopped) {
+          const config = loadNetworkConfig();
+          config.enabled = false;
+          saveNetworkConfig(config);
+        }
+        if (json) {
+          console.log(JSON.stringify({ ok: true, action: "consent", consented: false, removed, stopped }));
+          return;
+        }
+        display.success(removed ? "P2P consent withdrawn." : "No P2P consent was recorded.");
+        if (stopped) display.info("The running P2P node was stopped.");
+        display.hint("The node key (~/.rotifer/identity.pem) and remembered peers are kept.");
+        return;
+      }
+      case "status": {
+        const record = readConsent();
+        if (json) {
+          console.log(
+            JSON.stringify({
+              consented: record !== null,
+              noticeVersion: record?.noticeVersion ?? null,
+              acceptedAt: record?.acceptedAt ?? null,
+              source: record?.source ?? null,
+            }),
+          );
+          return;
+        }
+        if (!record) {
+          display.kv("P2P consent", "not given");
+          display.hint("Read it with 'rotifer network consent --show'; allow with 'rotifer network start' or --accept.");
+          return;
+        }
+        display.kv("P2P consent", "given");
+        display.kv("Notice version", String(record.noticeVersion));
+        display.kv("Since", record.acceptedAt);
+        display.kv("How", record.source);
+        return;
+      }
+    }
+  });
+
 export const networkCommand = new Command("network")
   .description("P2P gene network commands")
+  .addCommand(consentCommand)
   .addCommand(
     new Command("status")
       .description(
@@ -505,14 +694,18 @@ export const networkCommand = new Command("network")
         "don't discover or announce on the local network (use on untrusted Wi-Fi); mDNS only runs with a non-loopback --host",
       )
       .option("--foreground", "run in this process instead of the background, for a service manager such as systemd; exits non-zero if the node stops working")
-      .action(async (options: { port: string; host: string; bootstrap?: string[]; mdns: boolean; foreground?: boolean } & NodeFlags) => {
-        display.header("Starting P2P Daemon");
+      .option("--accept-p2p", "allow P2P networking for this account without the prompt, once you have read 'rotifer network consent --show'")
+      .action(async (options: { port: string; host: string; bootstrap?: string[]; mdns: boolean; foreground?: boolean; acceptP2p?: boolean } & NodeFlags) => {
         const node = nodeOptionsFrom(options);
         if ("error" in node) {
           display.error(node.error);
           process.exitCode = 1;
           return;
         }
+        // G1: nothing below runs, and no node key is made, before consent.
+        const bootstrapCount = options.bootstrap?.length ? options.bootstrap.length : loadNetworkConfig().bootstrap_peers.length;
+        if (!(await startConsent(bootstrapCount, options.acceptP2p === true))) return;
+        display.header("Starting P2P Daemon");
 
         if (await isDaemonRunning()) {
           display.warn("P2P daemon is already running.");

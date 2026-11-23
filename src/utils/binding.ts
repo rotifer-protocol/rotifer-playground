@@ -321,6 +321,30 @@ export function loadP2pNode(
   return new Ctor(listenHost, listenPort, bootstrapPeers, shouldUseMdns, undefined, options);
 }
 
+/**
+ * The node identity for the first-run P2P consent prompt (T-237): the key on
+ * disk read without writing, or one generated in memory that only
+ * `persist()` writes. Only the PeerId crosses into JS.
+ */
+export interface NodeIdentityHandle {
+  readonly peerId: string;
+  readonly onDisk: boolean;
+  /** Write the key (keeping one already on disk); the PeerId read back from the file. */
+  persist(): string;
+}
+
+/**
+ * The node identity at `~/.rotifer/identity.pem`, or `null` without the
+ * native module, or `"outdated"` when the module predates `NodeIdentity`.
+ */
+export function loadNodeIdentity(): NodeIdentityHandle | "outdated" | null {
+  const mod = loadRawModule();
+  if (!mod) return null;
+  const Ctor = mod.NodeIdentity as (new () => NodeIdentityHandle) | undefined;
+  if (typeof Ctor !== "function") return "outdated";
+  return new Ctor();
+}
+
 /** Whether this addon takes `P2pNodeOptions`: it came with `networkStats` (T-231 PR-②). */
 export function supportsNodeOptions(node: P2pNodeHandle): boolean {
   return typeof node.networkStats === "function";

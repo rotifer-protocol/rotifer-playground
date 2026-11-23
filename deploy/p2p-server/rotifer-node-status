@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# One look at a Rotifer public P2P node (T-231 B2 design §5.2, §6):
+#
+#   sudo rotifer-node-status                 service, release, quota, firewall, node counters
+#   sudo rotifer-node-status --version-only  the version the running node reports, or nothing
+#
+# Reads only. The node counters come from `rotifer network status --json`,
+# which prints no peer address, PeerId or score.
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=lib.sh
+. "$HERE/lib.sh"
+
+require_root
+NODE="$NODE_DIR/current/bin/node"
+DAEMON_STATE="$STATE/.rotifer/daemon.json"
+
+node_status_json() {
+	rotifer_as_service network status --json --state-file "$DAEMON_STATE" 2>/dev/null
+}
+
+# Pick named fields out of JSON on stdin: field paths as arguments, one
+# "path=value" line each, nothing for a missing field.
+pick() {
+	"$NODE" -e '
+		let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+			let j; try { j = JSON.parse(s); } catch { return; }
+			for (const path of process.argv.slice(1)) {
+				let v = j;
+				for (const k of path.split(".")) v = v == null ? undefined : v[k];
+				if (v === undefined) continue;
+				console.log(path + "=" + (typeof v === "object" ? JSON.stringify(v) : String(v)));
+			}
+		});' "$@"
+}
+
+if [[ "${1:-}" == --version-only ]]; then
+	node_status_json | pick version | sed -n 's/^version=//p'
+	exit 0
+fi
+
+release="$(current_release)"
+echo "Release:        ${release:-none installed}"
+if [[ -n "$release" ]]; then
+	verified="$(install_field "$release" verified)"
+	if [[ "$verified" == yes ]]; then
+		echo "Install:        verified (registry signatures and provenance checked)"
+	else
+		echo "Install:        UNVERIFIED INSTALL from local tarballs: test only, never in production"
+	fi
+	echo "Node.js:        $(install_field "$release" node)"
+fi
+
+systemctl show rotifer-p2p.service -p ActiveState -p SubState -p NRestarts | sed 's/^/Service:        /'
+
+used="$(cat "$QUOTA_STATE/used" 2>/dev/null || echo 0)"
+live="$( (nft -j list quota inet rotifer egress 2>/dev/null || true) | sed -n 's/.*"used":[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+limit="$(sed -n 's/^ROTIFER_QUOTA_BYTES=//p' "$ENV_FILE" 2>/dev/null | head -n 1)"
+[[ -n "$live" && "$live" -gt "$used" ]] && used="$live"
+if [[ "$limit" =~ ^[1-9][0-9]*$ ]]; then
+	echo "Outbound quota: $used of $limit bytes ($((used * 100 / limit))%) in the period from $(cat "$QUOTA_STATE/period" 2>/dev/null || echo '?')"
+fi
+if [[ -e "$QUOTA_STATE/capped" ]]; then
+	echo "                USED UP since $(cat "$QUOTA_STATE/capped"): the node is stopped until the period resets"
+fi
+if [[ -z "$live" ]]; then
+	echo "Firewall:       table inet rotifer NOT LOADED"
+else
+	dropped="$( (nft -j list set inet rotifer p2p_dropped 2>/dev/null || true) | "$NODE" -e '
+		let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+			try {
+				const set = JSON.parse(s).nftables.find((o) => o.set).set;
+				console.log((set.elem || []).length);
+			} catch { console.log("?"); }
+		});')"
+	echo "Firewall:       loaded; $dropped source addresses over the per-IP limits in the last 7 days"
+fi
+
+status="$(node_status_json || true)"
+if [[ -z "$status" ]] || ! pick running <<<"$status" | grep -q '=true'; then
+	echo "Node:           not answering on its control port"
+	exit 0
+fi
+# The address to hand out: /ip4/<public IP>/tcp/<port>/p2p/<PeerId>. The
+# PeerId comes from the plain `network status`, which the JSON leaves out.
+peer="$(rotifer_as_service network status --state-file "$DAEMON_STATE" 2>/dev/null |
+	sed -E 's/\x1b\[[0-9;]*m//g' | sed -nE 's/.*PeerId[^1-9A-Za-z]*([1-9A-HJ-NP-Za-km-z]{40,}).*/\1/p' | head -n 1 || true)"
+ip="$(sed -n 's/^ROTIFER_P2P_PUBLIC_IP=//p' "$ENV_FILE" 2>/dev/null | head -n 1)"
+port="$(sed -n 's/^ROTIFER_P2P_PORT=//p' "$ENV_FILE" 2>/dev/null | head -n 1)"
+if [[ -n "$peer" && -n "$ip" && -n "$port" ]]; then
+	echo "Address:        /ip4/$ip/tcp/$port/p2p/$peer"
+fi
+pick version roles announcedAddrs connections limits denials relay nat <<<"$status" | sed 's/^/Node:           /'

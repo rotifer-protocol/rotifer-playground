@@ -1,0 +1,9 @@
+{
+  "name": "rotifer-p2p-server",
+  "private": true,
+  "description": "What a Rotifer public P2P node runs: one exact @rotifer/playground version. Upgrading means changing this file and package-lock.json in a PR (deploy/p2p-server/RUNBOOK.md).",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@rotifer/playground": "0.38.0"
+  }
+}

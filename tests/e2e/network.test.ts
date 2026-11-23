@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { execSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, existsSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, rmSync, readFileSync, writeFileSync, statSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { hasNativeGeneIdV2 } from "../../src/utils/binding.js";
@@ -97,14 +97,37 @@ describe("rotifer network commands", () => {
     expect(result.stdout).toContain("rotifer network start");
   });
 
-  it("network status persists a stable node id in its config", () => {
-    run("network status");
-    const configPath = join(TEST_DIR, ".rotifer", "network.json");
-    const id1 = JSON.parse(readFileSync(configPath, "utf-8")).node_id;
-    run("network status");
-    const id2 = JSON.parse(readFileSync(configPath, "utf-8")).node_id;
-    expect(id1).toBeTruthy();
-    expect(id2).toBe(id1);
+  // `network status` reads only (T-231 PR-②, CEO 11-23): it neither creates
+  // nor changes network.json, and never shows a node id it made up.
+  it("network status on a machine that never started says it is not initialised and writes nothing", () => {
+    const dir = join(TEST_DIR, ".rotifer");
+    rmSync(join(dir, "network.json"), { force: true });
+    rmSync(join(dir, "identity.pem"), { force: true });
+    const first = run("network status");
+    const second = run("network status");
+    expect(first.exitCode).toBe(0);
+    expect(first.stdout).toContain("not initialised");
+    expect(first.stdout).toContain("rotifer network start");
+    // Nothing that varies from run to run, such as a fresh random id.
+    expect(second.stdout).toBe(first.stdout);
+    expect(existsSync(join(dir, "network.json"))).toBe(false);
+    expect(existsSync(join(dir, "identity.pem"))).toBe(false);
+  });
+
+  it("network status leaves an existing network.json as it was", () => {
+    const dir = join(TEST_DIR, ".rotifer");
+    mkdirSync(dir, { recursive: true });
+    const configPath = join(dir, "network.json");
+    const body = JSON.stringify({ node_id: "kept", listen_port: 19999, bootstrap_peers: [], enabled: false }) + "\n";
+    writeFileSync(configPath, body);
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(configPath, old, old);
+    const before = statSync(configPath).mtimeMs;
+    const result = run("network status");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("19999");
+    expect(readFileSync(configPath, "utf-8")).toBe(body);
+    expect(statSync(configPath).mtimeMs).toBe(before);
   });
 
   it("network start brings up a daemon (addon present) or degrades gracefully (no addon)", () => {

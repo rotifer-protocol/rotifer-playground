@@ -338,5 +338,17 @@ These daemons listen on loopback, where mDNS stays off. Start both with
   `--no-mdns`; connections are still Noise-authenticated and announcements
   still validated. Other libp2p programs on the LAN (IPFS, for example) answer
   mDNS too; they are disconnected as soon as they identify as non-Rotifer.
-- Reaching nodes across the public internet (NAT traversal, relays) is a later
-  milestone — see the productionization roadmap.
+- **Relays** (from the next release): `network start --relay <multiaddr/p2p/PeerId>`
+  holds a reservation on a relay node, so peers that cannot dial this node
+  directly reach it through the relay; `--relay-server --announce <public
+  multiaddr>` makes a node with a public address serve as one, and
+  `--max-inbound` / `--max-pending` set its connection limits. No public relay
+  is run yet, so across the internet you need one of your own — see the
+  productionization roadmap.
+- **`network status` reads only** (from the next release): it no longer writes `~/.rotifer/network.json`.
+  With the global `--json` it prints the node's counters (relay, NAT, limits,
+  denials) for scripts, without peer addresses, PeerIds or scores;
+  `--state-file <path>` points it at another user's daemon, such as a service's.
+  On a machine that never started a node it says so.
+- `network start --foreground` runs the node in that process, for a service
+  manager such as systemd; it exits non-zero if the node stops working.

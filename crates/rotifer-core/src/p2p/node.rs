@@ -68,6 +68,16 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How often the event loop checks search and announce deadlines.
 const SEARCH_TICK: Duration = Duration::from_millis(50);
+/// How often the event loop records that it is still running.
+const EVENT_LOOP_TICK: Duration = Duration::from_secs(1);
+
+/// Now, in Unix milliseconds (0 if the clock is before 1970).
+fn unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
+}
 
 /// How often remembered peers are flushed to disk while running. A clean stop
 /// also persists them; this only bounds the loss when a daemon is killed.
@@ -153,7 +163,6 @@ enum Command {
     #[cfg(test)]
     SearchRuns(oneshot::Sender<u64>),
     /// Established connections: (inbound, outbound).
-    #[cfg(test)]
     ConnectionCounts(oneshot::Sender<(u32, u32)>),
     /// Peers in this node's GossipSub mesh for `topic`.
     #[cfg(test)]
@@ -759,6 +768,7 @@ struct NodeShared {
     dialed: Arc<Mutex<Vec<DialedEntry>>>,
     /// Same-IP counters (A6 design v3 §3.4).
     colocation: Arc<Mutex<ColocationStats>>,
+    last_tick_ms: Arc<AtomicU64>,
 }
 
 /// Fixed listen ports currently bound by live nodes in this process. libp2p's
@@ -827,6 +837,8 @@ pub struct Node {
     dialed: Arc<Mutex<Vec<DialedEntry>>>,
     /// Same-IP counters (A6 design v3 §3.4).
     colocation: Arc<Mutex<ColocationStats>>,
+    /// When the event loop last ran, in Unix milliseconds (0 = never).
+    last_tick_ms: Arc<AtomicU64>,
     /// Connection-policy settings (defaults outside tests).
     policy: PolicyOptions,
     /// Peers this node never dials (test switch; empty outside tests).
@@ -930,6 +942,7 @@ impl Node {
             dht: Arc::new(Mutex::new(DhtStats::default())),
             dialed: Arc::new(Mutex::new(Vec::new())),
             colocation: Arc::new(Mutex::new(ColocationStats::default())),
+            last_tick_ms: Arc::new(AtomicU64::new(0)),
             policy: PolicyOptions::default(),
             deny_dial: Vec::new(),
             withhold_from: HashSet::new(),
@@ -1046,10 +1059,32 @@ impl Node {
         self.relay.lock().map(|r| *r).unwrap_or_default()
     }
 
-    /// Accept loopback addresses in `NetworkConfig::announce` (tests only:
-    /// one machine has no public address). Must be called before `start`.
-    #[cfg(test)]
-    fn with_announce_loopback(mut self) -> Self {
+    /// When the event loop last ran, in Unix milliseconds; 0 before the
+    /// first start. It stops moving when the loop ends (T-231 design §5.3).
+    pub fn event_loop_last_tick_ms(&self) -> u64 {
+        self.last_tick_ms.load(Ordering::Relaxed)
+    }
+
+    /// Whether the event loop is running: started and not ended. False
+    /// before `start`, after `stop`, and when the loop ended on its own.
+    pub fn event_loop_running(&self) -> bool {
+        self.task.as_ref().is_some_and(|t| !t.is_finished())
+    }
+
+    /// End the event loop and nothing else, the way a crash in it would
+    /// look from outside: the node keeps its runtime and state, and
+    /// [`Node::event_loop_running`] turns false. For tests of whatever
+    /// watches the loop (T-231 design §8.1 PR-② item 5); `stop` is the way
+    /// to shut a node down.
+    pub fn end_event_loop_for_test(&self) -> Result<(), NetworkError> {
+        self.send_command(Command::Shutdown)
+    }
+
+    /// Accept loopback addresses in `NetworkConfig::announce`. For tests
+    /// only: one machine has no public address. The CLI turns it on only
+    /// under a test-only environment variable (T-231 design §8.1 PR-②
+    /// item 1). Must be called before `start`.
+    pub fn with_announce_loopback(mut self) -> Self {
         self.announce_loopback = true;
         self
     }
@@ -1330,9 +1365,9 @@ impl Node {
     }
 
     /// Established connections right now, as (inbound, outbound): who
-    /// dialled whom (P2P RFC §8.5 item 3).
-    #[cfg(test)]
-    pub(crate) fn connection_counts(&self) -> Result<(u32, u32), NetworkError> {
+    /// dialled whom (P2P RFC §8.5 item 3). Answered by the event loop, so it
+    /// fails once the loop has ended.
+    pub fn connection_counts(&self) -> Result<(u32, u32), NetworkError> {
         let (tx, rx) = oneshot::channel();
         self.send_command(Command::ConnectionCounts(tx))?;
         self.block_on_query(rx)
@@ -1633,6 +1668,7 @@ impl Node {
             dht: Arc::clone(&self.dht),
             dialed: Arc::clone(&self.dialed),
             colocation: Arc::clone(&self.colocation),
+            last_tick_ms: Arc::clone(&self.last_tick_ms),
         };
         let (ready_tx, ready_rx) = oneshot::channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -2244,6 +2280,7 @@ async fn run_event_loop(
         dht,
         dialed,
         colocation,
+        last_tick_ms,
     } = shared;
     // Per-peer flood defence (§8.6); lives in the single-threaded event loop.
     let mut security = super::security::Security::new();
@@ -2337,10 +2374,15 @@ async fn run_event_loop(
             feed_kad(&mut swarm.behaviour_mut().kademlia, &peer, ma);
         }
     }
+    // Relays the startup dials below go through (`.../p2p/R/p2p-circuit/...`):
+    // libp2p's relay client dials R for each of them a moment later, so this
+    // node must not dial R itself at startup (see where `relay_addrs` is built).
+    let mut hopped: HashSet<String> = bootstrap_addrs.iter().filter_map(circuit_relay).collect();
     for (i, ma) in bootstrap_addrs.into_iter().enumerate() {
         dial_tagged(&mut swarm, &mut outbound, ma.into(), None, DialPurpose::Bootstrap(i));
     }
     let restart: Vec<String> = outbound.book.usable(wall_clock_ms()).map(|e| e.addr.clone()).collect();
+    hopped.extend(restart.iter().filter_map(|a| a.parse::<Multiaddr>().ok()).filter_map(|a| circuit_relay(&a)));
     if !restart.is_empty() {
         tracing::debug!("dialling {} remembered peer(s)", restart.len());
     }
@@ -2370,13 +2412,32 @@ async fn run_event_loop(
     // Connections per peer, for closing one at a time (tests) and reports.
     let mut peer_conns: HashMap<Libp2pPeerId, Vec<libp2p::swarm::ConnectionId>> = HashMap::new();
 
-    // Hold a reservation on each configured relay (ADR-304 D1): listening on
-    // its circuit address dials the relay and asks it to accept circuits for
-    // us. Peers that cannot dial us directly reach us through it.
-    for (relay_addr, _) in &options.relays {
-        let circuit = relay_addr.clone().with(Protocol::P2pCircuit);
-        if let Err(e) = swarm.listen_on(circuit) {
-            tracing::warn!("relay {relay_addr}: cannot request a reservation: {e}");
+    // Hold a reservation on each configured relay (ADR-304 D1), so peers
+    // that cannot dial us directly reach us through it. The circuit listener
+    // that asks for the reservation opens once a direct connection to the
+    // relay is up (`ConnectionEstablished` below), whoever dialled it, so the
+    // request goes out on that connection. Opening the listener first is
+    // racy: libp2p's relay client then dials the relay itself, the swarm
+    // refuses that dial while another one to the relay is under way (the
+    // relay is also a bootstrap or remembered peer), and the client drops the
+    // reservation without a word (T-231 PR-②). For the same reason a relay
+    // that a startup dial goes through is not dialled here: two dials to it
+    // and the swarm refuses the relay client's, failing that circuit.
+    let relay_addrs: HashMap<Libp2pPeerId, Multiaddr> =
+        options.relays.iter().map(|(addr, peer)| (*peer, addr.clone())).collect();
+    // Open relay listeners, by the relay they are on.
+    let mut relay_listeners: HashMap<libp2p::core::transport::ListenerId, Libp2pPeerId> = HashMap::new();
+    for (relay_addr, relay_peer) in &options.relays {
+        if hopped.contains(&relay_peer.to_string()) {
+            continue;
+        }
+        let opts = DialOpts::peer_id(*relay_peer)
+            .addresses(vec![relay_addr.clone()])
+            .condition(PeerCondition::DisconnectedAndNotDialing)
+            .build();
+        if let Err(e) = swarm.dial(opts) {
+            // Another dial to it is already under way: its connection will do.
+            tracing::debug!("relay {relay_addr}: dial not started: {e}");
         }
     }
     // A relay must be a Rotifer node: every Rotifer peer dialling through it
@@ -2461,8 +2522,15 @@ async fn run_event_loop(
     keeper_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let keeper_wake = tokio::time::sleep_until(keeper_deadline(&outbound).into());
     tokio::pin!(keeper_wake);
+    // Liveness (T-231 design §5.3, X10): the loop stamps the time each second,
+    // so a reader can tell a loop that stopped from one that is quiet.
+    let mut alive_tick = tokio::time::interval(EVENT_LOOP_TICK);
+    alive_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
+            _ = alive_tick.tick() => {
+                last_tick_ms.store(unix_millis(), Ordering::Relaxed);
+            }
             _ = search_tick.tick() => {
                 let now = std::time::Instant::now();
                 let due: Vec<String> = searches.iter().filter(|(_, s)| s.deadline <= now).map(|(g, _)| g.clone()).collect();
@@ -2569,7 +2637,7 @@ async fn run_event_loop(
                         let _ = tx.send(Err(NetworkError::Transport("listener error".into())));
                     }
                 }
-                SwarmEvent::ListenerClosed { reason, addresses, .. } => {
+                SwarmEvent::ListenerClosed { listener_id, reason, addresses } => {
                     // A relay listener closes when its reservation is lost
                     // (refused on renewal, relay gone). libp2p reports the
                     // addresses it held here, not as `ExpiredListenAddr`.
@@ -2581,6 +2649,8 @@ async fn run_event_loop(
                             n.relay_reservations.retain(|r| r != &relay_peer);
                         }
                     }
+                    // The next direct connection to that relay asks again.
+                    relay_listeners.remove(&listener_id);
                     if let Some(tx) = ready_tx.take() {
                         let msg = match reason {
                             Ok(()) => "listener closed before binding".to_string(),
@@ -2592,6 +2662,20 @@ async fn run_event_loop(
                 SwarmEvent::ConnectionEstablished {
                     peer_id, connection_id, endpoint, num_established, ..
                 } => {
+                    // A direct connection to a configured relay holding no
+                    // listener of ours: ask it for a reservation now (see
+                    // where `relay_addrs` is built).
+                    if !endpoint.is_relayed()
+                        && let Some(relay_addr) = relay_addrs.get(&peer_id)
+                        && !relay_listeners.values().any(|p| *p == peer_id)
+                    {
+                        match swarm.listen_on(relay_addr.clone().with(Protocol::P2pCircuit)) {
+                            Ok(id) => {
+                                relay_listeners.insert(id, peer_id);
+                            }
+                            Err(e) => tracing::warn!("relay {relay_addr}: cannot request a reservation: {e}"),
+                        }
+                    }
                     let remote = endpoint.get_remote_address();
                     outbound.established(
                         connection_id,
@@ -3307,7 +3391,6 @@ async fn run_event_loop(
                 Some(Command::SearchRuns(resp)) => {
                     let _ = resp.send(search_runs);
                 }
-                #[cfg(test)]
                 Some(Command::ConnectionCounts(resp)) => {
                     let info = swarm.network_info();
                     let c = info.connection_counters();
@@ -5290,6 +5373,108 @@ mod tests {
 
     fn reserved(client: &Node, relay: &RelayUnderTest) -> bool {
         client.nat_traversal().relay_reservations.contains(&relay.peer_id)
+    }
+
+    /// T-231 PR-② (design §5.3, X10): the event loop stamps the time once a
+    /// second while it runs; after the loop ends the stamp stops, the node
+    /// says it is not running, and queries the loop answers fail.
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "integration: a real loopback node")]
+    fn event_loop_heartbeat_stops_when_the_loop_ends() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut node = test_node(&dir, "beat", cfg(0));
+        assert_eq!(node.event_loop_last_tick_ms(), 0, "no stamp before start");
+        assert!(!node.event_loop_running(), "not running before start");
+        node.start().expect("start");
+        assert!(wait_until(3, || node.event_loop_last_tick_ms() > 0), "first stamp");
+        let first = node.event_loop_last_tick_ms();
+        assert!(wait_until(3, || node.event_loop_last_tick_ms() > first), "the stamp moves while the loop runs");
+        assert!(node.event_loop_running());
+        assert!(node.connection_counts().is_ok(), "the loop answers");
+
+        node.end_event_loop_for_test().expect("end the loop");
+        assert!(wait_until(3, || !node.event_loop_running()), "the node sees its loop ended");
+        let last = node.event_loop_last_tick_ms();
+        std::thread::sleep(Duration::from_millis(2_200));
+        assert_eq!(node.event_loop_last_tick_ms(), last, "no stamp after the loop ended");
+        assert!(node.connection_counts().is_err(), "nothing answers queries any more");
+    }
+
+    /// T-231 PR-②: a node that has the relay as its bootstrap peer too
+    /// (`-b R --relay R`, how users will point at a B2 public node) still
+    /// holds a reservation on it.
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "integration: relay server on real loopback nodes")]
+    fn relay_that_is_also_the_bootstrap_peer_takes_the_reservation() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let relay = relay_node(&dir, "relay", Some(RelayServerLimits::default()), true);
+        let mut client = test_node(
+            &dir,
+            "client",
+            NetworkConfig { relays: vec![relay.addr.clone()], bootstrap_peers: vec![relay.addr.clone()], ..cfg(0) },
+        );
+        client.start().expect("start");
+        assert!(
+            wait_until(10, || reserved(&client, &relay)),
+            "no reservation: client {:?}, relay {:?}",
+            client.nat_traversal(),
+            relay.node.relay_server_stats()
+        );
+    }
+
+    /// T-231 PR-②: when the connection to the relay drops, the reservation
+    /// goes with it; once the keeper has reconnected, the node reserves again.
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "integration: relay server on real loopback nodes")]
+    fn reservation_is_taken_again_after_the_relay_connection_drops() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let relay = relay_node(&dir, "relay", Some(RelayServerLimits::default()), true);
+        let mut client = test_node(
+            &dir,
+            "client",
+            NetworkConfig { relays: vec![relay.addr.clone()], bootstrap_peers: vec![relay.addr.clone()], ..cfg(0) },
+        );
+        client.start().expect("start");
+        assert!(wait_until(10, || reserved(&client, &relay)), "first reservation");
+        client.disconnect(relay.peer_id.parse().expect("peer id")).expect("disconnect");
+        assert!(wait_until(5, || !reserved(&client, &relay)), "the reservation goes with the connection");
+        assert!(
+            wait_until(30, || reserved(&client, &relay)),
+            "reserved again after the keeper reconnects (client {:?}, relay {:?})",
+            client.nat_traversal(),
+            relay.node.relay_server_stats()
+        );
+    }
+
+    /// T-231 PR-②: a node with `--relay R` whose bootstrap address goes
+    /// through R (`-b R/p2p-circuit/p2p/A`) reaches A through R on its first
+    /// dial, and also holds its own reservation on R. A second dial to R at
+    /// startup would make the swarm refuse libp2p's relay-client dial and
+    /// fail the circuit, leaving it to the keeper's retry (5 s or later).
+    #[test]
+    #[cfg_attr(not(feature = "p2p-integration"), ignore = "integration: relay server on real loopback nodes")]
+    fn relay_client_dials_its_bootstrap_circuit_through_the_same_relay_at_once() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let relay = relay_node(&dir, "relay", Some(RelayServerLimits::default()), true);
+        let behind = relay_client(&dir, "behind", &relay.addr);
+        assert!(wait_until(15, || reserved(&behind, &relay)));
+        let circuit = format!("{}/p2p-circuit/p2p/{}", relay.addr, behind.local_peer_id().0);
+        let mut dialer = test_node(
+            &dir,
+            "dialer",
+            NetworkConfig { relays: vec![relay.addr.clone()], bootstrap_peers: vec![circuit], ..cfg(0) },
+        );
+        dialer.start().expect("start");
+        assert!(
+            wait_until(4, || relay.node.relay_server_stats().circuits_accepted >= 1),
+            "the first dial must go through the relay (relay: {:?})",
+            relay.node.relay_server_stats()
+        );
+        assert!(
+            wait_until(10, || reserved(&dialer, &relay)),
+            "the dialler holds a reservation too (dialer: {:?})",
+            dialer.nat_traversal()
+        );
     }
 
     /// Test 1: a node built with the default config relays for nobody.

@@ -21,7 +21,8 @@ use std::sync::{Arc, Mutex};
 // unreferenced submodule's napi registration ctor, so the class must live here.
 use rotifer_core::p2p::messages::{encode_announcement, local_announcement, ANNOUNCEMENTS_TOPIC};
 use rotifer_core::p2p::discover::{SearchOutcome, SearchQuery};
-use rotifer_core::p2p::node::{AnnounceReport, Node as CoreNode, NodeHandle, RepublishReport};
+use rotifer_core::p2p::node::{AnnounceReport, Node as CoreNode, NodeHandle, Reachability, RepublishReport};
+use rotifer_core::p2p::relay_server::{RelayServerLimits, RelayServerStats};
 use rotifer_core::p2p::por::{AttestationStatus, TrustAnchor};
 use rotifer_core::p2p::NetworkConfig;
 use rotifer_core::p2p::outbound::ColocationStats;
@@ -213,6 +214,8 @@ impl P2pNode {
     /// `trust_anchors` replaces the issuers this node trusts (ADR-300; default
     /// `https://rotifer.dev`). The CLI never passes it: it is for local
     /// test setups. `start` refuses plain http to anything but loopback.
+    /// `options` carries the relay and connection-limit settings (T-231 B2
+    /// design §8 PR-②); left out, the node is configured as before.
     #[napi(constructor)]
     pub fn new(
         listen_host: String,
@@ -220,11 +223,14 @@ impl P2pNode {
         bootstrap_peers: Vec<String>,
         mdns_enabled: Option<bool>,
         trust_anchors: Option<Vec<NetworkTrustAnchor>>,
+        options: Option<NetworkNodeOptions>,
     ) -> Result<Self> {
         let config = node_config(listen_host, listen_port, bootstrap_peers, mdns_enabled, trust_anchors);
-        let inner = CoreNode::new(config)
+        let options = options.unwrap_or_default();
+        let allow_loopback = options.allow_loopback_announce.unwrap_or(false);
+        let inner = CoreNode::new(with_options(config, options))
             .map_err(|e| Error::from_reason(format!("create p2p node: {e}")))?;
-        Ok(Self { inner })
+        Ok(Self { inner: if allow_loopback { inner.with_announce_loopback() } else { inner } })
     }
 
     /// Start the swarm. Blocks until the first listen address is ready (or the
@@ -363,6 +369,30 @@ impl P2pNode {
         NetworkColocationStats::from(self.inner.colocation_stats())
     }
 
+    /// The node's settings and counters that `/status` reports (T-231 B2
+    /// design §4.2): roles, announced addresses, event-loop liveness,
+    /// connections and their limits, refusals, NAT, relay server, gossip and
+    /// DHT. Holds no peer's address, PeerId or score.
+    #[napi]
+    pub fn network_stats(&self) -> NetworkStats {
+        network_stats(&self.inner)
+    }
+
+    /// Whether the node's event loop is running. A node whose loop ended
+    /// without `stop` has stopped working even though this object lives.
+    #[napi]
+    pub fn event_loop_running(&self) -> bool {
+        self.inner.event_loop_running()
+    }
+
+    /// End the event loop as a crash would, leaving everything else as it
+    /// is. Tests only: what watches the loop must notice (T-231 design §8.1
+    /// PR-② item 5). Use `stop` to shut a node down.
+    #[napi]
+    pub fn end_event_loop_for_test(&self) -> Result<()> {
+        self.inner.end_event_loop_for_test().map_err(|e| Error::from_reason(e.to_string()))
+    }
+
     /// Answer a proof-of-registration challenge with this node's key (ADR-300
     /// revision 2). Takes the challenge's four fields; the node builds the
     /// message itself, so this cannot be used to sign anything else. `nonce`
@@ -465,6 +495,85 @@ fn node_config(
     }
 }
 
+/// `options` laid over `config`; an option left out keeps the config's value.
+fn with_options(config: NetworkConfig, options: NetworkNodeOptions) -> NetworkConfig {
+    NetworkConfig {
+        relays: options.relays.unwrap_or(config.relays.clone()),
+        max_inbound_connections: options.max_inbound.unwrap_or(config.max_inbound_connections),
+        max_pending_connections: options.max_pending.unwrap_or(config.max_pending_connections),
+        relay_server: match options.relay_server {
+            Some(true) => Some(RelayServerLimits::default()),
+            Some(false) => None,
+            None => config.relay_server.clone(),
+        },
+        announce: options.announce.unwrap_or(config.announce.clone()),
+        ..config
+    }
+}
+
+fn network_stats(node: &CoreNode) -> NetworkStats {
+    let n = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+    let config = &node.config;
+    let tick = node.event_loop_last_tick_ms();
+    let denials = node.connection_denials();
+    let nat = node.nat_traversal();
+    let dht = node.dht_stats();
+    NetworkStats {
+        roles: NetworkRoles { relay_server: config.relay_server.is_some() },
+        announced_addrs: config.announce.clone(),
+        event_loop: NetworkEventLoop {
+            last_tick_at: (tick > 0).then_some(tick as f64),
+            running: node.event_loop_running(),
+        },
+        connections: node
+            .connection_counts()
+            .ok()
+            .map(|(inbound, outbound)| NetworkConnections { inbound, outbound }),
+        limits: NetworkLimits {
+            inbound: config.max_inbound_connections,
+            outbound: config.max_outbound_connections,
+            pending: config.max_pending_connections,
+        },
+        denials: NetworkDenials {
+            inbound_limit: n(denials.inbound_limit),
+            pending_inbound_limit: n(denials.pending_inbound_limit),
+            outbound_limit: n(denials.outbound_limit),
+            memory: n(denials.memory),
+            blocked: n(denials.blocked),
+        },
+        foreign_peers_dropped: n(node.foreign_peers_dropped()),
+        nat: NetworkNat {
+            reachability: match nat.reachability {
+                Reachability::Unknown => "unknown",
+                Reachability::Public => "public",
+                Reachability::Private => "private",
+            }
+            .to_string(),
+            relay_reservations: n(nat.relay_reservations.len() as u64),
+            relayed_inbound: n(nat.relayed_inbound),
+            hole_punch_succeeded: n(nat.hole_punch_succeeded),
+            hole_punch_failed: n(nat.hole_punch_failed),
+        },
+        relay: NetworkRelayStats::from(node.relay_server_stats()),
+        gossip: NetworkGossipStats {
+            invalid: n(node.invalid_message_count()),
+            rate_limited: n(node.rate_limited_count()),
+            unregistered_topic: n(node.unregistered_topic_count()),
+        },
+        dht: NetworkDhtStats {
+            stored: n(dht.stored),
+            not_newer: n(dht.not_newer),
+            rejected: n(dht.rejected),
+            forgeries: n(dht.forgeries),
+            providers_stored: n(dht.providers_stored),
+            providers_bad_key: n(dht.providers_bad_key),
+            over_budget: n(dht.over_budget),
+            rate_limited: n(dht.rate_limited),
+            invalid_results: n(dht.invalid_results),
+        },
+    }
+}
+
 fn sign_challenge(node: &CoreNode, aud: &str, user_id: &str, nonce: &str, challenge_exp: i64) -> Result<PorChallengeSignature> {
     let exp = u64::try_from(challenge_exp).map_err(|_| Error::from_reason("challenge expiry is negative"))?;
     let answer = node
@@ -485,6 +594,232 @@ pub struct NetworkColocationStats {
     /// Distinct IPs over the threshold while one of their peers held a valid
     /// proof of registration.
     pub ips_over_threshold_with_registered_peer: u32,
+}
+
+/// Relay and connection settings for a new node (T-231 B2 design §8 PR-②).
+/// Each one left out keeps rotifer-core's default.
+#[napi(object)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NetworkNodeOptions {
+    /// Relays to hold a reservation on (multiaddrs with `/p2p/<PeerId>`), so
+    /// peers can reach this node through them.
+    pub relays: Option<Vec<String>>,
+    /// Most established inbound connections.
+    pub max_inbound: Option<u32>,
+    /// Most connections in their handshake, both directions together.
+    pub max_pending: Option<u32>,
+    /// Serve as a relay with the design's limits (design §2.2).
+    pub relay_server: Option<bool>,
+    /// This node's public addresses, `/ip4/<public IPv4>/tcp/<port>` only.
+    pub announce: Option<Vec<String>>,
+    /// Accept loopback addresses in `announce`. Tests only.
+    pub allow_loopback_announce: Option<bool>,
+}
+
+/// What `/status` reports about a node (T-231 B2 design §4.2). Counts
+/// saturate at `u32::MAX`.
+#[napi(object)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetworkStats {
+    pub roles: NetworkRoles,
+    /// The addresses the operator declared (public by intent).
+    pub announced_addrs: Vec<String>,
+    pub event_loop: NetworkEventLoop,
+    /// Established connections now; `null` once the event loop has ended.
+    pub connections: Option<NetworkConnections>,
+    pub limits: NetworkLimits,
+    pub denials: NetworkDenials,
+    /// Peers dropped because Identify showed they are not Rotifer nodes.
+    pub foreign_peers_dropped: u32,
+    pub nat: NetworkNat,
+    pub relay: NetworkRelayStats,
+    pub gossip: NetworkGossipStats,
+    pub dht: NetworkDhtStats,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkRoles {
+    /// Serving as a relay.
+    pub relay_server: bool,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetworkEventLoop {
+    /// When the event loop last ran, Unix milliseconds; `null` before start.
+    /// It stamps once a second, so an older time means it stopped.
+    pub last_tick_at: Option<f64>,
+    /// Started and not ended.
+    pub running: bool,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkConnections {
+    pub inbound: u32,
+    pub outbound: u32,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkLimits {
+    pub inbound: u32,
+    pub outbound: u32,
+    /// Handshakes under way, both directions together.
+    pub pending: u32,
+}
+
+/// [`rotifer_core::p2p::node::ConnectionDenials`] for JS.
+#[napi(object)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkDenials {
+    /// Inbound connections over a cap (inbound, pending or per peer).
+    pub inbound_limit: u32,
+    /// Of those, refused because the handshake slots were full.
+    pub pending_inbound_limit: u32,
+    pub outbound_limit: u32,
+    pub memory: u32,
+    pub blocked: u32,
+}
+
+/// [`rotifer_core::p2p::node::NatTraversal`] for JS, with the relays
+/// counted rather than listed (`/status` lists no PeerIds).
+#[napi(object)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkNat {
+    /// `unknown`, `public` or `private`, as AutoNAT last judged.
+    pub reachability: String,
+    /// Relays holding a reservation for this node now.
+    pub relay_reservations: u32,
+    pub relayed_inbound: u32,
+    pub hole_punch_succeeded: u32,
+    pub hole_punch_failed: u32,
+}
+
+/// [`RelayServerStats`] for JS; each count's meaning is documented there.
+#[napi(object)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkRelayStats {
+    pub advertising: bool,
+    pub reservations_accepted: u32,
+    pub reservations_renewed: u32,
+    pub reservations_denied: u32,
+    pub reservations_denied_per_ip: u32,
+    pub reservations_accept_failed: u32,
+    pub reservations_active: u32,
+    pub circuits_accepted: u32,
+    pub circuits_active: u32,
+    pub circuits_closed_over_bytes: u32,
+    pub circuits_closed_over_time: u32,
+    pub circuits_denied: u32,
+    pub circuits_denied_no_reservation: u32,
+    pub circuits_denied_per_ip: u32,
+    pub circuits_denied_global: u32,
+    /// Distinct source IPs the global circuit bucket refused (a count; the
+    /// IPs stay on the machine). Design §11's trigger line reads it.
+    pub circuits_denied_global_sources: u32,
+}
+
+impl From<RelayServerStats> for NetworkRelayStats {
+    fn from(r: RelayServerStats) -> Self {
+        let n = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+        Self {
+            advertising: r.advertising,
+            reservations_accepted: n(r.reservations_accepted),
+            reservations_renewed: n(r.reservations_renewed),
+            reservations_denied: n(r.reservations_denied),
+            reservations_denied_per_ip: n(r.reservations_denied_per_ip),
+            reservations_accept_failed: n(r.reservations_accept_failed),
+            reservations_active: n(r.reservations_active),
+            circuits_accepted: n(r.circuits_accepted),
+            circuits_active: n(r.circuits_active),
+            circuits_closed_over_bytes: n(r.circuits_closed_over_bytes),
+            circuits_closed_over_time: n(r.circuits_closed_over_time),
+            circuits_denied: n(r.circuits_denied),
+            circuits_denied_no_reservation: n(r.circuits_denied_no_reservation),
+            circuits_denied_per_ip: n(r.circuits_denied_per_ip),
+            circuits_denied_global: n(r.circuits_denied_global),
+            circuits_denied_global_sources: n(r.circuits_denied_global_sources),
+        }
+    }
+}
+
+#[cfg(test)]
+mod network_stats_tests {
+    use super::*;
+
+    /// Each relay count reaches JS under its own name (a distinct value per
+    /// field catches two swapped), counts past u32 saturate. Design §11's
+    /// trigger line reads `circuitsDeniedGlobalSources`, so it is pinned too.
+    #[test]
+    fn relay_counts_map_field_by_field() {
+        let r = RelayServerStats {
+            advertising: true,
+            reservations_accepted: 1,
+            reservations_renewed: 2,
+            reservations_denied: 3,
+            reservations_denied_per_ip: 4,
+            reservations_accept_failed: 5,
+            reservations_active: 6,
+            circuits_accepted: 7,
+            circuits_active: 8,
+            circuits_closed_over_bytes: 9,
+            circuits_closed_over_time: 10,
+            circuits_denied: 11,
+            circuits_denied_no_reservation: 12,
+            circuits_denied_per_ip: 13,
+            circuits_denied_global: 14,
+            circuits_denied_global_sources: u64::from(u32::MAX) + 15,
+        };
+        assert_eq!(
+            NetworkRelayStats::from(r),
+            NetworkRelayStats {
+                advertising: true,
+                reservations_accepted: 1,
+                reservations_renewed: 2,
+                reservations_denied: 3,
+                reservations_denied_per_ip: 4,
+                reservations_accept_failed: 5,
+                reservations_active: 6,
+                circuits_accepted: 7,
+                circuits_active: 8,
+                circuits_closed_over_bytes: 9,
+                circuits_closed_over_time: 10,
+                circuits_denied: 11,
+                circuits_denied_no_reservation: 12,
+                circuits_denied_per_ip: 13,
+                circuits_denied_global: 14,
+                circuits_denied_global_sources: u32::MAX,
+            }
+        );
+    }
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkGossipStats {
+    /// Messages rejected by wire-format validation.
+    pub invalid: u32,
+    /// Messages dropped by the per-peer rate limiter.
+    pub rate_limited: u32,
+    /// Messages on a topic with no registered validator.
+    pub unregistered_topic: u32,
+}
+
+/// [`rotifer_core::p2p::node::DhtStats`] for JS.
+#[napi(object)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkDhtStats {
+    pub stored: u32,
+    pub not_newer: u32,
+    pub rejected: u32,
+    pub forgeries: u32,
+    pub providers_stored: u32,
+    pub providers_bad_key: u32,
+    pub over_budget: u32,
+    pub rate_limited: u32,
+    pub invalid_results: u32,
 }
 
 impl From<ColocationStats> for NetworkColocationStats {

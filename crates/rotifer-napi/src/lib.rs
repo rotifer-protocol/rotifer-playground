@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 // unreferenced submodule's napi registration ctor, so the class must live here.
 use rotifer_core::p2p::messages::{encode_announcement, local_announcement, ANNOUNCEMENTS_TOPIC};
 use rotifer_core::p2p::discover::{SearchOutcome, SearchQuery};
-use rotifer_core::p2p::node::{AnnounceReport, Node as CoreNode, NodeHandle, Reachability, RepublishReport};
+use rotifer_core::p2p::node::{AnnounceReport, Node as CoreNode, NodeHandle, PendingIdentity, Reachability, RepublishReport};
 use rotifer_core::p2p::relay_server::{RelayServerLimits, RelayServerStats};
 use rotifer_core::p2p::por::{AttestationStatus, TrustAnchor};
 use rotifer_core::p2p::NetworkConfig;
@@ -199,6 +199,51 @@ fn now_ms() -> u64 {
 /// A live libp2p P2P node driven from the TS CLI, so `rotifer network` can run
 /// a real node instead of the v0.5 stub. The Node owns its own tokio runtime
 /// and keeps running after `start`, so these wrappers are plain sync calls.
+/// The node identity for the first-run P2P consent prompt (T-237): the key
+/// at `~/.rotifer/identity.pem` read without writing, or one generated in
+/// memory that is written only by `persist()`. Only the PeerId reaches JS;
+/// the key stays in Rust.
+#[napi]
+pub struct NodeIdentity {
+    inner: PendingIdentity,
+}
+
+#[napi]
+impl NodeIdentity {
+    /// `path` is for tests; the CLI leaves it out (the node's own path).
+    #[napi(constructor)]
+    pub fn new(path: Option<String>) -> Result<Self> {
+        let inner = match path {
+            Some(p) => PendingIdentity::at(PathBuf::from(p)),
+            None => PendingIdentity::at_default_path(),
+        }
+        .map_err(|e| Error::from_reason(format!("node identity: {e}")))?;
+        Ok(Self { inner })
+    }
+
+    #[napi(getter)]
+    pub fn peer_id(&self) -> String {
+        self.inner.peer_id().to_string()
+    }
+
+    /// Whether the key was already on disk.
+    #[napi(getter)]
+    pub fn on_disk(&self) -> bool {
+        self.inner.is_on_disk()
+    }
+
+    /// Write the key the node would generate on first start (same file and
+    /// format, 0600, atomic), keeping a key already there. Returns the PeerId
+    /// read back from the file.
+    #[napi]
+    pub fn persist(&mut self) -> Result<String> {
+        self.inner
+            .persist()
+            .map(|id| id.to_string())
+            .map_err(|e| Error::from_reason(format!("node identity: {e}")))
+    }
+}
+
 #[napi]
 pub struct P2pNode {
     inner: CoreNode,
@@ -742,6 +787,29 @@ impl From<RelayServerStats> for NetworkRelayStats {
             circuits_denied_global: n(r.circuits_denied_global),
             circuits_denied_global_sources: n(r.circuits_denied_global_sources),
         }
+    }
+}
+
+#[cfg(test)]
+mod node_identity_tests {
+    use super::*;
+
+    /// The PeerId the prompt shows is the PeerId of the key that ends up on
+    /// disk, and nothing is on disk before `persist` (T-237).
+    #[test]
+    fn shows_a_peer_id_writes_nothing_then_writes_that_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node-key");
+        let p = path.to_string_lossy().into_owned();
+        let mut shown = NodeIdentity::new(Some(p.clone())).unwrap();
+        assert!(!shown.on_disk());
+        assert!(!path.exists());
+        let displayed = shown.peer_id();
+        assert!(displayed.starts_with("12D3KooW"), "{displayed}");
+        assert_eq!(shown.persist().unwrap(), displayed);
+        let reread = NodeIdentity::new(Some(p)).unwrap();
+        assert!(reread.on_disk());
+        assert_eq!(reread.peer_id(), displayed);
     }
 }
 

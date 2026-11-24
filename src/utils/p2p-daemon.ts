@@ -19,6 +19,7 @@ import { loadP2pNode, supportsNodeOptions, type P2pNodeOptions } from "./binding
 import { Republisher, announcedTablePath, type WithdrawMatch } from "./announce-table.js";
 import { isPorCapable, obtainCertificate } from "./por-client.js";
 import { PorKeeper, porStatePath } from "./por-keeper.js";
+import { DAEMON_REFUSED, readConsent } from "./p2p-consent.js";
 
 const ROTIFER_HOME = join(
   process.env.HOME || process.env.USERPROFILE || "/tmp",
@@ -184,7 +185,7 @@ function hasNodeOptions(o: P2pNodeOptions): boolean {
   );
 }
 
-function cliVersion(): string | undefined {
+export function cliVersion(): string | undefined {
   try {
     return (JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf-8")) as { version?: string }).version;
   } catch {
@@ -205,6 +206,13 @@ export async function runDaemon(
   shouldUseMdns: boolean,
   options: DaemonOptions = {},
 ): Promise<void> {
+  // G2 (T-237 design §1.3): whatever started this process, no record means
+  // no node: not even its key is loaded or made.
+  if (!readConsent()) {
+    process.stderr.write(`${DAEMON_REFUSED}\n`);
+    process.exit(1);
+    return;
+  }
   const nodeOptions: P2pNodeOptions = {
     ...options.node,
     ...(process.env[LOOPBACK_ANNOUNCE_ENV] === "1" ? { allowLoopbackAnnounce: true } : {}),

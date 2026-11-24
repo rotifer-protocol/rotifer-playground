@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, existsSync, rmSync, readFileSync, writeFileSync, statSync, utimesSync } from "node:fs";
+import { grantP2pConsent } from "../helpers/p2p-consent.js";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { hasNativeGeneIdV2 } from "../../src/utils/binding.js";
@@ -133,6 +134,7 @@ describe("rotifer network commands", () => {
   it("network start brings up a daemon (addon present) or degrades gracefully (no addon)", () => {
     // Custom port so this doesn't collide with the default 9878 a parallel test
     // file (or a leaked daemon) might hold. afterEach stops whatever started.
+    grantP2pConsent(TEST_DIR); // T-237: `start` needs a consent record
     const result = run("network start --port 19878");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Starting P2P Daemon");

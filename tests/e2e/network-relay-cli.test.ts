@@ -21,6 +21,7 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
+import { grantP2pConsent } from "../helpers/p2p-consent.js";
 
 const CLI = process.env.ROTIFER_E2E_CLI ?? join(__dirname, "..", "..", "dist", "index.js");
 const ROOT = mkdtempSync(join(tmpdir(), "rotifer-relay-cli-"));
@@ -183,6 +184,8 @@ let relayAddr = "";
 
 describe.skipIf(!HAS_STATS)("relay server, relay clients and /status on real CLI processes", () => {
   beforeAll(async () => {
+    // T-237: every daemon here needs a consent record.
+    for (const home of [homeR, homeA, homeB]) grantP2pConsent(home);
     const port = await freePort();
     announced = `/ip4/127.0.0.1/tcp/${port}`;
     relay = foreground(
@@ -290,6 +293,7 @@ describe.skipIf(!HAS_STATS)("relay server, relay clients and /status on real CLI
 
   it("item 5: --foreground exits non-zero when the native event loop ends", async () => {
     const home = join(ROOT, "crash");
+    grantP2pConsent(home); // T-237
     const node = foreground(home, ["--port", "0"], { ROTIFER_TEST_END_EVENT_LOOP_AFTER_MS: "6000" });
     // Up and serving first, so the exit below is the watch, not a failed start.
     expect(await until(6, async () => (await status(home)).eventLoop?.running === true), node.log()).toBe(true);

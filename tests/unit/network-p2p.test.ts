@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { grantP2pConsent } from "../helpers/p2p-consent.js";
 
 vi.mock("../../src/utils/display.js", () => ({
   header: vi.fn(),
@@ -205,6 +206,13 @@ describe("network stop", () => {
 });
 
 describe("network start", () => {
+  // T-237: `start` needs a consent record; give it one in a HOME of its own.
+  beforeEach(() => {
+    vi.stubEnv("HOME", WORK);
+    grantP2pConsent(WORK);
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
   it("reports when a daemon is already running", async () => {
     vi.mocked(isDaemonRunning).mockResolvedValue(true);
     await networkCommand.parseAsync(["start"], { from: "user" });

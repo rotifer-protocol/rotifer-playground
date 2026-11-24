@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { grantP2pConsent } from "../helpers/p2p-consent.js";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -113,6 +114,7 @@ describe("with no daemon running", () => {
 
 describe("with the daemon running", () => {
   beforeAll(async () => {
+    grantP2pConsent(HOME); // T-237: the daemon needs a consent record
     await daemon.runDaemon("127.0.0.1", 0, [], false);
     // The restored entry (beta, left by the tests above) is republished at
     // start, since the node already has a DHT peer.

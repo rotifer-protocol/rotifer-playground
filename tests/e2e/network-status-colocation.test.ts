@@ -16,6 +16,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { grantP2pConsent } from "../helpers/p2p-consent.js";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -104,6 +105,9 @@ describe("network /status same-IP counters on real daemons", () => {
   });
 
   it.skipIf(!HAS_COLOCATION)("reads rotifer-core's cumulative counters, not the live connections", async () => {
+    // T-237: both daemons need a consent record.
+    grantP2pConsent(homeA);
+    grantP2pConsent(homeB);
     cli(homeA, "network", "start", "--port", "0", "--no-mdns");
     const a = await status(homeA);
     expect(a.colocation).toEqual(NONE);

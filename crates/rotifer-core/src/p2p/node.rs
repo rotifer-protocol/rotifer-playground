@@ -1801,6 +1801,58 @@ fn load_or_generate_keypair(path: &Path) -> Result<Keypair, NetworkError> {
     Ok(keypair)
 }
 
+/// The node identity as the first-run P2P consent prompt needs it (T-237):
+/// the key already on disk, or a key generated in memory and written only
+/// once the user agrees. Its PeerId can be shown before anything is written,
+/// and the key it shows is the key that gets written. The key itself never
+/// leaves this type: there is no accessor and no `Debug`.
+pub struct PendingIdentity {
+    keypair: Keypair,
+    path: PathBuf,
+    on_disk: bool,
+}
+
+impl PendingIdentity {
+    /// The identity at the node's default path, `$HOME/.rotifer/identity.pem`.
+    pub fn at_default_path() -> Result<Self, NetworkError> {
+        Self::at(default_identity_path())
+    }
+
+    /// Read the key at `path` (read-only), or generate one in memory when
+    /// there is none. Nothing is written either way.
+    pub fn at(path: impl Into<PathBuf>) -> Result<Self, NetworkError> {
+        let path = path.into();
+        Ok(match try_read_keypair(&path)? {
+            Some(keypair) => Self { keypair, path, on_disk: true },
+            None => Self { keypair: Keypair::generate_ed25519(), path, on_disk: false },
+        })
+    }
+
+    pub fn peer_id(&self) -> Libp2pPeerId {
+        self.keypair.public().to_peer_id()
+    }
+
+    /// Whether the key was already on disk.
+    pub fn is_on_disk(&self) -> bool {
+        self.on_disk
+    }
+
+    /// Write the key the way a starting node does (same PEM, 0600, atomic
+    /// rename), unless a key is already on disk, which is then kept as it
+    /// is. Returns the PeerId of the key that is on disk afterwards, read
+    /// back from the file.
+    pub fn persist(&mut self) -> Result<Libp2pPeerId, NetworkError> {
+        if try_read_keypair(&self.path)?.is_none() {
+            persist_keypair(&self.path, &self.keypair)
+                .map_err(|e| NetworkError::Transport(format!("write identity: {e}")))?;
+        }
+        self.on_disk = true;
+        let written = try_read_keypair(&self.path)?
+            .ok_or_else(|| NetworkError::Transport("identity vanished after writing".into()))?;
+        Ok(written.public().to_peer_id())
+    }
+}
+
 /// Read and decode the identity at `path`, or `None` if it does not exist.
 fn try_read_keypair(path: &Path) -> Result<Option<Keypair>, NetworkError> {
     match std::fs::read_to_string(path) {
@@ -4134,6 +4186,62 @@ mod tests {
             enabled: true,
             ..Default::default()
         }
+    }
+
+    // T-237: the consent prompt shows a PeerId before anything is written.
+
+    #[test]
+    fn pending_identity_writes_nothing_until_persisted_and_writes_the_key_it_showed() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join(".rotifer").join("identity.pem");
+        let mut pending = PendingIdentity::at(&path).expect("pending identity");
+        let shown = pending.peer_id();
+        assert!(!pending.is_on_disk());
+        assert!(!path.exists(), "nothing may be written before persist");
+        assert_eq!(pending.peer_id(), shown, "the shown PeerId is stable");
+
+        let written = pending.persist().expect("persist");
+        assert_eq!(written, shown, "persist returns the PeerId read back from the file");
+        let reread = PendingIdentity::at(&path).expect("re-read");
+        assert!(reread.is_on_disk());
+        assert_eq!(reread.peer_id(), shown, "the key on disk is the key that was shown");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        // A starting node loads the very same key.
+        assert_eq!(load_or_generate_keypair(&path).unwrap().public().to_peer_id(), shown);
+    }
+
+    #[test]
+    fn pending_identity_reads_an_existing_key_and_leaves_the_file_alone() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("identity.pem");
+        let existing = Keypair::generate_ed25519();
+        write_identity(&path, &existing).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        let mut pending = PendingIdentity::at(&path).expect("pending identity");
+        assert!(pending.is_on_disk());
+        assert_eq!(pending.peer_id(), existing.public().to_peer_id());
+        assert_eq!(pending.persist().unwrap(), existing.public().to_peer_id());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), mtime);
+    }
+
+    #[test]
+    fn pending_identity_keeps_a_key_written_meanwhile() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("identity.pem");
+        let mut pending = PendingIdentity::at(&path).expect("pending identity");
+        // Another process (say, a node started meanwhile) writes its own key.
+        let other = Keypair::generate_ed25519();
+        write_identity(&path, &other).unwrap();
+        assert_eq!(pending.persist().unwrap(), other.public().to_peer_id(), "the key on disk wins");
+        assert_eq!(load_or_generate_keypair(&path).unwrap().public().to_peer_id(), other.public().to_peer_id());
     }
 
     // -----------------------------------------------------------------

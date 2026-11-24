@@ -6,6 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
+import { grantP2pConsent } from "../helpers/p2p-consent.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -33,6 +34,7 @@ beforeEach(() => {
   vi.resetModules();
   home = mkdtempSync(join(tmpdir(), "rotifer-daemon-options-"));
   vi.stubEnv("HOME", home);
+  grantP2pConsent(home); // T-237: the daemon needs a consent record
   started = 0;
 });
 

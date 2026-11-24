@@ -12,6 +12,11 @@ export default defineConfig({
       "tests/live/**",
     ],
     globals: false,
+    // Keep every test out of the developer's real ~/.rotifer (T-237): a
+    // temporary HOME per test file, set before it is imported, and a check
+    // that fails the run if the real one changed. See tests/setup/.
+    globalSetup: ["tests/setup/real-home-guard.global.ts"],
+    setupFiles: ["tests/setup/temp-home.ts"],
     testTimeout: 10000,
     coverage: {
       provider: "v8",

@@ -19,6 +19,7 @@
  *
  * Exits non-zero if any check failed.
  */
+import { grantP2pConsent } from "../helpers/p2p-consent.ts";
 import { localUrl } from "../../supabase/functions/agent-memory/local-only.ts";
 import { buildJwks } from "../../supabase/functions/node-attestation/jwks.ts";
 import { b64url, fromB64url, ISSUER, TTL_SECONDS, verifyToken } from "../../supabase/functions/node-attestation/por.ts";
@@ -282,6 +283,7 @@ try {
   const probe = Deno.listen({ hostname: "127.0.0.1", port: 0 });
   const port = (probe.addr as Deno.NetAddr).port;
   probe.close();
+  grantP2pConsent(a); // T-237: `start` needs a consent record
   const started = await cli(a, ["network", "start", "-p", String(port)]);
   daemonHome = a;
   check(started.code === 0, "the daemon starts", started.text);

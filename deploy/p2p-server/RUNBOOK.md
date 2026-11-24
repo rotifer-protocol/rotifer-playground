@@ -47,6 +47,11 @@ The node is the `rotifer network start --foreground` daemon from
   `PasswordAuthentication no` in `/etc/ssh/sshd_config`, then
   `sudo systemctl reload ssh`. Log in with your own account; the `rotifer`
   account has no login shell.
+- For the **official** public nodes, two machines: at **two different cloud
+  providers** (two companies, not two regions of one), under **two different
+  provider accounts**, each with two-step verification, the two not sharing
+  one login email, password or second factor. Each node generates its own
+  key on its own machine at first start; never copy a key to the other one.
 
 ## Where things are
 
@@ -257,7 +262,7 @@ in order:
 | 1 | Stop the old node and keep the key for investigation, out of the node's reach: `sudo systemctl disable --now rotifer-p2p`, then `sudo mkdir -m 0700 /var/lib/rotifer/quarantine` and `sudo mv /var/lib/rotifer/.rotifer/identity.pem /var/lib/rotifer/quarantine/` | At once |
 | 2 | **Have the old address removed from the published node list.** Third-party operators: tell the maintainers within 24 hours, through the contact channel agreed when your node was listed | Within 1 hour |
 | 3 | Start the node with a new key (same or new machine): with `identity.pem` moved away, the next start generates a new key and PeerId. `sudo systemctl enable --now rotifer-p2p`, then back up the new key | After step 1 |
-| 4 | Tell the operators of the other public nodes to drop the old address from their `ROTIFER_P2P_BOOTSTRAP` and use the new one: the template below | Within 24 hours of step 2 |
+| 4 | Tell the operators of the other public nodes to drop the old address from their `ROTIFER_P2P_BOOTSTRAP` and use the new one: the template below. When both nodes are official, change the other node's `ROTIFER_P2P_BOOTSTRAP` yourself instead (then `sudo systemctl restart rotifer-p2p` there); no notice is needed | Within 24 hours of step 2 |
 | 5 | Publish the new address, once `rotifer-node-status` on the new node looks right | After step 3 |
 
 Notice to other operators (fill in the brackets, send it through the agreed

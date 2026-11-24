@@ -169,6 +169,7 @@ Run `rotifer --help` for the grouped command list. The commands below cover the 
 | `rotifer hello [--template <id>]` | Create and run a preset agent from curated templates inside a Rotifer Agent workspace. `--list-templates` shows which can run here; a template missing genes exits 1 and says what can be installed |
 | `rotifer scan [path]` | Scan for candidate genes and local skills |
 | `rotifer wrap <gene-name>` | Wrap a function or SKILL.md as a gene (offers to publish, default yes — see [Publishing by default](#publishing-by-default)) |
+| `rotifer wrap <gene-name> --from-clawhub <slug>` | Wrap a ClawHub skill as a gene. When more than one publisher uses the slug, name one as ClawHub writes it, `--from-clawhub @owner/slug`; otherwise the command stops, lists each publisher's command, and installs nothing |
 | `rotifer test [gene-name]` | Test a gene (WASM sandbox preferred, `--compliance` for structural checks) |
 | `rotifer compile [gene-name]` | Compile gene to Rotifer IR (auto TS→WASM) |
 | `rotifer run <gene-name>` | Execute a single local gene directly; input and output are checked against the gene's schema (`--no-validate` skips that) |

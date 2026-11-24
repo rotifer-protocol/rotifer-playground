@@ -1,0 +1,19 @@
+{
+  "code": "AMBIGUOUS_SKILL_SLUG",
+  "message": "Found multiple skills with the slug \"grilling\"; specify which one you want to install:",
+  "slug": "grilling",
+  "matches": [
+    {
+      "ownerHandle": "alice-demo",
+      "slug": "grilling",
+      "ref": "@alice-demo/grilling",
+      "url": "https://clawhub.ai/alice-demo/skills/grilling"
+    },
+    {
+      "ownerHandle": "bob-demo",
+      "slug": "grilling",
+      "ref": "@bob-demo/grilling",
+      "url": "https://clawhub.ai/bob-demo/skills/grilling"
+    }
+  ]
+}

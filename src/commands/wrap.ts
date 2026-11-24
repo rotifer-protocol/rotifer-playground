@@ -18,14 +18,20 @@ import { offerAutoPublish, resolveWrapFidelity } from "../publish/auto-publish.j
 import { showGeneIdV2 } from "../utils/gene-id-display.js";
 import {
   ClawHubError,
+  InvalidSkillRef,
   fetchClawHubInfo,
   fetchClawHubPackage,
+  parseSkillRef,
   type ClawHubRequestOptions,
   type ClawHubSkillInfo,
+  type ClawHubSkillRef,
 } from "../utils/clawhub-client.js";
 import { assertOnlyRegularFiles, assertSafeZip, UnsafeArchiveError } from "../utils/zip-safety.js";
 
-export async function downloadAndExtract(slug: string, options: ClawHubRequestOptions): Promise<string> {
+export async function downloadAndExtract(
+  slug: string,
+  options: ClawHubRequestOptions & { ownerHandle?: string },
+): Promise<string> {
   const zipBuf = await fetchClawHubPackage(slug, options);
   assertSafeZip(zipBuf);
   const workDir = join(tmpdir(), `rotifer-clawhub-${slug}-${Date.now()}`);
@@ -104,6 +110,28 @@ function refuseUnsafePackage(slug: string, e: UnsafeArchiveError): never {
     message: `Refused ClawHub skill '${slug}': ${e.message}`,
     file: `ClawHub package for ${slug}`,
     suggestion: "A package may not contain symbolic links or paths outside itself. Nothing was added to your project; report this to the skill's author.",
+    docsUrl: "https://rotifer.dev/docs/migration",
+  });
+  process.exit(1);
+}
+
+/**
+ * More than one publisher uses the slug. Which one to install is the user's
+ * choice, so this lists them with a command for each and stops (#625).
+ */
+function reportAmbiguousSlug(code: string, geneName: string, slug: string, e: ClawHubError): never {
+  const commands = e.candidates.map((ref) => `  rotifer wrap ${geneName} --from-clawhub ${ref}`);
+  const suggestion =
+    commands.length > 0
+      ? `Choose a publisher and run its command; nothing was installed:\n${commands.join("\n")}`
+      : `Name the publisher, then run it again; nothing was installed:\n` +
+        `  rotifer wrap ${geneName} --from-clawhub @<owner>/${slug}\n` +
+        `The publishers are listed at https://clawhub.ai/search?q=${encodeURIComponent(slug)}`;
+  display.rustStyleError({
+    code,
+    message: `ClawHub skill '${slug}' ${e.message}`,
+    file: e.url,
+    suggestion,
     docsUrl: "https://rotifer.dev/docs/migration",
   });
   process.exit(1);
@@ -209,7 +237,11 @@ export const wrapCommand = new Command("wrap")
   .option("-d, --domain <domain>", "gene functional domain")
   .option("--fidelity <level>", "fidelity level", "Wrapped")
   .option("--from-skill <path>", "create gene from a SKILL.md file (path to SKILL.md or its directory)")
-  .option("--from-clawhub <slug>", "create gene from a ClawHub skill (downloads and converts automatically)")
+  .option(
+    "--from-clawhub <slug|@owner/slug>",
+    "create gene from a ClawHub skill (downloads and converts automatically); " +
+      "when more than one publisher uses the slug, name one: @owner/slug",
+  )
   .action(async (geneName: string, options: { domain?: string; fidelity: string; fromSkill?: string; fromClawhub?: string }) => {
     const root = requireProjectRoot();
     const config = loadConfig(root);
@@ -243,18 +275,33 @@ export const wrapCommand = new Command("wrap")
     const geneDir = join(root, config.genes_dir, geneName);
 
     if (options.fromClawhub) {
-      const slug = options.fromClawhub;
+      let ref: ClawHubSkillRef;
+      try {
+        ref = parseSkillRef(options.fromClawhub);
+      } catch (e) {
+        if (!(e instanceof InvalidSkillRef)) throw e;
+        display.rustStyleError({
+          code: "E0010",
+          message: e.message,
+          suggestion: "Use the slug alone, or @owner/slug as ClawHub writes it (for example @owner/my-skill)",
+          docsUrl: "https://rotifer.dev/docs/migration",
+        });
+        process.exit(1);
+      }
+      const { slug, ownerHandle } = ref;
       // Retries are announced: ClawHub is slow and fails transiently often
       // enough that a silent 30 s wait would look like a hang.
-      const clawhub: ClawHubRequestOptions = {
+      const clawhub: ClawHubRequestOptions & { ownerHandle?: string } = {
+        ownerHandle,
         onRetry: (attempt, attempts, err) =>
           display.info(`ClawHub: ${err.message.replace(/ \(\d+ attempts?\)$/, "")}; trying again (${attempt + 1}/${attempts})`),
       };
-      display.info(`Fetching ClawHub skill metadata: ${slug}`);
+      display.info(`Fetching ClawHub skill metadata: ${options.fromClawhub}`);
       let info: ClawHubSkillInfo;
       try {
         info = await fetchClawHubInfo(slug, clawhub);
       } catch (e) {
+        if (e instanceof ClawHubError && e.kind === "ambiguous") reportAmbiguousSlug("E0010", geneName, slug, e);
         const isNotFound = e instanceof ClawHubError && e.kind === "not_found";
         display.rustStyleError({
           code: "E0010",
@@ -270,6 +317,17 @@ export const wrapCommand = new Command("wrap")
         process.exit(1);
       }
 
+      if (ownerHandle !== undefined && info.owner.handle.toLowerCase() !== ownerHandle.toLowerCase()) {
+        display.rustStyleError({
+          code: "E0010",
+          message: `ClawHub answered with @${info.owner.handle}'s '${slug}', not @${ownerHandle}'s`,
+          file: `ClawHub metadata for ${options.fromClawhub}`,
+          suggestion: "Nothing was installed. Check the publisher's name on ClawHub and run it again.",
+          docsUrl: "https://rotifer.dev/docs/migration",
+        });
+        process.exit(1);
+      }
+
       display.info(`Found: ${info.displayName} by @${info.owner.handle} (v${info.version}, ${info.stats.downloads.toLocaleString()} downloads)`);
       display.info("Downloading skill package...");
 
@@ -278,6 +336,7 @@ export const wrapCommand = new Command("wrap")
         skillDir = await downloadAndExtract(slug, clawhub);
       } catch (e) {
         if (e instanceof UnsafeArchiveError) refuseUnsafePackage(slug, e);
+        if (e instanceof ClawHubError && e.kind === "ambiguous") reportAmbiguousSlug("E0011", geneName, slug, e);
         const isNotFound = e instanceof ClawHubError && e.kind === "not_found";
         display.rustStyleError({
           code: "E0011",
@@ -379,7 +438,7 @@ export const wrapCommand = new Command("wrap")
             geneId, name: geneName, domain: resolvedDomain,
             fidelity: phenotype.fidelity as string,
             wrappedAt: new Date().toISOString(),
-            fromClawhub: slug,
+            fromClawhub: options.fromClawhub,
             clawhubVersion: info.version,
           },
           null,

@@ -165,6 +165,7 @@ playground/
 | `rotifer hello [--template <id>]` | 在 Rotifer Agent 工作区内从精选模板创建并运行一个预设 agent。`--list-templates` 显示哪些模板在当前工作区能跑；缺基因的模板以退出码 1 结束，并逐个说明能否安装 |
 | `rotifer scan [path]` | 扫描候选基因和本地技能 |
 | `rotifer wrap <gene-name>` | 将函数或 `SKILL.md` 包装为基因 |
+| `rotifer wrap <gene-name> --from-clawhub <slug>` | 将 ClawHub 技能包装为基因。同一个 slug 有多个发布者时，按 ClawHub 的写法指定发布者：`--from-clawhub @owner/slug`；不指定则停下，列出每个发布者对应的命令，不安装任何东西 |
 | `rotifer test [gene-name]` | 在沙箱中测试基因 |
 | `rotifer compile [gene-name]` | 将基因编译为 Rotifer IR（WASM） |
 | `rotifer run <gene-name>` | 直接执行单个本地基因；输入和输出都按基因的 schema 检查（`--no-validate` 跳过） |

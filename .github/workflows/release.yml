@@ -237,6 +237,11 @@ jobs:
           # step later, as `npm ci` reporting a generic out-of-sync lock, with
           # nothing naming propagation as the cause. Four platform packages were
           # left published at the new version with no main package to use them.
+          # The gap grows with package size: on 2026-11-24 (v0.39.0, about 34 MB
+          # per platform package) the four took about 10.5 minutes, from 09:24:07
+          # to 09:34:43, and a 5-minute wait failed the release the same way. So
+          # each package gets up to 20 minutes (80 tries, 15 s apart); the main
+          # package is still published only once all four resolve.
           VERSION="${{ steps.version.outputs.version }}"
           PKGS="$(node -p "Object.keys(require('./package.json').optionalDependencies || {}).filter((n) => n.startsWith('@rotifer/playground-')).join(' ')")"
           if [ -z "$PKGS" ]; then
@@ -244,16 +249,16 @@ jobs:
             exit 1
           fi
           for pkg in $PKGS; do
-            for attempt in $(seq 1 30); do
+            for attempt in $(seq 1 80); do
               if npm view "$pkg@$VERSION" version --prefer-online >/dev/null 2>&1; then
                 echo "$pkg@$VERSION resolvable (attempt $attempt)"
                 break
               fi
-              if [ "$attempt" -eq 30 ]; then
-                echo "::error::$pkg@$VERSION was published by publish-native but is still not resolvable after 5 minutes" >&2
+              if [ "$attempt" -eq 80 ]; then
+                echo "::error::$pkg@$VERSION was published by publish-native but is still not resolvable after 20 minutes" >&2
                 exit 1
               fi
-              sleep 10
+              sleep 15
             done
           done
 

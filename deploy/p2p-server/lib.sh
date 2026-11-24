@@ -153,6 +153,10 @@ prepare_release() {
 	[[ "$reported" == "$version" ]] || die "rotifer --version says '$reported', the deploy directory pins $version; nothing switched"
 	HOME="$scratch_home" "$node" "$work/node_modules/.bin/rotifer" network start --help 2>/dev/null | grep -q -- '--foreground' ||
 		die "$PACKAGE $version has no 'network start --foreground': it predates public nodes; nothing switched"
+	# install.sh records P2P consent with it before the first start (T-237 B5,
+	# design Q4); a release without it cannot, so it is refused here.
+	HOME="$scratch_home" "$node" "$work/node_modules/.bin/rotifer" network consent --help 2>/dev/null | grep -qE -- '^ +--accept +' ||
+		die "$PACKAGE $version has no 'network consent --accept' (first-run P2P consent, T-237 B5); pin a later release; nothing switched"
 	rm -rf "$scratch_home"
 	mkdir -p "$work/deploy"
 	cp -a "$deploy/." "$work/deploy/"

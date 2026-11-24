@@ -60,12 +60,12 @@ switch_to "$version"
 install_units "$version"
 systemctl daemon-reload
 
-# First-run P2P consent (T-237, B5). Takes effect once B5 is merged and
-# released: a release without the command skips this step.
-if rotifer_as_service network consent --help >/dev/null 2>&1; then
-	log "Recording P2P consent for the service user (rotifer network consent --accept)"
-	rotifer_as_service network consent --accept || die "recording P2P consent failed"
-fi
+# First-run P2P consent (T-237 B5, design Q4), before the node first starts:
+# the service has no terminal to ask on, and without a record the node
+# refuses to start. The command prints the text being agreed to; installing
+# a public node from this RUNBOOK is the operator agreeing to it.
+log "Recording P2P consent for the service user (rotifer network consent --accept)"
+rotifer_as_service network consent --accept || die "recording P2P consent failed; the node was not started"
 
 activate "$version" || die "the node did not come up on $version; see: journalctl -u rotifer-p2p -n 100"
 log "Installed $version."

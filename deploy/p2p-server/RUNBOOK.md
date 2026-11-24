@@ -100,15 +100,20 @@ The node is the `rotifer network start --foreground` daemon from
    `/var/lib/rotifer/.rotifer/credentials.json` exists: a public node must
    not hold a Cloud login, so never run `rotifer login` on it.
 
-5. **P2P consent** (B5 合并后生效: takes effect with the first release that
-   has the first-run consent prompt). The installer records consent for the
-   service user with
+5. **P2P consent.** Just before the node first starts, the installer runs
 
    ```bash
    rotifer network consent --accept
    ```
 
-   run as `rotifer`. A release without that command skips the step.
+   as `rotifer` and prints the text being agreed to: what the node connects
+   to and what peers can see. Read it; running the installer is you agreeing
+   to it for this node. The record is
+   `/var/lib/rotifer/.rotifer/p2p/consent.json`. Without it the node refuses
+   to start, and under systemd there is no terminal to ask on. A release
+   without `network consent` is refused before anything is switched.
+   Upgrades and rollbacks keep the record; `rotifer network consent --revoke`
+   (as `rotifer`) stops the node and withdraws it.
 
 6. Check it:
 
@@ -202,9 +207,9 @@ Node.js, and must report that version within 60 s.
 - An **unverified** (test) install is never picked by itself and never used
   as the fallback of a failed upgrade. To go to one anyway, pass
   `--allow-unverified`.
-- The oldest release a node can go back to is the first one that has the
-  public-node flags (`network start --foreground`, `--relay-server`). An
-  older release cannot start under these units and is refused at install.
+- The oldest release a node can go back to is the first one that has both
+  the public-node flags (`network start --foreground`, `--relay-server`) and
+  `network consent`. An older release is refused at install.
   To take the node off the network instead, `sudo systemctl stop rotifer-p2p`
   and ask the maintainers to remove its address.
 
@@ -307,7 +312,8 @@ with systemd and nftables, check each of these and keep the output:
 
 1. **Re-run every check in this list once a release that includes the
    public-node server role (`network start --foreground`, `--relay-server`,
-   `--announce`) is published, with this directory pinned to that release.**
+   `--announce`) and first-run consent (`network consent`) is published, with
+   this directory pinned to that release.**
    Checks run before that release, against local tarballs, do not count for
    launch.
 2. `sudo ./install.sh` from the registry: installs, `Install: verified`.
@@ -317,6 +323,8 @@ with systemd and nftables, check each of these and keep the output:
 3. `systemd-analyze security rotifer-p2p.service`: note the score.
 4. `HOME` under systemd is `/var/lib/rotifer`, and the node key appears at
    `/var/lib/rotifer/.rotifer/identity.pem`, mode 0600, owner `rotifer`.
+   `/var/lib/rotifer/.rotifer/p2p/consent.json` exists, owner `rotifer`,
+   from before the first start (`source` is `command`).
 5. The node starts with `RestrictAddressFamilies` as shipped (no address
    family missing for reading interface addresses).
 6. Restarts: `sudo kill -9` the node; systemd restarts it within 5 s. After

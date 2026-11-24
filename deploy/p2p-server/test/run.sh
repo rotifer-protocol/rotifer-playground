@@ -105,7 +105,7 @@ make_stubs() {
 
 # A fake @rotifer/playground <version> and its native package. Variants:
 # old (native without networkStats), broken (the daemon never answers),
-# consent (has `network consent`).
+# noconsent (predates `network consent`, T-237 B5).
 make_package() {
 	local version="$1" variant="${2:-}"
 	local dir="$T/pkgs/$version${2:+-$2}"
@@ -126,8 +126,9 @@ make_package() {
 		  process.exit(0);
 		}
 		if (a.startsWith("network status --state-file")) { console.log("\x1b[1m  PeerId\x1b[0m           12D3KooWQYhTNQdmr3ArTeUHRYzFg94BKyTkoWBDWez9kSCVe2Xo"); process.exit(0); }
-		if (a === "network consent --help") process.exit(variant === "consent" ? 0 : 1);
-		if (a === "network consent --accept") { fs.writeFileSync(process.env.HOME + "/consent-accepted", "y"); process.exit(0); }
+		// Without the subcommand, the CLI prints the parent's help and exits 0.
+		if (a === "network consent --help") { if (variant !== "noconsent") console.log("  --accept     record consent"); process.exit(0); }
+		if (a === "network consent --accept" && variant !== "noconsent") { fs.writeFileSync(process.env.HOME + "/consent-accepted", "y"); process.exit(0); }
 		if (a.startsWith("network start --foreground")) { console.log("ARGS " + a); process.exit(0); }
 		process.exit(9);
 	EOF
@@ -223,7 +224,7 @@ setup() {
 	for v in "$PIN" 0.90.0 0.91.0; do make_package "$v"; done
 	make_package 0.91.0 broken
 	make_package 0.92.0 old
-	make_package 0.93.0 consent
+	make_package 0.93.0 noconsent
 }
 teardown() { rm -rf "$T"; }
 
@@ -231,6 +232,8 @@ OPT() { echo "$ROOT/opt/rotifer"; }
 current() { basename "$(readlink "$(OPT)/current")"; }
 field() { sed -n "s/^$2=//p" "$(OPT)/releases/$1/INSTALL"; }
 calls() { grep -c -- "$1" "$T/calls.log" 2>/dev/null || true; }
+# The line number of the first call matching an extended regex, or 0.
+first_call() { grep -n -E -m1 -- "$1" "$T/calls.log" 2>/dev/null | cut -d: -f1 | grep . || echo 0; }
 env_set() { sed -i.bak "s|^$1=.*|$1=$2|" "$ROOT/etc/rotifer/p2p.env" && rm -f "$ROOT/etc/rotifer/p2p.env.bak"; }
 ORIG_PATH="$PATH"
 
@@ -288,12 +291,24 @@ expect_not "install fails" bash "$DEPLOY/install.sh"
 expect_not "no current link" test -e "$(OPT)/current"
 teardown
 
-setup "install: with B5's consent command, consent is recorded for the service user"
+setup "install: P2P consent is recorded for the service user before the node first starts"
+fill_env
+expect "install succeeds" bash "$DEPLOY/install.sh"
+expect "consent --accept ran once, with the service home" test "$(calls "HOME=$ROOT/var/lib/rotifer .*network consent --accept")" = 1
+expect "the record is in the service home" test -f "$ROOT/var/lib/rotifer/consent-accepted"
+consent_at="$(first_call 'network consent --accept')"
+start_at="$(first_call 'systemctl (re)?start rotifer-p2p\.service')"
+expect "the node was started" test "$start_at" -gt 0
+expect "consent comes before the node's first start" test "$consent_at" -gt 0 -a "$consent_at" -lt "$start_at"
+teardown
+
+setup "install: a release without 'network consent' (before B5) is refused before the switch"
 fill_env
 d="$(deploy_pinning 0.93.0)"
-echo consent >"$T/variant-0.93.0"
-expect "install succeeds" bash "$d/install.sh"
-expect "consent --accept ran as the service user" test -f "$ROOT/var/lib/rotifer/consent-accepted"
+echo noconsent >"$T/variant-0.93.0"
+expect_not "install fails" bash "$d/install.sh"
+expect_not "no current link" test -e "$(OPT)/current"
+expect "node never started" test "$(calls 'rotifer-p2p.service')" = 0
 teardown
 
 setup "install --from-tarballs: marked unverified everywhere, no signature check"

@@ -257,6 +257,11 @@ expect "firewall loaded with port and quota" grep -q 'tcp dport 9878' "$T/nft.ru
 expect "firewall restarted, node restarted" test "$(calls 'systemctl restart rotifer-firewall.service')" = 1 -a "$(calls 'systemctl restart rotifer-p2p.service')" = 1
 expect "HISTORY records it" grep -q "from=none to=$PIN verified=yes" "$(OPT)/releases/HISTORY"
 expect "status command linked" test -L "$ROOT/usr/local/bin/rotifer-node-status"
+# Operators run it through the link (RUNBOOK: `sudo rotifer-node-status`), from
+# another directory than its lib.sh: found on a real machine.
+out="$(bash "$ROOT/usr/local/bin/rotifer-node-status" 2>&1)"
+expect "the linked status command finds its lib.sh" grep -q 'Install:        verified' <<<"$out"
+expect_not "and reports no missing file" grep -q 'No such file' <<<"$out"
 out="$(bash "$DEPLOY/rotifer-node-status" 2>&1)"
 expect "status shows verified" grep -q 'Install:        verified' <<<"$out"
 expect "status shows the node version" grep -q "Node:           version=$PIN" <<<"$out"

@@ -7,7 +7,9 @@
 # Reads only. The node counters come from `rotifer network status --json`,
 # which prints no peer address, PeerId or score.
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# Operators run it as /usr/local/bin/rotifer-node-status, a link into the
+# release: resolve the link first, so lib.sh is looked up beside the target.
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd -P)"
 # shellcheck source=lib.sh
 . "$HERE/lib.sh"
 

@@ -266,6 +266,7 @@ quota_line="$(grep -n 'quota name "egress" counter name "egress_quota_drops" dro
 expect "the rate cap drops before the quota counts" test "${rate_line:-0}" -gt 0 -a "${rate_line:-0}" -lt "${quota_line:-0}"
 expect "firewall restarted, node restarted" test "$(calls 'systemctl restart rotifer-firewall.service')" = 1 -a "$(calls 'systemctl restart rotifer-p2p.service')" = 1
 expect "HISTORY records it" grep -q "from=none to=$PIN verified=yes" "$(OPT)/releases/HISTORY"
+expect "one install is one HISTORY line (no from=X to=X)" test "$(wc -l <"$(OPT)/releases/HISTORY" | tr -d ' ')" = 1
 expect "status command linked" test -L "$ROOT/usr/local/bin/rotifer-node-status"
 # Operators run it through the link (RUNBOOK: `sudo rotifer-node-status`), from
 # another directory than its lib.sh: found on a real machine.

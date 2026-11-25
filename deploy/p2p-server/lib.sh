@@ -210,12 +210,14 @@ install_units() {
 	swap_link "$CURRENT/deploy/rotifer-node-status" "$BIN_LINK"
 }
 
-# Point current (and the Node link) at a release and note it in HISTORY.
+# Point current (and the Node link) at a release and note it in HISTORY, once:
+# install.sh switches before recording consent and activate switches again.
 switch_to() {
 	local release="$1" from
 	from="$(current_release)"
 	swap_link "$NODE_DIR/$(install_field "$release" node)" "$NODE_DIR/current"
 	swap_link "$RELEASES/$release" "$CURRENT"
+	[[ "$from" == "$release" ]] && return 0
 	printf '%s from=%s to=%s verified=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${from:-none}" "$release" \
 		"$(install_field "$release" verified)" >>"$HISTORY"
 }

@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.39.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.38.0...v0.39.0) (2026-11-24)
+
+
+### Features
+
+* **network:** ask before the first P2P connection; non-interactive runs need --accept-p2p or one interactive consent (T-237 B5) ([#628](https://github.com/rotifer-protocol/rotifer-playground/issues/628)) ([6f8495d](https://github.com/rotifer-protocol/rotifer-playground/commit/6f8495d562c96beb322eb33ad5a1a499ed515718))
+* **network:** relay and limit flags, status --json, --foreground (T-231 PR-②) ([#623](https://github.com/rotifer-protocol/rotifer-playground/issues/623)) ([513d1c0](https://github.com/rotifer-protocol/rotifer-playground/commit/513d1c047bd7f30bd4fcdc41599422acd446a178))
+* **p2p:** Circuit Relay v2 server role, off by default (T-231 PR-①) ([#619](https://github.com/rotifer-protocol/rotifer-playground/issues/619)) ([b8590d0](https://github.com/rotifer-protocol/rotifer-playground/commit/b8590d0ce1581f25077e0cb8f1924b70ee9b834a))
+
+
+### Bug Fixes
+
+* **deps:** upgrade vitest to 4.1.12 and qs to 6.17.1 ([#617](https://github.com/rotifer-protocol/rotifer-playground/issues/617)) ([c45e126](https://github.com/rotifer-protocol/rotifer-playground/commit/c45e1266e7644815100119e6c5114b11c5116ff3))
+* **deps:** upgrade wasmtime to 48.0.9 and url to 2.5.9 for RustSec advisories ([#624](https://github.com/rotifer-protocol/rotifer-playground/issues/624)) ([6ccda22](https://github.com/rotifer-protocol/rotifer-playground/commit/6ccda22f560e3317f776552de60a7de743375d04))
+* **wrap:** let --from-clawhub name the publisher of a shared slug ([#627](https://github.com/rotifer-protocol/rotifer-playground/issues/627)) ([d662cf1](https://github.com/rotifer-protocol/rotifer-playground/commit/d662cf1497a7b868389459500cd249c69a16e4fa)), closes [#625](https://github.com/rotifer-protocol/rotifer-playground/issues/625)
+
 ## [0.38.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.37.0...v0.38.0) (2026-11-17)
 
 

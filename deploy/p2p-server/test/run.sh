@@ -258,6 +258,12 @@ expect "units copied" test -f "$ROOT/etc/systemd/system/rotifer-p2p.service" -a 
 expect_not "the node's unit leaves /proc/meminfo readable" grep -qE '^ProcSubset=pid' "$ROOT/etc/systemd/system/rotifer-p2p.service"
 expect "no test dir in the release" test ! -e "$(OPT)/releases/$PIN/deploy/test"
 expect "firewall loaded with port and quota" grep -q 'tcp dport 9878' "$T/nft.rules"
+# The quota counts what leaves: the 1 MB/s cap drops first. In the other order
+# every packet the cap then dropped, and each TCP retransmit of it, was charged
+# too (real machine: 15 MB delivered, 75 MB charged).
+rate_line="$(grep -n 'limit name "egress_rate"' "$T/nft.rules" | cut -d: -f1)"
+quota_line="$(grep -n 'quota name "egress" counter name "egress_quota_drops" drop' "$T/nft.rules" | cut -d: -f1)"
+expect "the rate cap drops before the quota counts" test "${rate_line:-0}" -gt 0 -a "${rate_line:-0}" -lt "${quota_line:-0}"
 expect "firewall restarted, node restarted" test "$(calls 'systemctl restart rotifer-firewall.service')" = 1 -a "$(calls 'systemctl restart rotifer-p2p.service')" = 1
 expect "HISTORY records it" grep -q "from=none to=$PIN verified=yes" "$(OPT)/releases/HISTORY"
 expect "status command linked" test -L "$ROOT/usr/local/bin/rotifer-node-status"

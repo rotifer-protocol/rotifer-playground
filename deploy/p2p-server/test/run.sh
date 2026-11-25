@@ -264,6 +264,27 @@ expect "firewall loaded with port and quota" grep -q 'tcp dport 9878' "$T/nft.ru
 rate_line="$(grep -n 'limit name "egress_rate"' "$T/nft.rules" | cut -d: -f1)"
 quota_line="$(grep -n 'quota name "egress" counter name "egress_quota_drops" drop' "$T/nft.rules" | cut -d: -f1)"
 expect "the rate cap drops before the quota counts" test "${rate_line:-0}" -gt 0 -a "${rate_line:-0}" -lt "${quota_line:-0}"
+# No lock-out (design §7.3): input's policy is drop, so SSH needs its accept;
+# SSH replies must pass before the cap and the quota drop, or an operator
+# cannot log in to lift a used-up quota. And at most 20 connections per IP.
+nft_rule() { # nft_rule <chain> <regex>: line number of an uncommented rule in that chain, or 0
+	python3 - "$T/nft.rules" "$1" "$2" <<-'EOF'
+		import re, sys
+		chain, n = None, 0
+		for i, line in enumerate(open(sys.argv[1]), 1):
+		    s = line.split("#", 1)[0].strip()
+		    m = re.match(r"chain (\w+) \{", s)
+		    if m: chain = m.group(1); continue
+		    if chain == sys.argv[2] and re.search(sys.argv[3], s): n = i; break
+		print(n)
+	EOF
+}
+expect "input accepts SSH" test "$(nft_rule input '^tcp dport 22 accept$')" -gt 0
+ssh_out="$(nft_rule output '^tcp sport 22 accept$')"
+expect "output accepts SSH replies" test "$ssh_out" -gt 0
+expect "SSH replies pass before the 1 MB/s cap" test "$ssh_out" -lt "$(nft_rule output '^limit name "egress_rate" .* drop$')"
+expect "SSH replies pass before the quota drop" test "$ssh_out" -lt "$(nft_rule output '^quota name "egress" .* drop$')"
+expect "at most 20 P2P connections per source IP" test "$(nft_rule input 'add @p2p_conn \{ ip saddr ct count over 20 \}.* drop$')" -gt 0
 expect "firewall restarted, node restarted" test "$(calls 'systemctl restart rotifer-firewall.service')" = 1 -a "$(calls 'systemctl restart rotifer-p2p.service')" = 1
 expect "HISTORY records it" grep -q "from=none to=$PIN verified=yes" "$(OPT)/releases/HISTORY"
 expect "one install is one HISTORY line (no from=X to=X)" test "$(wc -l <"$(OPT)/releases/HISTORY" | tr -d ' ')" = 1

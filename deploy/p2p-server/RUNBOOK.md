@@ -45,8 +45,12 @@ The node is the `rotifer network start --foreground` daemon from
 - 2 vCPU and 2 GB of memory to start with.
 - SSH with **keys only**. Turn password logins off before anything else:
   `PasswordAuthentication no` in `/etc/ssh/sshd_config`, then
-  `sudo systemctl reload ssh`. Log in with your own account; the `rotifer`
-  account has no login shell.
+  `sudo systemctl reload ssh`. A file in `/etc/ssh/sshd_config.d/` (such as
+  cloud-init's `50-cloud-init.conf`) can set it back to `yes` and wins over
+  the main file, so check what sshd really uses:
+  `sudo sshd -T | grep -E '^(passwordauthentication|kbdinteractiveauthentication) '`
+  must say `no` for both. Keep one session open until a new key login works.
+  Log in with your own account; the `rotifer` account has no login shell.
 - For the **official** public nodes, two machines: at **two different cloud
   providers** (two companies, not two regions of one), under **two different
   provider accounts**, each with two-step verification, the two not sharing
@@ -69,12 +73,23 @@ The node is the `rotifer network start --foreground` daemon from
 
 ## Install
 
-1. Get this directory at the release you are going to run, on the machine:
+1. Get this directory at the commit that pins the release you are going to
+   run, on the machine. That is a commit on `main` (the one that set the
+   version in `package.json` here), not the release tag: a release's tag
+   `v<version>` is cut before this directory is pinned to it, so it holds an
+   older pin or no `deploy/p2p-server` at all. Fetch that one commit:
 
    ```bash
-   git clone --depth 1 --branch v<version> https://github.com/rotifer-protocol/rotifer-playground.git
-   cd rotifer-playground/deploy/p2p-server
+   mkdir rotifer-playground && cd rotifer-playground
+   git init -q
+   git remote add origin https://github.com/rotifer-protocol/rotifer-playground.git
+   git fetch --depth 1 origin <commit SHA>
+   git checkout -q FETCH_HEAD
+   cd deploy/p2p-server
+   grep '"@rotifer/playground"' package.json
    ```
+
+   The last line must show the version you mean to run.
 
 2. Run the installer once. It puts `/etc/rotifer/p2p.env` in place and stops
    because the public IP is still empty:
@@ -94,8 +109,12 @@ The node is the `rotifer network start --foreground` daemon from
    ```
 
    Before anything is switched on it downloads the pinned Node.js and checks
-   its SHA-256; installs the pinned package with `npm ci` (lock-file
-   integrity hashes, no install scripts); checks npm registry signatures and
+   its SHA-256; refuses a `package-lock.json` in which any package does not
+   resolve to `https://registry.npmjs.org/` or has no integrity hash (a
+   rebuilt local tarball with its own matching hash would otherwise pass
+   both `npm ci` and the signature check); installs the pinned package with
+   `npm ci` (lock-file integrity hashes, no install scripts); checks npm
+   registry signatures and
    provenance (`npm audit signatures`); loads the native module; and checks
    that `rotifer --version` is the pinned version. Any failure stops the
    install with nothing switched.
@@ -324,7 +343,16 @@ with systemd and nftables, check each of these and keep the output:
 2. `sudo ./install.sh` from the registry: installs, `Install: verified`.
    Then, with one integrity hash in `package-lock.json` changed by one
    character, and with an unsigned local tarball, the install must stop
-   with `/opt/rotifer/current` unchanged.
+   with `/opt/rotifer/current` unchanged. For the unsigned tarball: rebuild
+   the pinned package (`npm pack`, change a file, pack it again) and point
+   its lock entry at it, `"resolved": "file:<path>"` with the rebuilt file's
+   own sha512 as `integrity`. `npm ci` and `npm audit signatures` both pass
+   on that lock (the audit checks the registry's signature for the
+   name@version, not where the files came from), so the stop must come from
+   the installer's own check, before `npm ci`, naming the entry. On a machine
+   that already runs a release, do it with `upgrade.sh` and a deploy
+   directory pinning another version: `install.sh` refuses at once because a
+   release is installed, so it would not test this.
 3. `systemd-analyze security rotifer-p2p.service`: note the score.
 4. `HOME` under systemd is `/var/lib/rotifer`, and the node key appears at
    `/var/lib/rotifer/.rotifer/identity.pem`, mode 0600, owner `rotifer`.
@@ -332,7 +360,9 @@ with systemd and nftables, check each of these and keep the output:
    from before the first start (`source` is `command`).
 5. The node starts with `RestrictAddressFamilies` as shipped (no address
    family missing for reading interface addresses).
-6. Restarts: `sudo kill -9` the node; systemd restarts it within 5 s. After
+6. Restarts: `sudo kill -9` the node; systemd restarts it after about 5 s
+   (`RestartSec=5s`; the journal's exit and `Started` lines are about 5.1 s
+   apart). After
    15 kills in a row it is still restarted, with growing delays, and
    `NRestarts` keeps counting (`RestartSteps`, `RestartMaxDelaySec`).
 7. Firewall: `rotifer-quota check` passes; the per-IP limits (20 concurrent,
@@ -344,9 +374,23 @@ with systemd and nftables, check each of these and keep the output:
 8. `upgrade.sh` to a newer release and `rollback.sh` back, each once: the unit
    files in `/etc/systemd/system` and the state in `/var/lib/rotifer` work in
    both directions (the older release starts on state the newer one wrote).
+   If no newer release exists yet, a stand-in shows that the scripts work:
+   the registry packages of the pinned release (`npm pack` of the main and
+   the linux-x64-gnu package) with only the version raised (also in the main
+   package's `optionalDependencies`), a deploy directory pinning that
+   version, `upgrade.sh --from-tarballs` (recorded `verified=no`), then
+   `rollback.sh` with no argument back to the verified release, then remove
+   the test release from `/opt/rotifer/releases`. The stand-in has the same
+   code as the release, so it does not test old code on new state: **re-run
+   this check with the first real newer release.**
 9. The native module loads after `npm ci --ignore-scripts`, and
    `npm audit signatures` passes for both packages.
 10. A CLI node on another machine reserves a slot on this relay and reaches a
     third node through it.
 11. No secret in this directory or in the installed release: run `gitleaks`
-    over both.
+    over both. `gitleaks dir` skips `node_modules` by default, which is
+    nearly all of an installed release: scan a copy with that folder renamed
+    (for example to `nm`). Expect one finding there, `DEFAULT_CLOUD_ANON_KEY`
+    in `dist/cloud/types.js` and `types.d.ts`: the Supabase publishable
+    client key that ships in the public npm package on purpose. It is not a
+    secret; anything else is.

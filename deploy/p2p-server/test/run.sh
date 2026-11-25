@@ -312,6 +312,92 @@ expect_not "no release dir" test -e "$(OPT)/releases/$PIN"
 expect "node never started" test "$(calls 'rotifer-p2p.service')" = 0
 teardown
 
+# `npm audit signatures` checks the registry's signature for a name@version,
+# not where the installed files came from: a lock entry pointing at a rebuilt
+# local tarball, with that tarball's own sha512, passes both `npm ci` and the
+# audit and installs the rebuilt files (found on the real node, check 2). So
+# every lock entry must come from the npm registry and carry an integrity.
+# lock_edit <deploy dir> <python, with the lock as d and its packages as p>
+lock_edit() {
+	python3 - "$1/package-lock.json" "$2" <<-'EOF'
+		import json, sys
+		f = sys.argv[1]; d = json.load(open(f)); p = d.get("packages", {})
+		exec(sys.argv[2])
+		json.dump(d, open(f, "w"), indent=2)
+	EOF
+}
+refused_before_npm() { # refused_before_npm <case label> <deploy dir> <entry the error must name> [upgrade [npm ci calls so far]]
+	local out
+	if out="$(bash "$2/${4:-install}.sh" 2>&1)"; then bad "$1: the ${4:-install} was not refused"; else ok; fi
+	expect "$1: the error names $3" grep -qF -- "$3" <<<"$out"
+	expect "$1: npm ci never ran" test "$(calls 'npm ci')" = "${5:-0}"
+	expect "$1: no release prepared" test -z "$(find "$(OPT)/releases" -mindepth 1 -maxdepth 1 -name "*$(pinned_v "$2")*" 2>/dev/null)"
+}
+pinned_v() { sed -n 's/^[[:space:]]*"@rotifer\/playground":[[:space:]]*"\([^"]*\)".*/\1/p' "$1/package.json"; }
+
+setup "install: a lock entry resolved to a local tarball, with its matching sha512, is refused before npm ci"
+fill_env
+d="$(deploy_pinning "$PIN")"
+printf 'rebuilt' >"$T/rotifer-playground-$PIN.tgz"
+lock_edit "$d" "import base64, hashlib; t='$T/rotifer-playground-$PIN.tgz'; e=p['node_modules/@rotifer/playground']; e['resolved']='file:'+t; e['integrity']='sha512-'+base64.b64encode(hashlib.sha512(open(t,'rb').read()).digest()).decode()"
+refused_before_npm "file: tarball" "$d" "node_modules/@rotifer/playground"
+expect_not "no current link" test -e "$(OPT)/current"
+expect "node never started" test "$(calls 'rotifer-p2p.service')" = 0
+teardown
+
+setup "install: a lock entry without an integrity is refused before npm ci"
+fill_env
+d="$(deploy_pinning "$PIN")"
+lock_edit "$d" "del p['node_modules/@rotifer/playground-linux-x64-gnu']['integrity']"
+refused_before_npm "no integrity" "$d" "node_modules/@rotifer/playground-linux-x64-gnu"
+expect_not "no current link" test -e "$(OPT)/current"
+teardown
+
+lock_dep() { python3 -c "import json,sys; print(sorted(k for k in json.load(open(sys.argv[1]))['packages'] if k and not k.startswith('node_modules/@rotifer'))[0])" "$1/package-lock.json"; }
+
+setup "install: a lock entry from another registry is refused before npm ci"
+fill_env
+d="$(deploy_pinning "$PIN")"
+dep="$(lock_dep "$d")"
+lock_edit "$d" "e=p['$dep']; e['resolved']=e['resolved'].replace('https://registry.npmjs.org/','https://registry.example.com/')"
+refused_before_npm "other registry" "$d" "$dep"
+expect_not "no current link" test -e "$(OPT)/current"
+teardown
+
+setup "install: a lock entry from a look-alike host (registry.npmjs.org.example.com) is refused before npm ci"
+fill_env
+d="$(deploy_pinning "$PIN")"
+dep="$(lock_dep "$d")"
+lock_edit "$d" "e=p['$dep']; e['resolved']=e['resolved'].replace('https://registry.npmjs.org/','https://registry.npmjs.org.example.com/')"
+refused_before_npm "look-alike host" "$d" "$dep"
+expect_not "no current link" test -e "$(OPT)/current"
+teardown
+
+setup "install: a lock without the packages section, or without the pinned package in it, is refused before npm ci"
+fill_env
+d="$(deploy_pinning "$PIN")"
+lock_edit "$d" "d.pop('packages')"
+refused_before_npm "no packages section" "$d" "package-lock.json"
+d="$T/deploy-rootonly"
+cp -R "$DEPLOY/." "$d/"
+lock_edit "$d" "d['packages']={'': p['']}"
+refused_before_npm "packages without @rotifer/playground" "$d" "node_modules/@rotifer/playground"
+expect_not "no current link" test -e "$(OPT)/current"
+teardown
+
+setup "upgrade: a lock entry resolved to a local tarball is refused; the node stays on the verified release"
+fill_env
+bash "$DEPLOY/install.sh" >/dev/null 2>&1
+d="$(deploy_pinning 0.90.0)"
+printf 'rebuilt' >"$T/rotifer-playground-0.90.0.tgz"
+lock_edit "$d" "e=p['node_modules/@rotifer/playground']; e['version']='0.90.0'; e['resolved']='file:$T/rotifer-playground-0.90.0.tgz'"
+refused_before_npm "upgrade, file: tarball" "$d" "node_modules/@rotifer/playground" upgrade 1
+expect "current is still the pin" test "$(current)" = "$PIN"
+expect "still verified" test "$(field "$PIN" verified)" = yes
+expect "HISTORY unchanged (one line)" test "$(wc -l <"$(OPT)/releases/HISTORY" | tr -d ' ')" = 1
+expect "the node was not restarted" test "$(calls 'systemctl restart rotifer-p2p.service')" = 1
+teardown
+
 setup "install: a release older than PR-② (no networkStats) is refused before the switch"
 fill_env
 d="$(deploy_pinning 0.92.0)"

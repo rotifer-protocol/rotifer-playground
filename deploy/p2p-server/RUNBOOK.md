@@ -225,7 +225,7 @@ period, `ROTIFER_QUOTA_BYTES`, set to **40% of the outbound traffic your plan
 includes** (1 TB included: `400000000000`). 40% keeps the bill inside the
 plan even when a quota period and the provider's billing month do not line
 up: two quota periods in one billing month add up to 80%. Outbound traffic is
-also limited to 1 MB/s, so using up 0.4 TB takes at least about 4.6 days.
+also limited to 1 MB/s, so using up 0.4 TB takes at least about 4.4 days.
 
 - The kernel counts the bytes. `rotifer-quota.timer` saves the count every
   5 minutes to `/var/lib/rotifer-quota/used`, and the firewall is loaded with

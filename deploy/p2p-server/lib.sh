@@ -93,6 +93,36 @@ ensure_node() {
 	rm -rf "$tmp"
 }
 
+# Every package in the lock must come from the npm registry, with an
+# integrity hash. `npm audit signatures` checks the registry's signature for
+# a name@version, not where the installed files came from: an entry resolved
+# to a rebuilt local tarball, with that tarball's own sha512, passes `npm ci`
+# and the audit and installs the rebuilt files (found on the real node,
+# RUNBOOK pre-launch check 2). So this runs before `npm ci`.
+check_lock_sources() {
+	local node="$1" lock="$2" problem
+	problem="$("$node" -e '
+		const lock = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+		const pkgs = lock.packages;
+		if (!pkgs || typeof pkgs !== "object" || !pkgs["node_modules/@rotifer/playground"]) {
+			console.log("package-lock.json has no \"packages\" section with node_modules/@rotifer/playground (lockfileVersion 3 expected)");
+			process.exit(0);
+		}
+		for (const [name, e] of Object.entries(pkgs)) {
+			if (name === "") continue;
+			if (typeof e.resolved !== "string" || !e.resolved.startsWith("https://registry.npmjs.org/")) {
+				console.log(`package-lock.json: ${name} resolves to ${JSON.stringify(e.resolved ?? null)}, not https://registry.npmjs.org/`);
+				process.exit(0);
+			}
+			if (typeof e.integrity !== "string" || e.integrity === "") {
+				console.log(`package-lock.json: ${name} has no integrity hash`);
+				process.exit(0);
+			}
+		}
+	' "$lock" 2>&1)" || die "could not read $lock; nothing switched"
+	[[ -z "$problem" ]] || die "$problem; only packages from the npm registry are installed. Nothing switched"
+}
+
 # Build /opt/rotifer/releases/<version> from a deploy directory and run every
 # check before anything switches (design §5.5): the pinned Node, `npm ci`
 # against the lock file's integrity hashes without install scripts, registry
@@ -121,6 +151,7 @@ prepare_release() {
 	ensure_node "$deploy"
 	node="$NODE_DIR/$node_version_/bin/node"
 	npm="$NODE_DIR/$node_version_/bin/npm"
+	[[ -n "$tarballs" ]] || check_lock_sources "$node" "$deploy/package-lock.json"
 	work="$RELEASES/.$version.tmp"
 	rm -rf "$work"
 	mkdir -p "$work"

@@ -142,6 +142,27 @@ jobs:
       - name: Pack, install the tarball, run init and the recommended first command
         run: bash scripts/smoke-packed-package.sh
 
+  # The public P2P node's install, upgrade and rollback scripts, units and
+  # firewall rules (deploy/p2p-server, T-231 PR-③). Their regression tests,
+  # including the SSH no-lock-out and per-IP limit checks, guard nothing
+  # unless something runs them. Stubs stand in for nft, systemctl and npm,
+  # so the job needs only node and python3.
+  deploy-p2p-server:
+    name: P2P Server Deploy Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Run deploy/p2p-server/test/run.sh with a throwaway HOME
+        run: HOME="$(mktemp -d)" bash deploy/p2p-server/test/run.sh
+
   test:
     name: Test (Node ${{ matrix.node-version }})
     runs-on: ${{ matrix.os }}

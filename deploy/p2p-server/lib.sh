@@ -104,6 +104,11 @@ ensure_node() {
 # so the release is recorded as unverified.
 # Prints only the version on stdout (callers capture it); all else to stderr.
 prepare_release() {
+	# Callers run this as `version="$(prepare_release …)"`, and a command
+	# substitution does not inherit errexit (bash < 4.4, or no inherit_errexit):
+	# without this, a `die` in a nested `$(...)` below would only end that
+	# subshell, and the release would be built with an empty version.
+	set -e
 	local deploy="$1" tarballs="${2:-}" version node_version_ release work node npm verified
 	version="$(pinned_version "$deploy")"
 	node_version_="$(node_version "$deploy")"

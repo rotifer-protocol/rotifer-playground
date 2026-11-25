@@ -283,6 +283,18 @@ expect_not "install fails" bash "$d/install.sh"
 expect_not "no current link" test -e "$(OPT)/current"
 teardown
 
+setup "install: a pin that is not an exact version stops at once, with nothing prepared"
+fill_env
+d="$(deploy_pinning 0.93.0-rc.1)"
+out="$(bash "$d/install.sh" 2>&1)"
+rc=$?
+expect "install fails" test "$rc" -ne 0
+expect "it says why" grep -q "must pin an exact @rotifer/playground version, found '0.93.0-rc.1'" <<<"$out"
+expect_not "and nothing after that runs" grep -q "native module" <<<"$out"
+expect "no release directory is started" test ! -e "$(OPT)/releases/..tmp"
+expect_not "no current link" test -e "$(OPT)/current"
+teardown
+
 setup "install: a Cloud login in the service home is refused"
 fill_env
 mkdir -p "$ROOT/var/lib/rotifer/.rotifer"

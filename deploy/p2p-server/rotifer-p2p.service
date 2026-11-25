@@ -58,7 +58,8 @@ ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
 ProtectProc=invisible
-ProcSubset=pid
+# No ProcSubset=pid: libp2p's memory limit reads /proc/meminfo, and without it
+# takes the machine's RAM as 0 and refuses every connection.
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes

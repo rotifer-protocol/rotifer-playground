@@ -252,6 +252,10 @@ expect "current is the pin" test "$(current)" = "$PIN"
 expect "INSTALL verified=yes" test "$(field "$PIN" verified)" = yes
 expect "signatures were checked" test "$(calls 'npm audit signatures')" = 1
 expect "units copied" test -f "$ROOT/etc/systemd/system/rotifer-p2p.service" -a -f "$ROOT/etc/systemd/system/rotifer-quota.timer"
+# libp2p's memory limit reads /proc/meminfo; with ProcSubset=pid it reads 0 RAM
+# and refuses every connection (found on a real machine: denials.memory grew
+# with each dial, no reservation was ever taken).
+expect_not "the node's unit leaves /proc/meminfo readable" grep -qE '^ProcSubset=pid' "$ROOT/etc/systemd/system/rotifer-p2p.service"
 expect "no test dir in the release" test ! -e "$(OPT)/releases/$PIN/deploy/test"
 expect "firewall loaded with port and quota" grep -q 'tcp dport 9878' "$T/nft.rules"
 expect "firewall restarted, node restarted" test "$(calls 'systemctl restart rotifer-firewall.service')" = 1 -a "$(calls 'systemctl restart rotifer-p2p.service')" = 1

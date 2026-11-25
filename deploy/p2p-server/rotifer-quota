@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# Firewall rules and the outbound quota of a Rotifer public P2P node
+# (T-231 B2 design §5.2, §7.3).
+#
+#   rotifer-quota render   print the rules for the settings in p2p.env
+#   rotifer-quota check    check them with `nft -c` (changes nothing)
+#   rotifer-quota save     write the quota use the kernel counted to disk
+#   rotifer-quota load     save, then load the rules with the saved use
+#                          (rotifer-firewall.service, at boot and on restart)
+#   rotifer-quota reload   the same as load
+#   rotifer-quota tick     every 5 minutes (rotifer-quota.timer): save, start
+#                          a new period on the reset day, stop the node when
+#                          the quota is used up, warn at 50% and 80%
+#   rotifer-quota not-capped
+#                          exit 1 while the quota has stopped the node
+#                          (ExecCondition of rotifer-p2p.service)
+#
+# The kernel counts outbound bytes in the `egress` quota object and drops
+# everything but SSH once it is over; this script keeps the count across
+# rule reloads and reboots, and stops the node so it does not keep retrying.
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=lib.sh
+. "$HERE/lib.sh"
+
+USED_FILE="$QUOTA_STATE/used"
+PERIOD_FILE="$QUOTA_STATE/period"
+CAPPED_FILE="$QUOTA_STATE/capped"
+WARNED_FILE="$QUOTA_STATE/warned"
+
+write_state() {
+	local file="$1" value="$2"
+	mkdir -p "$QUOTA_STATE"
+	printf '%s\n' "$value" >"$file.tmp"
+	mv -f "$file.tmp" "$file"
+}
+
+read_number() {
+	local v
+	v="$(cat "$1" 2>/dev/null || true)"
+	[[ "$v" =~ ^[0-9]+$ ]] && printf '%s\n' "$v" || printf '0\n'
+}
+
+settings() {
+	[[ -f "$ENV_FILE" ]] || die "$ENV_FILE is missing"
+	set -a
+	# shellcheck disable=SC1090
+	. "$ENV_FILE"
+	set +a
+	[[ "${ROTIFER_P2P_PORT:-}" =~ ^[0-9]+$ ]] || die "ROTIFER_P2P_PORT in $ENV_FILE must be a port number"
+	[[ "${ROTIFER_QUOTA_BYTES:-}" =~ ^[1-9][0-9]*$ ]] || die "ROTIFER_QUOTA_BYTES in $ENV_FILE must be a positive whole number"
+	[[ "${ROTIFER_QUOTA_RESET_DAY:-}" =~ ^[0-9]+$ ]] && ((ROTIFER_QUOTA_RESET_DAY >= 1 && ROTIFER_QUOTA_RESET_DAY <= 28)) ||
+		die "ROTIFER_QUOTA_RESET_DAY in $ENV_FILE must be a day from 1 to 28"
+}
+
+render() {
+	local used="$1"
+	# A saved use above the quota is loaded as the quota itself: the kernel
+	# then starts in the over state, which is what matters.
+	((used <= ROTIFER_QUOTA_BYTES)) || used="$ROTIFER_QUOTA_BYTES"
+	sed -e "s/@QUOTA_BYTES@/$ROTIFER_QUOTA_BYTES/g" -e "s/@QUOTA_USED@/$used/g" -e "s/@P2P_PORT@/$ROTIFER_P2P_PORT/g" \
+		"$HERE/nftables.conf"
+}
+
+# The bytes the kernel's `egress` quota has counted, or nothing when the
+# table is not loaded.
+live_used() {
+	local out
+	out="$(nft -j list quota inet rotifer egress 2>/dev/null)" || return 0
+	sed -n 's/.*"used":[[:space:]]*\([0-9][0-9]*\).*/\1/p' <<<"$out" | head -n 1
+}
+
+save() {
+	local live saved
+	live="$(live_used)"
+	[[ -n "$live" ]] || return 0
+	saved="$(read_number "$USED_FILE")"
+	# Within a period the count only grows; a smaller live count means the
+	# rules were loaded without the saved use, so keep the larger one.
+	((live >= saved)) || live="$saved"
+	write_state "$USED_FILE" "$live"
+}
+
+apply() {
+	render "$(read_number "$USED_FILE")" | nft -f - || die "nft could not load the firewall rules"
+}
+
+# The first day (YYYY-MM-DD, UTC) of the billing period today falls in.
+period_start() {
+	local y m d
+	read -r y m d < <(date -u '+%Y %m %d')
+	y=$((10#$y)) m=$((10#$m)) d=$((10#$d))
+	if ((d < ROTIFER_QUOTA_RESET_DAY)); then
+		m=$((m - 1))
+		((m >= 1)) || { m=12; y=$((y - 1)); }
+	fi
+	printf '%04d-%02d-%02d\n' "$y" "$m" "$ROTIFER_QUOTA_RESET_DAY"
+}
+
+tick() {
+	save
+	local now stored used pct warned
+	now="$(period_start)"
+	stored="$(cat "$PERIOD_FILE" 2>/dev/null || true)"
+	if [[ -z "$stored" ]]; then
+		write_state "$PERIOD_FILE" "$now"
+	elif [[ "$stored" != "$now" ]]; then
+		log "New billing period from $now: outbound quota use back to 0 (was $(read_number "$USED_FILE") bytes)"
+		write_state "$USED_FILE" 0
+		write_state "$PERIOD_FILE" "$now"
+		rm -f "$WARNED_FILE"
+		apply
+		if [[ -e "$CAPPED_FILE" ]]; then
+			rm -f "$CAPPED_FILE"
+			log "Starting the node again, which the quota had stopped"
+			systemctl start rotifer-p2p.service
+		fi
+	fi
+	used="$(read_number "$USED_FILE")"
+	pct=$((used * 100 / ROTIFER_QUOTA_BYTES))
+	if ((used >= ROTIFER_QUOTA_BYTES)); then
+		if [[ ! -e "$CAPPED_FILE" ]]; then
+			write_state "$CAPPED_FILE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+			log "Outbound quota used up ($used of $ROTIFER_QUOTA_BYTES bytes): stopping the node until $(next_reset)"
+		fi
+		systemctl stop rotifer-p2p.service
+		return 0
+	fi
+	warned="$(read_number "$WARNED_FILE")"
+	local level
+	for level in 80 50; do
+		if ((pct >= level && warned < level)); then
+			log "Outbound quota at $pct% ($used of $ROTIFER_QUOTA_BYTES bytes) for the period from $now"
+			write_state "$WARNED_FILE" "$level"
+			break
+		fi
+	done
+}
+
+next_reset() {
+	local start y m
+	start="$(period_start)"
+	y=$((10#${start:0:4})) m=$((10#${start:5:2}))
+	m=$((m + 1))
+	((m <= 12)) || { m=1; y=$((y + 1)); }
+	printf '%04d-%02d-%02d\n' "$y" "$m" "$ROTIFER_QUOTA_RESET_DAY"
+}
+
+case "${1:-}" in
+render)
+	settings
+	render "$(read_number "$USED_FILE")"
+	;;
+check)
+	settings
+	render "$(read_number "$USED_FILE")" | nft -c -f -
+	;;
+save)
+	save
+	;;
+load | reload)
+	settings
+	save
+	[[ -s "$PERIOD_FILE" ]] || write_state "$PERIOD_FILE" "$(period_start)"
+	apply
+	;;
+tick)
+	settings
+	tick
+	;;
+not-capped)
+	[[ ! -e "$CAPPED_FILE" ]]
+	;;
+*)
+	die "usage: rotifer-quota render|check|save|load|reload|tick|not-capped"
+	;;
+esac

@@ -1,0 +1,23 @@
+# Loads the Rotifer firewall table at boot with the saved quota use, so a
+# reboot does not zero the month's count (T-231 B2 design §7.3). Also run by
+# install.sh, upgrade.sh and rollback.sh after they save the current use.
+[Unit]
+Description=Rotifer P2P node: firewall rules and outbound quota
+DefaultDependencies=no
+Before=network-pre.target rotifer-p2p.service
+Wants=network-pre.target
+After=local-fs.target nftables.service
+# Restarting nftables.service flushes the whole ruleset: load ours again.
+PartOf=nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/rotifer/p2p.env
+ExecStart=/opt/rotifer/current/deploy/rotifer-quota load
+ExecReload=/opt/rotifer/current/deploy/rotifer-quota reload
+StateDirectory=rotifer-quota
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

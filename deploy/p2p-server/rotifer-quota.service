@@ -1,0 +1,13 @@
+# Saves the outbound quota use, stops the node when the quota is used up and
+# starts it again on the reset day (T-231 B2 design §7.3). Run by
+# rotifer-quota.timer every 5 minutes.
+[Unit]
+Description=Rotifer P2P node: outbound quota bookkeeping
+After=rotifer-firewall.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/rotifer/p2p.env
+ExecStart=/opt/rotifer/current/deploy/rotifer-quota tick
+StateDirectory=rotifer-quota
+StateDirectoryMode=0700

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.40.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.39.0...v0.40.0) (2026-11-25)
+
+
+### Features
+
+* **deploy:** public P2P node deployment package and runbook (T-231 PR-③) ([#626](https://github.com/rotifer-protocol/rotifer-playground/issues/626)) ([a20a4ae](https://github.com/rotifer-protocol/rotifer-playground/commit/a20a4aeadb18182ac6d7f693a202e0d5c64ef8be))
+
+
+### Bug Fixes
+
+* **deploy:** refuse lock entries that are not from the npm registry (T-231 B2) ([#633](https://github.com/rotifer-protocol/rotifer-playground/issues/633)) ([c610b35](https://github.com/rotifer-protocol/rotifer-playground/commit/c610b35edb538d6ca20ad88512a9df0241f22945))
+
 ## [0.39.0](https://github.com/rotifer-protocol/rotifer-playground/compare/v0.38.0...v0.39.0) (2026-11-24)
 
 

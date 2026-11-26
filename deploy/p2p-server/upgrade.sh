@@ -5,8 +5,9 @@
 #   sudo ./upgrade.sh                       from the npm registry, signatures checked
 #   sudo ./upgrade.sh --from-tarballs DIR   TEST ONLY, as in install.sh
 #
-# Run from a checkout of rotifer-playground at the NEW release's tag, so the
-# checks, units and firewall rules are the new release's. Everything is
+# Run from a checkout of rotifer-playground at the main commit that pins the
+# NEW release here (not its tag; RUNBOOK.md Upgrade), so the checks, units and
+# firewall rules are the new release's. Everything is
 # checked before the switch; if the node does not report the new version
 # within 60 s, the node goes back to the most recent verified release.
 # An unverified (test) install is never gone back to.

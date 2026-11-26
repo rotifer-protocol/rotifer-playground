@@ -7,7 +7,8 @@
 #   sudo ./install.sh --from-tarballs DIR   TEST ONLY: from local `npm pack` files;
 #                                           no signature check, marked unverified
 #
-# Run from a checkout of rotifer-playground at the release tag. The first run
+# Run from a checkout of rotifer-playground at the main commit that pins the
+# release here (not the release tag; RUNBOOK.md Install step 1). The first run
 # puts /etc/rotifer/p2p.env in place and stops if it still needs filling in.
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

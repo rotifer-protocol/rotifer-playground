@@ -196,16 +196,27 @@ example after a security release.
 
 ## Upgrade
 
-Releases are pinned in this directory: upgrading means a newer tag of this
-repository, whose `package.json` and `package-lock.json` pin the newer
-version. Run the new tag's `upgrade.sh`, so the checks, units and firewall
-rules are the new release's:
+Releases are pinned in this directory: upgrading means the commit on `main`
+whose `package.json` and `package-lock.json` here pin the newer version, not
+the release tag (the tag is cut before this directory is pinned to it; see
+[Install](#install) step 1). Fetch that one commit into a new directory and
+run its `upgrade.sh`, so the checks, units and firewall rules are the new
+release's:
 
 ```bash
-git clone --depth 1 --branch v<new version> https://github.com/rotifer-protocol/rotifer-playground.git
-cd rotifer-playground/deploy/p2p-server
+mkdir rotifer-playground-<new version> && cd rotifer-playground-<new version>
+git init -q
+git remote add origin https://github.com/rotifer-protocol/rotifer-playground.git
+git fetch --depth 1 origin <commit SHA>
+git checkout -q FETCH_HEAD
+cd deploy/p2p-server
+grep '"@rotifer/playground"' package.json
 sudo ./upgrade.sh
 ```
+
+The `grep` line must show the version you mean to run. Give `git fetch` the
+full 40-character SHA: a server only accepts a short one if it is a branch
+or tag name.
 
 It runs the same checks as the install before switching anything, checks the
 new firewall rules with `nft -c`, saves the quota's use, switches, restarts,

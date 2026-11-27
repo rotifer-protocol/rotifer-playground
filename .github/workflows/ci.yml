@@ -418,9 +418,61 @@ jobs:
       - name: Cargo test (core)
         run: cargo test -p rotifer-core
 
-  p2p-integration:
-    name: P2P Integration Tests
+  # The src/p2p/ two-node tests (kad discovery / gossipsub broadcast / DHT
+  # put-get + the connectivity spike and the attack suites) are
+  # #[cfg_attr(not(feature = "p2p-integration"), ignore)] — ignored by the
+  # default `cargo test`. Enable the feature to run them, single-threaded:
+  # they spin up real libp2p nodes on loopback and share fixed identity
+  # files, so parallel execution would contend. The deferred spec-ID
+  # scaffolds (A_1_6 mDNS / A_4_3 / A_4_4 / A_6_6) stay unconditionally
+  # #[ignore]d and never run here.
+  #
+  # Run serially, the suite took 71 min (run 45614376538), almost all of it a
+  # handful of p2p::attack_a6 tests. So it is cut into shards, each on its own
+  # runner and still --test-threads=1 there (T-250): shards 1-5 each run named
+  # tests (--exact), shard 6 runs everything else (--exact --skip each of those
+  # names). Test times are each test's own, measured on the sharded run
+  # 45866710356; the build adds ~9 min on a cold cache. p2p-integration below
+  # checks that the shards together ran every test of the binary exactly once.
+  p2p-integration-shard:
+    name: P2P Integration Tests (${{ matrix.shard.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - name: "1 of 6"
+            # ~966 s
+            args: >-
+              p2p::attack_a6::a6_topup_ground_keys_take_no_majority
+          - name: "2 of 6"
+            # ~845 s
+            args: >-
+              p2p::attack_a6::a6_self_chosen_outbound_route1
+          - name: "3 of 6"
+            # ~422 s each
+            args: >-
+              p2p::attack_a6::a6_self_chosen_outbound_control_a_no_topup
+              p2p::attack_a6::a6_self_chosen_outbound_control_b_mesh_outbound_min_2
+          - name: "4 of 6"
+            # ~422 s each
+            args: >-
+              p2p::attack_a6::a6_self_chosen_outbound_control_cd_attackers_first
+              p2p::attack_a6::a6_self_chosen_outbound_control_e_before_a6
+          - name: "5 of 6"
+            # ~274 s
+            args: >-
+              p2p::attack_a6::a6_topup_direction_bias_is_measured
+          - name: "6 of 6"
+            # everything else, ~904 s
+            args: >-
+              --skip p2p::attack_a6::a6_topup_ground_keys_take_no_majority
+              --skip p2p::attack_a6::a6_self_chosen_outbound_route1
+              --skip p2p::attack_a6::a6_self_chosen_outbound_control_a_no_topup
+              --skip p2p::attack_a6::a6_self_chosen_outbound_control_b_mesh_outbound_min_2
+              --skip p2p::attack_a6::a6_self_chosen_outbound_control_cd_attackers_first
+              --skip p2p::attack_a6::a6_self_chosen_outbound_control_e_before_a6
+              --skip p2p::attack_a6::a6_topup_direction_bias_is_measured
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -443,15 +495,88 @@ jobs:
       - name: Two-node libp2p integration tests (serial, real loopback nodes)
         env:
           REQUIRE_POR_CROSS: "1"
-        # The src/p2p/ two-node tests (kad discovery / gossipsub broadcast / DHT
-        # put-get + the connectivity spike) are
-        # #[cfg_attr(not(feature = "p2p-integration"), ignore)] — ignored by the
-        # default `cargo test`. Enable the feature to run them, single-threaded:
-        # they spin up real libp2p nodes on loopback and share fixed identity
-        # files, so parallel execution would contend. The deferred spec-ID
-        # scaffolds (A_1_6 mDNS / A_4_3 / A_4_4 / A_6_6) stay unconditionally
-        # #[ignore]d and never run here.
-        run: cargo test --config 'profile.dev.package."*".opt-level=2' -p rotifer-core --features p2p-integration --lib -- --test-threads=1
+          SHARD_ARGS: ${{ matrix.shard.args }}
+        run: |
+          set -o pipefail
+          mkdir -p p2p-shard
+          # SHARD_ARGS is split on spaces on purpose: test names have none.
+          # shellcheck disable=SC2086
+          cargo test --config 'profile.dev.package."*".opt-level=2' -p rotifer-core --features p2p-integration --lib -- \
+            --test-threads=1 --color never --exact $SHARD_ARGS 2>&1 | tee p2p-shard/output.txt
+
+      # What the coverage check in p2p-integration compares: the tests this
+      # shard ran and every test in the binary (`--list`, no filter; the build
+      # is already there). A test is recorded when libtest starts it, not by
+      # its "ok": the tavily tests build a gene with cargo, whose output lands
+      # on the same line before the "ok" (run 45866710356). The step above
+      # passed, so every test it started passed or was ignored; the check
+      # also matches the counts in each `test result:` line.
+      - name: Record which tests this shard ran
+        run: |
+          set -o pipefail
+          sed -n -E 's/^test ([^ ]+) \.\.\. .*$/\1/p' p2p-shard/output.txt | sort > p2p-shard/ran.txt
+          grep -E '^test result: ' p2p-shard/output.txt > p2p-shard/result.txt
+          cargo test --config 'profile.dev.package."*".opt-level=2' -p rotifer-core --features p2p-integration --lib -- \
+            --list --format terse 2>/dev/null | sed -n -E 's/^(.+): test$/\1/p' | sort > p2p-shard/all.txt
+          echo "${{ matrix.shard.name }}" > p2p-shard/name.txt
+          echo "shard ${{ matrix.shard.name }}: ran $(wc -l < p2p-shard/ran.txt) of $(wc -l < p2p-shard/all.txt) tests"
+          cat p2p-shard/result.txt
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: p2p-shard-${{ strategy.job-index }}
+          path: p2p-shard/
+          retention-days: 7
+
+  # One check under the old name: green only when every shard passed and the
+  # shards together ran each test of the binary exactly once (no test in no
+  # shard, none in two), so a test added later cannot fall between them.
+  p2p-integration:
+    name: P2P Integration Tests
+    runs-on: ubuntu-latest
+    needs: [p2p-integration-shard]
+    if: always()
+    steps:
+      - name: Every shard passed
+        env:
+          SHARDS: ${{ needs.p2p-integration-shard.result }}
+        run: |
+          echo "shards: $SHARDS"
+          test "$SHARDS" = success
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+        with:
+          pattern: p2p-shard-*
+          path: shards
+
+      - name: The shards ran every test exactly once
+        run: |
+          set -o pipefail
+          n=$(ls -d shards/p2p-shard-* | wc -l)
+          echo "shard results: $n"
+          test "$n" = 6
+          for d in shards/p2p-shard-*; do
+            echo "shard $(cat "$d/name.txt"): $(cat "$d/result.txt")"
+          done
+          # Every shard built the same binary, so every full list must match.
+          first=$(ls -d shards/p2p-shard-* | head -1)
+          for d in shards/p2p-shard-*; do cmp "$first/all.txt" "$d/all.txt"; done
+          sort shards/p2p-shard-*/ran.txt > ran-all.txt
+          total=$(wc -l < "$first/all.txt")
+          ran=$(wc -l < ran-all.txt)
+          echo "tests in the binary: $total; run by the shards (passed + ignored): $ran"
+          dups=$(uniq -d ran-all.txt)
+          if [ -n "$dups" ]; then echo "::error::run in more than one shard:"; echo "$dups"; exit 1; fi
+          missing=$(comm -23 "$first/all.txt" ran-all.txt)
+          if [ -n "$missing" ]; then echo "::error::run in no shard (add it to a shard):"; echo "$missing"; exit 1; fi
+          extra=$(comm -13 "$first/all.txt" ran-all.txt)
+          if [ -n "$extra" ]; then echo "::error::run but not in the list:"; echo "$extra"; exit 1; fi
+          test "$total" -gt 0 && test "$ran" = "$total"
+          # libtest's own counts must agree: passed + ignored over all shards.
+          counted=$(sed -n -E 's/^test result: ok\. ([0-9]+) passed; 0 failed; ([0-9]+) ignored;.*/\1 \2/p' shards/p2p-shard-*/result.txt | awk '{s += $1 + $2} END {print s + 0}')
+          echo "passed + ignored in the test result lines: $counted"
+          test "$counted" = "$total"
+          echo "ok: $ran of $total tests, each in exactly one shard"
 
   security-check:
     name: Security Check
